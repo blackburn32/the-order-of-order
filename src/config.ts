@@ -14,14 +14,17 @@ export const WIN_ROUND = 20;
 // the balance simulation (src/sim) so runs end across the whole game instead of
 // piling up at "cleared round 2 = guaranteed win": the score economy grows
 // ~8-10x/round early and ~2x/round late, so the targets track that shape rather
-// than a single geometric ratio. This is the "GENTLE" curve — deaths spread
-// evenly across rounds 2-20 with a naive-bot win rate ~18% (a thinking player
-// wins more). See src/sim/analyze.ts to redesign and src/sim/validate.ts to
-// re-test alternate curves.
+// than a single geometric ratio.
+//
+// Shape ("soft-early"): a gentle on-ramp — rounds 2-3 barely cull, so nearly
+// every run that survives round 1 reaches round 3 — easing up through round 9,
+// then converging to the steeper mid/late difficulty from round 10 on.
+// Naive-bot win rate ~19% (a thinking player wins more); deaths land on every
+// round. See src/sim/analyze.ts to redesign and src/sim/validate.ts to re-test.
 export const ROUND_TARGETS: number[] = [
-  5, 10, 67, 450, 2_200, 6_400, 15_000, 37_000, 95_000, 250_000,
-  480_000, 850_000, 1_400_000, 2_400_000, 4_300_000, 7_600_000,
-  13_000_000, 24_000_000, 42_000_000, 77_000_000
+  5, 6, 38, 270, 1_500, 5_000, 12_000, 30_000, 77_000, 210_000,
+  430_000, 770_000, 1_300_000, 2_200_000, 4_000_000, 7_000_000,
+  12_000_000, 22_000_000, 38_000_000, 71_000_000
 ];
 
 // Legacy geometric-growth constants, kept as the fallback for any round beyond
