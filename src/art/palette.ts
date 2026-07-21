@@ -13,7 +13,12 @@ export const COLORS = {
   goldLight: 0xe6c65a,
   waxRed: 0x8a1f2b,
   waxRedDark: 0x561019,
-  glow: 0xffd977
+  glow: 0xffd977,
+  glowGreen: 0x86e07a, // Snake Eyes match flash
+  // Shop rarity tiers.
+  rarityCommon: 0xd4b83c,
+  rarityUncommon: 0x4a7fc9,
+  rarityRare: 0x9a4fc9
 };
 
 export const CSS = {
@@ -26,7 +31,10 @@ export const CSS = {
   goldLight: '#e6c65a',
   dim: '#8c7a55',
   red: '#d96a5a',
-  waxRed: '#8a1f2b'
+  waxRed: '#8a1f2b',
+  rarityCommon: '#d4b83c',
+  rarityUncommon: '#4a7fc9',
+  rarityRare: '#9a4fc9'
 };
 
 export const SERIF = 'Georgia, "Palatino Linotype", "Times New Roman", serif';

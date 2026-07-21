@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { CSS, SERIF } from '../art/palette';
+import { WIN_ROUND } from '../config';
 import { getRun } from '../state/RunState';
 import { summarizeDice } from '../systems/Dice';
 import { beginRun } from '../systems/Tutorial';
@@ -7,9 +8,9 @@ import { addFelt, bannerButton } from '../ui/widgets';
 import { responsive } from '../ui/layout';
 import { takePendingSubmission } from '../systems/GlobalScores';
 
-export class GameOverScene extends Phaser.Scene {
+export class VictoryScene extends Phaser.Scene {
   constructor() {
-    super('GameOver');
+    super('Victory');
   }
 
   create(): void {
@@ -22,7 +23,7 @@ export class GameOverScene extends Phaser.Scene {
       this.scene.launch('InitialsPrompt', {
         score: pending.score,
         purchases: pending.purchases,
-        returnTo: 'GameOver'
+        returnTo: 'Victory'
       });
   }
 
@@ -38,17 +39,17 @@ export class GameOverScene extends Phaser.Scene {
     const step = Math.min(H * 0.09, 60);
 
     this.add
-      .text(cx, top, 'The Run Has Ended', {
+      .text(cx, top, 'The Order Is Complete', {
         fontFamily: SERIF,
         fontSize: `${Math.round(Phaser.Math.Clamp(W * 0.045, 30, 58))}px`,
-        color: CSS.red,
+        color: CSS.goldLight,
         fontStyle: 'bold'
       })
       .setOrigin(0.5)
       .setShadow(0, 4, '#000000', 10, false, true);
 
     this.add
-      .text(cx, top + step, 'The Order does not tolerate disorder.', {
+      .text(cx, top + step, 'You have brought order to the dice.', {
         fontFamily: SERIF,
         fontSize: '20px',
         color: CSS.dim,
@@ -57,7 +58,7 @@ export class GameOverScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.add
-      .text(cx, top + step * 2.3, `You fell in Round ${state.round}`, {
+      .text(cx, top + step * 2.3, `You survived all ${WIN_ROUND} rounds`, {
         fontFamily: SERIF,
         fontSize: '32px',
         color: CSS.parchment

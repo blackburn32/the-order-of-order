@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { COLORS, CSS, SERIF } from '../art/palette';
-import { newRun, setRun } from '../state/RunState';
 import { audio } from '../systems/Audio';
-import { addFelt, bannerButton } from '../ui/widgets';
+import { loadProgress, loadSettings } from '../systems/SaveData';
+import { beginRun } from '../systems/Tutorial';
+import { addFelt, bannerButton, showBanner } from '../ui/widgets';
 import { responsive } from '../ui/layout';
 
 export class MenuScene extends Phaser.Scene {
@@ -58,14 +59,35 @@ export class MenuScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    const btnGap = Math.min(90, H * 0.13);
-    const startY = H * 0.54;
+    const btnGap = Math.min(84, H * 0.12);
+    const startY = H * 0.48;
     bannerButton(this, cx, startY, 'Start New Run', () => {
-      setRun(this.registry, newRun());
-      this.scene.start('Game');
+      // Intro plays on every main-menu run until the player skips it; Victory /
+      // Game Over "Begin a New Run" skip straight to the game (they call
+      // setRun + start('Game') directly, so the intro is main-menu only).
+      if (loadSettings().showIntro) this.scene.start('Intro');
+      else beginRun(this);
     });
     bannerButton(this, cx, startY + btnGap, 'Hall of High Scores', () => this.scene.start('Hall'));
-    bannerButton(this, cx, startY + btnGap * 2, 'Settings', () => this.scene.start('Settings'));
+
+    // The Codex of items stays locked until the player has finished one run.
+    const itemsUnlocked = loadProgress().gamesCompleted > 0;
+    const itemsBtn = bannerButton(this, cx, startY + btnGap * 2, 'Codex', () => {
+      if (itemsUnlocked) this.scene.start('Items');
+      else showBanner(this, 'Complete a run to unlock the Codex', 1200);
+    });
+    if (!itemsUnlocked) {
+      itemsBtn.setAlpha(0.55);
+      // A padlock pinned to the left of the button, vertically centered, so it
+      // doesn't shove the centered label off-center.
+      const img = itemsBtn.getAt(0) as Phaser.GameObjects.Image;
+      const lock = this.add
+        .text(-img.width / 2 + 24, 0, '🔒', { fontFamily: SERIF, fontSize: '24px', color: CSS.ink })
+        .setOrigin(0, 0.5);
+      itemsBtn.add(lock);
+    }
+
+    bannerButton(this, cx, startY + btnGap * 3, 'Settings', () => this.scene.start('Settings'));
 
     this.add
       .text(cx, H - Math.min(28, H * 0.05), 'Roll ones. Appease the Order. Survive the thresholds.', {

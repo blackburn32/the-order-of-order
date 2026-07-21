@@ -193,6 +193,16 @@ class AudioBus {
     const notes = [440, 349.23, 293.66, 220];
     notes.forEach((f, i) => this.tone(f, 0.5, 'sawtooth', i * 0.22, 0.12));
   }
+
+  victory(): void {
+    this.ensure();
+    // Rising major arpeggio (C-E-G-C-E-G) resolving on a held high C,
+    // over a sustained low root — grander and longer than jackpot().
+    const arp = [523.25, 659.25, 783.99, 1046.5, 1318.5, 1567.98];
+    arp.forEach((f, i) => this.tone(f, 0.3, 'triangle', i * 0.12, 0.22));
+    this.tone(2093, 1.2, 'triangle', arp.length * 0.12, 0.24); // held high C7
+    this.tone(130.81, 1.6, 'sawtooth', 0, 0.09); // sustained low C3 root
+  }
 }
 
 export const audio = new AudioBus();

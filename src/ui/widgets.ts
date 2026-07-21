@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { CSS, SERIF } from '../art/palette';
+import { COLORS, CSS, SERIF } from '../art/palette';
 import { audio } from '../systems/Audio';
 
 /** Felt tabletop background, stretched to cover the current viewport. */
@@ -33,6 +33,52 @@ export function bannerButton(
   container.on('pointerdown', () => {
     audio.click();
     onClick();
+  });
+  return container;
+}
+
+/**
+ * A labelled checkbox row centered on (x, y): a gold check in an ink-bordered
+ * box to the left, the label to its right. Tapping anywhere on the row toggles
+ * it, plays a click, and reports the new value. Returns the container so callers
+ * can drop it into a scroll content container or reposition it.
+ */
+export function checkboxRow(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  label: string,
+  initial: boolean,
+  onChange: (value: boolean) => void,
+  boxSize = 26
+): Phaser.GameObjects.Container {
+  let value = initial;
+
+  const box = scene.add.rectangle(0, 0, boxSize, boxSize, COLORS.feltLight, 0.35).setOrigin(0, 0.5);
+  box.setStrokeStyle(2, COLORS.ink, 0.9);
+  const check = scene.add
+    .rectangle(boxSize / 2, 0, boxSize * 0.5, boxSize * 0.5, COLORS.gold)
+    .setOrigin(0.5)
+    .setVisible(value);
+  const text = scene.add
+    .text(boxSize + 14, 0, label, { fontFamily: SERIF, fontSize: '22px', color: CSS.ink })
+    .setOrigin(0, 0.5);
+
+  // Origin the container on the box's left edge, then shift so the whole row
+  // reads as centered on x.
+  const rowW = boxSize + 14 + text.width;
+  const container = scene.add.container(x - rowW / 2, y, [box, check, text]);
+  container.setSize(rowW, Math.max(boxSize, text.height));
+  container.setInteractive(
+    new Phaser.Geom.Rectangle(0, -container.height / 2, rowW, container.height),
+    Phaser.Geom.Rectangle.Contains
+  );
+  container.input!.cursor = 'pointer';
+  container.on('pointerdown', () => {
+    value = !value;
+    check.setVisible(value);
+    audio.click();
+    onChange(value);
   });
   return container;
 }
