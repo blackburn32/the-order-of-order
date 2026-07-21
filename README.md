@@ -80,6 +80,33 @@ copying `.env.example` to `.env` and filling in the LootLocker keys. When the ke
 the feature disables gracefully and the game runs fully offline against the local Hall of High
 Scores.
 
+#### Pointing at a different leaderboard backend
+
+The backend targets are read from three Vite environment variables — the game never hard-codes a
+game or leaderboard, so switching backends (e.g. from a dev project to a production one, or to a
+fresh leaderboard) is purely a matter of updating `.env`:
+
+| Variable | What it targets |
+|---|---|
+| `VITE_LOOTLOCKER_GAME_KEY` | The LootLocker game's public API key (`dev_…` or `prod_…`). Safe to ship in the bundle. |
+| `VITE_LOOTLOCKER_LEADERBOARD_KEY` | The key of the leaderboard within that game to submit to and read from. |
+| `VITE_LOOTLOCKER_GAME_VERSION` | Version string sent with the guest session (defaults to `0.1.0`). |
+
+To repoint the leaderboard:
+
+1. In the [LootLocker dashboard](https://console.lootlocker.com), pick (or create) the target
+   game and enable the **Guest** login platform — anonymous sessions won't open without it.
+2. Create a **generic** leaderboard in that game (submissions carry an explicit `member_id`, so
+   the leaderboard must be the generic type, not player-scoped) and copy its key.
+3. Put the game's API key and that leaderboard key into `.env` as the two variables above.
+4. Restart the dev server (or rebuild). Vite inlines env vars at build time, so changes to
+   `.env` only take effect on the next `npm run dev` / `npm run build` — a running server won't
+   pick them up.
+
+The API host (`https://api.lootlocker.io/game`) and the number of rows fetched
+(`GLOBAL_TOP_N`) live as constants in `src/systems/GlobalScores.ts`; change those there if you
+need to target a different host or list length.
+
 ## Gameplay
 
 The main game screen features a centered grid of dice, starting with a single die, and a "Roll"
