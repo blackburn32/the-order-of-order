@@ -26,10 +26,10 @@ export class ShopScene extends Phaser.Scene {
   private offers: ShopOffer[] = [];
   private cardGroup!: Phaser.GameObjects.Container;
   private pickGroup?: Phaser.GameObjects.Container;
-  // The scrollable card row renders through its own camera, clipped to the
-  // carousel's screen rect — Phaser 4's WebGL renderer doesn't reliably
-  // support GameObject masks for content this deep, so a GeometryMask here
-  // (as used previously) lets cards render past the panel's inner border.
+  // When the card grid is too tall to fit and has to scroll, its cards render
+  // through their own camera, clipped to the card area's screen rect — Phaser
+  // 4's WebGL renderer doesn't reliably support GameObject masks for content
+  // this deep, so a mask here would let cards render past the panel's border.
   private track?: Phaser.GameObjects.Container;
   private carouselCamera?: Phaser.Cameras.Scene2D.Camera;
   private dragDistance = 0;
@@ -186,148 +186,194 @@ export class ShopScene extends Phaser.Scene {
 
     const buttonH = 70;
     const bottomPad = 26;
-    const scrollbarReserve = 46; // room for the scrollbar + hint, whether or not they end up shown
-    const availCardH = panelBottom - bottomPad - buttonH / 2 - scrollbarReserve - cursorY;
-    const cardScale = Phaser.Math.Clamp(availCardH / CARD_H, 0.4, 1);
+    const buttonY = panelBottom - bottomPad - buttonH / 2;
 
-    // The card row must stay inside the panel's inner border (1072/1100 of the
-    // panel width in the source texture), not the full screen — otherwise on a
-    // wide landscape screen the row is sized to the viewport, spills past the
-    // capped-at-1100 panel, and `overflow` computes to 0 so scrolling never
-    // engages. Reserve a little breathing room inside the border too.
-    const panelInnerW = panelW * (1072 / 1100) - 32;
+    // The card grid fills the space between the header and the Decline button,
+    // kept inside the panel's inner border (1072/1100 of the panel width in the
+    // source texture) with a little breathing room.
+    const areaTop = cursorY;
+    const areaBottom = buttonY - buttonH / 2 - 16;
+    const availH = Math.max(0, areaBottom - areaTop);
+    const availW = panelW * (1072 / 1100) - 32;
 
-    const carouselY = cursorY + (CARD_H * cardScale) / 2;
-    // Screen rect of the card row, for anchoring the tutorial callout's open
-    // "hole" (matches the carousel viewport height of cardH + 24).
-    this.cardBand = new Phaser.Geom.Rectangle(
-      W / 2 - panelW / 2,
-      carouselY - (CARD_H * cardScale + 24) / 2,
-      panelW,
-      CARD_H * cardScale + 24
-    );
-    const carousel = this.buildCarousel(W, carouselY, cardScale, panelInnerW);
-    items.push(...carousel.decor);
+    // Screen rect of the card area, for anchoring the tutorial callout's open
+    // "hole".
+    this.cardBand = new Phaser.Geom.Rectangle(W / 2 - availW / 2, areaTop, availW, availH);
 
-    const buttonY = Math.min(panelBottom - bottomPad - buttonH / 2, carousel.bottomY + buttonH / 2 + 16);
+    const grid = this.buildCardGrid(W, areaTop, availW, availH);
+    items.push(...grid.decor);
+
     items.push(bannerButton(this, W / 2, buttonY, 'Decline the Offerings', () => this.exit()));
 
     this.cardGroup = this.add.container(0, 0, items);
   }
 
-  /** A horizontally scrollable row of offer cards: drag/swipe, mouse wheel, and a scrollbar. */
-  private buildCarousel(
+  /**
+   * Lay the offer cards out in a grid sized to fit the available area. The
+   * column count is chosen to maximize card size — a single row on wide/short
+   * areas (desktop), a 2-wide grid on narrow/tall ones (phones), which gives a
+   * 2x2 grid for four offers. Cards shrink to fit; only when they'd have to
+   * shrink below a readable minimum does the grid fall back to vertical
+   * scrolling.
+   */
+  private buildCardGrid(
     W: number,
-    y: number,
-    cardScale: number,
-    maxViewportW: number
-  ): { decor: Phaser.GameObjects.GameObject[]; bottomY: number } {
-    const cardW = CARD_W * cardScale;
-    const cardH = CARD_H * cardScale;
-    const gap = CARD_GAP * cardScale;
+    areaTop: number,
+    availW: number,
+    availH: number
+  ): { decor: Phaser.GameObjects.GameObject[] } {
     const n = this.offers.length;
-    const contentW = n * cardW + (n - 1) * gap;
 
-    const viewportMargin = 40;
-    const viewportW = Math.min(contentW, maxViewportW, W - viewportMargin * 2);
-    const viewportH = cardH + 24;
-    const viewportX = (W - viewportW) / 2;
-    const overflow = Math.max(0, contentW - viewportW);
+    const scaleFor = (cols: number) => {
+      const rows = Math.ceil(n / cols);
+      const unitW = cols * CARD_W + (cols - 1) * CARD_GAP;
+      const unitH = rows * CARD_H + (rows - 1) * CARD_GAP;
+      return Math.min(availW / unitW, availH / unitH, 1);
+    };
+    // Whichever column count yields the larger (more readable) cards wins.
+    const cols = scaleFor(Math.min(2, n)) > scaleFor(n) ? Math.min(2, n) : n;
+    const rows = Math.ceil(n / cols);
 
-    const restX = overflow > 0 ? viewportX : viewportX + (viewportW - contentW) / 2;
-    const minX = overflow > 0 ? viewportX - overflow : restX;
-    const maxX = restX;
+    const unitW = cols * CARD_W + (cols - 1) * CARD_GAP;
+    const unitH = rows * CARD_H + (rows - 1) * CARD_GAP;
+    const fitScale = Math.min(availW / unitW, availH / unitH, 1);
 
-    const track = this.add.container(restX, y);
+    const MIN_SCALE = 0.42;
+    const needsScroll = fitScale < MIN_SCALE;
+    // When scrolling, keep cards at the readable minimum (but never wider than
+    // the area) and let the grid overflow vertically.
+    const scale = needsScroll ? Math.min(availW / unitW, MIN_SCALE) : fitScale;
+
+    const cw = CARD_W * scale;
+    const ch = CARD_H * scale;
+    const gap = CARD_GAP * scale;
+    const gridH = rows * ch + (rows - 1) * gap;
+    const cx = W / 2;
+
+    // Card centre for index `idx`, with content-top at y=0 and the last,
+    // possibly-partial row centered.
+    const posFor = (idx: number) => {
+      const row = Math.floor(idx / cols);
+      const col = idx % cols;
+      const inRow = row === rows - 1 ? n - (rows - 1) * cols : cols;
+      const rowW = inRow * cw + (inRow - 1) * gap;
+      return { x: cx - rowW / 2 + col * (cw + gap) + cw / 2, y: row * (ch + gap) + ch / 2 };
+    };
+
+    if (needsScroll) {
+      return { decor: this.buildScrollingGrid(W, areaTop, availW, availH, scale, gridH, posFor) };
+    }
+
+    // Everything fits: place cards centered in the area on the main camera, and
+    // drop any carousel camera left over from a previous (scrolling) build.
+    if (this.carouselCamera) {
+      this.cameras.remove(this.carouselCamera, true);
+      this.carouselCamera = undefined;
+    }
+    this.track = undefined;
+    const top = areaTop + (availH - gridH) / 2;
+    const decor: Phaser.GameObjects.GameObject[] = [];
     this.offers.forEach((offer, idx) => {
-      const cardX = idx * (cardW + gap) + cardW / 2;
-      const card = this.buildCard(cardX, 0, offer);
-      card.setScale(cardScale);
+      const p = posFor(idx);
+      const card = this.buildCard(p.x, top + p.y, offer);
+      card.setScale(scale);
+      decor.push(card);
+    });
+    return { decor };
+  }
+
+  /** A vertically scrollable grid of offer cards (drag/swipe, mouse wheel, and a
+   *  scrollbar), used only when the cards can't shrink enough to fit the area. */
+  private buildScrollingGrid(
+    W: number,
+    areaTop: number,
+    availW: number,
+    availH: number,
+    scale: number,
+    gridH: number,
+    posFor: (idx: number) => { x: number; y: number }
+  ): Phaser.GameObjects.GameObject[] {
+    const viewportX = W / 2 - availW / 2;
+    const overflow = Math.max(0, gridH - availH);
+
+    // Cards live in a track container placed at the top of the card area; the
+    // camera's vertical scroll pans it. See ensureCarouselCamera for why a
+    // dedicated camera (native scissor clipping) is used instead of a mask.
+    const track = this.add.container(0, areaTop);
+    this.offers.forEach((offer, idx) => {
+      const p = posFor(idx);
+      const card = this.buildCard(p.x, p.y, offer);
+      card.setScale(scale);
       track.add(card);
     });
     this.track = track;
 
-    // Clip cards to the viewport via a dedicated camera (native, always-
-    // correct scissor clipping) instead of a GameObject mask. A camera's
-    // scroll defaults to (0,0), which shows whatever's at *world* (0,0) —
-    // not wherever the viewport rect happens to sit on screen — so without
-    // an explicit scroll matching the viewport's own position, the camera
-    // shows the wrong slice of the scene entirely. At zoom 1 this is a pure
-    // passthrough: scroll = the viewport's own screen position.
+    // At zoom 1 the camera is a pure passthrough when its scroll matches the
+    // viewport's screen position; adding `pan` to scrollY moves content up.
     const cam = this.ensureCarouselCamera();
-    cam.setViewport(viewportX, y - viewportH / 2, viewportW, viewportH);
-    cam.setScroll(viewportX, y - viewportH / 2);
+    cam.setViewport(viewportX, areaTop, availW, availH);
+    cam.setScroll(viewportX, areaTop);
     this.cameras.main.ignore(track);
 
-    const decor: Phaser.GameObjects.GameObject[] = [];
     this.dragDistance = 0;
-    let bottomY = y + viewportH / 2;
+    let pan = 0;
 
-    if (overflow > 0) {
-      const barY = y + viewportH / 2 + 20;
-      const barTrack = this.add.rectangle(viewportX + viewportW / 2, barY, viewportW, 5, COLORS.inkSoft, 0.4);
-      const thumbW = Math.max(30, (viewportW * viewportW) / contentW);
-      const thumb = this.add.rectangle(viewportX + thumbW / 2, barY, thumbW, 5, COLORS.gold, 0.9);
-      const updateThumb = () => {
-        const progress = (maxX - track.x) / (maxX - minX);
-        thumb.x = viewportX + thumbW / 2 + progress * (viewportW - thumbW);
-      };
+    const barX = viewportX + availW - 8;
+    const barTrack = this.add.rectangle(barX, areaTop + availH / 2, 5, availH, COLORS.inkSoft, 0.4);
+    const thumbH = Math.max(30, (availH * availH) / gridH);
+    const thumb = this.add.rectangle(barX, areaTop + thumbH / 2, 5, thumbH, COLORS.gold, 0.9);
+    const updateThumb = () => {
+      const progress = overflow > 0 ? pan / overflow : 0;
+      thumb.y = areaTop + thumbH / 2 + progress * (availH - thumbH);
+    };
+    const apply = () => {
+      pan = Phaser.Math.Clamp(pan, 0, overflow);
+      cam.setScroll(viewportX, areaTop + pan);
+      updateThumb();
+    };
 
-      const inBounds = (p: Phaser.Input.Pointer) =>
-        p.x >= viewportX && p.x <= viewportX + viewportW && p.y >= y - viewportH / 2 && p.y <= y + viewportH / 2;
+    const inBounds = (p: Phaser.Input.Pointer) =>
+      p.x >= viewportX && p.x <= viewportX + availW && p.y >= areaTop && p.y <= areaTop + availH;
 
-      let dragging = false;
-      let startPointerX = 0;
-      let startTrackX = 0;
+    let dragging = false;
+    let startPointerY = 0;
+    let startPan = 0;
 
-      const onDown: PointerHandler = (p) => {
-        if (!inBounds(p)) return;
-        dragging = true;
-        startPointerX = p.x;
-        startTrackX = track.x;
-        this.dragDistance = 0;
-      };
-      const onMove: PointerHandler = (p) => {
-        if (!dragging) {
-          this.input.setDefaultCursor(inBounds(p) ? 'grab' : 'default');
-          return;
-        }
-        const dx = p.x - startPointerX;
-        this.dragDistance = Math.abs(dx);
-        track.x = Phaser.Math.Clamp(startTrackX + dx, minX, maxX);
-        updateThumb();
-      };
-      const onUp: PointerHandler = () => {
-        dragging = false;
-      };
-      const onWheel: WheelHandler = (p, _over, dx, dy) => {
-        if (!inBounds(p)) return;
-        const delta = Math.abs(dx) > Math.abs(dy) ? dx : dy;
-        track.x = Phaser.Math.Clamp(track.x - delta, minX, maxX);
-        updateThumb();
-      };
+    const onDown: PointerHandler = (p) => {
+      if (!inBounds(p)) return;
+      dragging = true;
+      startPointerY = p.y;
+      startPan = pan;
+      this.dragDistance = 0;
+    };
+    const onMove: PointerHandler = (p) => {
+      if (!dragging) {
+        this.input.setDefaultCursor(inBounds(p) ? 'grab' : 'default');
+        return;
+      }
+      const dy = p.y - startPointerY;
+      this.dragDistance = Math.abs(dy);
+      pan = startPan - dy;
+      apply();
+    };
+    const onUp: PointerHandler = () => {
+      dragging = false;
+    };
+    const onWheel: WheelHandler = (p, _over, dx, dy) => {
+      if (!inBounds(p)) return;
+      const delta = Math.abs(dy) > Math.abs(dx) ? dy : dx;
+      pan += delta;
+      apply();
+    };
 
-      this.input.on('pointerdown', onDown);
-      this.input.on('pointermove', onMove);
-      this.input.on('pointerup', onUp);
-      this.input.on('pointerupoutside', onUp);
-      this.input.on('wheel', onWheel);
-      this.carouselInput = { down: onDown, move: onMove, up: onUp, wheel: onWheel };
+    this.input.on('pointerdown', onDown);
+    this.input.on('pointermove', onMove);
+    this.input.on('pointerup', onUp);
+    this.input.on('pointerupoutside', onUp);
+    this.input.on('wheel', onWheel);
+    this.carouselInput = { down: onDown, move: onMove, up: onUp, wheel: onWheel };
 
-      const hint = this.add
-        .text(W / 2, barY + 18, 'drag or scroll to see more', {
-          fontFamily: SERIF,
-          fontSize: '14px',
-          color: CSS.dim,
-          fontStyle: 'italic'
-        })
-        .setOrigin(0.5);
-
-      decor.push(barTrack, thumb, hint);
-      bottomY = barY + 18 + 10;
-    }
-
-    return { decor, bottomY };
+    return [barTrack, thumb];
   }
 
   private buildCard(x: number, y: number, offer: ShopOffer): Phaser.GameObjects.Container {

@@ -8,10 +8,13 @@ import { responsive } from '../ui/layout';
 interface Page {
   title: string;
   blurb: string;
+  // Texture key of the page art (loaded in BootScene). Pages without one still
+  // show the placeholder 4:3 rectangle.
+  image?: string;
 }
 
-// The premise of the Order, one screen at a time. Images are placeholder 4:3
-// rectangles for now — real art drops in later.
+// The premise of the Order, one screen at a time. Pages without an `image` show
+// a placeholder 4:3 rectangle until real art drops in.
 const PAGES: Page[] = [
   {
     title: 'A Gathering Chaos',
@@ -21,12 +24,14 @@ const PAGES: Page[] = [
   {
     title: 'The Brave Monks',
     blurb:
-      'In the high monasteries, a devoted few refuse to yield. Searching the old vaults, they uncover a relic of impossible make.'
+      'In the high monasteries, a devoted few refuse to yield. Searching the old vaults, they uncover a relic of impossible make.',
+    image: 'intro-monastery'
   },
   {
     title: 'The Sacred Dice',
     blurb:
-      'The artifact is a set of dice — and rolled with discipline, they can bind the chaos and restore the world’s order. The rite is yours to perform.'
+      'The artifact is a set of dice — and rolled with discipline, they can bind the chaos and restore the world’s order. The rite is yours to perform.',
+    image: 'intro-dice-twirl'
   }
 ];
 
@@ -63,18 +68,29 @@ export class IntroScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setShadow(0, 3, '#000000', 8, false, true);
 
-    // Placeholder 4:3 image, sized to fit both width and the vertical band left
-    // between the title and the text/controls below.
+    // Image sized to fit both width and the vertical band left between the title
+    // and the text/controls below, keeping a 4:3 frame.
     const maxImgW = Math.min(W - 48, 560);
     const maxImgH = H * 0.42;
     const imgW = Math.min(maxImgW, maxImgH * (4 / 3));
     const imgH = imgW * (3 / 4);
     const imgCy = H * 0.36;
-    const image = this.add.rectangle(cx, imgCy, imgW, imgH, COLORS.feltLight, 0.6);
-    image.setStrokeStyle(2, COLORS.gold, 0.4);
-    this.add
-      .text(cx, imgCy, '4 : 3', { fontFamily: SERIF, fontSize: '18px', color: CSS.dim, fontStyle: 'italic' })
-      .setOrigin(0.5);
+
+    if (p.image && this.textures.exists(p.image)) {
+      // Fit the art entirely within the 4:3 frame without distorting it
+      // (contain), so it never overflows the outlined region.
+      const sprite = this.add.image(cx, imgCy, p.image);
+      const scale = Math.min(imgW / sprite.width, imgH / sprite.height);
+      sprite.setScale(scale);
+      this.add.rectangle(cx, imgCy, imgW, imgH).setStrokeStyle(2, COLORS.gold, 0.4);
+    } else {
+      // Placeholder 4:3 rectangle for pages without art yet.
+      const image = this.add.rectangle(cx, imgCy, imgW, imgH, COLORS.feltLight, 0.6);
+      image.setStrokeStyle(2, COLORS.gold, 0.4);
+      this.add
+        .text(cx, imgCy, '4 : 3', { fontFamily: SERIF, fontSize: '18px', color: CSS.dim, fontStyle: 'italic' })
+        .setOrigin(0.5);
+    }
 
     const blurbStyle: Phaser.Types.GameObjects.Text.TextStyle = {
       fontFamily: SERIF,
@@ -120,12 +136,23 @@ export class IntroScene extends Phaser.Scene {
     // Final page: the skip checkbox sits below the button.
     if (last) {
       this.skip = !loadSettings().showIntro;
-      const row = checkboxRow(this, cx, cursorY, 'Skip the intro on future runs', this.skip, (value) => {
-        this.skip = value;
-        const settings = loadSettings();
-        settings.showIntro = !value;
-        saveSettings(settings);
-      });
+      const row = checkboxRow(
+        this,
+        cx,
+        cursorY,
+        'Skip the intro on future runs',
+        this.skip,
+        (value) => {
+          this.skip = value;
+          const settings = loadSettings();
+          settings.showIntro = !value;
+          saveSettings(settings);
+        },
+        26,
+        // The row sits on the dark felt, so use light text and a parchment
+        // border instead of the panel-friendly ink defaults.
+        { textColor: CSS.ivory, boxStroke: COLORS.parchment }
+      );
       row.setDepth(1);
       cursorY += 34;
     }

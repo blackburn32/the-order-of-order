@@ -92,6 +92,8 @@ export class SettingsScene extends Phaser.Scene {
     const viewportH = panelTop + panelH * 0.94 - viewportTop;
     const viewportW = panelW * 0.84;
     const viewportX = cx - viewportW / 2;
+    // Banner buttons shrink to fit inside the panel band on narrow screens.
+    const btnMaxW = viewportW;
 
     // ---- lay out the rows at absolute world coords in a content container ----
     const content = this.add.container(0, 0);
@@ -126,26 +128,33 @@ export class SettingsScene extends Phaser.Scene {
         this.apply();
       })
     );
-    y += 68;
+    y += 56;
 
-    content.add(this.buildFullscreenButton(cx, y));
-    y += 78;
+    content.add(this.buildFullscreenToggle(cx, y));
+    y += 68;
 
     if (this.returnTo === 'Game') {
       content.add(
-        bannerButton(this, cx, y, 'Abandon Run', () => {
-          audio.click();
-          recordRunEnd(getRun(this.registry), false);
-          this.scene.start('GameOver');
-        })
+        bannerButton(
+          this,
+          cx,
+          y,
+          'Abandon Run',
+          () => {
+            audio.click();
+            recordRunEnd(getRun(this.registry), false);
+            this.scene.start('GameOver');
+          },
+          btnMaxW
+        )
       );
     } else {
-      content.add(this.buildResetButton(cx, y));
+      content.add(this.buildResetButton(cx, y, btnMaxW));
     }
     y += 78;
 
     const backLabel = this.returnTo === 'Game' ? 'Return to Game' : 'Return to the Vestibule';
-    content.add(bannerButton(this, cx, y, backLabel, () => this.scene.start(this.returnTo)));
+    content.add(bannerButton(this, cx, y, backLabel, () => this.scene.start(this.returnTo), btnMaxW));
 
     const contentBottom = y + 40;
     const contentH = contentBottom - viewportTop;
@@ -240,47 +249,51 @@ export class SettingsScene extends Phaser.Scene {
     cam.ignore(hint);
   }
 
-  private buildFullscreenButton(cx: number, y: number): Phaser.GameObjects.Container {
-    const button = bannerButton(this, cx, y, this.fsLabel(), () => {
-      if (this.scale.isFullscreen) this.scale.stopFullscreen();
-      else this.scale.startFullscreen();
+  private buildFullscreenToggle(cx: number, y: number): Phaser.GameObjects.Container {
+    const row = checkboxRow(this, cx, y, 'Fullscreen', this.scale.isFullscreen, (value) => {
+      if (value) this.scale.startFullscreen();
+      else this.scale.stopFullscreen();
     });
-    const text = button.getAt(1) as Phaser.GameObjects.Text;
-    this.scale.on(Phaser.Scale.Events.ENTER_FULLSCREEN, () => text.setText('Fullscreen: On'));
-    this.scale.on(Phaser.Scale.Events.LEAVE_FULLSCREEN, () => text.setText('Fullscreen: Off'));
-    return button;
-  }
-
-  private fsLabel(): string {
-    return `Fullscreen: ${this.scale.isFullscreen ? 'On' : 'Off'}`;
+    // Keep the checkbox in sync when fullscreen is exited/entered outside the UI
+    // (Esc, F11); setChecked doesn't re-fire onChange, so there's no loop.
+    this.scale.on(Phaser.Scale.Events.ENTER_FULLSCREEN, () => row.setChecked(true));
+    this.scale.on(Phaser.Scale.Events.LEAVE_FULLSCREEN, () => row.setChecked(false));
+    return row;
   }
 
   /** "Reset All Progress" with a lightweight two-tap confirm (there's no modal
    *  helper): the first tap arms it, a second within a few seconds wipes item
    *  unlocks, selection counts, games-completed, and the Hall of High Scores.
    *  Audio settings are kept. */
-  private buildResetButton(cx: number, y: number): Phaser.GameObjects.Container {
+  private buildResetButton(cx: number, y: number, maxWidth: number): Phaser.GameObjects.Container {
     const DEFAULT = 'Reset All Progress';
     let confirming = false;
     let timer: Phaser.Time.TimerEvent | undefined;
 
-    const button = bannerButton(this, cx, y, DEFAULT, () => {
-      const label = button.getAt(1) as Phaser.GameObjects.Text;
-      if (!confirming) {
-        confirming = true;
-        label.setText('Tap again to confirm');
-        timer = this.time.delayedCall(3000, () => {
-          confirming = false;
-          label.setText(DEFAULT);
-        });
-        return;
-      }
-      timer?.remove();
-      confirming = false;
-      resetAllProgress();
-      label.setText('Progress reset');
-      showBanner(this, 'All progress has been reset', 1200);
-    });
+    const button = bannerButton(
+      this,
+      cx,
+      y,
+      DEFAULT,
+      () => {
+        const label = button.getAt(1) as Phaser.GameObjects.Text;
+        if (!confirming) {
+          confirming = true;
+          label.setText('Tap again to confirm');
+          timer = this.time.delayedCall(3000, () => {
+            confirming = false;
+            label.setText(DEFAULT);
+          });
+          return;
+        }
+        timer?.remove();
+        confirming = false;
+        resetAllProgress();
+        label.setText('Progress reset');
+        showBanner(this, 'All progress has been reset', 1200);
+      },
+      maxWidth
+    );
     return button;
   }
 

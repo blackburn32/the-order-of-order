@@ -268,6 +268,33 @@ export function describeCriterion(c: UnlockCriterion): string {
   }
 }
 
+/** Past-tense description of the deed that just satisfied an unlock criterion,
+ *  shown on the "New item unlocked" banner so the player knows what earned it.
+ *  Where `describeCriterion` frames the condition as a still-locked goal, this
+ *  frames it as an accomplishment. */
+export function describeUnlockAction(c: UnlockCriterion): string {
+  switch (c.kind) {
+    case 'diceInGrid':
+      return `Held over ${c.count} dice in one run`;
+    case 'winGame':
+      return 'Won a run';
+    case 'reachRound':
+      return `Reached round ${c.round}`;
+    case 'scoreInRound':
+      return `Scored ${c.points} in a single round`;
+    case 'diceOfSize':
+      return `Held ${c.count} d${c.sides} at once`;
+    case 'scoreStreak':
+      return `Scored on ${c.count} rolls in a row`;
+    case 'sameFaceCount':
+      return `Showed the same number on ${c.count} dice in one roll`;
+    case 'clutchClear':
+      return 'Cleared a round on its final roll';
+    case 'scoreVsTarget':
+      return `Reached ${c.factor}× the round's target score`;
+  }
+}
+
 /** Whether the current run satisfies an unlock criterion. `roundScore` is the
  *  peak points reached within the current round (see RunState). */
 export function meetsCriterion(c: UnlockCriterion, state: RunState): boolean {

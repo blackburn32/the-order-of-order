@@ -3,13 +3,13 @@ import { WIN_ROUND, roundTarget } from '../config';
 import { COLORS, CSS, SERIF } from '../art/palette';
 import { getRun, RunState } from '../state/RunState';
 import { rollAll } from '../systems/Dice';
-import { ITEMS } from '../systems/Items';
+import { ITEMS, describeUnlockAction } from '../systems/Items';
 import { resolveRoll, resolveRoundEnd, roundRollTarget, shouldOpenShop } from '../sim/engine';
 import { audio } from '../systems/Audio';
 import { evaluateAndUnlock, recordRunEnd } from '../systems/SaveData';
 import { globalScoresEnabled, queuePendingSubmission } from '../systems/GlobalScores';
 import { DieSprite } from '../ui/DieSprite';
-import { addFelt, floatText, showBanner } from '../ui/widgets';
+import { addFelt, floatText, BannerStack } from '../ui/widgets';
 import { showCallout, CalloutHandle } from '../ui/Callout';
 import { advanceTutorial, getTutorial, TutorialStage } from '../systems/Tutorial';
 import { isPortrait, onResizeCoalesced } from '../ui/layout';
@@ -28,7 +28,7 @@ interface HudCell {
 
 interface Layout {
   hud: HudCell[];
-  footer: { numbersY: number; settingsY: number; centered: boolean };
+  footer: { numbersY: number; settingsY: number };
   grid: GridArea;
   button: { x: number; y: number };
 }
@@ -50,6 +50,9 @@ export class GameScene extends Phaser.Scene {
   // stacked *above* it, so popups (banners, float-ups) land on top of the grid
   // camera's opaque backdrop instead of being painted over by it. See overlay().
   private overlayCamera?: Phaser.Cameras.Scene2D.Camera;
+  // Vertically-stacked announcement banners (unlocks, shop, round end) so that
+  // several firing at once never overlap — see BannerStack.
+  private banners!: BannerStack;
   private windowed = false;
   private viewport: Viewport = { scrollX: 0, scrollY: 0, zoom: 1 };
   private layout!: Layout;
@@ -90,6 +93,9 @@ export class GameScene extends Phaser.Scene {
     this.gridCamera = undefined;
     this.overlayCamera = undefined;
     this.gridContainer = this.add.container(0, 0);
+    // Recreated each build: routes new banners through the overlay camera so
+    // they composite above the windowed grid, just like other popups.
+    this.banners = new BannerStack(this, (objs) => this.overlay(objs));
 
     this.build();
 
@@ -245,10 +251,12 @@ export class GameScene extends Phaser.Scene {
 
     return {
       hud,
+      // Sacred numbers stay bottom-left, Inventory/Settings bottom-right, in
+      // both orientations — portrait just reserves a taller footer so the
+      // (potentially wrapping) sacred-numbers text clears the two links.
       footer: {
-        numbersY: portrait ? H - footerH + 16 : H - footerH + 10,
-        settingsY: portrait ? H - 16 : H - footerH + 10,
-        centered: portrait
+        numbersY: portrait ? H - 27 : H - footerH + 10,
+        settingsY: portrait ? H - 16 : H - footerH + 10
       },
       grid: {
         x: portrait ? margin : W * 0.06,
@@ -310,39 +318,24 @@ export class GameScene extends Phaser.Scene {
     });
     [this.hudRound, this.hudRoll, this.hudScore, this.hudTarget] = refs;
 
-    const { numbersY, settingsY, centered } = layout.footer;
-    if (centered) {
-      this.hudNumbers = this.add
-        .text(W / 2, numbersY, '', {
-          fontFamily: SERIF,
-          fontSize: '14px',
-          color: CSS.dim,
-          fontStyle: 'italic',
-          align: 'center',
-          wordWrap: { width: W - 32 }
-        })
-        .setOrigin(0.5);
-      items.push(
-        this.hudNumbers,
-        this.buildInventoryLink(W / 2, settingsY - 22, 0.5),
-        this.buildSettingsLink(W / 2, settingsY, 0.5)
-      );
-    } else {
-      this.hudNumbers = this.add
-        .text(24, numbersY, '', {
-          fontFamily: SERIF,
-          fontSize: '17px',
-          color: CSS.dim,
-          fontStyle: 'italic',
-          wordWrap: { width: W * 0.5 }
-        })
-        .setOrigin(0, 0.5);
-      items.push(
-        this.hudNumbers,
-        this.buildInventoryLink(W - 24, settingsY - 22, 1),
-        this.buildSettingsLink(W - 24, settingsY, 1)
-      );
-    }
+    const { numbersY, settingsY } = layout.footer;
+    // Sacred numbers pinned bottom-left; Inventory (upper) and Settings (lower)
+    // pinned bottom-right. The left text wraps within the half-width gap so it
+    // never runs under the right-hand links on narrow portrait screens.
+    this.hudNumbers = this.add
+      .text(24, numbersY, '', {
+        fontFamily: SERIF,
+        fontSize: '15px',
+        color: CSS.dim,
+        fontStyle: 'italic',
+        wordWrap: { width: W * 0.5 }
+      })
+      .setOrigin(0, 0.5);
+    items.push(
+      this.hudNumbers,
+      this.buildInventoryLink(W - 24, settingsY - 22, 1),
+      this.buildSettingsLink(W - 24, settingsY, 1)
+    );
 
     this.updateHud();
     return items;
@@ -752,7 +745,10 @@ export class GameScene extends Phaser.Scene {
   private checkUnlocks(): void {
     for (const id of evaluateAndUnlock(this.state)) {
       const def = ITEMS.find((it) => it.id === id);
-      this.overlay(showBanner(this, `New item unlocked: ${def?.name ?? id}`, 1500));
+      this.banners.push(`New item unlocked: ${def?.name ?? id}`, {
+        holdMs: 1500,
+        detail: def?.unlock ? describeUnlockAction(def.unlock) : undefined
+      });
     }
   }
 
@@ -778,20 +774,20 @@ export class GameScene extends Phaser.Scene {
         audio.victory();
         this.endRun(s, true);
         this.checkUnlocks();
-        this.overlay(showBanner(this, `All ${WIN_ROUND} rounds survived — the Order is complete`, 1300));
+        this.banners.push(`All ${WIN_ROUND} rounds survived — the Order is complete`, { holdMs: 1300 });
         this.time.delayedCall(1700, () => this.scene.start('Victory'));
         return;
       }
       if (outcome.phase === 'gameOver') {
         audio.gameOver();
         this.endRun(s, false);
-        this.overlay(showBanner(this, 'The Order is displeased. Your run ends.', 1300));
+        this.banners.push('The Order is displeased. Your run ends.', { holdMs: 1300 });
         this.time.delayedCall(1700, () => this.scene.start('GameOver'));
         return;
       }
       // advanced — round was just incremented by the engine.
       audio.roundUp();
-      this.overlay(showBanner(this, `Round ${s.round - 1} survived — the Order is pleased`, 1300));
+      this.banners.push(`Round ${s.round - 1} survived — the Order is pleased`, { holdMs: 1300 });
       this.checkUnlocks();
       this.time.delayedCall(1700, () => {
         this.updateHud();
@@ -802,7 +798,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     if (shouldOpenShop(s)) {
-      this.overlay(showBanner(this, 'The shop beckons…', 900));
+      this.banners.push('The shop beckons…', { holdMs: 900 });
       this.time.delayedCall(800, () => this.scene.start('Shop'));
       return;
     }
