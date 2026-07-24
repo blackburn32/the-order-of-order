@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { COLORS, CSS, SERIF } from '../art/palette';
 import { getRun } from '../state/RunState';
 import { audio } from '../systems/Audio';
-import { loadSettings, recordRunEnd, resetAllProgress, saveSettings, Settings } from '../systems/SaveData';
+import { hasBeatenGame, loadSettings, recordRunEnd, resetAllProgress, saveSettings, Settings } from '../systems/SaveData';
 import { addFelt, addPanel, bannerButton, checkboxRow, showBanner } from '../ui/widgets';
 import { onResizeCoalesced } from '../ui/layout';
 
@@ -92,8 +92,10 @@ export class SettingsScene extends Phaser.Scene {
     const viewportH = panelTop + panelH * 0.94 - viewportTop;
     const viewportW = panelW * 0.84;
     const viewportX = cx - viewportW / 2;
-    // Banner buttons shrink to fit inside the panel band on narrow screens.
-    const btnMaxW = viewportW;
+    // Keep the whole form on one screen: cap the banner buttons well below the
+    // 340px parchment so they render ~80% size, and still shrink further to fit
+    // the panel band on narrow screens.
+    const btnMaxW = Math.min(viewportW, 272);
 
     // ---- lay out the rows at absolute world coords in a content container ----
     const content = this.add.container(0, 0);
@@ -102,18 +104,18 @@ export class SettingsScene extends Phaser.Scene {
     const trackX1 = cx + trackW / 2;
     // Start low enough that the first slider's label (centered at y-26) clears
     // the clip camera's top edge instead of being sheared off.
-    let y = viewportTop + 48;
+    let y = viewportTop + 42;
 
     this.makeSlider(content, cx, y, trackX0, trackX1, 'Music Volume', this.settings.musicVol, (v) => {
       this.settings.musicVol = v;
       this.apply();
     });
-    y += 84;
+    y += 72;
     this.makeSlider(content, cx, y, trackX0, trackX1, 'Sound Effects', this.settings.sfxVol, (v) => {
       this.settings.sfxVol = v;
       this.apply();
     });
-    y += 74;
+    y += 62;
 
     content.add(
       checkboxRow(this, cx, y, 'Show Intro', this.settings.showIntro, (value) => {
@@ -121,17 +123,28 @@ export class SettingsScene extends Phaser.Scene {
         this.apply();
       })
     );
-    y += 56;
+    y += 48;
     content.add(
       checkboxRow(this, cx, y, 'Show Tutorial', this.settings.showTutorial, (value) => {
         this.settings.showTutorial = value;
         this.apply();
       })
     );
-    y += 56;
+    y += 48;
+
+    // Hard Mode only appears once the player has beaten the game at least once.
+    if (hasBeatenGame()) {
+      content.add(
+        checkboxRow(this, cx, y, 'Hard Mode ☠', this.settings.hardMode, (value) => {
+          this.settings.hardMode = value;
+          this.apply();
+        })
+      );
+      y += 48;
+    }
 
     content.add(this.buildFullscreenToggle(cx, y));
-    y += 68;
+    y += 58;
 
     if (this.returnTo === 'Game') {
       content.add(
@@ -151,12 +164,12 @@ export class SettingsScene extends Phaser.Scene {
     } else {
       content.add(this.buildResetButton(cx, y, btnMaxW));
     }
-    y += 78;
+    y += 64;
 
     const backLabel = this.returnTo === 'Game' ? 'Return to Game' : 'Return to the Vestibule';
     content.add(bannerButton(this, cx, y, backLabel, () => this.scene.start(this.returnTo), btnMaxW));
 
-    const contentBottom = y + 40;
+    const contentBottom = y + 34;
     const contentH = contentBottom - viewportTop;
 
     if (contentH > viewportH) {

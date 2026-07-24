@@ -6,7 +6,7 @@ the shop's currency, so every purchase is a gamble. The player must meet a score
 the end of every round (20 rolls) to survive; falling short ends the run. Surviving a round
 clears the score back to 0, so banked points must be spent in the shop before the round ends or
 they're lost — unless the player owns a carryover item (Vault keeps 20%, Reserve keeps 50%).
-Clearing **all 20 rounds** wins the game.
+Clearing **all 10 rounds** wins the game.
 
 The game is built with Phaser 4 (TypeScript + Vite). Rolling a **1** scores; "Extra Number"
 upgrades add 2 and then 3 as scoring faces. Score and shop currency are one pool, so every
@@ -15,6 +15,17 @@ hand-authored table (`ROUND_TARGETS` in `src/config.ts`), tuned with the balance
 in `src/sim` so runs end across the whole game rather than being decided in the first few
 rounds; the legacy geometric formula (`ceil(5 × 1.85^(round−1))`) survives only as a fallback
 for rounds beyond the authored table.
+
+The 10-round curve is designed to a deliberate attrition shape (measured on the pooled
+naive-bot field; a thinking player does better):
+
+- **Rounds 1–3** — a gentle on-ramp; about **60%** of the field survives to round 4.
+- **Rounds 4–9** — a steady wall; roughly **5% of the whole field** is culled at each step.
+- **Round 10** — the final wall; culls about **8%** of the field, landing a ~22% bot win rate.
+
+Deaths land on every round, so no single spike decides the run. Redesign the curve with
+`src/sim/designTargets.ts` and re-test it against the real survival gate with
+`src/sim/validate.ts`.
 
 ## Development
 
@@ -86,11 +97,11 @@ The backend targets are read from three Vite environment variables — the game 
 game or leaderboard, so switching backends (e.g. from a dev project to a production one, or to a
 fresh leaderboard) is purely a matter of updating `.env`:
 
-| Variable | What it targets |
-|---|---|
-| `VITE_LOOTLOCKER_GAME_KEY` | The LootLocker game's public API key (`dev_…` or `prod_…`). Safe to ship in the bundle. |
-| `VITE_LOOTLOCKER_LEADERBOARD_KEY` | The key of the leaderboard within that game to submit to and read from. |
-| `VITE_LOOTLOCKER_GAME_VERSION` | Version string sent with the guest session (defaults to `0.1.0`). |
+| Variable                          | What it targets                                                                         |
+| --------------------------------- | --------------------------------------------------------------------------------------- |
+| `VITE_LOOTLOCKER_GAME_KEY`        | The LootLocker game's public API key (`dev_…` or `prod_…`). Safe to ship in the bundle. |
+| `VITE_LOOTLOCKER_LEADERBOARD_KEY` | The key of the leaderboard within that game to submit to and read from.                 |
+| `VITE_LOOTLOCKER_GAME_VERSION`    | Version string sent with the guest session (defaults to `0.1.0`).                       |
 
 To repoint the leaderboard:
 
@@ -133,7 +144,7 @@ itself down ("shrinks out") to keep every die visible on screen.
 A round is 20 rolls by default. Extra rolls granted by Overtime and Metronome are appended to
 the end of the round, so a round can run past 20; shop visits stay pinned to the 5th and 15th
 rolls regardless. Surviving a round clears the score back to 0 (unless the player owns Vault or
-Reserve, which carry a fraction over). Clearing round 20 ends the run in victory.
+Reserve, which carry a fraction over). Clearing round 10 ends the run in victory.
 
 ### Scoring
 
@@ -144,8 +155,8 @@ by pushing another modifier rather than threading a new field through the scene:
   face is worth 1 point, +1 per Extra Point owned, and +1 per Keen Edge owned when it's a d1.
 - **Snake Eyes** — any value shown by 2+ dice scores that value once (needs the item).
 - **Jackpot** — any value shown by 4+ dice scores value × count, per Jackpot owned (item).
-- **Windfall** — a max-face-bonus die (Rollplayer, Centurion) that rolls its top face scores its
-  full size.
+- **Windfall** — a Rollplayer/Centurion die's current highest face always scores and applies
+  that card's ×2/×4 roll multiplier; shrinking the die makes the effect more likely.
 - **Momentum** — adds the current consecutive-scoring-roll streak as points, per Momentum owned.
 
 The subtotal is then multiplied by a single run multiplier: Amplifier ×2, Prism ×3 per copy,
@@ -158,26 +169,66 @@ Two passives fire at the **start** of each round (`applyRoundStart`): Dividend g
 
 A shop is encountered every 10 rolls, on the 5th and 15th rolls, after the roll. The shop
 replaces the dice grid and the button, and offers 3 item cards for the player to choose from
-(4 once the player owns Ledger). The cards sit in a horizontally scrollable carousel —
+(5 once the player owns Ledger). The cards sit in a horizontally scrollable carousel —
 drag/swipe, mouse wheel, or the scrollbar — so they stay full size and readable instead of
 shrinking to cram into a narrow (portrait) screen; the carousel only appears once the cards
 don't already fit. The player can purchase a single item. If nothing is affordable, the free
-Extra Die is guaranteed onto a card so the shop is never a dead screen.
+Two Bricks is guaranteed onto a card so the shop is never a dead screen.
+
+### Dynamic pricing
+
+Item prices scale with the current round instead of staying fixed while targets grow. Each item
+has a strength band, and the shop resolves its concrete price from the current survival target:
+
+```text
+price = round target × strength rate × shop timing × repeat multiplier × market variation
+```
+
+| Strength band  | Target rate | First-copy minimum |
+| -------------- | ----------: | -----------------: |
+| Low            |          3% |            1 point |
+| Standard       |          6% |            1 point |
+| Strong         |         10% |           2 points |
+| Build-defining |         15% |           3 points |
+
+Two Bricks is the sole free item and remains the guaranteed fallback. Prices at the second shop
+(after roll 15) are 25% lower because fewer rolls remain in the current round. Repeatable
+effects become more expensive for each copy already bought: ordinary linear stacks grow by
+1.35× per copy, while multipliers and explosive grid-growth effects grow by 1.8× per copy.
+Single-time items have no repeat multiplier. Every non-free card also rolls a market adjustment
+from −25% to +25%, in whole-percentage steps, each time it appears. This overlap makes price an
+imperfect signal of power: a stronger item can be discounted below a weaker offer, and the most
+expensive card is not automatically the best choice. Live shop cards show both the strength
+band beside rarity and the resolved price, so the player can recognize a discount or markup.
+
+Resolved prices round upward to readable values: whole points below 10, multiples of 5 below
+100, multiples of 25 below 1,000, and multiples of 100 thereafter. For example, a first-copy
+Strong item costs 2 points against round 2's target of 19, 45 points against round 6's target
+of 420, and 3,300 points against round 10's target of 33,000 at the first shop before that
+visit's market adjustment.
+
+The bands are informed by the simulator's per-item point attribution, with lifetime totals
+treated as supporting evidence rather than converted directly into prices. Raw totals are
+highly skewed by exponential winning builds and miss indirect value from items such as Ledger,
+Metronome, Shrink Die, and Vault. Balance passes should therefore read contribution rankings
+alongside purchase/win correlation and matched runs, then tune the four global rates before
+hand-editing individual bands.
 
 ### Rarity
 
 Every item belongs to one of three rarity tiers, shown by card colour:
 
-| Tier | Colour | Draw weight |
-|---|---|---|
-| Common | Yellow | 60% |
-| Uncommon | Blue | 30% |
-| Rare | Purple | 10% |
+| Tier     | Colour | Draw weight |
+| -------- | ------ | ----------- |
+| Common   | Yellow | 60%         |
+| Uncommon | Blue   | 30%         |
+| Rare     | Purple | 10%         |
 
-Rarity is about power and swing, not price — a 1 pt Common and a 1 pt Rare can share a price
-tag and be very different cards.
+Rarity controls how often an item is offered; price band controls how much score it risks.
+They are intentionally independent.
 
 Draw rules:
+
 - Each card in a shop rolls its tier independently against the 60/30/10 weights, then picks an
   item from that tier.
 - Cards are drawn without replacement, so one shop never offers duplicates.
@@ -186,97 +237,101 @@ Draw rules:
 
 ### Common (yellow)
 
-| Item | Cost | Effect |
-|---|---|---|
-| Extra Die | 0 pt | Adds one d6 to the grid |
-| Pocket Change | 0 pt | Gain 2 points immediately |
-| Spike | 1 pt | Adds a d4 to the grid |
-| Shrink Die | 1 pt | Shrinks a die of the player's choice one step: d1 < d2 < d4 < d6 < d8 < d10 < d20 < d100 |
-| Whetstone | 1 pt | Shrinks a random die one step |
-| Twin | 1 pt | Duplicates a die of the player's choice, same size |
-| Overtime | 1 pt | +1 roll, appended to the end of this round only |
-| Dividend 🔒 | 1 pt | At the start of each round, gain 1 point for every 5 dice owned. **Unlockable** |
-| Momentum 🔒 | 1 pt | Each consecutive scoring roll adds +1 to points earned; a scoreless roll resets it. **Unlockable** |
-| Keen Edge 🔒 | 1 pt | Each d1 scores +1 when it scores (a d1 is worth 2). **Unlockable** |
+| Item          | Price band     | Effect                                                                                             |
+| ------------- | -------------- | -------------------------------------------------------------------------------------------------- |
+| Two Bricks    | Free           | Adds two d6 to the grid                                                                            |
+| Pocket Change | Low            | Gain 2 points on every roll                                                                        |
+| Spikes        | Low            | Adds two d4 to the grid                                                                            |
+| Shrink Die    | Low            | Shrinks a die of the player's choice two steps: d1 < d2 < d4 < d6 < d8 < d10 < d20 < d100          |
+| Whetstone     | Low            | Each roll, a 10% chance to shrink a random die one step                                            |
+| Twins         | Strong         | Choose a die; duplicate every die of its size                                                      |
+| Overtime      | Low            | +2 rolls, appended to the end of this round only                                                   |
+| Dividend 🔒   | Build-defining | On every roll, gain 1 point for every 3 dice owned. **Unlockable**                                 |
+| Momentum 🔒   | Standard       | Each consecutive scoring roll adds +2 to points earned; a scoreless roll resets it. **Unlockable** |
+| Keen Edge 🔒  | Standard       | Each d1 scores +2 when it scores (a d1 is worth 3). **Unlockable**                                 |
 
 ### Uncommon (blue)
 
-| Item | Cost | Effect |
-|---|---|---|
-| Chip | 0 pt | Adds a d2 to the grid |
-| Extra Dice | 1 pt | Adds three d6 to the grid |
-| Rollplayer | 1 pt | Adds a d20; rolling 20 grants 20 points |
-| Multiply Dice ×2 | 2 pt | Doubles the number of dice |
-| Metronome | 2 pt | +1 roll every round, appended to the end, permanent |
-| Grindstone | 2 pt | Shrinks 3 dice of the player's choice one step each |
-| Loaded Die | 2 pt | Choose a die; it never rolls its highest face |
-| Snake Eyes | 2 pt | When 2 or more dice show the same number, score that number (once per number, per roll) |
-| Ledger | 2 pt | The shop offers 4 cards from now on |
-| Double the Fun 🔒 | 1 pt | Whenever any die rolls a 6, add another copy of that die to the grid. **Unlockable** |
-| Foundry 🔒 | 2 pt | At the start of each round, add 3 copies of the smallest die. **Unlockable** |
-| Jackpot 🔒 | 2 pt | When 4+ dice show the same face, score that face × the number of dice showing it (each face separately). **Unlockable** |
-| Last Call 🔒 | 2 pt | Points earned on the final roll of each round are tripled. **Unlockable** |
+| Item              | Price band     | Effect                                                                                                                  |
+| ----------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Chips             | Low            | Adds two d2 to the grid                                                                                                 |
+| Extra Dice        | Standard       | Adds d6 equal to a quarter of the grid (at least 5)                                                                     |
+| Rollplayer        | Standard       | Adds a d20; its highest face always scores and doubles all points that roll                                             |
+| Multiply Dice ×2  | Strong         | Doubles the number of dice                                                                                              |
+| Metronome         | Standard       | +1 roll every round, appended to the end, permanent                                                                     |
+| Grindstone        | Standard       | Choose a die; shrink every die of its size two steps                                                                    |
+| Loaded Die        | Standard       | Choose a die; every die of its size never rolls its two highest faces, now and later                                    |
+| Snake Eyes        | Strong         | When 2 or more dice show the same number, score that number × the dice showing it (per number, per roll)                |
+| Ledger            | Standard       | The shop offers 5 cards from now on                                                                                     |
+| Double the Fun 🔒 | Build-defining | Whenever any die rolls a 5 or 6, add another copy of that die to the grid. **Unlockable**                               |
+| Foundry 🔒        | Strong         | At the start of each round, add 5 copies of the smallest die. **Unlockable**                                            |
+| Jackpot 🔒        | Build-defining | When 3+ dice show the same face, score that face × the number of dice showing it (each face separately). **Unlockable** |
+| Last Call 🔒      | Build-defining | Points earned on the final roll of each round are quadrupled. **Unlockable**                                            |
 
 ### Rare (purple)
 
-| Item | Cost | Effect |
-|---|---|---|
-| Extra Point | 1 pt | Adds +1 per scoring die |
-| Multiply Dice ×3 | 3 pt | Triples the number of dice |
-| Extra Number | 3 pt | Provides points on an additional number. Stacks 2, then 3, then can't show up anymore |
-| Amplifier | 3 pt | Doubles all points earned from rolls |
-| Refinement | 3 pt | Shrinks every die one step |
-| Wild Face | 3 pt | Choose a die; it scores on every face |
-| Centurion | 3 pt | Adds a d100; rolling 100 grants 100 points |
-| Vault | 3 pt | Keep 20% of your points (rounded down) when a round clears |
-| Genesis 🔒 | 3 pt | Whenever a die scores, add a copy of that die to the grid (max +10 dice per roll). **Unlockable** |
-| Reserve 🔒 | 3 pt | Keep 50% of your points (rounded down) when a round clears. **Unlockable** |
-| Prism 🔒 | 3 pt | Triples all points earned from rolls (multiplies with Amplifier). **Unlockable** |
+| Item             | Price band     | Effect                                                                                            |
+| ---------------- | -------------- | ------------------------------------------------------------------------------------------------- |
+| Extra Point      | Standard       | Adds +1 per scoring die                                                                           |
+| Multiply Dice ×3 | Build-defining | Triples the number of dice                                                                        |
+| Extra Number     | Strong         | Provides points on an additional number. Stacks 2, then 3, then 4, then can't show up anymore     |
+| Amplifier        | Build-defining | Doubles all points earned from rolls                                                              |
+| Refinement       | Standard       | Shrinks every die two steps                                                                       |
+| Wild Face        | Strong         | Choose a die; every die of its size scores on every face, now and later                           |
+| Centurion        | Strong         | Adds a d100; its highest face always scores and quadruples all points that roll                   |
+| Vault            | Standard       | Keep 33% of your points (rounded down) when a round clears                                        |
+| Genesis 🔒       | Build-defining | Whenever a die scores, add a copy of that die to the grid (max +20 dice per roll). **Unlockable** |
+| Reserve 🔒       | Strong         | Keep 75% of your points (rounded down) when a round clears. **Unlockable**                        |
+| Prism 🔒         | Build-defining | Triples all points earned from rolls (multiplies with Amplifier). **Unlockable**                  |
 
 ### Gating
 
 An item is only offered when it can actually do something:
-- Shrink Die, Whetstone, Grindstone, Refinement — require at least one die above d1
-  (Grindstone requires 3).
+
+- Shrink Die, Grindstone, Refinement — require at least one die above d1.
 - Loaded Die — requires a die that isn't already loaded.
 - Keen Edge — requires at least one d1 in the grid.
-- Extra Number — stops appearing once the face 3 has been added.
+- Extra Number — stops appearing once the face 4 has been added.
+- Flat starters (Chips, Spikes, Pocket Change, Shrink Die) drop out of the shop once the grid
+  passes 75 dice, since their fixed adds become noise at that scale. Two Bricks is exempt — it's
+  the guaranteed free fallback.
 
 Some items are **single-time**: a second copy would do nothing, so once bought they never
 appear again for the rest of the run. These are Snake Eyes, Ledger, Amplifier, Vault, and
 Double the Fun. Everything else can be bought repeatedly and stacks — the stacking passives
-(Dividend, Momentum, Keen Edge, Foundry, Jackpot, Last Call, Genesis, Reserve, Prism) compound
-per copy owned.
+(Pocket Change, Whetstone, Dividend, Momentum, Keen Edge, Foundry, Jackpot, Last Call, Genesis,
+Reserve, Prism) compound per copy owned.
 
 ## Unlocks and the Codex
 
 Most items are available from the very first run. Some are **locked** behind an achievement and
 never appear in the shop until the player has earned them. An unlock is permanent: once met, the
-item is offered from that moment on — in the current run and every future run — and can never be
-re-locked (short of resetting all progress).
+item is offered starting with the next run and can never be re-locked (short of resetting all
+progress).
 
 Unlock progress is meta-progression: it lives in `localStorage` (key `ooo_progress_v1`), separate
 from the ephemeral per-run state, so it survives reloads and carries across runs.
 
 Currently unlockable:
 
-| Item | Unlock criterion |
-|---|---|
-| Dividend | Reach round 6 |
-| Momentum | Score on 12 rolls in a row (in one run) |
-| Keen Edge | Hold 10 or more d1 at once |
-| Foundry | Hold more than 29 dice in your grid at once |
-| Double the Fun | Hold more than 1000 dice in your grid at once |
-| Jackpot | Show the same number on 6 or more dice in a single roll |
-| Last Call | Clear a round on its final roll |
-| Genesis | Reach round 10 |
-| Reserve | Reach 2× the current round's target score |
-| Prism | Win a run (clear all 20 rounds) |
+| Item           | Unlock criterion                                        |
+| -------------- | ------------------------------------------------------- |
+| Dividend       | Reach round 6                                           |
+| Momentum       | Score on 12 rolls in a row (in one run)                 |
+| Keen Edge      | Hold 10 or more d1 at once                              |
+| Foundry        | Hold more than 29 dice in your grid at once             |
+| Double the Fun | Hold more than 1000 dice in your grid at once           |
+| Jackpot        | Show the same number on 6 or more dice in a single roll |
+| Last Call      | Clear a round on its final roll                         |
+| Genesis        | Reach round 10                                          |
+| Reserve        | Reach 2× the current round's target score               |
+| Prism          | Win a run (clear all 10 rounds)                         |
 
-Criteria are checked live during a run, so crossing a threshold unlocks the item mid-run — a
-banner announces it, and it can be offered in that same run's later shops. The criteria engine is
-data-driven (`src/systems/Items.ts` — `UnlockCriterion` / `meetsCriterion`), so new unlock
-conditions can be added by tagging an item with an `unlock` field.
+Criteria are checked live during a run, so a banner announces an unlock as soon as its threshold
+is crossed. Each run snapshots its eligible card pool when it begins, so newly unlocked cards
+first appear in the next run. The criteria engine is data-driven (`src/systems/Items.ts` —
+`UnlockCriterion` / `meetsCriterion`), so new unlock conditions can be added by tagging an item
+with an `unlock` field.
 
 ### The Codex (Items screen)
 
@@ -292,6 +347,7 @@ loss — including abandoning a run), at which point it becomes available.
 ## Other screens
 
 The game opens on a menu with:
+
 - Start New Run
 - Hall of High Scores
 - Codex (locked until the first game is completed)
@@ -303,12 +359,14 @@ player's first run, a **callout tutorial** walks through the score, roll, target
 round, and shop in sequence; it self-disables after one run and can be re-enabled from Settings.
 
 The Hall of High Scores shows the top runs, each with:
+
 - The date the run was started, short format
 - The round the player reached (and whether the run was a win)
 - The total score accumulated across the run
 - The grid of dice they ended with
 
 Settings controls:
+
 - Volume of music
 - Volume of sound effects
 - Show Intro

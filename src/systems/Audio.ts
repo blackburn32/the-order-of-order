@@ -1,11 +1,22 @@
-// All audio is synthesized with WebAudio: no binary assets.
-// SFX are short envelopes; "music" is a low generative drone befitting a dice cult.
+import pranceUrl from '../../audio/songs/prance.mp3?url';
+
+// SFX are synthesized with WebAudio; background music is a decoded, natively
+// looped buffer routed through the same bus.
+
+const PRANCE_SAMPLE_RATE = 44_100;
+const PRANCE_LOOP_START = 174_832 / PRANCE_SAMPLE_RATE;
+const PRANCE_LOOP_END = 3_703_086 / PRANCE_SAMPLE_RATE;
+const MUSIC_TRIM = 0.16;
+const DUCK_ATTACK_SECONDS = 0.02;
 
 class AudioBus {
   private ctx: AudioContext | null = null;
   private musicGain: GainNode | null = null;
+  private musicDuckGain: GainNode | null = null;
   private sfxGain: GainNode | null = null;
-  private droneNodes: AudioNode[] = [];
+  private musicSource: AudioBufferSourceNode | null = null;
+  private musicLoad: Promise<void> | null = null;
+  private duckUntil = 0;
 
   musicVol = 0.5;
   sfxVol = 0.7;
@@ -17,8 +28,10 @@ class AudioBus {
       if (!Ctor) return;
       this.ctx = new Ctor();
       this.musicGain = this.ctx.createGain();
+      this.musicDuckGain = this.ctx.createGain();
       this.sfxGain = this.ctx.createGain();
-      this.musicGain.connect(this.ctx.destination);
+      this.musicGain.connect(this.musicDuckGain);
+      this.musicDuckGain.connect(this.ctx.destination);
       this.sfxGain.connect(this.ctx.destination);
       this.applyVolumes();
     }
@@ -32,70 +45,51 @@ class AudioBus {
   }
 
   private applyVolumes(): void {
-    if (this.musicGain) this.musicGain.gain.value = this.musicVol * 0.16;
+    if (this.musicGain) this.musicGain.gain.value = this.musicVol * MUSIC_TRIM;
     if (this.sfxGain) this.sfxGain.gain.value = this.sfxVol * 0.9;
   }
 
-  // ---- music: ambient drone ------------------------------------------------
+  // ---- music ---------------------------------------------------------------
 
-  startDrone(): void {
+  /** Start the soundtrack once and let it persist across scene changes. */
+  startMusic(): void {
     this.ensure();
-    if (!this.ctx || !this.musicGain || this.droneNodes.length > 0) return;
+    if (!this.ctx || !this.musicGain || this.musicSource || this.musicLoad) return;
     const ctx = this.ctx;
+    const destination = this.musicGain;
 
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 220;
-    filter.Q.value = 1.2;
-    filter.connect(this.musicGain);
-
-    const freqs = [55, 82.5, 110.3]; // A1, E2, slightly detuned A2
-    for (const f of freqs) {
-      const osc = ctx.createOscillator();
-      osc.type = 'sawtooth';
-      osc.frequency.value = f;
-      const g = ctx.createGain();
-      g.gain.value = 0.33;
-      osc.connect(g);
-      g.connect(filter);
-      osc.start();
-      this.droneNodes.push(osc, g);
-    }
-
-    // Slow LFO breathing on the filter cutoff.
-    const lfo = ctx.createOscillator();
-    lfo.frequency.value = 0.07;
-    const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 120;
-    lfo.connect(lfoGain);
-    lfoGain.connect(filter.frequency);
-    lfo.start();
-    this.droneNodes.push(lfo, lfoGain, filter);
-
-    // A faint high shimmer.
-    const shimmer = ctx.createOscillator();
-    shimmer.type = 'sine';
-    shimmer.frequency.value = 660;
-    const sg = ctx.createGain();
-    sg.gain.value = 0.015;
-    shimmer.connect(sg);
-    sg.connect(this.musicGain);
-    shimmer.start();
-    this.droneNodes.push(shimmer, sg);
+    this.musicLoad = (async () => {
+      const response = await fetch(pranceUrl);
+      if (!response.ok) throw new Error(`Unable to load soundtrack (${response.status})`);
+      const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+      source.loopStart = Math.min(PRANCE_LOOP_START, buffer.duration);
+      source.loopEnd = Math.min(PRANCE_LOOP_END, buffer.duration);
+      source.connect(destination);
+      source.start(0, source.loopStart);
+      this.musicSource = source;
+    })()
+      .catch((error: unknown) => {
+        console.warn('Unable to start background music', error);
+      })
+      .finally(() => {
+        this.musicLoad = null;
+      });
   }
 
-  stopDrone(): void {
-    for (const node of this.droneNodes) {
-      if (node instanceof OscillatorNode) {
-        try {
-          node.stop();
-        } catch {
-          // already stopped
-        }
-      }
-      node.disconnect();
-    }
-    this.droneNodes = [];
+  /** Briefly lower the music for a prominent cue, then restore it smoothly. */
+  private duckMusic(level: number, holdSeconds: number, releaseSeconds: number): void {
+    if (!this.ctx || !this.musicDuckGain) return;
+    const now = this.ctx.currentTime;
+    this.duckUntil = Math.max(this.duckUntil, now + holdSeconds);
+
+    const gain = this.musicDuckGain.gain;
+    gain.cancelAndHoldAtTime(now);
+    gain.linearRampToValueAtTime(level, now + DUCK_ATTACK_SECONDS);
+    gain.setValueAtTime(level, this.duckUntil);
+    gain.linearRampToValueAtTime(1, this.duckUntil + releaseSeconds);
   }
 
   // ---- sfx -----------------------------------------------------------------
@@ -160,6 +154,7 @@ class AudioBus {
 
   jackpot(): void {
     this.ensure();
+    this.duckMusic(0.3, 0.8, 0.4);
     const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5];
     notes.forEach((f, i) => this.tone(f, 0.3, 'triangle', i * 0.08, 0.24));
     this.tone(261.63, 0.6, 'sawtooth', 0, 0.08);
@@ -168,6 +163,15 @@ class AudioBus {
   dud(): void {
     this.ensure();
     this.tone(140, 0.15, 'sine', 0, 0.1);
+  }
+
+  /** Whetstone filing a die down a step: a short metallic grind (filtered
+   *  noise scrape) plus a quick descending chirp. */
+  shrink(): void {
+    this.ensure();
+    this.noiseBurst(0.14, 0, 0.16, 1100);
+    this.tone(720, 0.13, 'triangle', 0, 0.13);
+    this.tone(520, 0.16, 'triangle', 0.07, 0.11);
   }
 
   buy(): void {
@@ -184,18 +188,21 @@ class AudioBus {
 
   roundUp(): void {
     this.ensure();
+    this.duckMusic(0.35, 0.7, 0.4);
     const notes = [392, 493.88, 587.33, 783.99];
     notes.forEach((f, i) => this.tone(f, 0.3, 'triangle', i * 0.1, 0.22));
   }
 
   gameOver(): void {
     this.ensure();
+    this.duckMusic(0.25, 1.3, 0.5);
     const notes = [440, 349.23, 293.66, 220];
     notes.forEach((f, i) => this.tone(f, 0.5, 'sawtooth', i * 0.22, 0.12));
   }
 
   victory(): void {
     this.ensure();
+    this.duckMusic(0.2, 2, 0.6);
     // Rising major arpeggio (C-E-G-C-E-G) resolving on a held high C,
     // over a sustained low root — grander and longer than jackpot().
     const arp = [523.25, 659.25, 783.99, 1046.5, 1318.5, 1567.98];

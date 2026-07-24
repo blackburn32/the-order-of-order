@@ -11,6 +11,7 @@ import { SettingsScene } from './scenes/SettingsScene';
 import { ItemsScene } from './scenes/ItemsScene';
 import { InventoryScene } from './scenes/InventoryScene';
 import { InitialsPromptScene } from './scenes/InitialsPromptScene';
+import { AnalysisScene } from './scenes/AnalysisScene';
 import { installDevPanel } from './dev/DevPanel';
 
 const game = new Phaser.Game({
@@ -25,7 +26,7 @@ const game = new Phaser.Game({
     width: window.innerWidth,
     height: window.innerHeight
   },
-  scene: [BootScene, MenuScene, IntroScene, GameScene, ShopScene, GameOverScene, VictoryScene, HallScene, ItemsScene, SettingsScene, InventoryScene, InitialsPromptScene]
+  scene: [BootScene, MenuScene, IntroScene, GameScene, ShopScene, GameOverScene, VictoryScene, HallScene, ItemsScene, SettingsScene, InventoryScene, InitialsPromptScene, AnalysisScene]
 });
 
 // Exposed for smoke tests / debugging in the console.

@@ -1,15 +1,27 @@
-import Phaser from 'phaser';
-import { COLORS, CSS, SERIF } from '../art/palette';
-import { loadHall } from '../systems/SaveData';
-import { addFelt, addPanel, bannerButton } from '../ui/widgets';
-import { onResizeCoalesced } from '../ui/layout';
-import { fetchTopScores, globalScoresEnabled, GlobalScoreRow } from '../systems/GlobalScores';
+import Phaser from "phaser";
+import { COLORS, CSS, SERIF } from "../art/palette";
+import { HallEntry, loadHall } from "../systems/SaveData";
+import { addFelt, addPanel, bannerButton } from "../ui/widgets";
+import { onResizeCoalesced } from "../ui/layout";
+import {
+  fetchTopScores,
+  globalScoresEnabled,
+  GlobalScoreRow,
+} from "../systems/GlobalScores";
+import { toNumberPointMap } from "../systems/ItemPoints";
+import { formatScore } from "../ui/formatScore";
 
 type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
-type WheelHandler = (pointer: Phaser.Input.Pointer, over: unknown, dx: number, dy: number, dz: number) => void;
+type WheelHandler = (
+  pointer: Phaser.Input.Pointer,
+  over: unknown,
+  dx: number,
+  dy: number,
+  dz: number,
+) => void;
 
-type Tab = 'local' | 'global';
-type GlobalStatus = 'idle' | 'loading' | 'error' | 'disabled' | 'ready';
+type Tab = "local" | "global";
+type GlobalStatus = "idle" | "loading" | "error" | "disabled" | "ready";
 
 /**
  * The Hall of High Scores. Two tabs: the player's local runs (unchanged, drawn
@@ -20,20 +32,25 @@ type GlobalStatus = 'idle' | 'loading' | 'error' | 'disabled' | 'ready';
  * `track` container clipped by a dedicated camera and scrolled by drag/wheel.
  */
 export class HallScene extends Phaser.Scene {
-  private tab: Tab = 'local';
+  private tab: Tab = "local";
   private globalRows: GlobalScoreRow[] | null = null;
-  private globalStatus: GlobalStatus = 'idle';
+  private globalStatus: GlobalStatus = "idle";
   private gridCamera?: Phaser.Cameras.Scene2D.Camera;
-  private input$?: { down: PointerHandler; move: PointerHandler; up: PointerHandler; wheel: WheelHandler };
+  private input$?: {
+    down: PointerHandler;
+    move: PointerHandler;
+    up: PointerHandler;
+    wheel: WheelHandler;
+  };
 
   constructor() {
-    super('Hall');
+    super("Hall");
   }
 
   create(): void {
-    this.tab = 'local';
+    this.tab = "local";
     this.globalRows = null;
-    this.globalStatus = 'idle';
+    this.globalStatus = "idle";
     this.gridCamera = undefined;
     this.build();
 
@@ -41,7 +58,7 @@ export class HallScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       off();
       this.teardownInput();
-      this.input.setDefaultCursor('default');
+      this.input.setDefaultCursor("default");
     });
   }
 
@@ -53,11 +70,11 @@ export class HallScene extends Phaser.Scene {
 
   private teardownInput(): void {
     if (this.input$) {
-      this.input.off('pointerdown', this.input$.down);
-      this.input.off('pointermove', this.input$.move);
-      this.input.off('pointerup', this.input$.up);
-      this.input.off('pointerupoutside', this.input$.up);
-      this.input.off('wheel', this.input$.wheel);
+      this.input.off("pointerdown", this.input$.down);
+      this.input.off("pointermove", this.input$.move);
+      this.input.off("pointerup", this.input$.up);
+      this.input.off("pointerupoutside", this.input$.up);
+      this.input.off("wheel", this.input$.wheel);
       this.input$ = undefined;
     }
   }
@@ -75,13 +92,13 @@ export class HallScene extends Phaser.Scene {
     addPanel(this, cx, H / 2, panelW, panelH);
 
     this.add
-      .text(cx, panelTop + panelH * 0.09, 'Hall of High Scores', {
+      .text(cx, panelTop + panelH * 0.09, "Hall of High Scores", {
         fontFamily: SERIF,
         fontSize: `${Math.round(Phaser.Math.Clamp(Math.min(panelW * 0.075, panelH * 0.068), 20, 40))}px`,
         color: CSS.ink,
-        fontStyle: 'bold',
-        align: 'center',
-        wordWrap: { width: panelW * 0.92 }
+        fontStyle: "bold",
+        align: "center",
+        wordWrap: { width: panelW * 0.92 },
       })
       .setOrigin(0.5);
 
@@ -90,12 +107,18 @@ export class HallScene extends Phaser.Scene {
     // Back button is created before the (possibly camera-clipped) content so it
     // is part of the "everything except the scroll track" set the grid camera
     // ignores.
-    bannerButton(this, cx, panelTop + panelH * 0.92, 'Return to the Vestibule', () => this.scene.start('Menu'));
+    bannerButton(
+      this,
+      cx,
+      panelTop + panelH * 0.92,
+      "Return to the Vestibule",
+      () => this.scene.start("Menu"),
+    );
 
     const contentTop = panelTop + panelH * 0.31;
     const contentBottom = panelTop + panelH * 0.86;
 
-    if (this.tab === 'local') {
+    if (this.tab === "local") {
       this.buildLocal(cx, panelLeft, panelW, panelH, contentTop);
     } else {
       this.buildGlobal(cx, panelLeft, panelW, contentTop, contentBottom);
@@ -103,21 +126,28 @@ export class HallScene extends Phaser.Scene {
   }
 
   private buildTabs(cx: number, y: number, panelW: number): void {
-    const local = bannerButton(this, cx, y, 'My Runs', () => this.switchTab('local'));
-    const global = bannerButton(this, cx, y, 'Global', () => this.switchTab('global'));
+    const local = bannerButton(this, cx, y, "My Runs", () =>
+      this.switchTab("local"),
+    );
+    const global = bannerButton(this, cx, y, "Global", () =>
+      this.switchTab("global"),
+    );
     // Space the two tabs by half their own width plus a fixed gap so they never
     // overlap regardless of the button art's size or the panel width.
     const btnW = (local.getAt(0) as Phaser.GameObjects.Image).width;
     const dx = btnW / 2 + Math.max(24, panelW * 0.03);
     local.setX(cx - dx);
     global.setX(cx + dx);
-    const active = this.tab === 'local' ? local : global;
+    const active = this.tab === "local" ? local : global;
     (active.getAt(0) as Phaser.GameObjects.Image).setTint(0xf0d98a);
   }
 
   private switchTab(tab: Tab): void {
     // Retry the fetch when (re)entering Global if we've never loaded or errored.
-    if (tab === 'global' && (this.globalStatus === 'idle' || this.globalStatus === 'error')) {
+    if (
+      tab === "global" &&
+      (this.globalStatus === "idle" || this.globalStatus === "error")
+    ) {
       this.loadGlobal();
     }
     this.tab = tab;
@@ -126,29 +156,40 @@ export class HallScene extends Phaser.Scene {
 
   private loadGlobal(): void {
     if (!globalScoresEnabled()) {
-      this.globalStatus = 'disabled';
+      this.globalStatus = "disabled";
       return;
     }
-    this.globalStatus = 'loading';
+    this.globalStatus = "loading";
     fetchTopScores().then((rows) => {
       if (!this.scene.isActive()) return; // scene left while in flight
       if (rows === null) {
-        this.globalStatus = 'error';
+        this.globalStatus = "error";
       } else {
         this.globalRows = rows;
-        this.globalStatus = 'ready';
+        this.globalStatus = "ready";
       }
-      if (this.tab === 'global') this.rebuild();
+      if (this.tab === "global") this.rebuild();
     });
   }
 
   // --- Local tab (existing behaviour) ---------------------------------------
 
-  private buildLocal(cx: number, panelLeft: number, panelW: number, panelH: number, contentTop: number): void {
+  private buildLocal(
+    cx: number,
+    panelLeft: number,
+    panelW: number,
+    panelH: number,
+    contentTop: number,
+  ): void {
     const entries = loadHall();
 
     if (entries.length === 0) {
-      this.centerMessage(cx, contentTop + panelH * 0.2, 'No initiates have been recorded.\nBegin a run and earn your place.', panelW);
+      this.centerMessage(
+        cx,
+        contentTop + panelH * 0.2,
+        "No initiates have been recorded.\nBegin a run and earn your place.",
+        panelW,
+      );
       return;
     }
 
@@ -164,25 +205,26 @@ export class HallScene extends Phaser.Scene {
     const rowStart = contentTop + panelH * 0.05;
     const rowStep = Math.min(36, (panelH * 0.55) / Math.max(1, entries.length));
 
-    const dateTexts = [this.header(headerY, 'DATE', headerSize)];
-    const roundTexts = [this.header(headerY, 'ROUND', headerSize)];
-    const scoreTexts = [this.header(headerY, 'SCORE', headerSize)];
-    const gridHeader = this.header(headerY, 'FINAL GRID', headerSize, 0);
+    const dateTexts = [this.header(headerY, "DATE", headerSize)];
+    const roundTexts = [this.header(headerY, "ROUND", headerSize)];
+    const scoreTexts = [this.header(headerY, "SCORE", headerSize)];
+    const gridHeader = this.header(headerY, "FINAL GRID", headerSize, 0);
 
     const rows = entries.map((entry, i) => {
       const y = rowStart + i * rowStep;
       const date = new Date(entry.startedAt).toLocaleDateString(undefined, {
-        year: '2-digit',
-        month: 'numeric',
-        day: 'numeric'
+        year: "2-digit",
+        month: "numeric",
+        day: "numeric",
       });
       dateTexts.push(this.cell(y, date, cellSize));
       roundTexts.push(this.cell(y, String(entry.round), cellSize));
-      scoreTexts.push(this.cell(y, String(entry.score), cellSize));
+      scoreTexts.push(this.cell(y, formatScore(entry.score), cellSize));
       return { y, entry };
     });
 
-    const widest = (texts: Phaser.GameObjects.Text[]) => Math.max(...texts.map((t) => t.width));
+    const widest = (texts: Phaser.GameObjects.Text[]) =>
+      Math.max(...texts.map((t) => t.width));
     const dateW = widest(dateTexts);
     const roundW = widest(roundTexts);
     const scoreW = widest(scoreTexts);
@@ -192,8 +234,6 @@ export class HallScene extends Phaser.Scene {
     const col3 = col2 + roundW / 2 + colGap + scoreW / 2;
     const col4 = col3 + scoreW / 2 + colGap * 1.4;
     const gridColW = panelLeft + panelW * 0.95 - col4;
-    const iconStep = Math.min(30, Math.max(16, rowStep * 0.85));
-    const maxIcons = Math.max(2, Math.floor(gridColW / iconStep));
 
     dateTexts.forEach((t) => t.setX(col1));
     roundTexts.forEach((t) => t.setX(col2));
@@ -205,44 +245,142 @@ export class HallScene extends Phaser.Scene {
       // `won`, so `undefined` reads as a loss — no marker).
       if (entry.won) {
         this.add
-          .text(panelLeft + panelW * 0.03, y, '♛', { fontFamily: SERIF, fontSize: `${cellSize}px`, color: CSS.goldLight })
+          .text(panelLeft + panelW * 0.03, y, "♛", {
+            fontFamily: SERIF,
+            fontSize: `${cellSize}px`,
+            color: CSS.goldLight,
+          })
           .setOrigin(0.5);
       }
-      const shown = entry.dice.slice(0, maxIcons);
-      shown.forEach((die, j) => {
-        this.add.image(col4 + j * iconStep, y, `die-${die.sides}`).setScale(0.27);
-      });
-      if (entry.dice.length > maxIcons) {
+      // Hard Mode runs get a skull just left of the score column.
+      if (entry.hard) {
         this.add
-          .text(col4 + maxIcons * iconStep, y, `+${entry.dice.length - maxIcons}`, {
+          .text(col3 - scoreW / 2 - 6, y, "☠", {
             fontFamily: SERIF,
-            fontSize: '15px',
-            color: CSS.inkSoft
+            fontSize: `${cellSize}px`,
+            color: CSS.red,
+          })
+          .setOrigin(1, 0.5);
+      }
+      // A saved grid can contain several stacks of the same die size because
+      // source and special flags are persisted separately. Collapse those
+      // stacks so the row shows every size once, followed by its total count.
+      const counts = new Map<number, number>();
+      for (const stack of entry.dice) {
+        counts.set(stack.sides, (counts.get(stack.sides) ?? 0) + stack.count);
+      }
+      const diceTypes = [...counts.entries()].sort(
+        ([sidesA], [sidesB]) => sidesB - sidesA,
+      );
+      const iconSize = Phaser.Math.Clamp(rowStep * 0.72, 10, 26);
+      const countSize = Math.floor(Phaser.Math.Clamp(cellSize * 0.72, 7, 14));
+      const itemPadding = Math.max(8, iconSize * 0.4);
+      const list = this.add.container(col4, y);
+      let listX = 0;
+
+      diceTypes.forEach(([sides, count]) => {
+        const countLabel = `×${formatScore(count)}`;
+        const icon = this.add
+          .image(listX + iconSize / 2, 0, `die-${sides}`)
+          .setScale(iconSize / 96);
+        const label = this.add
+          .text(listX + iconSize + 3, 0, countLabel, {
+            fontFamily: SERIF,
+            fontSize: `${countSize}px`,
+            color: CSS.inkSoft,
           })
           .setOrigin(0, 0.5);
+        list.add([icon, label]);
+        listX += iconSize + 3 + label.width + itemPadding;
+      });
+      const listWidth = Math.max(0, listX - itemPadding);
+      if (listWidth > gridColW) list.setScale(gridColW / listWidth);
+
+      // Runs recorded with a points breakdown are tappable to open their
+      // analysis. A near-transparent zone highlights on hover; older entries
+      // predate the breakdown and stay inert.
+      const hasPoints =
+        !!(entry.itemPoints && Object.keys(entry.itemPoints).length) ||
+        !!(entry.dicePoints && Object.keys(entry.dicePoints).length);
+      if (hasPoints) {
+        const zone = this.add
+          .rectangle(cx, y, panelW * 0.9, rowStep, COLORS.goldLight, 0.0001)
+          .setInteractive({ useHandCursor: true });
+        zone.on("pointerover", () => zone.setFillStyle(COLORS.goldLight, 0.12));
+        zone.on("pointerout", () =>
+          zone.setFillStyle(COLORS.goldLight, 0.0001),
+        );
+        zone.on("pointerdown", () => this.openAnalysisLocal(entry));
       }
+    });
+
+    if (entries.some((e) => e.itemPoints || e.dicePoints)) {
+      this.add
+        .text(
+          cx,
+          rowStart + entries.length * rowStep + panelH * 0.02,
+          "tap a run for its points breakdown",
+          {
+            fontFamily: SERIF,
+            fontSize: "13px",
+            color: CSS.dim,
+            fontStyle: "italic",
+          },
+        )
+        .setOrigin(0.5, 0);
+    }
+  }
+
+  private openAnalysisLocal(entry: HallEntry): void {
+    const date = new Date(entry.startedAt).toLocaleDateString();
+    this.scene.launch("Analysis", {
+      returnTo: "Hall",
+      title: `Run Analysis · ${formatScore(entry.score)} pts`,
+      subtitle: `${date} · round ${entry.round}${entry.won ? " · victory" : ""}`,
+      dicePoints: toNumberPointMap(entry.dicePoints ?? {}),
+      itemPoints: toNumberPointMap(entry.itemPoints ?? {}),
+    });
+  }
+
+  private openAnalysisGlobal(row: GlobalScoreRow): void {
+    this.scene.launch("Analysis", {
+      returnTo: "Hall",
+      title: `Global · rank ${row.rank}${row.name ? ` · ${row.name}` : ""}`,
+      subtitle: "Approximate points, from the leaderboard’s per-item shares",
+      entries: row.breakdown,
     });
   }
 
   // --- Global tab -----------------------------------------------------------
 
-  private buildGlobal(cx: number, panelLeft: number, panelW: number, contentTop: number, contentBottom: number): void {
-    if (this.globalStatus !== 'ready') {
+  private buildGlobal(
+    cx: number,
+    panelLeft: number,
+    panelW: number,
+    contentTop: number,
+    contentBottom: number,
+  ): void {
+    if (this.globalStatus !== "ready") {
       const msg =
-        this.globalStatus === 'loading'
-          ? 'Consulting the global hall…'
-          : this.globalStatus === 'disabled'
-          ? 'The global hall is beyond reach.'
-          : this.globalStatus === 'error'
-          ? 'The global hall could not be reached.\nTap Global to try again.'
-          : 'Consulting the global hall…';
+        this.globalStatus === "loading"
+          ? "Consulting the global hall…"
+          : this.globalStatus === "disabled"
+            ? "The global hall is beyond reach."
+            : this.globalStatus === "error"
+              ? "The global hall could not be reached.\nTap Global to try again."
+              : "Consulting the global hall…";
       this.centerMessage(cx, (contentTop + contentBottom) / 2, msg, panelW);
       return;
     }
 
     const rows = this.globalRows ?? [];
     if (rows.length === 0) {
-      this.centerMessage(cx, (contentTop + contentBottom) / 2, 'No scores have been recorded yet.\nBe the first to earn a place.', panelW);
+      this.centerMessage(
+        cx,
+        (contentTop + contentBottom) / 2,
+        "No scores have been recorded yet.\nBe the first to earn a place.",
+        panelW,
+      );
       return;
     }
 
@@ -255,19 +393,25 @@ export class HallScene extends Phaser.Scene {
       x: panelLeft + panelW * 0.09,
       y: contentTop + band * 0.09,
       width: panelW * 0.82,
-      height: 0
+      height: 0,
     };
     // Header row sits just above the scrolling list, fixed.
     const rankX = grid.x + grid.width * 0.08;
     const nameX = grid.x + grid.width * 0.42;
     const scoreX = grid.x + grid.width * 0.98;
-    this.header2(contentTop, rankX, 'RANK', headerSize, 0.5);
-    this.header2(contentTop, nameX, 'INITIALS', headerSize, 0.5);
-    this.header2(contentTop, scoreX, 'SCORE', headerSize, 1);
+    this.header2(contentTop, rankX, "RANK", headerSize, 0.5);
+    this.header2(contentTop, nameX, "INITIALS", headerSize, 0.5);
+    this.header2(contentTop, scoreX, "SCORE", headerSize, 1);
 
-    grid.height = Math.max(80, contentBottom - grid.y);
+    // Reserve a strip below the list for the hint line, so it never collides
+    // with the Return button (whose top edge sits right at contentBottom).
+    const hintReserve = 24;
+    grid.height = Math.max(80, contentBottom - grid.y - hintReserve);
 
-    const rowStep = Math.min(34, Math.max(22, grid.height / Math.max(rows.length, 1)));
+    const rowStep = Math.min(
+      34,
+      Math.max(22, grid.height / Math.max(rows.length, 1)),
+    );
     const contentH = rows.length * rowStep;
 
     // Rows live in a track clipped/scrolled by a dedicated camera. Local coords
@@ -280,14 +424,53 @@ export class HallScene extends Phaser.Scene {
     rows.forEach((row, i) => {
       const y = i * rowStep + rowStep / 2;
       if (row.isYou) {
-        track.add(this.add.rectangle(grid.width / 2, y, grid.width, rowStep, COLORS.goldLight, 0.18).setOrigin(0.5));
-        track.add(this.add.text(0, y, '♛', { fontFamily: SERIF, fontSize: `${cellSize}px`, color: CSS.gold }).setOrigin(0, 0.5));
+        track.add(
+          this.add
+            .rectangle(
+              grid.width / 2,
+              y,
+              grid.width,
+              rowStep,
+              COLORS.goldLight,
+              0.18,
+            )
+            .setOrigin(0.5),
+        );
+        track.add(
+          this.add
+            .text(0, y, "♛", {
+              fontFamily: SERIF,
+              fontSize: `${cellSize}px`,
+              color: CSS.gold,
+            })
+            .setOrigin(0, 0.5),
+        );
       }
       const color = row.isYou ? CSS.gold : CSS.ink;
-      const style = { fontFamily: SERIF, fontSize: `${cellSize}px`, color, fontStyle: row.isYou ? 'bold' : 'normal' };
+      const style = {
+        fontFamily: SERIF,
+        fontSize: `${cellSize}px`,
+        color,
+        fontStyle: row.isYou ? "bold" : "normal",
+      };
       track.add(this.add.text(lRank, y, `${row.rank}`, style).setOrigin(0.5));
-      track.add(this.add.text(lName, y, row.name || '—', style).setOrigin(0.5));
-      track.add(this.add.text(lScore, y, `${row.score}`, style).setOrigin(1, 0.5));
+      track.add(this.add.text(lName, y, row.name || "—", style).setOrigin(0.5));
+      const scoreText = this.add
+        .text(lScore, y, formatScore(row.score), style)
+        .setOrigin(1, 0.5);
+      track.add(scoreText);
+      // Hard Mode runs get a skull just left of the (right-aligned) score.
+      if (row.hard) {
+        track.add(
+          this.add
+            .text(lScore - scoreText.width - 6, y, "☠", {
+              fontFamily: SERIF,
+              fontSize: `${cellSize}px`,
+              color: CSS.red,
+            })
+            .setOrigin(1, 0.5),
+        );
+      }
     });
 
     // Clip the track to the list area via a dedicated parchment-backed camera.
@@ -298,54 +481,96 @@ export class HallScene extends Phaser.Scene {
     this.cameras.main.ignore(track);
 
     const overflow = Math.max(0, contentH - grid.height);
-    if (overflow <= 0) return;
-
     const maxY = grid.y;
     const minY = grid.y - overflow;
     const inBounds = (p: Phaser.Input.Pointer) =>
-      p.x >= grid.x && p.x <= grid.x + grid.width && p.y >= grid.y && p.y <= grid.y + grid.height;
+      p.x >= grid.x &&
+      p.x <= grid.x + grid.width &&
+      p.y >= grid.y &&
+      p.y <= grid.y + grid.height;
+    const anyBreakdown = rows.some(
+      (r) => r.breakdown && r.breakdown.length > 0,
+    );
+
+    // Map a pointer to the row under it (accounting for the scroll offset) so a
+    // tap can open that run's points breakdown; a drag scrolls the list instead.
+    const rowAt = (p: Phaser.Input.Pointer): GlobalScoreRow | undefined => {
+      const i = Math.floor((p.y - track.y) / rowStep);
+      return i >= 0 && i < rows.length ? rows[i] : undefined;
+    };
 
     let dragging = false;
+    let startPointerX = 0;
     let startPointerY = 0;
     let startTrackY = 0;
 
     const onDown: PointerHandler = (p) => {
       if (!inBounds(p)) return;
       dragging = true;
+      startPointerX = p.x;
       startPointerY = p.y;
       startTrackY = track.y;
     };
     const onMove: PointerHandler = (p) => {
       if (!dragging) {
-        this.input.setDefaultCursor(inBounds(p) ? 'grab' : 'default');
+        const over = inBounds(p);
+        const tappable = over && !!rowAt(p)?.breakdown?.length;
+        this.input.setDefaultCursor(
+          tappable ? "pointer" : over && overflow > 0 ? "grab" : "default",
+        );
         return;
       }
-      track.y = Phaser.Math.Clamp(startTrackY + (p.y - startPointerY), minY, maxY);
+      if (overflow > 0)
+        track.y = Phaser.Math.Clamp(
+          startTrackY + (p.y - startPointerY),
+          minY,
+          maxY,
+        );
     };
-    const onUp: PointerHandler = () => {
+    const onUp: PointerHandler = (p) => {
+      // A pointerup that barely moved is a tap: open the row's breakdown.
+      if (
+        dragging &&
+        Math.abs(p.x - startPointerX) < 6 &&
+        Math.abs(p.y - startPointerY) < 6 &&
+        inBounds(p)
+      ) {
+        const row = rowAt(p);
+        if (row?.breakdown?.length) this.openAnalysisGlobal(row);
+      }
       dragging = false;
     };
     const onWheel: WheelHandler = (p, _over, _dx, dy) => {
-      if (!inBounds(p)) return;
+      if (overflow <= 0 || !inBounds(p)) return;
       track.y = Phaser.Math.Clamp(track.y - dy, minY, maxY);
     };
 
-    this.input.on('pointerdown', onDown);
-    this.input.on('pointermove', onMove);
-    this.input.on('pointerup', onUp);
-    this.input.on('pointerupoutside', onUp);
-    this.input.on('wheel', onWheel);
+    this.input.on("pointerdown", onDown);
+    this.input.on("pointermove", onMove);
+    this.input.on("pointerup", onUp);
+    this.input.on("pointerupoutside", onUp);
+    this.input.on("wheel", onWheel);
     this.input$ = { down: onDown, move: onMove, up: onUp, wheel: onWheel };
 
-    const hint = this.add
-      .text(grid.x + grid.width / 2, grid.y + grid.height + 2, 'drag or scroll for more', {
-        fontFamily: SERIF,
-        fontSize: '13px',
-        color: CSS.dim,
-        fontStyle: 'italic'
-      })
-      .setOrigin(0.5, 0);
-    this.gridCamera?.ignore(hint);
+    const hintText =
+      overflow > 0
+        ? anyBreakdown
+          ? "drag or scroll for more · tap a row for its points"
+          : "drag or scroll for more"
+        : anyBreakdown
+          ? "tap a row for its points"
+          : "";
+    if (hintText) {
+      const hint = this.add
+        .text(grid.x + grid.width / 2, grid.y + grid.height + 2, hintText, {
+          fontFamily: SERIF,
+          fontSize: "13px",
+          color: CSS.dim,
+          fontStyle: "italic",
+        })
+        .setOrigin(0.5, 0);
+      this.gridCamera?.ignore(hint);
+    }
   }
 
   private ensureGridCamera(): Phaser.Cameras.Scene2D.Camera {
@@ -356,43 +581,69 @@ export class HallScene extends Phaser.Scene {
     return cam;
   }
 
-  private centerMessage(cx: number, y: number, text: string, panelW: number): void {
+  private centerMessage(
+    cx: number,
+    y: number,
+    text: string,
+    panelW: number,
+  ): void {
     this.add
       .text(cx, y, text, {
         fontFamily: SERIF,
         fontSize: `${Math.round(Phaser.Math.Clamp(panelW * 0.022, 16, 24))}px`,
         color: CSS.inkSoft,
-        fontStyle: 'italic',
-        align: 'center'
+        fontStyle: "italic",
+        align: "center",
       })
       .setOrigin(0.5);
   }
 
-  private header(y: number, label: string, size: number, originX = 0.5): Phaser.GameObjects.Text {
+  private header(
+    y: number,
+    label: string,
+    size: number,
+    originX = 0.5,
+  ): Phaser.GameObjects.Text {
     return this.add
       .text(0, y, label, {
         fontFamily: SERIF,
         fontSize: `${size}px`,
         color: CSS.inkSoft,
         letterSpacing: 2,
-        fontStyle: 'bold'
+        fontStyle: "bold",
       })
       .setOrigin(originX, 0.5);
   }
 
-  private header2(y: number, x: number, label: string, size: number, originX: number): Phaser.GameObjects.Text {
+  private header2(
+    y: number,
+    x: number,
+    label: string,
+    size: number,
+    originX: number,
+  ): Phaser.GameObjects.Text {
     return this.add
       .text(x, y, label, {
         fontFamily: SERIF,
         fontSize: `${size}px`,
         color: CSS.inkSoft,
         letterSpacing: 2,
-        fontStyle: 'bold'
+        fontStyle: "bold",
       })
       .setOrigin(originX, 0.5);
   }
 
-  private cell(y: number, value: string, size: number): Phaser.GameObjects.Text {
-    return this.add.text(0, y, value, { fontFamily: SERIF, fontSize: `${size}px`, color: CSS.ink }).setOrigin(0.5);
+  private cell(
+    y: number,
+    value: string,
+    size: number,
+  ): Phaser.GameObjects.Text {
+    return this.add
+      .text(0, y, value, {
+        fontFamily: SERIF,
+        fontSize: `${size}px`,
+        color: CSS.ink,
+      })
+      .setOrigin(0.5);
   }
 }

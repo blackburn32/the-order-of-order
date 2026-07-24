@@ -1,6 +1,6 @@
 // Node has no `localStorage`, which SaveData.ts uses for meta-progression, and
-// no reproducible RNG. This installs a minimal in-memory localStorage (so the
-// shop's unlock gating reads the set we seed) and swaps in a seeded PRNG so the
+// no reproducible RNG. This installs a minimal in-memory localStorage for the
+// game's meta-progression APIs and swaps in a seeded PRNG so the
 // whole batch is deterministic — including the handful of effects (e.g.
 // Whetstone's `shrinkRandom`) that call Math.random directly and can't take an
 // injected rng.
@@ -37,8 +37,8 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
-/** Install the in-memory localStorage and seed the unlocked-items set that the
- *  shop reads via loadProgress(). Safe to call once per process. */
+/** Install the in-memory localStorage and seed the unlocked-items progress.
+ *  Safe to call once per process. */
 export function installStorage(unlockedAtStart: ShopItemId[]): void {
   const storage = new MemoryStorage();
   (globalThis as { localStorage?: unknown }).localStorage = storage;

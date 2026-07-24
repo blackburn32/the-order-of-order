@@ -213,8 +213,12 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
 
   for (const label of labels) {
     const { cx, cy } = placeAt(label.name);
+    // The d6 label sits inside the light ivory die body, so dark soft ink reads
+    // well. Every other die puts its label below the shape on the dark felt,
+    // where that same ink is nearly invisible — use a light parchment tone there.
+    const color = label.sides === 6 ? CSS.inkSoft : CSS.parchment;
     const text = scene.add
-      .text(0, 0, `d${label.sides}`, { fontFamily: SERIF, fontSize: '13px', color: CSS.inkSoft })
+      .text(0, 0, `d${label.sides}`, { fontFamily: SERIF, fontSize: '13px', color })
       .setOrigin(0.5);
     rt.draw(text, cx, cy);
     throwaways.push(text);

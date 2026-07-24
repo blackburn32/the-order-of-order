@@ -5,11 +5,12 @@
 // drives them in a tight loop. Keeping the rules here (rather than inline in
 // GameScene) is what stops the simulation from drifting from the live game.
 
-import { ROLLS_PER_ROUND, SHOP_ROLLS, WIN_ROUND, roundTarget } from '../config';
+import { ROLLS_PER_ROUND, SHOP_ROLLS, WIN_ROUND, survivalTarget } from '../config';
 import { RunState } from '../state/RunState';
-import { cloneDie, Die } from '../systems/Dice';
 import { applyRoundStart } from '../systems/Items';
-import { RollResult, scoreRoll } from '../systems/Scoring';
+import { accumulatePoints } from '../systems/ItemPoints';
+import { RollResult } from '../systems/Scoring';
+import { scoreRollHistogram } from '../systems/ScoringHistogram';
 
 /** Base round length plus Metronome's permanent bonus and Overtime's
  *  this-round-only bonus (both appended to the end; shop rolls stay pinned). */
@@ -25,52 +26,93 @@ export function shouldOpenShop(state: RunState): boolean {
 export interface RoundEndOutcome {
   phase: 'victory' | 'gameOver' | 'advanced';
   diceAdded: number; // Foundry dice added by applyRoundStart on advance (0 otherwise)
+  insuranceUsed: boolean;
 }
 
 /**
  * Resolve a single roll's scoring and grid growth against dice that have
- * already been rolled (the caller rolls them — in GameScene that's tied to the
- * tumble animation, in the bot it's `rollAll` with a seeded RNG). Mutates
- * `state`: advances `roll`, banks `score`/`totalScore`, tracks `roundScore` and
- * `clutchClear`, and appends any Genesis / Double-the-Fun dice to `state.dice`.
- * Returns the scoring `result` (for the caller to visualize) and the `spawned`
- * dice (so the caller knows to re-lay its grid).
+ * already been rolled (the caller rolls them via `state.dice.roll(rng, nums)` —
+ * in GameScene that's tied to the tumble animation, in the bot it's a seeded
+ * RNG). Mutates `state`: advances `roll`, banks `score`/`totalScore`, tracks
+ * `roundScore` and `clutchClear`, and grows the grid with any Genesis /
+ * Double-the-Fun dice. Returns the scoring `result` (for the caller to
+ * visualize), `spawnedCount` (how many dice grew in), and the grid indices of
+ * any dice Whetstone `shrunk` (only populated below the bucket threshold, where
+ * individual dice can be flashed). `rng` drives Whetstone; GameScene lets it
+ * default to Math.random.
  */
-export function resolveRoll(state: RunState): { result: RollResult; spawned: Die[] } {
+export function resolveRoll(
+  state: RunState,
+  rng: () => number = Math.random
+): {
+  result: RollResult;
+  spawnedCount: number;
+  spawnedBySource: { genesis: number; brickMold: number };
+  shrunk: number[];
+} {
   const finalRoll = state.roll + 1 >= roundRollTarget(state);
   const scoreBefore = state.score;
-  const result = scoreRoll(state, { finalRoll });
+  // Score from the pool's cached roll aggregate — O(distinct faces) in either
+  // storage mode. Attribution reads the pool's per-source tallies (below).
+  const result = scoreRollHistogram(state, state.dice.agg(), { finalRoll });
+  accumulatePoints(state, result, finalRoll);
   state.roll += 1;
   state.score += result.points;
   state.totalScore += result.points;
 
   // Track the round's peak score (for score-in-a-round unlock criteria).
-  state.roundScore = Math.max(state.roundScore, state.score);
+  if (state.score > state.roundScore) state.roundScore = state.score;
 
   // Last Call unlock: this roll crossed the round's target as its final roll.
-  if (finalRoll && scoreBefore < roundTarget(state.round) && state.score >= roundTarget(state.round)) {
+  const target = survivalTarget(state.round, state.hardMode);
+  if (finalRoll && scoreBefore < target && state.score >= target) {
     state.clutchClear = true;
   }
 
   // Grid-growing passives, applied after scoring so the new copies don't score
-  // the roll they were born on. Built fully before appending, and appended with
-  // a loop rather than `push(...spawned)` — a spread of a very large array (dice
-  // can grow into the hundreds of thousands with Double the Fun) overflows the
-  // call stack.
-  const spawned: Die[] = [];
-  // Double the Fun: every die showing a 6 spawns a copy of itself.
-  if (state.hasDoubleTheFun) {
-    for (const d of state.dice) if (d.value === 6) spawned.push(cloneDie(d));
+  // the roll they were born on. The pool computes these from the cached roll and
+  // grows in place — O(buckets) once bucketed, so Double the Fun doubling into
+  // the millions no longer walks (or reallocates) a giant array.
+  const doubleTheFunCount = state.hasDoubleTheFun
+    ? state.dice.doubleTheFun()
+    : 0;
+  const genesisCount =
+    state.genesis > 0 ? state.dice.genesis(20 * state.genesis) : 0;
+  const brickMoldCount = state.brickMold;
+  if (brickMoldCount > 0) {
+    state.dice.addDice(
+      6,
+      brickMoldCount,
+      {
+        loaded: state.loadedSizes.includes(6),
+        wildFace: state.wildSizes.includes(6),
+      },
+      "brick_mold",
+    );
   }
-  // Genesis: each scoring die spawns a copy, capped at +10 per copy owned.
-  if (state.genesis > 0) {
-    const scored = result.modifiers.find((m) => m.id === 'scoring')?.dice ?? [];
-    const cap = 10 * state.genesis;
-    for (const i of scored.slice(0, cap)) spawned.push(cloneDie(state.dice[i]));
-  }
-  for (const d of spawned) state.dice.push(d);
+  const spawnedCount =
+    doubleTheFunCount + genesisCount + brickMoldCount;
 
-  return { result, spawned };
+  // Whetstone: each copy owned has a 10% chance this roll to shrink one random
+  // die a step. Applied after scoring so it only helps future rolls. Below the
+  // bucket threshold the shrunk grid index comes back so the scene can flash it.
+  const shrunk: number[] = [];
+  for (let c = 0; c < state.whetstone; c++) {
+    if (rng() >= 0.1) continue;
+    const idx = state.dice.whetstoneShrink(rng);
+    if (idx === null) break;
+    if (idx >= 0) shrunk.push(idx);
+  }
+
+  return {
+    result,
+    spawnedCount,
+    spawnedBySource: {
+      genesis: genesisCount,
+      brickMold: brickMoldCount,
+    },
+    shrunk,
+  };
 }
 
 /**
@@ -78,23 +120,39 @@ export function resolveRoll(state: RunState): { result: RollResult; spawned: Die
  * `state.roll >= roundRollTarget(state)`). Returns whether the run won, lost, or
  * advanced. On `advanced` it mutates `state`: increments the round, resets the
  * roll counter and this-round bonus, carries over a fraction of the cleared
- * score (Vault 20% + Reserve 50%/copy, capped at all of it), and runs the
- * round-start passives (Dividend income, Foundry dice). `victory`/`gameOver`
- * leave `state` untouched so the caller can record and present the ending.
+ * score (Vault 33% + Reserve 75%/copy, capped at all of it), and runs the
+ * round-start passives (Foundry dice). `victory`/`gameOver` leave `state`
+ * untouched so the caller can record and present the ending.
  */
 export function resolveRoundEnd(state: RunState): RoundEndOutcome {
-  const target = roundTarget(state.round);
-  if (state.score < target) return { phase: 'gameOver', diceAdded: 0 };
-  if (state.round >= WIN_ROUND) return { phase: 'victory', diceAdded: 0 };
+  const target = survivalTarget(state.round, state.hardMode);
+  const insuranceUsed =
+    state.score < target &&
+    state.hasInsurancePolicy &&
+    state.score * 4n >= target * 3n;
+  if (state.score < target && !insuranceUsed)
+    return { phase: 'gameOver', diceAdded: 0, insuranceUsed: false };
+
+  if (insuranceUsed) {
+    state.hasInsurancePolicy = false;
+    state.ownedUnique = state.ownedUnique.filter(
+      (id) => id !== "insurance_policy",
+    );
+    delete state.purchases.insurance_policy;
+  }
+
+  if (state.round >= WIN_ROUND)
+    return { phase: 'victory', diceAdded: 0, insuranceUsed };
 
   state.round += 1;
   state.roll = 0;
   state.bonusRollsThisRound = 0;
-  // Carry over a fraction of the cleared score: Vault 20% + Reserve 50% per
-  // copy, added together and capped at keeping all of it.
-  const keep = Math.min(1, (state.hasVault ? 0.2 : 0) + 0.5 * state.reserve);
-  state.score = Math.floor(state.score * keep);
+  // Carry over a fraction of the cleared score: Vault 33% + Reserve 75% per
+  // copy, added together and capped at keeping all of it. Expressed in per-mille
+  // so the fraction applies exactly to a bigint score (truncates, like floor).
+  const keepMilli = Math.min(1000, (state.hasVault ? 330 : 0) + 750 * state.reserve);
+  state.score = (state.score * BigInt(keepMilli)) / 1000n;
   const diceAdded = applyRoundStart(state);
   state.roundScore = state.score;
-  return { phase: 'advanced', diceAdded };
+  return { phase: 'advanced', diceAdded, insuranceUsed };
 }

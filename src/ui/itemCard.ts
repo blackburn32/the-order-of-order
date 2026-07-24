@@ -1,7 +1,7 @@
-import Phaser from 'phaser';
-import { CSS, SERIF } from '../art/palette';
-import { newRun } from '../state/RunState';
-import { describeCriterion, ItemDef } from '../systems/Items';
+import Phaser from "phaser";
+import { CSS, SERIF } from "../art/palette";
+import { newRun } from "../state/RunState";
+import { describeCriterion, ItemDef } from "../systems/Items";
 
 export interface ItemCardOptions {
   locked: boolean;
@@ -15,13 +15,12 @@ export interface ItemCardOptions {
 const RARITY_Y = -148;
 const NAME_Y = -110;
 const DESC_Y = -10;
-const COST_Y = 128;
 const CAPTION_Y = 190;
 
-const RARITY_COLOR: Record<ItemDef['rarity'], string> = {
+const RARITY_COLOR: Record<ItemDef["rarity"], string> = {
   common: CSS.rarityCommon,
   uncommon: CSS.rarityUncommon,
-  rare: CSS.rarityRare
+  rare: CSS.rarityRare,
 };
 
 /**
@@ -34,53 +33,43 @@ const RARITY_COLOR: Record<ItemDef['rarity'], string> = {
 export function buildItemCard(
   scene: Phaser.Scene,
   def: ItemDef,
-  opts: ItemCardOptions
+  opts: ItemCardOptions,
 ): Phaser.GameObjects.Container {
-  const img = scene.add.image(0, 0, 'card');
+  const img = scene.add.image(0, 0, "card");
 
-  const rarityText = opts.locked ? '???' : def.rarity.toUpperCase();
+  const rarityText = opts.locked ? "???" : def.rarity.toUpperCase();
   const rarity = scene.add
     .text(0, RARITY_Y, rarityText, {
       fontFamily: SERIF,
-      fontSize: '13px',
+      fontSize: "13px",
       color: opts.locked ? CSS.dim : RARITY_COLOR[def.rarity],
-      fontStyle: 'bold'
+      fontStyle: "bold",
     })
     .setOrigin(0.5);
 
   const name = scene.add
-    .text(0, NAME_Y, opts.locked ? '???' : def.name, {
+    .text(0, NAME_Y, opts.locked ? "???" : def.name, {
       fontFamily: SERIF,
-      fontSize: '26px',
+      fontSize: "26px",
       color: CSS.ink,
-      fontStyle: 'bold',
-      align: 'center',
-      wordWrap: { width: 220 }
+      fontStyle: "bold",
+      align: "center",
+      wordWrap: { width: 220 },
     })
     .setOrigin(0.5);
 
   const descText = opts.locked
-    ? '???'
-    : typeof def.desc === 'function'
+    ? "???"
+    : typeof def.desc === "function"
       ? def.desc(newRun())
       : def.desc;
   const desc = scene.add
     .text(0, DESC_Y, descText, {
       fontFamily: SERIF,
-      fontSize: '19px',
+      fontSize: "19px",
       color: CSS.inkSoft,
-      align: 'center',
-      wordWrap: { width: 214 }
-    })
-    .setOrigin(0.5);
-
-  const costLabel = def.cost === 0 ? 'Free' : `${def.cost} point${def.cost > 1 ? 's' : ''}`;
-  const cost = scene.add
-    .text(0, COST_Y, opts.locked ? '???' : costLabel, {
-      fontFamily: SERIF,
-      fontSize: '24px',
-      color: opts.locked ? CSS.dim : CSS.gold,
-      fontStyle: 'bold'
+      align: "center",
+      wordWrap: { width: 214 },
     })
     .setOrigin(0.5);
 
@@ -91,22 +80,22 @@ export function buildItemCard(
   const captionText = opts.locked
     ? def.unlock
       ? describeCriterion(def.unlock)
-      : 'Locked'
-    : `Selected ${opts.count ?? 0} time${opts.count === 1 ? '' : 's'}`;
+      : "Locked"
+    : `Selected ${opts.count ?? 0} time${opts.count === 1 ? "" : "s"}`;
   const caption = showCaption
     ? scene.add
         .text(0, CAPTION_Y, captionText, {
           fontFamily: SERIF,
-          fontSize: '18px',
+          fontSize: "18px",
           color: opts.locked ? CSS.inkSoft : CSS.ink,
-          fontStyle: opts.locked ? 'italic' : 'bold',
-          align: 'center',
-          wordWrap: { width: 240 }
+          fontStyle: opts.locked ? "italic" : "bold",
+          align: "center",
+          wordWrap: { width: 240 },
         })
         .setOrigin(0.5)
     : undefined;
 
-  const children = [img, rarity, name, desc, cost, ...(caption ? [caption] : [])];
+  const children = [img, rarity, name, desc, ...(caption ? [caption] : [])];
   const card = scene.add.container(0, 0, children);
   card.setSize(img.width, img.height);
   if (opts.locked) card.setAlpha(0.5);

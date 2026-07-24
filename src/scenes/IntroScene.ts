@@ -19,7 +19,8 @@ const PAGES: Page[] = [
   {
     title: 'A Gathering Chaos',
     blurb:
-      'Across the realm, order frays. Numbers fall as they please, and the wild churn of chance brings great peril to every living thing.'
+      'Across the realm, order frays. Numbers fall as they please, and the wild churn of chance brings great peril to every living thing.',
+    image: 'intro-volcano',
   },
   {
     title: 'The Brave Monks',
@@ -32,6 +33,12 @@ const PAGES: Page[] = [
     blurb:
       'The artifact is a set of dice — and rolled with discipline, they can bind the chaos and restore the world’s order. The rite is yours to perform.',
     image: 'intro-dice-twirl'
+  },
+  {
+    title: 'The Race is On',
+    blurb:
+      'Humble monk, take up the dice and roll the sacred numbers. The Order of Order is depending on you to bring balance back to the realm before it\'s too late!',
+    image: 'intro-dice-earth'
   }
 ];
 

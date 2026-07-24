@@ -1,17 +1,28 @@
-import Phaser from 'phaser';
-import { CSS, SERIF, COLORS } from '../art/palette';
-import { getRun, RunState } from '../state/RunState';
-import { canLoad, canShrink, Die } from '../systems/Dice';
-import { applyOffer, canAfford, rollShopOffers, ShopOffer } from '../systems/Shop';
-import { recordSelection } from '../systems/SaveData';
-import { completeTutorial, getTutorial, TutorialStage } from '../systems/Tutorial';
-import { audio } from '../systems/Audio';
-import { DieSprite } from '../ui/DieSprite';
-import { addFelt, addPanel, bannerButton } from '../ui/widgets';
-import { showCallout, CalloutHandle } from '../ui/Callout';
-import { computeGridPositions, GridArea } from '../ui/gridLayout';
-import { onResizeCoalesced } from '../ui/layout';
-import { WINDOW_THRESHOLD } from '../ui/windowedGrid';
+import Phaser from "phaser";
+import { CSS, SERIF, COLORS } from "../art/palette";
+import { getRun, RunState } from "../state/RunState";
+import { canLoad, canShrink, Die } from "../systems/Dice";
+import {
+  applyCouponFreebie,
+  applyOffer,
+  canAfford,
+  rollShopOffers,
+  ShopOffer,
+} from "../systems/Shop";
+import { recordSelection } from "../systems/SaveData";
+import {
+  completeTutorial,
+  getTutorial,
+  TutorialStage,
+} from "../systems/Tutorial";
+import { audio } from "../systems/Audio";
+import { DieSprite } from "../ui/DieSprite";
+import { formatScore } from "../ui/formatScore";
+import { addFelt, addPanel, bannerButton } from "../ui/widgets";
+import { showCallout, CalloutHandle } from "../ui/Callout";
+import { computeGridPositions, GridArea } from "../ui/gridLayout";
+import { onResizeCoalesced } from "../ui/layout";
+import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
 
 const CARD_W = 260;
 const CARD_H = 340;
@@ -19,7 +30,13 @@ const CARD_GAP = 26;
 const DRAG_THRESHOLD = 8; // px of pointer movement before a press counts as a scroll, not a tap
 
 type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
-type WheelHandler = (pointer: Phaser.Input.Pointer, currentlyOver: unknown, dx: number, dy: number, dz: number) => void;
+type WheelHandler = (
+  pointer: Phaser.Input.Pointer,
+  currentlyOver: unknown,
+  dx: number,
+  dy: number,
+  dz: number,
+) => void;
 
 export class ShopScene extends Phaser.Scene {
   private state!: RunState;
@@ -33,19 +50,28 @@ export class ShopScene extends Phaser.Scene {
   private track?: Phaser.GameObjects.Container;
   private carouselCamera?: Phaser.Cameras.Scene2D.Camera;
   private dragDistance = 0;
-  private carouselInput?: { down: PointerHandler; move: PointerHandler; up: PointerHandler; wheel: WheelHandler };
+  private carouselInput?: {
+    down: PointerHandler;
+    move: PointerHandler;
+    up: PointerHandler;
+    wheel: WheelHandler;
+  };
   private pickedIndices: number[] = []; // dice chosen so far for a multi-target offer (Grindstone)
   // Screen rect of the card row and the live tutorial callout (first-game only).
   private cardBand?: Phaser.Geom.Rectangle;
   private tutorialCallout?: CalloutHandle;
+  private purchasesMade = 0;
+  private storeRerolled = false;
 
   constructor() {
-    super('Shop');
+    super("Shop");
   }
 
   create(): void {
     this.state = getRun(this.registry);
-    this.offers = rollShopOffers(this.state, this.state.ownedLedger ? 4 : 3);
+    this.purchasesMade = 0;
+    this.storeRerolled = false;
+    this.offers = rollShopOffers(this.state, this.state.ownedLedger ? 5 : 3);
     // The scene instance is reused across restarts, but Phaser destroys all
     // non-main cameras on shutdown — this field would otherwise dangle.
     this.carouselCamera = undefined;
@@ -61,7 +87,7 @@ export class ShopScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       off();
       this.teardownCarouselInput();
-      this.input.setDefaultCursor('default');
+      this.input.setDefaultCursor("default");
     });
   }
 
@@ -84,8 +110,8 @@ export class ShopScene extends Phaser.Scene {
     if (!t.active || t.stage !== TutorialStage.Shop || !this.cardBand) return;
     this.tutorialCallout = showCallout(this, {
       anchor: this.cardBand,
-      text: 'Choose an item to add a new mechanic. Items are needed to win — but each one costs points this round, so spend carefully.',
-      interactiveAnchor: true
+      text: "Choose an item to add a new mechanic. Items are needed to win — but each one costs points this round, so spend carefully.",
+      interactiveAnchor: true,
     });
     // The carousel camera renders only `track`; keep the callout off it.
     this.carouselCamera?.ignore(this.tutorialCallout.objects);
@@ -93,11 +119,11 @@ export class ShopScene extends Phaser.Scene {
 
   private teardownCarouselInput(): void {
     if (this.carouselInput) {
-      this.input.off('pointerdown', this.carouselInput.down);
-      this.input.off('pointermove', this.carouselInput.move);
-      this.input.off('pointerup', this.carouselInput.up);
-      this.input.off('pointerupoutside', this.carouselInput.up);
-      this.input.off('wheel', this.carouselInput.wheel);
+      this.input.off("pointerdown", this.carouselInput.down);
+      this.input.off("pointermove", this.carouselInput.move);
+      this.input.off("pointerup", this.carouselInput.up);
+      this.input.off("pointerupoutside", this.carouselInput.up);
+      this.input.off("wheel", this.carouselInput.wheel);
       this.carouselInput = undefined;
     }
   }
@@ -129,18 +155,22 @@ export class ShopScene extends Phaser.Scene {
     // Laid out sequentially from the top so nothing overlaps regardless of
     // aspect ratio — a fixed fraction-of-panelH per element can collide once
     // the panel gets tall and narrow (portrait) instead of short and wide.
-    const titleSize = Math.round(Phaser.Math.Clamp(Math.min(panelW * 0.075, panelH * 0.07), 20, 40));
-    const subtitleSize = Math.round(Phaser.Math.Clamp(Math.min(panelW * 0.032, panelH * 0.033), 13, 19));
+    const titleSize = Math.round(
+      Phaser.Math.Clamp(Math.min(panelW * 0.075, panelH * 0.07), 20, 40),
+    );
+    const subtitleSize = Math.round(
+      Phaser.Math.Clamp(Math.min(panelW * 0.032, panelH * 0.033), 13, 19),
+    );
 
     let cursorY = panelTop + Math.max(30, panelH * 0.09);
     const title = this.add
-      .text(W / 2, cursorY, 'The Shop of the Order', {
+      .text(W / 2, cursorY, "The Shop of the Order", {
         fontFamily: SERIF,
         fontSize: `${titleSize}px`,
         color: CSS.ink,
-        fontStyle: 'bold',
-        align: 'center',
-        wordWrap: { width: panelW * 0.92 }
+        fontStyle: "bold",
+        align: "center",
+        wordWrap: { width: panelW * 0.92 },
       })
       .setOrigin(0.5);
     items.push(title);
@@ -150,15 +180,15 @@ export class ShopScene extends Phaser.Scene {
       .text(
         W / 2,
         cursorY,
-        `Your score: ${this.state.score} point${this.state.score === 1 ? '' : 's'} — choose one offering`,
+        `Your score: ${formatScore(this.state.score)} point${this.state.score === 1n ? "" : "s"} — choose ${this.remainingPurchases()} offering${this.remainingPurchases() === 1 ? "" : "s"}`,
         {
           fontFamily: SERIF,
           fontSize: `${subtitleSize}px`,
           color: CSS.inkSoft,
-          fontStyle: 'italic',
-          align: 'center',
-          wordWrap: { width: panelW * 0.92 }
-        }
+          fontStyle: "italic",
+          align: "center",
+          wordWrap: { width: panelW * 0.92 },
+        },
       )
       .setOrigin(0.5);
     items.push(subtitle);
@@ -167,22 +197,39 @@ export class ShopScene extends Phaser.Scene {
     // A quick affordance to review what you've already bought this run, opened
     // as an overlay so the shop stays put underneath.
     const invLink = this.add
-      .text(W / 2, cursorY, 'View Inventory', {
+      .text(W / 2, cursorY, "View Inventory", {
         fontFamily: SERIF,
         fontSize: `${subtitleSize}px`,
         color: CSS.gold,
-        fontStyle: 'bold'
+        fontStyle: "bold",
       })
       .setOrigin(0.5, 0)
       .setInteractive({ useHandCursor: true });
-    invLink.on('pointerover', () => invLink.setColor(CSS.goldLight));
-    invLink.on('pointerout', () => invLink.setColor(CSS.gold));
-    invLink.on('pointerdown', () => {
+    invLink.on("pointerover", () => invLink.setColor(CSS.goldLight));
+    invLink.on("pointerout", () => invLink.setColor(CSS.gold));
+    invLink.on("pointerdown", () => {
       audio.click();
-      this.scene.launch('Inventory', { returnTo: 'Shop' });
+      this.scene.launch("Inventory", { returnTo: "Shop" });
     });
     items.push(invLink);
     cursorY += invLink.height + 18;
+
+    if (this.state.hasDealersBell && !this.storeRerolled) {
+      const bell = this.add
+        .text(W / 2, cursorY, "Ring Dealer's Bell — Reroll Store", {
+          fontFamily: SERIF,
+          fontSize: `${subtitleSize}px`,
+          color: CSS.gold,
+          fontStyle: "bold",
+        })
+        .setOrigin(0.5, 0)
+        .setInteractive({ useHandCursor: true });
+      bell.on("pointerover", () => bell.setColor(CSS.goldLight));
+      bell.on("pointerout", () => bell.setColor(CSS.gold));
+      bell.on("pointerdown", () => this.rerollStore());
+      items.push(bell);
+      cursorY += bell.height + 14;
+    }
 
     const buttonH = 70;
     const bottomPad = 26;
@@ -198,12 +245,40 @@ export class ShopScene extends Phaser.Scene {
 
     // Screen rect of the card area, for anchoring the tutorial callout's open
     // "hole".
-    this.cardBand = new Phaser.Geom.Rectangle(W / 2 - availW / 2, areaTop, availW, availH);
+    this.cardBand = new Phaser.Geom.Rectangle(
+      W / 2 - availW / 2,
+      areaTop,
+      availW,
+      availH,
+    );
 
     const grid = this.buildCardGrid(W, areaTop, availW, availH);
     items.push(...grid.decor);
 
-    items.push(bannerButton(this, W / 2, buttonY, 'Decline the Offerings', () => this.exit()));
+    const footerGap = Math.max(10, Math.min(20, panelW * 0.02));
+    const footerButtonMaxW = (panelW * 0.92 - footerGap) / 2;
+    const codex = bannerButton(
+      this,
+      W / 2,
+      buttonY,
+      "Codex",
+      () => this.scene.launch("Items", { returnTo: "Shop" }),
+      footerButtonMaxW,
+    );
+    const decline = bannerButton(
+      this,
+      W / 2,
+      buttonY,
+      "Decline the Offerings",
+      () => this.exit(),
+      footerButtonMaxW,
+    );
+    const footerButtonImage = codex.getAt(0) as Phaser.GameObjects.Image;
+    const footerButtonW = footerButtonImage.width * codex.scaleX;
+    const footerDx = footerButtonW / 2 + footerGap / 2;
+    codex.setX(W / 2 - footerDx);
+    decline.setX(W / 2 + footerDx);
+    items.push(codex, decline);
 
     this.cardGroup = this.add.container(0, 0, items);
   }
@@ -220,7 +295,7 @@ export class ShopScene extends Phaser.Scene {
     W: number,
     areaTop: number,
     availW: number,
-    availH: number
+    availH: number,
   ): { decor: Phaser.GameObjects.GameObject[] } {
     const n = this.offers.length;
 
@@ -257,11 +332,24 @@ export class ShopScene extends Phaser.Scene {
       const col = idx % cols;
       const inRow = row === rows - 1 ? n - (rows - 1) * cols : cols;
       const rowW = inRow * cw + (inRow - 1) * gap;
-      return { x: cx - rowW / 2 + col * (cw + gap) + cw / 2, y: row * (ch + gap) + ch / 2 };
+      return {
+        x: cx - rowW / 2 + col * (cw + gap) + cw / 2,
+        y: row * (ch + gap) + ch / 2,
+      };
     };
 
     if (needsScroll) {
-      return { decor: this.buildScrollingGrid(W, areaTop, availW, availH, scale, gridH, posFor) };
+      return {
+        decor: this.buildScrollingGrid(
+          W,
+          areaTop,
+          availW,
+          availH,
+          scale,
+          gridH,
+          posFor,
+        ),
+      };
     }
 
     // Everything fits: place cards centered in the area on the main camera, and
@@ -291,7 +379,7 @@ export class ShopScene extends Phaser.Scene {
     availH: number,
     scale: number,
     gridH: number,
-    posFor: (idx: number) => { x: number; y: number }
+    posFor: (idx: number) => { x: number; y: number },
   ): Phaser.GameObjects.GameObject[] {
     const viewportX = W / 2 - availW / 2;
     const overflow = Math.max(0, gridH - availH);
@@ -319,9 +407,23 @@ export class ShopScene extends Phaser.Scene {
     let pan = 0;
 
     const barX = viewportX + availW - 8;
-    const barTrack = this.add.rectangle(barX, areaTop + availH / 2, 5, availH, COLORS.inkSoft, 0.4);
+    const barTrack = this.add.rectangle(
+      barX,
+      areaTop + availH / 2,
+      5,
+      availH,
+      COLORS.inkSoft,
+      0.4,
+    );
     const thumbH = Math.max(30, (availH * availH) / gridH);
-    const thumb = this.add.rectangle(barX, areaTop + thumbH / 2, 5, thumbH, COLORS.gold, 0.9);
+    const thumb = this.add.rectangle(
+      barX,
+      areaTop + thumbH / 2,
+      5,
+      thumbH,
+      COLORS.gold,
+      0.9,
+    );
     const updateThumb = () => {
       const progress = overflow > 0 ? pan / overflow : 0;
       thumb.y = areaTop + thumbH / 2 + progress * (availH - thumbH);
@@ -333,7 +435,10 @@ export class ShopScene extends Phaser.Scene {
     };
 
     const inBounds = (p: Phaser.Input.Pointer) =>
-      p.x >= viewportX && p.x <= viewportX + availW && p.y >= areaTop && p.y <= areaTop + availH;
+      p.x >= viewportX &&
+      p.x <= viewportX + availW &&
+      p.y >= areaTop &&
+      p.y <= areaTop + availH;
 
     let dragging = false;
     let startPointerY = 0;
@@ -348,7 +453,7 @@ export class ShopScene extends Phaser.Scene {
     };
     const onMove: PointerHandler = (p) => {
       if (!dragging) {
-        this.input.setDefaultCursor(inBounds(p) ? 'grab' : 'default');
+        this.input.setDefaultCursor(inBounds(p) ? "grab" : "default");
         return;
       }
       const dy = p.y - startPointerY;
@@ -366,54 +471,71 @@ export class ShopScene extends Phaser.Scene {
       apply();
     };
 
-    this.input.on('pointerdown', onDown);
-    this.input.on('pointermove', onMove);
-    this.input.on('pointerup', onUp);
-    this.input.on('pointerupoutside', onUp);
-    this.input.on('wheel', onWheel);
-    this.carouselInput = { down: onDown, move: onMove, up: onUp, wheel: onWheel };
+    this.input.on("pointerdown", onDown);
+    this.input.on("pointermove", onMove);
+    this.input.on("pointerup", onUp);
+    this.input.on("pointerupoutside", onUp);
+    this.input.on("wheel", onWheel);
+    this.carouselInput = {
+      down: onDown,
+      move: onMove,
+      up: onUp,
+      wheel: onWheel,
+    };
 
     return [barTrack, thumb];
   }
 
-  private buildCard(x: number, y: number, offer: ShopOffer): Phaser.GameObjects.Container {
+  private buildCard(
+    x: number,
+    y: number,
+    offer: ShopOffer,
+  ): Phaser.GameObjects.Container {
     const affordable = canAfford(this.state, offer);
-    const img = this.add.image(0, 0, 'card');
-    const rarityColor = { common: CSS.rarityCommon, uncommon: CSS.rarityUncommon, rare: CSS.rarityRare }[offer.rarity];
+    const img = this.add.image(0, 0, "card");
+    const rarityColor = {
+      common: CSS.rarityCommon,
+      uncommon: CSS.rarityUncommon,
+      rare: CSS.rarityRare,
+    }[offer.rarity];
     const rarityLabel = this.add
       .text(0, -148, offer.rarity.toUpperCase(), {
         fontFamily: SERIF,
-        fontSize: '13px',
+        fontSize: "13px",
         color: rarityColor,
-        fontStyle: 'bold'
+        fontStyle: "bold",
       })
       .setOrigin(0.5);
     const name = this.add
       .text(0, -110, offer.name, {
         fontFamily: SERIF,
-        fontSize: '26px',
+        fontSize: "26px",
         color: CSS.ink,
-        fontStyle: 'bold',
-        align: 'center',
-        wordWrap: { width: 220 }
+        fontStyle: "bold",
+        align: "center",
+        wordWrap: { width: 220 },
       })
       .setOrigin(0.5);
     const desc = this.add
       .text(0, -10, offer.desc, {
         fontFamily: SERIF,
-        fontSize: '19px',
+        fontSize: "19px",
         color: CSS.inkSoft,
-        align: 'center',
-        wordWrap: { width: 214 }
+        align: "center",
+        wordWrap: { width: 214 },
       })
       .setOrigin(0.5);
-    const costLabel = offer.cost === 0 ? 'Free' : `${offer.cost} point${offer.cost > 1 ? 's' : ''}`;
+    const costLabel = offer.freeByCoupon
+      ? "Coupon Book: Free"
+      : offer.cost === 0n
+        ? "Free"
+        : `${formatScore(offer.cost)} point${offer.cost > 1n ? "s" : ""}`;
     const cost = this.add
       .text(0, 128, costLabel, {
         fontFamily: SERIF,
-        fontSize: '24px',
+        fontSize: "24px",
         color: affordable ? CSS.gold : CSS.red,
-        fontStyle: 'bold'
+        fontStyle: "bold",
       })
       .setOrigin(0.5);
 
@@ -422,10 +544,10 @@ export class ShopScene extends Phaser.Scene {
 
     if (affordable) {
       card.setInteractive({ useHandCursor: true });
-      card.on('pointerover', () => img.setTint(0xfff2c8));
-      card.on('pointerout', () => img.clearTint());
+      card.on("pointerover", () => img.setTint(0xfff2c8));
+      card.on("pointerout", () => img.clearTint());
       // Buy on release, not press, and only if this wasn't a carousel drag/swipe.
-      card.on('pointerup', () => {
+      card.on("pointerup", () => {
         if (this.dragDistance < DRAG_THRESHOLD) this.choose(offer);
       });
     } else {
@@ -448,9 +570,7 @@ export class ShopScene extends Phaser.Scene {
       return;
     }
     if (applyOffer(this.state, offer)) {
-      recordSelection(offer.id);
-      audio.buy();
-      this.exit();
+      this.completePurchase(offer);
     } else {
       audio.deny();
     }
@@ -459,11 +579,13 @@ export class ShopScene extends Phaser.Scene {
   /** Which dice a given offer may target. */
   private eligibleFor(offer: ShopOffer, die: Die): boolean {
     switch (offer.id) {
-      case 'shrink':
-      case 'grindstone':
+      case "shrink":
+      case "grindstone":
         return canShrink(die);
-      case 'loaded_die':
+      case "loaded_die":
         return canLoad(die);
+      case "royal_seal":
+        return !this.state.royalSealSizes.includes(die.sides);
       default: // twin, wild_face
         return true;
     }
@@ -474,16 +596,20 @@ export class ShopScene extends Phaser.Scene {
       return `Choose die ${this.pickedIndices.length + 1} of ${offer.targetCount} to shrink`;
     }
     switch (offer.id) {
-      case 'shrink':
-        return 'Choose a die to shrink';
-      case 'twin':
-        return 'Choose a die to duplicate';
-      case 'loaded_die':
-        return 'Choose a die to load';
-      case 'wild_face':
-        return 'Choose a die to make wild';
+      case "shrink":
+        return "Choose a die to shrink";
+      case "grindstone":
+        return "Choose a die — its whole size shrinks";
+      case "twin":
+        return "Choose a die — its whole size is duplicated";
+      case "loaded_die":
+        return "Choose a die — its whole size is loaded";
+      case "wild_face":
+        return "Choose a die — its whole size turns wild";
+      case "royal_seal":
+        return "Choose a die — its size receives the Royal Seal";
       default:
-        return 'Choose a die';
+        return "Choose a die";
     }
   }
 
@@ -509,48 +635,70 @@ export class ShopScene extends Phaser.Scene {
       this.add
         .text(W / 2, H * 0.12, this.promptFor(offer), {
           fontFamily: SERIF,
-          fontSize: '34px',
+          fontSize: "34px",
           color: CSS.ink,
-          fontStyle: 'bold'
+          fontStyle: "bold",
         })
-        .setOrigin(0.5)
+        .setOrigin(0.5),
     );
 
     const area = { x: W * 0.08, y: H * 0.2, width: W * 0.84, height: H * 0.58 };
     const grouped = this.state.dice.length > WINDOW_THRESHOLD;
-    items.push(...(grouped ? this.buildGroupedPicker(offer, area) : this.buildIndividualPicker(offer, area)));
+    items.push(
+      ...(grouped
+        ? this.buildGroupedPicker(offer, area)
+        : this.buildIndividualPicker(offer, area)),
+    );
 
     items.push(
-      bannerButton(this, W / 2, H - Math.min(75, H * 0.1), 'Back to the Offerings', () => {
-        this.pickGroup?.destroy();
-        this.pickGroup = undefined;
-        this.cardGroup.setVisible(true);
-        this.track?.setVisible(true);
-        if (this.carouselCamera) this.carouselCamera.visible = true;
-      })
+      bannerButton(
+        this,
+        W / 2,
+        H - Math.min(75, H * 0.1),
+        "Back to the Offerings",
+        () => {
+          this.pickGroup?.destroy();
+          this.pickGroup = undefined;
+          this.cardGroup.setVisible(true);
+          this.track?.setVisible(true);
+          if (this.carouselCamera) this.carouselCamera.visible = true;
+        },
+      ),
     );
 
     this.pickGroup = this.add.container(0, 0, items);
   }
 
-  private buildIndividualPicker(offer: ShopOffer, area: GridArea): Phaser.GameObjects.GameObject[] {
+  private buildIndividualPicker(
+    offer: ShopOffer,
+    area: GridArea,
+  ): Phaser.GameObjects.GameObject[] {
     const items: Phaser.GameObjects.GameObject[] = [];
     const visible = this.state.dice
       .map((die, i) => ({ die, i }))
       .filter(({ i }) => !this.pickedIndices.includes(i));
-    const { scale, positions } = computeGridPositions(visible.length, area, 112);
+    const { scale, positions } = computeGridPositions(
+      visible.length,
+      area,
+      112,
+    );
 
     visible.forEach(({ die, i }, pos) => {
-      const sprite = new DieSprite(this, positions[pos].x, positions[pos].y, die);
+      const sprite = new DieSprite(
+        this,
+        positions[pos].x,
+        positions[pos].y,
+        die,
+      );
       sprite.setScale(scale);
       sprite.showFace(null);
 
       if (this.eligibleFor(offer, die)) {
         sprite.setSize(104, 104);
         sprite.setInteractive({ useHandCursor: true });
-        sprite.on('pointerover', () => sprite.setScale(scale * 1.12));
-        sprite.on('pointerout', () => sprite.setScale(scale));
-        sprite.on('pointerdown', () => this.onPick(offer, i));
+        sprite.on("pointerover", () => sprite.setScale(scale * 1.12));
+        sprite.on("pointerout", () => sprite.setScale(scale));
+        sprite.on("pointerdown", () => this.onPick(offer, i));
       } else {
         sprite.setAlpha(0.35);
       }
@@ -564,30 +712,23 @@ export class ShopScene extends Phaser.Scene {
    *  group homogeneous w.r.t. `eligibleFor`, so a group's single representative
    *  always reflects the whole group's eligibility. Picking one targets the
    *  first matching die. */
-  private buildGroupedPicker(offer: ShopOffer, area: GridArea): Phaser.GameObjects.GameObject[] {
-    interface Group {
-      count: number;
-      firstIndex: number;
-    }
-    const groups = new Map<string, Group>();
-    this.state.dice.forEach((die, i) => {
-      if (this.pickedIndices.includes(i)) return;
-      const key = `${die.sides}-${die.maxFaceBonus}-${die.loaded}-${die.wildFace}`;
-      const g = groups.get(key);
-      if (g) {
-        g.count += 1;
-      } else {
-        groups.set(key, { count: 1, firstIndex: i });
-      }
-    });
-
-    const entries = [...groups.values()].sort((a, b) => this.state.dice[b.firstIndex].sides - this.state.dice[a.firstIndex].sides);
-    const { scale, positions } = computeGridPositions(entries.length, area, 112);
+  private buildGroupedPicker(
+    offer: ShopOffer,
+    area: GridArea,
+  ): Phaser.GameObjects.GameObject[] {
+    const entries = this.state.dice
+      .groups(this.pickedIndices)
+      .sort((a, b) => b.die.sides - a.die.sides);
+    const { scale, positions } = computeGridPositions(
+      entries.length,
+      area,
+      112,
+    );
 
     const items: Phaser.GameObjects.GameObject[] = [];
     entries.forEach((group, i) => {
       const { x, y } = positions[i];
-      const die = this.state.dice[group.firstIndex];
+      const die = group.die;
       const sprite = new DieSprite(this, x, y, die);
       sprite.setScale(scale);
       sprite.showFace(null);
@@ -597,19 +738,19 @@ export class ShopScene extends Phaser.Scene {
         this.add
           .text(x, y + 50 * scale, `×${group.count}`, {
             fontFamily: SERIF,
-            fontSize: '15px',
+            fontSize: "15px",
             color: CSS.goldLight,
-            fontStyle: 'bold'
+            fontStyle: "bold",
           })
-          .setOrigin(0.5)
+          .setOrigin(0.5),
       );
 
       if (this.eligibleFor(offer, die)) {
         sprite.setSize(104, 104);
         sprite.setInteractive({ useHandCursor: true });
-        sprite.on('pointerover', () => sprite.setScale(scale * 1.12));
-        sprite.on('pointerout', () => sprite.setScale(scale));
-        sprite.on('pointerdown', () => this.onPick(offer, group.firstIndex));
+        sprite.on("pointerover", () => sprite.setScale(scale * 1.12));
+        sprite.on("pointerout", () => sprite.setScale(scale));
+        sprite.on("pointerdown", () => this.onPick(offer, group.firstIndex));
       } else {
         sprite.setAlpha(0.35);
       }
@@ -625,24 +766,68 @@ export class ShopScene extends Phaser.Scene {
         return;
       }
       if (applyOffer(this.state, offer, undefined, this.pickedIndices)) {
-        recordSelection(offer.id);
-        audio.buy();
-        this.exit();
+        this.completePurchase(offer);
       } else {
         audio.deny();
       }
       return;
     }
     if (applyOffer(this.state, offer, index)) {
-      recordSelection(offer.id);
-      audio.buy();
-      this.exit();
+      this.completePurchase(offer);
     } else {
       audio.deny();
     }
   }
 
+  private purchaseLimit(): number {
+    return this.state.hasShoppingCart ? 2 : 1;
+  }
+
+  private remainingPurchases(): number {
+    return Math.max(0, this.purchaseLimit() - this.purchasesMade);
+  }
+
+  private completePurchase(offer: ShopOffer): void {
+    recordSelection(offer.id);
+    audio.buy();
+    this.purchasesMade += 1;
+    this.offers = this.offers.filter((candidate) => candidate !== offer);
+
+    // These two items affect the remainder of the visit in which they are
+    // purchased: Coupon Book makes one remaining card free, and Shopping Cart
+    // immediately grants the second purchase.
+    if (offer.id === "coupon_book")
+      applyCouponFreebie(this.state, this.offers);
+
+    if (this.remainingPurchases() > 0 && this.offers.length > 0) {
+      this.rebuildShop();
+      return;
+    }
+    this.exit();
+  }
+
+  private rerollStore(): void {
+    if (!this.state.hasDealersBell || this.storeRerolled) return;
+    this.storeRerolled = true;
+    audio.click();
+    this.offers = rollShopOffers(
+      this.state,
+      this.state.ownedLedger ? 5 : 3,
+    );
+    this.rebuildShop();
+  }
+
+  private rebuildShop(): void {
+    this.tutorialCallout?.destroy();
+    this.tutorialCallout = undefined;
+    this.pickGroup = undefined;
+    this.track = undefined;
+    this.teardownCarouselInput();
+    this.children.removeAll(true);
+    this.build();
+  }
+
   private exit(): void {
-    this.scene.start('Game');
+    this.scene.start("Game");
   }
 }

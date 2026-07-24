@@ -6,11 +6,17 @@ import { addFelt, addPanel, bannerButton } from '../ui/widgets';
 import { buildItemCard } from '../ui/itemCard';
 import { onResizeCoalesced } from '../ui/layout';
 
+export interface ItemsData {
+  /** Active scene to reveal when an in-game Codex overlay closes. */
+  returnTo?: string;
+}
+
 // Native card box plus caption room below — used for grid spacing/scaling.
 const CARD_W = 260;
 const CARD_H = 420;
 const COL_GAP = 24;
 const ROW_GAP = 24;
+const RARITY_ORDER = { common: 0, uncommon: 1, rare: 2 } as const;
 
 type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
 type WheelHandler = (pointer: Phaser.Input.Pointer, over: unknown, dx: number, dy: number, dz: number) => void;
@@ -23,6 +29,9 @@ type WheelHandler = (pointer: Phaser.Input.Pointer, over: unknown, dx: number, d
  * approach ShopScene uses) and scrolls vertically by drag/wheel.
  */
 export class ItemsScene extends Phaser.Scene {
+  private returnTo = 'Menu';
+  private openedAsOverlay = false;
+  private returnInputWasEnabled = true;
   private gridCamera?: Phaser.Cameras.Scene2D.Camera;
   private input$?: { down: PointerHandler; move: PointerHandler; up: PointerHandler; wheel: WheelHandler };
 
@@ -30,7 +39,21 @@ export class ItemsScene extends Phaser.Scene {
     super('Items');
   }
 
+  init(data: ItemsData): void {
+    this.returnTo = data?.returnTo ?? 'Menu';
+  }
+
   create(): void {
+    this.openedAsOverlay = this.scene.isActive(this.returnTo);
+    if (this.openedAsOverlay) {
+      const base = this.scene.get(this.returnTo);
+      this.returnInputWasEnabled = base.input.enabled;
+      base.input.enabled = false;
+      // Inventory is registered after Items in the scene list, so a plain
+      // launch would otherwise leave this overlay rendering behind it.
+      this.scene.bringToTop();
+    }
+
     this.gridCamera = undefined;
     this.build();
 
@@ -43,6 +66,10 @@ export class ItemsScene extends Phaser.Scene {
       off();
       this.teardownInput();
       this.input.setDefaultCursor('default');
+      if (this.openedAsOverlay) {
+        const base = this.scene.get(this.returnTo);
+        base.input.enabled = this.returnInputWasEnabled;
+      }
     });
   }
 
@@ -92,7 +119,13 @@ export class ItemsScene extends Phaser.Scene {
 
     const buttonH = 70;
     const backY = panelBottom - 24 - buttonH / 2;
-    const back = bannerButton(this, cx, backY, 'Return to the Vestibule', () => this.scene.start('Menu'));
+    const back = bannerButton(
+      this,
+      cx,
+      backY,
+      this.openedAsOverlay ? 'Close Codex' : 'Return to the Vestibule',
+      () => this.close()
+    );
 
     // Grid area sits between the subtitle and the back button, inset in the panel.
     const gridTop = subtitle.y + subtitle.height / 2 + 20;
@@ -107,12 +140,23 @@ export class ItemsScene extends Phaser.Scene {
     this.buildGallery(grid, unlocked, [felt, panel, title, subtitle, back]);
   }
 
+  private close(): void {
+    if (this.openedAsOverlay) this.scene.stop();
+    else this.scene.start(this.returnTo);
+  }
+
   private buildGallery(
     grid: { x: number; y: number; width: number; height: number },
     unlocked: Set<string>,
     ignoredByGridCamera: Phaser.GameObjects.GameObject[]
   ): void {
-    const n = ITEMS.length;
+    const isLocked = (def: (typeof ITEMS)[number]) => !!def.unlock && !unlocked.has(def.id);
+    const codexItems = [...ITEMS].sort((a, b) => {
+      const aOrder = isLocked(a) ? 3 : RARITY_ORDER[a.rarity];
+      const bOrder = isLocked(b) ? 3 : RARITY_ORDER[b.rarity];
+      return aOrder - bOrder;
+    });
+    const n = codexItems.length;
 
     // Pick the column count that yields the largest (still readable) cards, then
     // scale each card to its cell. Vertical overflow becomes scroll.
@@ -124,13 +168,13 @@ export class ItemsScene extends Phaser.Scene {
     const contentH = rows * cellH;
 
     const track = this.add.container(grid.x, grid.y);
-    ITEMS.forEach((def, i) => {
+    codexItems.forEach((def, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
       const x = col * cellW + cellW / 2;
       const y = row * cellH + cellH / 2;
       const card = buildItemCard(this, def, {
-        locked: !!def.unlock && !unlocked.has(def.id),
+        locked: isLocked(def),
         count: getSelectionCount(def.id)
       });
       card.setScale(cardScale);

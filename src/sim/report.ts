@@ -4,23 +4,26 @@
 // marks with rounded data-ends, native <title> hover tooltips, and a selected
 // dark mode (not an auto-flip). Detail-heavy per-item numbers live in tables.
 
-import { BatchStats, ItemStat, StrategyStats } from './stats';
-import { StrategyName } from './bot';
+import { BatchStats, ItemStat, StrategyStats } from "./stats";
+import { SIM_SERIES } from "./series";
 
-// Series colors are the dataviz reference palette's first three categorical
-// slots (blue / green / magenta), defined once as CSS vars --series-1..3 in the
-// page's <style> (light + dark) and referenced by role via seriesVar().
-const STRATEGY_ORDER: StrategyName[] = ['noBuy', 'random', 'greedy'];
-const STRATEGY_LABEL: Record<StrategyName, string> = {
-  noBuy: 'No-buy (baseline)',
-  random: 'Random',
-  greedy: 'Greedy (expensive-first)'
-};
+const STRATEGY_ORDER = SIM_SERIES.map((series) => series.id);
+const STRATEGY_LABEL = new Map(
+  SIM_SERIES.map((series) => [series.id, series.label]),
+);
+
+function strategyLabel(name: string): string {
+  return STRATEGY_LABEL.get(name) ?? name;
+}
 
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 const n1 = (x: number) => x.toFixed(1);
 const int = (x: number) => Math.round(x).toLocaleString();
-const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
+const esc = (s: string) =>
+  s.replace(
+    /[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!,
+  );
 
 function seriesVar(i: number): string {
   return `var(--series-${i + 1})`;
@@ -32,7 +35,12 @@ function seriesVar(i: number): string {
 function groupedBars(
   categories: string[],
   series: { name: string; color: string; values: number[] }[],
-  opts: { width?: number; height?: number; yLabel?: string; fmt?: (v: number) => string } = {}
+  opts: {
+    width?: number;
+    height?: number;
+    yLabel?: string;
+    fmt?: (v: number) => string;
+  } = {},
 ): string {
   const W = opts.width ?? 720;
   const H = opts.height ?? 260;
@@ -48,10 +56,12 @@ function groupedBars(
   const grid = [0, 0.25, 0.5, 0.75, 1]
     .map((t) => {
       const gy = m.top + ih - t * ih;
-      return `<line x1="${m.left}" y1="${gy}" x2="${W - m.right}" y2="${gy}" class="grid"/>` +
-        `<text x="${m.left - 6}" y="${gy + 3}" class="tick" text-anchor="end">${fmt(t * max)}</text>`;
+      return (
+        `<line x1="${m.left}" y1="${gy}" x2="${W - m.right}" y2="${gy}" class="grid"/>` +
+        `<text x="${m.left - 6}" y="${gy + 3}" class="tick" text-anchor="end">${fmt(t * max)}</text>`
+      );
     })
-    .join('');
+    .join("");
 
   const bars = categories
     .map((cat, ci) => {
@@ -64,11 +74,11 @@ function groupedBars(
           const bh = m.top + ih - by;
           return `<rect x="${bx.toFixed(1)}" y="${by.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, bh).toFixed(1)}" rx="2" fill="${s.color}"><title>${esc(s.name)} · ${esc(cat)}: ${esc(fmt(v))}</title></rect>`;
         })
-        .join('');
+        .join("");
       const label = `<text x="${(gx + (barW * series.length) / 2).toFixed(1)}" y="${H - m.bottom + 16}" class="tick" text-anchor="middle">${esc(cat)}</text>`;
       return inner + label;
     })
-    .join('');
+    .join("");
 
   return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img">${grid}${bars}</svg>`;
 }
@@ -76,8 +86,19 @@ function groupedBars(
 /** Multi-series line chart with an optional log-y scale and a dashed reference line. */
 function lineChart(
   xs: number[],
-  series: { name: string; color: string; points: { x: number; y: number }[]; dashed?: boolean }[],
-  opts: { width?: number; height?: number; log?: boolean; fmt?: (v: number) => string; xLabel?: string } = {}
+  series: {
+    name: string;
+    color: string;
+    points: { x: number; y: number }[];
+    dashed?: boolean;
+  }[],
+  opts: {
+    width?: number;
+    height?: number;
+    log?: boolean;
+    fmt?: (v: number) => string;
+    xLabel?: string;
+  } = {},
 ): string {
   const W = opts.width ?? 720;
   const H = opts.height ?? 300;
@@ -85,14 +106,20 @@ function lineChart(
   const iw = W - m.left - m.right;
   const ih = H - m.top - m.bottom;
   const fmt = opts.fmt ?? ((v) => int(v));
-  const allY = series.flatMap((s) => s.points.map((p) => p.y)).filter((v) => v > 0);
-  const rawMax = Math.max(1, ...series.flatMap((s) => s.points.map((p) => p.y)));
+  const allY = series
+    .flatMap((s) => s.points.map((p) => p.y))
+    .filter((v) => v > 0);
+  const rawMax = Math.max(
+    1,
+    ...series.flatMap((s) => s.points.map((p) => p.y)),
+  );
   const xMin = Math.min(...xs);
   const xMax = Math.max(...xs);
   const log = opts.log ?? false;
   const yMin = log ? Math.max(0.5, Math.min(...allY, 1)) : 0;
   const yMax = rawMax;
-  const sx = (x: number) => m.left + ((x - xMin) / Math.max(1, xMax - xMin)) * iw;
+  const sx = (x: number) =>
+    m.left + ((x - xMin) / Math.max(1, xMax - xMin)) * iw;
   const sy = (v: number) => {
     if (log) {
       const lv = Math.log10(Math.max(yMin, v));
@@ -104,53 +131,74 @@ function lineChart(
   };
 
   const yTicks = log
-    ? [1, 10, 100, 1000, 10000, 100000, 1000000].filter((v) => v >= yMin * 0.9 && v <= yMax * 1.1)
+    ? [1, 10, 100, 1000, 10000, 100000, 1000000].filter(
+        (v) => v >= yMin * 0.9 && v <= yMax * 1.1,
+      )
     : [0, 0.25, 0.5, 0.75, 1].map((t) => t * yMax);
   const grid = yTicks
     .map((v) => {
       const gy = sy(v);
-      return `<line x1="${m.left}" y1="${gy}" x2="${W - m.right}" y2="${gy}" class="grid"/>` +
-        `<text x="${m.left - 6}" y="${gy + 3}" class="tick" text-anchor="end">${esc(fmt(v))}</text>`;
+      return (
+        `<line x1="${m.left}" y1="${gy}" x2="${W - m.right}" y2="${gy}" class="grid"/>` +
+        `<text x="${m.left - 6}" y="${gy + 3}" class="tick" text-anchor="end">${esc(fmt(v))}</text>`
+      );
     })
-    .join('');
+    .join("");
 
   const xTicks = xs
-    .map((x) => `<text x="${sx(x)}" y="${H - m.bottom + 16}" class="tick" text-anchor="middle">${x}</text>`)
-    .join('');
+    .map(
+      (x) =>
+        `<text x="${sx(x)}" y="${H - m.bottom + 16}" class="tick" text-anchor="middle">${x}</text>`,
+    )
+    .join("");
 
   const paths = series
     .map((s) => {
-      if (!s.points.length) return '';
+      if (!s.points.length) return "";
       const d = s.points
-        .map((p, i) => `${i === 0 ? 'M' : 'L'} ${sx(p.x).toFixed(1)} ${sy(p.y).toFixed(1)}`)
-        .join(' ');
+        .map(
+          (p, i) =>
+            `${i === 0 ? "M" : "L"} ${sx(p.x).toFixed(1)} ${sy(p.y).toFixed(1)}`,
+        )
+        .join(" ");
       const dots = s.points
-        .map((p) => `<circle cx="${sx(p.x).toFixed(1)}" cy="${sy(p.y).toFixed(1)}" r="3" fill="${s.color}"><title>${esc(s.name)} · round ${p.x}: ${esc(fmt(p.y))}</title></circle>`)
-        .join('');
-      return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" ${s.dashed ? 'stroke-dasharray="5 4"' : ''}/>${dots}`;
+        .map(
+          (p) =>
+            `<circle cx="${sx(p.x).toFixed(1)}" cy="${sy(p.y).toFixed(1)}" r="3" fill="${s.color}"><title>${esc(s.name)} · round ${p.x}: ${esc(fmt(p.y))}</title></circle>`,
+        )
+        .join("");
+      return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" ${s.dashed ? 'stroke-dasharray="5 4"' : ""}/>${dots}`;
     })
-    .join('');
+    .join("");
 
   return `<svg viewBox="0 0 ${W} ${H}" class="chart" role="img">${grid}${xTicks}${paths}</svg>`;
 }
 
 /** Horizontal bars, sorted by value desc. Each row: label + bar + display value. */
-function hbars(rows: { label: string; value: number; display: string; hint?: string }[], color: string): string {
+function hbars(
+  rows: { label: string; value: number; display: string; hint?: string }[],
+  color: string,
+): string {
   const max = Math.max(1e-9, ...rows.map((r) => r.value));
   return `<div class="hbars">${rows
     .map((r) => {
       const w = (r.value / max) * 100;
-      return `<div class="hbar-row" title="${esc(r.hint ?? r.label)}"><span class="hbar-label">${esc(r.label)}</span>` +
+      return (
+        `<div class="hbar-row" title="${esc(r.hint ?? r.label)}"><span class="hbar-label">${esc(r.label)}</span>` +
         `<span class="hbar-track"><span class="hbar-fill" style="width:${w.toFixed(1)}%;background:${color}"></span></span>` +
-        `<span class="hbar-val">${esc(r.display)}</span></div>`;
+        `<span class="hbar-val">${esc(r.display)}</span></div>`
+      );
     })
-    .join('')}</div>`;
+    .join("")}</div>`;
 }
 
 function legend(stats: StrategyStats[]): string {
   return `<div class="legend">${stats
-    .map((s, i) => `<span class="lg"><span class="sw" style="background:${seriesVar(i)}"></span>${esc(STRATEGY_LABEL[s.name])}</span>`)
-    .join('')}</div>`;
+    .map(
+      (s, i) =>
+        `<span class="lg"><span class="sw" style="background:${seriesVar(i)}"></span>${esc(strategyLabel(s.name))}</span>`,
+    )
+    .join("")}</div>`;
 }
 
 // ---- sections --------------------------------------------------------------
@@ -158,46 +206,90 @@ function legend(stats: StrategyStats[]): string {
 function summaryTiles(stats: StrategyStats[]): string {
   return `<div class="tiles">${stats
     .map(
-      (s, i) => `<div class="tile"><div class="tile-strat"><span class="sw" style="background:${seriesVar(i)}"></span>${esc(STRATEGY_LABEL[s.name])}</div>` +
+      (s, i) =>
+        `<div class="tile"><div class="tile-strat"><span class="sw" style="background:${seriesVar(i)}"></span>${esc(strategyLabel(s.name))}</div>` +
         `<div class="tile-grid">` +
         `<div><span class="big">${pct(s.winRate)}</span><span class="cap">win rate</span></div>` +
         `<div><span class="big">${n1(s.round.median)}</span><span class="cap">median round</span></div>` +
         `<div><span class="big">${int(s.score.median)}</span><span class="cap">median score</span></div>` +
         `<div><span class="big">${int(s.finalDice.median)}</span><span class="cap">median dice</span></div>` +
-        `</div></div>`
+        `</div></div>`,
     )
-    .join('')}</div>`;
+    .join("")}</div>`;
 }
 
 function histogramSection(stats: StrategyStats[]): string {
   const rounds = stats[0].round.histogram.map((_, i) => String(i + 1));
-  const series = stats.map((s, i) => ({ name: STRATEGY_LABEL[s.name], color: seriesVar(i), values: s.round.histogram }));
-  return `<section><h2>Where runs end</h2>` +
+  const series = stats.map((s, i) => ({
+    name: strategyLabel(s.name),
+    color: seriesVar(i),
+    values: s.round.histogram,
+  }));
+  return (
+    `<section><h2>Where runs end</h2>` +
     `<p class="note">Number of runs that ended on each round (the round they died, or ${stats[0]?.round.histogram.length ?? 20} = cleared all rounds / victory). Tall early bars mark a difficulty wall.</p>` +
     legend(stats) +
     groupedBars(rounds, series, { fmt: (v) => int(v) }) +
-    `</section>`;
+    `</section>`
+  );
+}
+
+function survivalSection(stats: StrategyStats[]): string {
+  const maxRound = stats[0].round.histogram.length; // = WIN_ROUND
+  const xs = Array.from({ length: maxRound }, (_, i) => i + 1);
+  // Survival curve from the death histogram: the share of runs that reached at
+  // least round r (roundReached >= r). Starts at 100% on round 1 and decreases
+  // monotonically; the value on the final round is the win rate.
+  const series = stats.map((s, i) => {
+    const total = s.runs || 1;
+    const points = xs.map((r) => {
+      let reached = 0;
+      for (let k = r; k <= maxRound; k++) reached += s.round.histogram[k - 1];
+      return { x: r, y: reached / total };
+    });
+    return { name: strategyLabel(s.name), color: seriesVar(i), points };
+  });
+  return (
+    `<section><h2>Runs still alive by round</h2>` +
+    `<p class="note">Share of runs that survived to reach each round (roundReached ≥ r). Every run starts at 100% on round 1 and the curve drops as runs die; its height on round ${maxRound} is the share reaching the final round, a hair above the win rate since some reach round ${maxRound} but die there. A steep drop marks a difficulty wall.</p>` +
+    legend(stats) +
+    lineChart(xs, series, { fmt: (v) => pct(v) }) +
+    `</section>`
+  );
 }
 
 function curveSection(stats: StrategyStats[]): string {
-  const maxRound = Math.max(...stats.flatMap((s) => s.roundCurve.map((p) => p.round)), 1);
+  const maxRound = Math.max(
+    ...stats.flatMap((s) => s.roundCurve.map((p) => p.round)),
+    1,
+  );
   const xs = Array.from({ length: maxRound }, (_, i) => i + 1);
   const target = stats[0]
-    ? { name: 'Round target', color: 'var(--muted)', dashed: true, points: xs.map((x) => ({ x, y: roundTargetFrom(stats, x) })) }
-    : { name: 'target', color: 'var(--muted)', points: [] };
+    ? {
+        name: "Round target",
+        color: "var(--muted)",
+        dashed: true,
+        points: xs.map((x) => ({ x, y: roundTargetFrom(stats, x) })),
+      }
+    : { name: "target", color: "var(--muted)", points: [] };
   const series = [
     ...stats.map((s, i) => ({
-      name: STRATEGY_LABEL[s.name],
+      name: strategyLabel(s.name),
       color: seriesVar(i),
-      points: s.roundCurve.map((p) => ({ x: p.round, y: Math.max(1, p.medianRoundScore) }))
+      points: s.roundCurve.map((p) => ({
+        x: p.round,
+        y: Math.max(1, p.medianRoundScore),
+      })),
     })),
-    target
+    target,
   ];
-  return `<section><h2>Peak score vs. target, by round</h2>` +
+  return (
+    `<section><h2>Peak score vs. target, by round</h2>` +
     `<p class="note">Median peak score reached each round (log scale) against the survival target (dashed). Where a strategy's line dips toward the target, runs are scraping by; where it crosses below, they die. The target grows 1.85×/round.</p>` +
     legend(stats) +
     lineChart(xs, series, { log: true, fmt: (v) => int(v) }) +
-    `</section>`;
+    `</section>`
+  );
 }
 
 function roundTargetFrom(stats: StrategyStats[], round: number): number {
@@ -209,18 +301,40 @@ function roundTargetFrom(stats: StrategyStats[], round: number): number {
 }
 
 function itemTableSection(stats: StrategyStats[]): string {
-  const rarityRank: Record<string, number> = { common: 0, uncommon: 1, rare: 2 };
+  const rarityRank: Record<string, number> = {
+    common: 0,
+    uncommon: 1,
+    rare: 2,
+  };
+  const priceRank: Record<string, number> = {
+    free: 0,
+    low: 1,
+    standard: 2,
+    strong: 3,
+    build: 4,
+  };
   const base = stats[0].items
     .slice()
-    .sort((a, b) => rarityRank[a.rarity] - rarityRank[b.rarity] || a.cost - b.cost || a.name.localeCompare(b.name));
+    .sort(
+      (a, b) =>
+        rarityRank[a.rarity] - rarityRank[b.rarity] ||
+        priceRank[a.priceBand] - priceRank[b.priceBand] ||
+        a.name.localeCompare(b.name),
+    );
 
-  const byStrat = new Map<StrategyName, Map<string, ItemStat>>();
-  for (const s of stats) byStrat.set(s.name, new Map(s.items.map((it) => [it.id, it])));
+  const byStrat = new Map<string, Map<string, ItemStat>>();
+  for (const s of stats)
+    byStrat.set(s.name, new Map(s.items.map((it) => [it.id, it])));
 
-  const head = `<tr><th>Item</th><th>Cost</th><th>Rarity</th>` +
-    stats.map((s) => `<th class="grp" colspan="2">${esc(STRATEGY_LABEL[s.name])}</th>`).join('') +
+  const head =
+    `<tr><th>Item</th><th>Price band</th><th>Rarity</th>` +
+    stats
+      .map(
+        (s) => `<th class="grp" colspan="2">${esc(strategyLabel(s.name))}</th>`,
+      )
+      .join("") +
     `</tr><tr><th></th><th></th><th></th>` +
-    stats.map(() => `<th>buy%</th><th>win% if bought</th>`).join('') +
+    stats.map(() => `<th>buy%</th><th>win% if bought</th>`).join("") +
     `</tr>`;
 
   const rows = base
@@ -228,18 +342,45 @@ function itemTableSection(stats: StrategyStats[]): string {
       const cells = stats
         .map((s) => {
           const st = byStrat.get(s.name)!.get(it.id)!;
-          const buy = st.buyRate > 0 ? pct(st.buyRate) : '—';
-          const win = st.buyRuns > 0 ? pct(st.winRateIfBought) : '—';
+          const buy = st.buyRate > 0 ? pct(st.buyRate) : "—";
+          const win = st.buyRuns > 0 ? pct(st.winRateIfBought) : "—";
           return `<td class="num">${buy}</td><td class="num">${win}</td>`;
         })
-        .join('');
-      return `<tr><td>${esc(it.name)}${it.gated ? ' <span class="gated">gated</span>' : ''}</td><td class="num">${it.cost}</td><td>${it.rarity}</td>${cells}</tr>`;
+        .join("");
+      const band = it.priceBand === "build" ? "build-defining" : it.priceBand;
+      return `<tr><td>${esc(it.name)}${it.gated ? ' <span class="gated">gated</span>' : ""}</td><td>${esc(band)}</td><td>${it.rarity}</td>${cells}</tr>`;
     })
-    .join('');
+    .join("");
 
-  return `<section><h2>Item purchase &amp; win correlation</h2>` +
-    `<p class="note">Per strategy: how often each offered item was bought when it appeared, and the win rate of runs that bought it (selection bias — a strong item and a strong run correlate; read alongside the baseline).</p>` +
-    `<div class="tablewrap"><table>${head}${rows}</table></div></section>`;
+  return (
+    `<section><h2>Item purchase &amp; win correlation</h2>` +
+    `<p class="note">Price bands resolve to a share of the current round target; concrete costs also account for shop timing and repeat purchases. Per strategy: how often each offered item was bought when it appeared, and the win rate of runs that bought it (selection bias — a strong item and a strong run correlate; read alongside the baseline).</p>` +
+    `<div class="tablewrap"><table>${head}${rows}</table></div></section>`
+  );
+}
+
+function itemPointsSection(stats: StrategyStats[]): string {
+  const TOP = 12;
+  const cards = stats
+    .map((s, i) => {
+      const head = `<div class="tile-strat"><span class="sw" style="background:${seriesVar(i)}"></span>${esc(strategyLabel(s.name))} <span class="cap">· ${int(s.winningRuns)} wins</span></div>`;
+      if (s.winningRuns === 0 || s.itemPointRanking.length === 0) {
+        return `<div class="unlock-card">${head}<p class="note">No winning runs to attribute.</p></div>`;
+      }
+      const rows = s.itemPointRanking.slice(0, TOP).map((it) => ({
+        label: it.label,
+        value: it.avgPoints,
+        display: `${int(it.avgPoints)} · ${pct(it.shareOfWinPoints)}`,
+        hint: `${it.label}: ${int(it.avgPoints)} pts/win (${int(it.avgDice)} from dice + ${int(it.avgBonus)} bonus/mult), ${pct(it.shareOfWinPoints)} of all winning points`,
+      }));
+      return `<div class="unlock-card">${head}${hbars(rows, seriesVar(i))}</div>`;
+    })
+    .join("");
+  return (
+    `<section><h2>Points by item (winning runs)</h2>` +
+    `<p class="note">Among runs that won, the average points each item contributed per win, ranked. Points from an item's dice (base rolling points over their lifespan) and its own bonus/multiplier payouts are combined; hover a bar for the split. Each item's share of all points earned across winning runs is shown after the “·”. Copies are credited to the item that spawned them.</p>` +
+    `<div class="unlock-grid">${cards}</div></section>`
+  );
 }
 
 function unlockSection(stats: StrategyStats[]): string {
@@ -251,31 +392,34 @@ function unlockSection(stats: StrategyStats[]): string {
         .map((it) => ({
           label: it.name,
           value: it.unlockRate,
-          display: it.unlockRate > 0 ? `${pct(it.unlockRate)}${it.medianUnlockRound != null ? ` · r${it.medianUnlockRound}` : ''}` : '0%',
-          hint: `${it.name}: unlocked in ${pct(it.unlockRate)} of runs${it.medianUnlockRound != null ? `, median round ${it.medianUnlockRound}` : ''}`
+          display:
+            it.unlockRate > 0
+              ? `${pct(it.unlockRate)}${it.medianUnlockRound != null ? ` · r${it.medianUnlockRound}` : ""}`
+              : "0%",
+          hint: `${it.name}: unlocked in ${pct(it.unlockRate)} of runs${it.medianUnlockRound != null ? `, median round ${it.medianUnlockRound}` : ""}`,
         }))
         .sort((a, b) => b.value - a.value);
-      return `<div class="unlock-card"><div class="tile-strat"><span class="sw" style="background:${seriesVar(i)}"></span>${esc(STRATEGY_LABEL[s.name])}</div>${hbars(rows, seriesVar(i))}</div>`;
+      return `<div class="unlock-card"><div class="tile-strat"><span class="sw" style="background:${seriesVar(i)}"></span>${esc(strategyLabel(s.name))}</div>${hbars(rows, seriesVar(i))}</div>`;
     })
-    .join('');
-  return `<section><h2>Unlock likelihood</h2>` +
+    .join("");
+  return (
+    `<section><h2>Unlock likelihood</h2>` +
     `<p class="note">Share of runs whose play satisfied each gated item's unlock criterion, and the median round it first happened (r#). Items near 0% are effectively unreachable for that play style. Measured for all ${gated.length} gated items regardless of the configured shop pool.</p>` +
-    `<div class="unlock-grid">${cards}</div></section>`;
+    `<div class="unlock-grid">${cards}</div></section>`
+  );
 }
 
 // ---- page ------------------------------------------------------------------
 
 export function buildReport(stats: BatchStats): string {
-  const ordered = STRATEGY_ORDER
-    .map((name) => stats.strategies.find((s) => s.name === name))
-    .filter((s): s is StrategyStats => !!s);
+  const ordered = STRATEGY_ORDER.map((name) =>
+    stats.strategies.find((s) => s.name === name),
+  ).filter((s): s is StrategyStats => !!s);
 
-  const meta = `${int(stats.runsPerStrategy)} runs/strategy · seed ${stats.seed} · ${stats.unlockedAtStart.length} gated items unlocked in pool · dice cap ${int(stats.maxDice)} · ${new Date(stats.generatedAt).toLocaleString()}`;
-  const capNote = ordered.some((s) => s.diceCapHitRate > 0)
-    ? `<p class="note">Dice cap (${int(stats.maxDice)}) hit by ${ordered
-        .map((s) => `${pct(s.diceCapHitRate)} of ${STRATEGY_LABEL[s.name].toLowerCase()}`)
-        .join(', ')} runs — those already overshoot the target by 100×+, so the cap does not change win/loss or round reached.</p>`
-    : '';
+  const pools = stats.unlockPools
+    .map((pool) => `${pool.name}: ${pool.gatedItems} gated`)
+    .join(" · ");
+  const meta = `${int(stats.runsPerStrategy)} runs/series · seed ${stats.seed} · ${pools} · ${new Date(stats.generatedAt).toLocaleString()}`;
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -284,11 +428,13 @@ export function buildReport(stats: BatchStats): string {
 :root{color-scheme:light;
   --plane:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
   --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
-  --series-1:#2a78d6; --series-2:#008300; --series-3:#e87ba4;}
+  --series-1:#77736b; --series-2:#2a78d6; --series-3:#72a9e6;
+  --series-4:#008300; --series-5:#70b96b;}
 @media (prefers-color-scheme:dark){:root{color-scheme:dark;
   --plane:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
   --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
-  --series-1:#3987e5; --series-2:#008300; --series-3:#d55181;}}
+  --series-1:#a29e95; --series-2:#3987e5; --series-3:#86b9ef;
+  --series-4:#26a641; --series-5:#78c876;}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--plane);color:var(--ink);
   font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5;padding:32px 20px 80px}
@@ -328,10 +474,12 @@ td.num,.num{text-align:right;font-variant-numeric:tabular-nums}
 <h1>The Order of Order — Balance Report</h1>
 <p class="sub">${esc(meta)}</p>
 <section><h2>Strategy summary</h2>
-<p class="note">Three shopping strategies compared over identical run counts. No-buy is the raw survival floor; random and greedy show how much shopping moves the needle.</p>
-${summaryTiles(ordered)}${capNote}</section>
+<p class="note">No-buy is the raw survival floor. Random and greedy are each shown with only base items available and with every gated item unlocked; each matched pair uses the same seed stream.</p>
+${summaryTiles(ordered)}</section>
 ${histogramSection(ordered)}
+${survivalSection(ordered)}
 ${curveSection(ordered)}
+${itemPointsSection(ordered)}
 ${itemTableSection(ordered)}
 ${unlockSection(ordered)}
 </div></body></html>`;

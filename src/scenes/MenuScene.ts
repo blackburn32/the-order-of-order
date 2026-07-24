@@ -14,10 +14,9 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     responsive(this, () => this.build());
 
-    // Browsers require a gesture before audio; first click wakes the drone.
+    // Browsers require a gesture before audio; first click starts the soundtrack.
     this.input.once('pointerdown', () => {
-      audio.ensure();
-      audio.startDrone();
+      audio.startMusic();
     });
   }
 
@@ -73,7 +72,7 @@ export class MenuScene extends Phaser.Scene {
     // The Codex of items stays locked until the player has finished one run.
     const itemsUnlocked = loadProgress().gamesCompleted > 0;
     const itemsBtn = bannerButton(this, cx, startY + btnGap * 2, 'Codex', () => {
-      if (itemsUnlocked) this.scene.start('Items');
+      if (itemsUnlocked) this.scene.start('Items', { returnTo: 'Menu' });
       else showBanner(this, 'Complete a run to unlock the Codex', 1200);
     });
     if (!itemsUnlocked) {
@@ -87,7 +86,11 @@ export class MenuScene extends Phaser.Scene {
       itemsBtn.add(lock);
     }
 
-    bannerButton(this, cx, startY + btnGap * 3, 'Settings', () => this.scene.start('Settings'));
+    // Pass returnTo explicitly: Phaser keeps a scene's previous start-data when
+    // none is supplied, so without this Settings would inherit a stale
+    // `{ returnTo: 'Game' }` from a mid-run visit and wrongly offer "Return to
+    // Game" / "Abandon Run" from the Vestibule.
+    bannerButton(this, cx, startY + btnGap * 3, 'Settings', () => this.scene.start('Settings', { returnTo: 'Menu' }));
 
     this.add
       .text(cx, H - Math.min(28, H * 0.05), 'Roll ones. Appease the Order. Survive the thresholds.', {

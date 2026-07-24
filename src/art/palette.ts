@@ -15,6 +15,7 @@ export const COLORS = {
   waxRedDark: 0x561019,
   glow: 0xffd977,
   glowGreen: 0x86e07a, // Snake Eyes match flash
+  glowSteel: 0xcfd6df, // Whetstone shrink flash
   // Shop rarity tiers.
   rarityCommon: 0xd4b83c,
   rarityUncommon: 0x4a7fc9,
@@ -29,6 +30,7 @@ export const CSS = {
   inkSoft: '#5a4a2e',
   gold: '#c9a227',
   goldLight: '#e6c65a',
+  steel: '#cfd6df',
   dim: '#8c7a55',
   red: '#d96a5a',
   waxRed: '#8a1f2b',

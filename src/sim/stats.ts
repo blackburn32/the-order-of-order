@@ -1,9 +1,10 @@
 // Aggregate raw RunRecords into the numbers the HTML report charts. Pure — takes
 // records in, returns plain data out, no I/O.
 
-import { WIN_ROUND, roundTarget } from '../config';
-import { ITEMS, Rarity, ShopItemId } from '../systems/Items';
-import { RunRecord, StrategyName } from './bot';
+import { WIN_ROUND, roundTarget } from "../config";
+import { ITEMS, PriceBand, Rarity, ShopItemId } from "../systems/Items";
+import { sourceLabel } from "../systems/ItemPoints";
+import { RunRecord } from "./bot";
 
 const ITEM_META = new Map(ITEMS.map((it) => [it.id, it]));
 
@@ -12,27 +13,43 @@ function mean(xs: number[]): number {
 }
 function percentile(sortedAsc: number[], p: number): number {
   if (!sortedAsc.length) return 0;
-  const idx = Math.min(sortedAsc.length - 1, Math.max(0, Math.round((p / 100) * (sortedAsc.length - 1))));
+  const idx = Math.min(
+    sortedAsc.length - 1,
+    Math.max(0, Math.round((p / 100) * (sortedAsc.length - 1))),
+  );
   return sortedAsc[idx];
 }
 function median(xs: number[]): number {
-  return percentile([...xs].sort((a, b) => a - b), 50);
+  return percentile(
+    [...xs].sort((a, b) => a - b),
+    50,
+  );
 }
 
 export interface ItemStat {
   id: ShopItemId;
   name: string;
-  cost: number;
+  priceBand: PriceBand;
   rarity: Rarity;
   gated: boolean;
-  buyRuns: number;      // runs that bought it at least once
-  buyRate: number;      // buyRuns / runs
-  totalBought: number;  // copies bought across all runs
+  buyRuns: number; // runs that bought it at least once
+  buyRate: number; // buyRuns / runs
+  totalBought: number; // copies bought across all runs
   avgPerRun: number;
-  winRateIfBought: number;  // win rate among runs that bought it
+  winRateIfBought: number; // win rate among runs that bought it
   avgRoundIfBought: number; // mean round reached among runs that bought it
-  unlockRate: number;       // (gated) fraction of runs whose play met the criterion
+  unlockRate: number; // (gated) fraction of runs whose play met the criterion
   medianUnlockRound: number | null; // (gated) median round it was first met
+}
+
+/** How many points a single item contributed, averaged over winning runs. */
+export interface ItemPointStat {
+  id: string; // item id, or the starter-die sentinel
+  label: string; // display name
+  avgDice: number; // mean base rolling points from this item's dice, per winning run
+  avgBonus: number; // mean bonus + multiplier points, per winning run
+  avgPoints: number; // avgDice + avgBonus
+  shareOfWinPoints: number; // fraction of all points earned across winning runs
 }
 
 export interface RoundCurvePoint {
@@ -44,16 +61,29 @@ export interface RoundCurvePoint {
 }
 
 export interface StrategyStats {
-  name: StrategyName;
+  name: string;
   runs: number;
   wins: number;
   winRate: number;
-  round: { mean: number; median: number; min: number; max: number; histogram: number[] }; // histogram[r-1]
-  score: { mean: number; median: number; p10: number; p90: number; max: number };
+  round: {
+    mean: number;
+    median: number;
+    min: number;
+    max: number;
+    histogram: number[];
+  }; // histogram[r-1]
+  score: {
+    mean: number;
+    median: number;
+    p10: number;
+    p90: number;
+    max: number;
+  };
   finalDice: { mean: number; median: number; max: number };
-  diceCapHitRate: number; // fraction of runs whose dice pool hit the cap
   roundCurve: RoundCurvePoint[];
   items: ItemStat[];
+  winningRuns: number; // runs used for the point ranking below
+  itemPointRanking: ItemPointStat[]; // points per item across winning runs, desc
 }
 
 export interface BatchStats {
@@ -61,8 +91,7 @@ export interface BatchStats {
   winRound: number;
   runsPerStrategy: number;
   seed: number;
-  maxDice: number;
-  unlockedAtStart: ShopItemId[];
+  unlockPools: { name: string; gatedItems: number }[];
   targets: { round: number; target: number }[];
   strategies: StrategyStats[];
 }
@@ -95,7 +124,7 @@ function itemStats(records: RunRecord[]): ItemStat[] {
     return {
       id: def.id,
       name: def.name,
-      cost: def.cost,
+      priceBand: def.priceBand,
       rarity: def.rarity,
       gated: !!def.unlock,
       buyRuns,
@@ -105,20 +134,63 @@ function itemStats(records: RunRecord[]): ItemStat[] {
       winRateIfBought: buyRuns ? winsIfBought / buyRuns : 0,
       avgRoundIfBought: mean(roundsIfBought),
       unlockRate: runs ? unlockRuns / runs : 0,
-      medianUnlockRound: unlockRounds.length ? median(unlockRounds) : null
+      medianUnlockRound: unlockRounds.length ? median(unlockRounds) : null,
     };
   });
 }
 
-function strategyStats(name: StrategyName, records: RunRecord[]): StrategyStats {
+/** Rank items by the points they contributed, averaged over winning runs only.
+ *  Base rolling points from an item's dice and its bonus/multiplier points are
+ *  summed separately so the report can show the split. */
+function itemPointRanking(records: RunRecord[]): {
+  winningRuns: number;
+  ranking: ItemPointStat[];
+} {
+  const wins = records.filter((r) => r.won);
+  const diceTotals = new Map<string, number>();
+  const bonusTotals = new Map<string, number>();
+  let allPoints = 0;
+
+  for (const r of wins) {
+    for (const [id, pts] of Object.entries(r.dicePoints)) {
+      diceTotals.set(id, (diceTotals.get(id) ?? 0) + pts);
+      allPoints += pts;
+    }
+    for (const [id, pts] of Object.entries(r.itemPoints)) {
+      bonusTotals.set(id, (bonusTotals.get(id) ?? 0) + pts);
+      allPoints += pts;
+    }
+  }
+
+  const ids = new Set<string>([...diceTotals.keys(), ...bonusTotals.keys()]);
+  const n = wins.length;
+  const ranking: ItemPointStat[] = [...ids].map((id) => {
+    const dice = diceTotals.get(id) ?? 0;
+    const bonus = bonusTotals.get(id) ?? 0;
+    return {
+      id,
+      label: sourceLabel(id),
+      avgDice: n ? dice / n : 0,
+      avgBonus: n ? bonus / n : 0,
+      avgPoints: n ? (dice + bonus) / n : 0,
+      shareOfWinPoints: allPoints ? (dice + bonus) / allPoints : 0,
+    };
+  });
+  ranking.sort((a, b) => b.avgPoints - a.avgPoints);
+  return { winningRuns: n, ranking };
+}
+
+function strategyStats(name: string, records: RunRecord[]): StrategyStats {
   const runs = records.length;
   const wins = records.filter((r) => r.won).length;
+  const ranking = itemPointRanking(records);
   const rounds = records.map((r) => r.roundReached);
   const scores = records.map((r) => r.totalScore).sort((a, b) => a - b);
   const dice = records.map((r) => r.finalDiceTotal);
 
   const histogram = new Array(WIN_ROUND).fill(0);
-  for (const r of rounds) histogram[Math.min(WIN_ROUND, Math.max(1, r)) - 1] += 1;
+  for (const r of rounds)
+    histogram[Math.min(WIN_ROUND, Math.max(1, r)) - 1] += 1;
 
   // Achieved-vs-target curve: peak score reached per round, across runs that
   // played that round.
@@ -138,8 +210,8 @@ function strategyStats(name: StrategyName, records: RunRecord[]): StrategyStats 
         round,
         meanRoundScore: mean(peaks),
         medianRoundScore: median(peaks),
-        target: roundTarget(round),
-        runsReached: peaks.length
+        target: Number(roundTarget(round)), // sim reporting is Number
+        runsReached: peaks.length,
       };
     });
 
@@ -153,42 +225,48 @@ function strategyStats(name: StrategyName, records: RunRecord[]): StrategyStats 
       median: median(rounds),
       min: rounds.length ? Math.min(...rounds) : 0,
       max: rounds.length ? Math.max(...rounds) : 0,
-      histogram
+      histogram,
     },
     score: {
       mean: mean(scores),
       median: median(scores),
       p10: percentile(scores, 10),
       p90: percentile(scores, 90),
-      max: scores.length ? scores[scores.length - 1] : 0
+      max: scores.length ? scores[scores.length - 1] : 0,
     },
     finalDice: {
       mean: mean(dice),
       median: median(dice),
-      max: dice.length ? Math.max(...dice) : 0
+      max: dice.length ? Math.max(...dice) : 0,
     },
-    diceCapHitRate: runs ? records.filter((r) => r.hitDiceCap).length / runs : 0,
     roundCurve,
-    items: itemStats(records)
+    items: itemStats(records),
+    winningRuns: ranking.winningRuns,
+    itemPointRanking: ranking.ranking,
   };
 }
 
 export function aggregate(
-  byStrategy: Record<StrategyName, RunRecord[]>,
-  meta: { seed: number; maxDice: number; unlockedAtStart: ShopItemId[] }
+  byStrategy: Record<string, RunRecord[]>,
+  meta: {
+    seed: number;
+    unlockPools: { name: string; gatedItems: number }[];
+  },
 ): BatchStats {
-  const names = Object.keys(byStrategy) as StrategyName[];
+  const names = Object.keys(byStrategy);
   const runsPerStrategy = names.length ? byStrategy[names[0]].length : 0;
-  const targets = Array.from({ length: WIN_ROUND }, (_, i) => ({ round: i + 1, target: roundTarget(i + 1) }));
+  const targets = Array.from({ length: WIN_ROUND }, (_, i) => ({
+    round: i + 1,
+    target: Number(roundTarget(i + 1)),
+  }));
   return {
     generatedAt: new Date().toISOString(),
     winRound: WIN_ROUND,
     runsPerStrategy,
     seed: meta.seed,
-    maxDice: meta.maxDice,
-    unlockedAtStart: meta.unlockedAtStart,
+    unlockPools: meta.unlockPools,
     targets,
-    strategies: names.map((n) => strategyStats(n, byStrategy[n]))
+    strategies: names.map((n) => strategyStats(n, byStrategy[n])),
   };
 }
 

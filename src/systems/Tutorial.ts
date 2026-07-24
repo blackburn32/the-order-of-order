@@ -1,12 +1,13 @@
 import type Phaser from 'phaser';
 import { newRun, setRun } from '../state/RunState';
-import { loadSettings, saveSettings } from './SaveData';
+import { hasBeatenGame, loadProgress, loadSettings, saveSettings } from './SaveData';
 
-// The six tutorial steps, in the order the spec lays them out. `Done` is the
+// The seven tutorial steps, in the order the spec lays them out. `Done` is the
 // terminal marker once every step has been shown.
 export enum TutorialStage {
   Score,
   Roll,
+  Viewport,
   Target,
   Rolls,
   Round,
@@ -65,7 +66,13 @@ export function completeTutorial(registry: Phaser.Data.DataManager): void {
  * intro and no-intro paths identical.
  */
 export function beginRun(scene: Phaser.Scene): void {
-  setRun(scene.registry, newRun());
+  // Freeze shop eligibility at run start. Unlocks earned during this run are
+  // still saved and announced, but only the next run's snapshot can offer them.
+  // Hard Mode only ever applies when it's unlocked AND explicitly enabled — so a
+  // stale `hardMode` setting (e.g. left over after a progress reset relocks the
+  // feature) can never silently start a hard run.
+  const hardMode = hasBeatenGame() && loadSettings().hardMode;
+  setRun(scene.registry, newRun(loadProgress().unlocked, hardMode));
   beginTutorial(scene.registry);
   scene.scene.start('Game');
 }

@@ -4,6 +4,8 @@ import { audio } from '../systems/Audio';
 import { loadSettings } from '../systems/SaveData';
 import monasteryUrl from '../../images/monastery.png';
 import diceTwirlUrl from '../../images/dice-twirl.png';
+import volcanoUrl from '../../images/volcano.png';
+import diceEarthUrl from '../../images/dice-earth.png';
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -14,6 +16,8 @@ export class BootScene extends Phaser.Scene {
     // Intro art, keyed to match IntroScene's PAGES entries.
     this.load.image('intro-monastery', monasteryUrl);
     this.load.image('intro-dice-twirl', diceTwirlUrl);
+    this.load.image('intro-volcano', volcanoUrl);
+    this.load.image('intro-dice-earth', diceEarthUrl);
   }
 
   create(): void {

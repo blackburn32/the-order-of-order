@@ -1,7 +1,19 @@
-import Phaser from 'phaser';
-import { canLoad, canShrink, DIE_LADDER, DieSides, makeDie } from '../systems/Dice';
-import { getRun, RunState } from '../state/RunState';
-import { ALL_SHOP_ITEM_IDS, applyOffer, offerFor, ShopItemId } from '../systems/Shop';
+import Phaser from "phaser";
+import {
+  canLoad,
+  canShrink,
+  DIE_LADDER,
+  DieSides,
+  makeDie,
+} from "../systems/Dice";
+import { DicePool } from "../systems/DicePool";
+import { getRun, RunState } from "../state/RunState";
+import {
+  ALL_SHOP_ITEM_IDS,
+  applyOffer,
+  offerFor,
+  ShopItemId,
+} from "../systems/Shop";
 
 const PRESET_COUNTS = [10, 100, 1000, 1500, 3000, 10000, 100000];
 
@@ -16,8 +28,8 @@ const PRESET_COUNTS = [10, 100, 1000, 1500, 3000, 10000, 100000];
 export function installDevPanel(game: Phaser.Game): void {
   if (!import.meta.env.DEV) return;
 
-  const toggle = document.createElement('button');
-  toggle.textContent = 'DEV ▾';
+  const toggle = document.createElement("button");
+  toggle.textContent = "DEV ▾";
   toggle.style.cssText = `
     position: fixed; top: 8px; right: 8px; z-index: 1001;
     background: rgba(10,8,16,0.85); color: #e6c65a; border: 1px solid #c9a227;
@@ -25,7 +37,7 @@ export function installDevPanel(game: Phaser.Game): void {
   `;
   document.body.appendChild(toggle);
 
-  const panel = document.createElement('div');
+  const panel = document.createElement("div");
   panel.style.cssText = `
     position: fixed; top: 36px; right: 8px; z-index: 1000; width: 220px;
     background: rgba(10,8,16,0.92); color: #e9d8a6; font: 12px/1.4 system-ui, sans-serif;
@@ -44,7 +56,7 @@ export function installDevPanel(game: Phaser.Game): void {
              border:1px solid #5a4a2e;border-radius:3px;padding:3px 5px;font:inherit;">
       <option value="mixed">Mixed (cycle all types)</option>
       <option value="random">Random per die</option>
-      ${DIE_LADDER.map((s) => `<option value="${s}">d${s}</option>`).join('')}
+      ${DIE_LADDER.map((s) => `<option value="${s}">d${s}</option>`).join("")}
     </select>
     <label style="display:flex;align-items:center;gap:5px;margin-top:8px;font-size:11px;opacity:.85;">
       <input id="dp-bonus" type="checkbox" style="margin:0;" />
@@ -77,35 +89,35 @@ export function installDevPanel(game: Phaser.Game): void {
   `;
   document.body.appendChild(panel);
 
-  const presetsEl = panel.querySelector('#dp-presets') as HTMLDivElement;
-  const countInput = panel.querySelector('#dp-count') as HTMLInputElement;
-  const typeSelect = panel.querySelector('#dp-type') as HTMLSelectElement;
-  const bonusCheckbox = panel.querySelector('#dp-bonus') as HTMLInputElement;
-  const roundInput = panel.querySelector('#dp-round') as HTMLInputElement;
-  const itemSelect = panel.querySelector('#dp-item') as HTMLSelectElement;
-  const status = panel.querySelector('#dp-status') as HTMLDivElement;
+  const presetsEl = panel.querySelector("#dp-presets") as HTMLDivElement;
+  const countInput = panel.querySelector("#dp-count") as HTMLInputElement;
+  const typeSelect = panel.querySelector("#dp-type") as HTMLSelectElement;
+  const bonusCheckbox = panel.querySelector("#dp-bonus") as HTMLInputElement;
+  const roundInput = panel.querySelector("#dp-round") as HTMLInputElement;
+  const itemSelect = panel.querySelector("#dp-item") as HTMLSelectElement;
+  const status = panel.querySelector("#dp-status") as HTMLDivElement;
 
   // Item names come from `offerFor`; the argument state only affects a couple
   // of *descriptions*, never the names, so a throwaway current state is fine.
   const nameState = getRun(game.registry);
   for (const id of ALL_SHOP_ITEM_IDS) {
-    const opt = document.createElement('option');
+    const opt = document.createElement("option");
     opt.value = id;
     opt.textContent = offerFor(id, nameState).name;
     itemSelect.appendChild(opt);
   }
 
-  panel.querySelector('#dp-set-round')!.addEventListener('click', () => {
+  panel.querySelector("#dp-set-round")!.addEventListener("click", () => {
     const round = Math.max(1, Math.floor(Number(roundInput.value) || 1));
     status.textContent = setRound(game, round);
   });
 
-  panel.querySelector('#dp-grant')!.addEventListener('click', () => {
+  panel.querySelector("#dp-grant")!.addEventListener("click", () => {
     status.textContent = grantItem(game, itemSelect.value as ShopItemId);
   });
 
   for (const n of PRESET_COUNTS) {
-    const b = document.createElement('button');
+    const b = document.createElement("button");
     b.textContent = String(n);
     b.style.cssText = `
       flex: 1 1 auto; padding: 3px 6px; background: #3a3050; color: #e9d8a6;
@@ -117,9 +129,9 @@ export function installDevPanel(game: Phaser.Game): void {
     presetsEl.appendChild(b);
   }
 
-  typeSelect.value = '6';
+  typeSelect.value = "6";
 
-  panel.querySelector('#dp-apply')!.addEventListener('click', () => {
+  panel.querySelector("#dp-apply")!.addEventListener("click", () => {
     const count = Math.max(0, Math.floor(Number(countInput.value) || 0));
     applyDiceSetup(game, count, typeSelect.value, bonusCheckbox.checked);
     status.textContent = `Set ${count} dice (${typeSelect.options[typeSelect.selectedIndex].text}).`;
@@ -127,15 +139,15 @@ export function installDevPanel(game: Phaser.Game): void {
 
   let visible = true;
   const applyVisibility = () => {
-    panel.style.display = visible ? 'block' : 'none';
-    toggle.textContent = visible ? 'DEV ▾' : 'DEV ▸';
+    panel.style.display = visible ? "block" : "none";
+    toggle.textContent = visible ? "DEV ▾" : "DEV ▸";
   };
   toggle.onclick = () => {
     visible = !visible;
     applyVisibility();
   };
-  window.addEventListener('keydown', (e) => {
-    if (e.key === '`') {
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "`") {
       visible = !visible;
       applyVisibility();
     }
@@ -145,33 +157,39 @@ export function installDevPanel(game: Phaser.Game): void {
 /** Restart whichever gameplay scene is showing so the granted change renders. */
 function refreshActiveScene(game: Phaser.Game): void {
   const active = game.scene.getScenes(true)[0];
-  if (active && (active.scene.key === 'Game' || active.scene.key === 'Shop')) {
+  if (active && (active.scene.key === "Game" || active.scene.key === "Shop")) {
     active.scene.restart();
   }
 }
 
 /** Auto-pick eligible die target(s) for an item that normally prompts the
  *  player, so the dev panel can grant it without the shop's picker UI. */
-function autoTargets(state: RunState, id: ShopItemId): { index?: number; indices?: number[] } | null {
+function autoTargets(
+  state: RunState,
+  id: ShopItemId,
+): { index?: number; indices?: number[] } | null {
   switch (id) {
-    case 'shrink': {
+    case "shrink": {
       const i = state.dice.findIndex(canShrink);
       return i === -1 ? null : { index: i };
     }
-    case 'loaded_die': {
+    case "loaded_die": {
       const i = state.dice.findIndex(canLoad);
       return i === -1 ? null : { index: i };
     }
-    case 'twin':
-    case 'wild_face':
+    case "twin":
+    case "wild_face":
       return state.dice.length === 0 ? null : { index: 0 };
-    case 'grindstone': {
-      const indices = state.dice
-        .map((die, i) => ({ die, i }))
-        .filter(({ die }) => canShrink(die))
-        .slice(0, 3)
-        .map(({ i }) => i);
-      return indices.length < 3 ? null : { indices };
+    case "royal_seal": {
+      const i = state.dice.findIndex(
+        (die) => !state.royalSealSizes.includes(die.sides),
+      );
+      return i === -1 ? null : { index: i };
+    }
+    case "grindstone": {
+      // Size-wide shrink now: one shrinkable die names the size.
+      const i = state.dice.findIndex(canShrink);
+      return i === -1 ? null : { index: i };
     }
     default:
       return {}; // no target needed
@@ -185,9 +203,9 @@ function setRound(game: Phaser.Game, round: number): string {
   const state = getRun(game.registry);
   state.round = round;
   state.roll = 0;
-  state.score = 0;
+  state.score = 0n;
   state.bonusRollsThisRound = 0;
-  game.registry.set('run', state);
+  game.registry.set("run", state);
   refreshActiveScene(game);
   return `Set to round ${round} (roll/score reset).`;
 }
@@ -196,7 +214,7 @@ function setRound(game: Phaser.Game, round: number): string {
  *  the item would normally prompt. Returns a status message. */
 function grantItem(game: Phaser.Game, id: ShopItemId): string {
   const state = getRun(game.registry);
-  const offer = { ...offerFor(id, state), cost: 0 };
+  const offer = { ...offerFor(id, state), cost: 0n };
 
   const targets = autoTargets(state, id);
   if (!targets) return `No eligible die to target for ${offer.name}.`;
@@ -205,27 +223,32 @@ function grantItem(game: Phaser.Game, id: ShopItemId): string {
     return `Could not grant ${offer.name} (item's own conditions not met).`;
   }
 
-  game.registry.set('run', state);
+  game.registry.set("run", state);
   refreshActiveScene(game);
   return `Granted ${offer.name}.`;
 }
 
-function applyDiceSetup(game: Phaser.Game, count: number, type: string, maxFaceBonus: boolean): void {
+function applyDiceSetup(
+  game: Phaser.Game,
+  count: number,
+  type: string,
+  maxFaceBonus: boolean,
+): void {
   const state = getRun(game.registry);
 
   const dice = [];
   for (let i = 0; i < count; i++) {
     let sides: DieSides;
-    if (type === 'mixed') {
+    if (type === "mixed") {
       sides = DIE_LADDER[i % DIE_LADDER.length];
-    } else if (type === 'random') {
+    } else if (type === "random") {
       sides = DIE_LADDER[Math.floor(Math.random() * DIE_LADDER.length)];
     } else {
       sides = Number(type) as DieSides;
     }
     dice.push(makeDie(sides, { maxFaceBonus }));
   }
-  state.dice = dice;
-  game.registry.set('run', state);
+  state.dice = DicePool.fromDice(dice);
+  game.registry.set("run", state);
   refreshActiveScene(game);
 }
