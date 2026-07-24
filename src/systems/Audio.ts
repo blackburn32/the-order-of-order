@@ -9,6 +9,21 @@ const PRANCE_LOOP_END = 3_703_086 / PRANCE_SAMPLE_RATE;
 const MUSIC_TRIM = 0.16;
 const DUCK_ATTACK_SECONDS = 0.02;
 
+/**
+ * Cancel scheduled automation while holding the current value at `time`.
+ * Firefox lacks `cancelAndHoldAtTime`, so fall back to capturing the current
+ * value and pinning it before cancelling.
+ */
+function cancelAndHold(param: AudioParam, time: number): void {
+  if (typeof param.cancelAndHoldAtTime === 'function') {
+    param.cancelAndHoldAtTime(time);
+    return;
+  }
+  const current = param.value;
+  param.cancelScheduledValues(time);
+  param.setValueAtTime(current, time);
+}
+
 class AudioBus {
   private ctx: AudioContext | null = null;
   private musicGain: GainNode | null = null;
@@ -86,7 +101,7 @@ class AudioBus {
     this.duckUntil = Math.max(this.duckUntil, now + holdSeconds);
 
     const gain = this.musicDuckGain.gain;
-    gain.cancelAndHoldAtTime(now);
+    cancelAndHold(gain, now);
     gain.linearRampToValueAtTime(level, now + DUCK_ATTACK_SECONDS);
     gain.setValueAtTime(level, this.duckUntil);
     gain.linearRampToValueAtTime(1, this.duckUntil + releaseSeconds);

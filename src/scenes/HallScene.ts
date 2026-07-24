@@ -126,16 +126,32 @@ export class HallScene extends Phaser.Scene {
   }
 
   private buildTabs(cx: number, y: number, panelW: number): void {
-    const local = bannerButton(this, cx, y, "My Runs", () =>
-      this.switchTab("local"),
+    // Two tabs plus a gap between them must fit within the panel, so cap each
+    // button at half the available room; bannerButton scales the whole button
+    // down to honour the cap on narrow (portrait/mobile) viewports.
+    const gap = Math.max(16, panelW * 0.03);
+    const maxBtnW = (panelW * 0.94 - gap) / 2;
+    const local = bannerButton(
+      this,
+      cx,
+      y,
+      "My Runs",
+      () => this.switchTab("local"),
+      maxBtnW,
     );
-    const global = bannerButton(this, cx, y, "Global", () =>
-      this.switchTab("global"),
+    const global = bannerButton(
+      this,
+      cx,
+      y,
+      "Global",
+      () => this.switchTab("global"),
+      maxBtnW,
     );
-    // Space the two tabs by half their own width plus a fixed gap so they never
-    // overlap regardless of the button art's size or the panel width.
-    const btnW = (local.getAt(0) as Phaser.GameObjects.Image).width;
-    const dx = btnW / 2 + Math.max(24, panelW * 0.03);
+    // Space the two tabs by half their (possibly shrunk) display width plus the
+    // gap so they sit side by side, always inside the panel.
+    const btnW =
+      (local.getAt(0) as Phaser.GameObjects.Image).width * local.scale;
+    const dx = btnW / 2 + gap / 2;
     local.setX(cx - dx);
     global.setX(cx + dx);
     const active = this.tab === "local" ? local : global;

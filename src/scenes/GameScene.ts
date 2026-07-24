@@ -254,9 +254,12 @@ export class GameScene extends Phaser.Scene {
       onContinue,
       interactiveAnchor,
     });
-    // If the grid has gone windowed, keep the callout off the clipped grid
-    // camera so it isn't scissored to the grid area.
-    this.gridCamera?.ignore(this.tutorialCallout.objects);
+    // If the grid has gone windowed, route the callout through the overlay
+    // camera so it draws *above* the grid camera's opaque backdrop. A plain
+    // gridCamera.ignore() only stops the grid camera from drawing the callout —
+    // its felt backdrop (drawn after the main camera) would still paint over any
+    // part of the panel that overlaps the viewport, partially obscuring it.
+    this.overlay(this.tutorialCallout.objects);
   }
 
   private build(): void {
