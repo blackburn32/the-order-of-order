@@ -5,7 +5,10 @@
 // there is no fixed design resolution.
 
 export const ROLLS_PER_ROUND = 20;
-export const SHOP_ROLLS = [5, 15];
+// Rolls that trigger a shop mid-round. 25 is only reachable with bonus rolls
+// (Metronome/Overtime); when a round's final roll lands on 25 the shop opens
+// first and the round end resolves on return to GameScene.
+export const SHOP_ROLLS = [5, 15, 25];
 
 // Clearing this many rounds wins the game.
 export const WIN_ROUND = 10;

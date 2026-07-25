@@ -15,7 +15,8 @@
     "sim": "tsx src/sim/runBatch.ts",
     "balance": "tsx src/sim/runBatch.ts",
     "pricing:check": "tsx src/sim/pricingCheck.ts",
-    "items:check": "tsx src/sim/itemCheck.ts"
+    "items:check": "tsx src/sim/itemCheck.ts",
+    "scale:check": "tsx src/sim/scaleRegression.ts"
   },
   "dependencies": {
     "phaser": "^4.2.1"

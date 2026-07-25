@@ -14,6 +14,13 @@ import {
   offerFor,
   ShopItemId,
 } from "../systems/Shop";
+import {
+  fetchTopScores,
+  getInitials,
+  globalScoresEnabled,
+  submitScore,
+} from "../systems/GlobalScores";
+import { scoreToWireOrdinal } from "../systems/LeaderboardWire";
 
 const PRESET_COUNTS = [10, 100, 1000, 1500, 3000, 10000, 100000];
 
@@ -85,6 +92,20 @@ export function installDevPanel(game: Phaser.Game): void {
       color:#e9d8a6;border:none;border-radius:3px;cursor:pointer;font:inherit;font-weight:bold;">
       Grant (free)
     </button>
+    <button id="dp-grant-all" style="margin-top:6px;width:100%;padding:5px;background:#1f6b8a;
+      color:#e9d8a6;border:none;border-radius:3px;cursor:pointer;font:inherit;font-weight:bold;">
+      Grant ALL items (free)
+    </button>
+    <hr style="border:none;border-top:1px solid #5a4a2e;margin:10px 0 8px;" />
+    <h4 style="margin:0 0 6px;font-size:12px;color:#e6c65a;">Leaderboard Test</h4>
+    <label style="display:block;margin-top:2px;font-size:11px;opacity:.85;">Score (int or 1e35)</label>
+    <input id="dp-lb-score" type="text" value="1e35"
+      style="width:100%;box-sizing:border-box;margin-top:2px;background:#1a1526;color:#e9d8a6;
+             border:1px solid #5a4a2e;border-radius:3px;padding:3px 5px;font:inherit;" />
+    <button id="dp-lb-submit" style="margin-top:8px;width:100%;padding:5px;background:#1f6b8a;
+      color:#e9d8a6;border:none;border-radius:3px;cursor:pointer;font:inherit;font-weight:bold;">
+      Submit &amp; read back
+    </button>
     <div id="dp-status" style="margin-top:6px;font-size:11px;opacity:.75;"></div>
   `;
   document.body.appendChild(panel);
@@ -95,6 +116,7 @@ export function installDevPanel(game: Phaser.Game): void {
   const bonusCheckbox = panel.querySelector("#dp-bonus") as HTMLInputElement;
   const roundInput = panel.querySelector("#dp-round") as HTMLInputElement;
   const itemSelect = panel.querySelector("#dp-item") as HTMLSelectElement;
+  const lbScoreInput = panel.querySelector("#dp-lb-score") as HTMLInputElement;
   const status = panel.querySelector("#dp-status") as HTMLDivElement;
 
   // Item names come from `offerFor`; the argument state only affects a couple
@@ -114,6 +136,16 @@ export function installDevPanel(game: Phaser.Game): void {
 
   panel.querySelector("#dp-grant")!.addEventListener("click", () => {
     status.textContent = grantItem(game, itemSelect.value as ShopItemId);
+  });
+
+  panel.querySelector("#dp-grant-all")!.addEventListener("click", () => {
+    status.textContent = grantAllItems(game);
+  });
+
+  panel.querySelector("#dp-lb-submit")!.addEventListener("click", () => {
+    void submitLeaderboardTest(lbScoreInput.value, (msg) => {
+      status.textContent = msg;
+    });
   });
 
   for (const n of PRESET_COUNTS) {
@@ -152,6 +184,62 @@ export function installDevPanel(game: Phaser.Game): void {
       applyVisibility();
     }
   });
+}
+
+/** Parse a dev-entered score: a plain decimal integer, or `<mantissa>e<exp>`
+ *  shorthand (e.g. `1e35`, `25e30`) expanded losslessly into a bigint. Returns
+ *  null on anything else. */
+function parseScoreInput(raw: string): bigint | null {
+  const s = raw.trim();
+  const sci = /^(\d+)e(\d+)$/i.exec(s);
+  if (sci) return BigInt(sci[1]) * 10n ** BigInt(sci[2]);
+  if (/^\d+$/.test(s)) return BigInt(s);
+  return null;
+}
+
+/** Submit a large score to the live LootLocker board under the current initials,
+ *  then read the top back and report where our exact value landed — a manual
+ *  end-to-end check that the int64 ordinal projection round-trips. Reports each
+ *  stage through `report` so the async progress is visible in the panel. */
+async function submitLeaderboardTest(
+  raw: string,
+  report: (msg: string) => void,
+): Promise<void> {
+  const score = parseScoreInput(raw);
+  if (score === null) {
+    report(`Bad score "${raw}" — use an integer or e.g. 1e35.`);
+    return;
+  }
+  if (!globalScoresEnabled()) {
+    report("Leaderboard disabled (LootLocker keys not configured).");
+    return;
+  }
+  const wire = scoreToWireOrdinal(score);
+  report(`Submitting ${score.toString()} (wire ${wire.toString()})…`);
+
+  const ok = await submitScore(score, getInitials() || "DEV", {}, {}, false);
+  if (!ok) {
+    report(`Submit FAILED for ${score.toString()} (wire ${wire.toString()}).`);
+    return;
+  }
+
+  const rows = await fetchTopScores();
+  if (!rows) {
+    report("Submitted OK, but read-back failed (network/disabled).");
+    return;
+  }
+  const mine = rows.find((r) => r.isYou && r.score === score);
+  if (mine) {
+    report(
+      `OK: rank #${mine.rank}, exact score ${mine.score.toString()} round-tripped (wire ${wire.toString()}).`,
+    );
+  } else {
+    const top = rows[0];
+    report(
+      `Submitted (wire ${wire.toString()}). Exact row not in top ${rows.length}` +
+        (top ? `; current #1 is ${top.score.toString()}.` : "."),
+    );
+  }
 }
 
 /** Restart whichever gameplay scene is showing so the granted change renders. */
@@ -226,6 +314,32 @@ function grantItem(game: Phaser.Game, id: ShopItemId): string {
   game.registry.set("run", state);
   refreshActiveScene(game);
   return `Granted ${offer.name}.`;
+}
+
+/** Grant every shop item to the current run for free in one pass. Iterates in
+ *  ITEMS order so Two Bricks seeds the grid before target-consuming items run,
+ *  auto-targeting each against the live (mutating) state. Skips items whose own
+ *  conditions can't be met. Refreshes the scene once at the end. Returns a
+ *  status message with the granted/skipped tally. */
+function grantAllItems(game: Phaser.Game): string {
+  const state = getRun(game.registry);
+  let granted = 0;
+  const skipped: string[] = [];
+
+  for (const id of ALL_SHOP_ITEM_IDS) {
+    const offer = { ...offerFor(id, state), cost: 0n };
+    const targets = autoTargets(state, id);
+    if (!targets || !applyOffer(state, offer, targets.index, targets.indices)) {
+      skipped.push(offer.name);
+      continue;
+    }
+    granted++;
+  }
+
+  game.registry.set("run", state);
+  refreshActiveScene(game);
+  const tail = skipped.length ? ` Skipped: ${skipped.join(", ")}.` : "";
+  return `Granted ${granted} item${granted === 1 ? "" : "s"}.${tail}`;
 }
 
 function applyDiceSetup(

@@ -18,20 +18,25 @@
 // Dashboard prerequisites (one-time): the game must have the **Guest** login
 // platform enabled, and the leaderboard with the configured key must exist.
 
-import { ITEMS } from './Items';
-import { combinePointsByItem, sourceLabel, STARTER_SOURCE } from './ItemPoints';
+import { ITEMS } from "./Items";
+import { combinePointsByItem, sourceLabel, STARTER_SOURCE } from "./ItemPoints";
+import {
+  buildLeaderboardSubmissionBody,
+  normalizeLeaderboardScore,
+  scoreToWireOrdinal,
+} from "./LeaderboardWire";
 
-const API = 'https://api.lootlocker.io/game';
+const API = "https://api.lootlocker.io/game";
 
 const GAME_KEY = import.meta.env.VITE_LOOTLOCKER_GAME_KEY;
 const LEADERBOARD_KEY = import.meta.env.VITE_LOOTLOCKER_LEADERBOARD_KEY;
-const GAME_VERSION = import.meta.env.VITE_LOOTLOCKER_GAME_VERSION ?? '0.1.0';
+const GAME_VERSION = import.meta.env.VITE_LOOTLOCKER_GAME_VERSION ?? "0.1.0";
 
 export const GLOBAL_TOP_N = 100;
 
-const KEY_PLAYER_ID = 'ooo_player_id_v1';
-const KEY_INITIALS = 'ooo_initials_v1';
-const KEY_PENDING = 'ooo_pending_global_v1';
+const KEY_PLAYER_ID = "ooo_player_id_v1";
+const KEY_INITIALS = "ooo_initials_v1";
+const KEY_PENDING = "ooo_pending_global_v1";
 
 /** One item's reconstructed point contribution for a fetched global row. Points
  *  are approximate: the metadata carries each item's share (permille) of the
@@ -44,7 +49,7 @@ export interface GlobalBreakdownEntry {
 
 export interface GlobalScoreRow {
   rank: number;
-  score: number;
+  score: bigint;
   name: string; // initials (from metadata), uppercased; may be ''
   isYou: boolean;
   hard?: boolean; // run was played on Hard Mode (from metadata)
@@ -55,7 +60,7 @@ export interface GlobalScoreRow {
 export type PointMap = Record<string, number>;
 
 export interface PendingSubmission {
-  score: number;
+  score: bigint;
   won: boolean;
   hard: boolean;
   dicePoints: PointMap;
@@ -91,9 +96,9 @@ export function getPlayerId(): string {
 
 export function getInitials(): string {
   try {
-    return localStorage.getItem(KEY_INITIALS) ?? '';
+    return localStorage.getItem(KEY_INITIALS) ?? "";
   } catch {
-    return '';
+    return "";
   }
 }
 
@@ -109,7 +114,7 @@ export function setInitials(initials: string): void {
 export function normalizeInitials(raw: string): string {
   return raw
     .toUpperCase()
-    .replace(/[^A-Z]/g, '')
+    .replace(/[^A-Z]/g, "")
     .slice(0, 3);
 }
 
@@ -117,7 +122,10 @@ export function normalizeInitials(raw: string): string {
 
 export function queuePendingSubmission(pending: PendingSubmission): void {
   try {
-    localStorage.setItem(KEY_PENDING, JSON.stringify(pending));
+    localStorage.setItem(
+      KEY_PENDING,
+      JSON.stringify({ ...pending, score: pending.score.toString() }),
+    );
   } catch {
     // non-fatal
   }
@@ -128,7 +136,10 @@ export function takePendingSubmission(): PendingSubmission | null {
     const raw = localStorage.getItem(KEY_PENDING);
     if (!raw) return null;
     localStorage.removeItem(KEY_PENDING);
-    return JSON.parse(raw) as PendingSubmission;
+    const parsed = JSON.parse(raw) as Omit<PendingSubmission, "score"> & {
+      score: string | number;
+    };
+    return { ...parsed, score: BigInt(parsed.score) };
   } catch {
     return null;
   }
@@ -141,13 +152,13 @@ let sessionToken: string | null = null;
 async function startGuestSession(): Promise<string | null> {
   try {
     const res = await fetch(`${API}/v2/session/guest`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         game_key: GAME_KEY,
         game_version: GAME_VERSION,
-        player_identifier: getPlayerId()
-      })
+        player_identifier: getPlayerId(),
+      }),
     });
     if (!res.ok) return null;
     const data = (await res.json()) as { session_token?: string };
@@ -164,13 +175,20 @@ async function ensureSession(): Promise<string | null> {
 
 /** Authed request that transparently re-auths once on 401 (expired token).
  *  Returns null when we can't obtain a session or the network fails. */
-async function authed(path: string, init: RequestInit = {}): Promise<Response | null> {
+async function authed(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response | null> {
   let token = await ensureSession();
   if (!token) return null;
   const doFetch = (t: string): Promise<Response> =>
     fetch(`${API}${path}`, {
       ...init,
-      headers: { 'Content-Type': 'application/json', 'x-session-token': t, ...(init.headers ?? {}) }
+      headers: {
+        "Content-Type": "application/json",
+        "x-session-token": t,
+        ...(init.headers ?? {}),
+      },
     });
   try {
     let res = await doFetch(token);
@@ -190,7 +208,8 @@ async function authed(path: string, init: RequestInit = {}): Promise<Response | 
 
 // LootLocker's generic-leaderboard `metadata` is a single string with a length
 // cap (~256 chars). We pack the display initials plus a compact per-item points
-// breakdown into a JSON envelope { i, b }. `b` is an array of [code, permille]
+// breakdown into a JSON envelope { i, s, b }. `s` is the exact decimal score;
+// `b` is an array of [code, permille]
 // for the top items by points, where `code` is the item's index in ITEMS (or 's'
 // for the starter die) and `permille` is that item's share of the run's total
 // (×1000). Absolute points are reconstructed on read as share × the row's score.
@@ -201,15 +220,16 @@ const MAX_BREAKDOWN_ITEMS = 14;
  *  Uses the item's index in ITEMS; items are only ever appended, so existing
  *  codes stay valid. Returns null for an unknown id. */
 function codeForSource(source: string): string | null {
-  if (source === STARTER_SOURCE) return 's';
+  if (source === STARTER_SOURCE) return "s";
   const i = ITEMS.findIndex((it) => it.id === source);
   return i >= 0 ? String(i) : null;
 }
 
 function sourceForCode(code: unknown): string | null {
-  if (code === 's') return STARTER_SOURCE;
-  if (typeof code === 'string' && /^\d+$/.test(code)) return ITEMS[Number(code)]?.id ?? null;
-  if (typeof code === 'number') return ITEMS[code]?.id ?? null;
+  if (code === "s") return STARTER_SOURCE;
+  if (typeof code === "string" && /^\d+$/.test(code))
+    return ITEMS[Number(code)]?.id ?? null;
+  if (typeof code === "number") return ITEMS[code]?.id ?? null;
   return null;
 }
 
@@ -220,9 +240,12 @@ function encodeMeta(
   initials: string,
   dicePoints: PointMap,
   itemPoints: PointMap,
-  hard: boolean
+  hard: boolean,
+  score: bigint,
 ): string {
-  const entries = combinePointsByItem(dicePoints, itemPoints).filter((e) => e.points > 0);
+  const entries = combinePointsByItem(dicePoints, itemPoints).filter(
+    (e) => e.points > 0,
+  );
   const total = entries.reduce((s, e) => s + e.points, 0);
   const coded: [string, number][] = [];
   for (const e of entries) {
@@ -233,23 +256,52 @@ function encodeMeta(
   // `h: 1` marks a Hard Mode run (1 char, always kept even when the breakdown is
   // dropped to fit the length cap). Omitted entirely on normal runs.
   const hardField = hard ? { h: 1 } : {};
+  // LootLocker's response is parsed through JavaScript Number, so it cannot
+  // reproduce large integers exactly. Keep the canonical decimal score in
+  // metadata for lossless display while the numeric field remains the value the
+  // backend ranks.
+  const scoreField = { s: score.toString() };
   for (let n = Math.min(coded.length, MAX_BREAKDOWN_ITEMS); n > 0; n--) {
-    const s = JSON.stringify({ i: initials, ...hardField, b: coded.slice(0, n) });
+    const s = JSON.stringify({
+      i: initials,
+      ...hardField,
+      ...scoreField,
+      b: coded.slice(0, n),
+    });
     if (s.length <= META_MAX) return s;
   }
-  return JSON.stringify({ i: initials, ...hardField });
+  return JSON.stringify({ i: initials, ...hardField, ...scoreField });
 }
 
 /** Decode initials and (when present) the points breakdown from a metadata
  *  string, tolerating legacy rows where metadata was the bare initials or an
  *  older `{ i, p }` purchases envelope (whose extra key is simply ignored). */
-function decodeMeta(meta: string | undefined, score: number): { initials: string; hard: boolean; breakdown?: GlobalBreakdownEntry[] } {
-  if (!meta) return { initials: '', hard: false };
+function decodeMeta(
+  meta: string | undefined,
+  wireScore: number,
+): {
+  score: bigint;
+  initials: string;
+  hard: boolean;
+  breakdown?: GlobalBreakdownEntry[];
+} {
+  const fallbackScore = wireScoreToBigInt(wireScore);
+  if (!meta) return { score: fallbackScore, initials: "", hard: false };
   try {
-    const parsed = JSON.parse(meta) as { i?: unknown; h?: unknown; b?: unknown };
-    const initials = typeof parsed.i === 'string' ? parsed.i.toUpperCase() : '';
+    const parsed = JSON.parse(meta) as {
+      i?: unknown;
+      h?: unknown;
+      s?: unknown;
+      b?: unknown;
+    };
+    const score =
+      typeof parsed.s === "string" && /^\d+$/.test(parsed.s)
+        ? BigInt(parsed.s)
+        : fallbackScore;
+    const initials = typeof parsed.i === "string" ? parsed.i.toUpperCase() : "";
     const hard = parsed.h === 1 || parsed.h === true;
     let breakdown: GlobalBreakdownEntry[] | undefined;
+    const approximateScore = Number(score);
     if (Array.isArray(parsed.b)) {
       breakdown = parsed.b
         .map((pair) => {
@@ -257,45 +309,82 @@ function decodeMeta(meta: string | undefined, score: number): { initials: string
           const id = sourceForCode(pair[0]);
           const permille = Number(pair[1]);
           if (id === null || !Number.isFinite(permille)) return null;
-          return { id, label: sourceLabel(id), points: (permille / 1000) * score };
+          return {
+            id,
+            label: sourceLabel(id),
+            points: (permille / 1000) * approximateScore,
+          };
         })
         .filter((e): e is GlobalBreakdownEntry => e !== null);
       if (breakdown.length === 0) breakdown = undefined;
     }
-    return { initials, hard, breakdown };
+    return { score, initials, hard, breakdown };
   } catch {
     // legacy row: metadata was the bare initials string
-    return { initials: meta.toUpperCase(), hard: false };
+    return {
+      score: fallbackScore,
+      initials: meta.toUpperCase(),
+      hard: false,
+    };
   }
+}
+
+function wireScoreToBigInt(score: number): bigint {
+  return normalizeLeaderboardScore(score);
 }
 
 /** Push a score to the global leaderboard under our device member id, packing
  *  the initials (display name) and a compact per-item points breakdown into
  *  `metadata`. Resolves to whether it succeeded; never throws. */
 export async function submitScore(
-  score: number,
+  score: bigint | number,
   initials: string,
   dicePoints: PointMap = {},
   itemPoints: PointMap = {},
-  hard = false
+  hard = false,
 ): Promise<boolean> {
   if (!globalScoresEnabled()) return false;
+  const exactScore = normalizeLeaderboardScore(score);
+  const metadata = encodeMeta(
+    normalizeInitials(initials),
+    dicePoints,
+    itemPoints,
+    hard,
+    exactScore,
+  );
+  // LootLocker ranks by a signed int64 `score` field, which real scores now
+  // overflow (target 1e35). Submit an order-preserving projection into that
+  // field instead — existing rows (all below ~1.93e18) pass through unchanged,
+  // larger scores compress into the headroom above them — while the exact value
+  // stays in metadata `s` for lossless display (see encodeMeta / decodeMeta).
+  const wireScore = scoreToWireOrdinal(exactScore);
+  // Do not hand the score to JSON.stringify: once a Number reaches 1e21 it
+  // emits exponent notation (`1e+21`), which LootLocker's integer validator
+  // rejects, and converting bigint to Number already loses low digits. The
+  // interpolated token is a validated non-negative bigint decimal, so this is
+  // still valid JSON while preserving the complete integer.
+  const body = buildLeaderboardSubmissionBody(
+    getPlayerId(),
+    wireScore,
+    metadata,
+  );
   const res = await authed(`/leaderboards/${LEADERBOARD_KEY}/submit`, {
-    method: 'POST',
-    body: JSON.stringify({
-      member_id: getPlayerId(),
-      score: Math.max(0, Math.floor(score)),
-      metadata: encodeMeta(normalizeInitials(initials), dicePoints, itemPoints, hard)
-    })
+    method: "POST",
+    body,
   });
   return !!res && res.ok;
 }
 
 /** Fetch the global top-N. Returns null when disabled or the request fails
  *  (caller distinguishes via `globalScoresEnabled()`). */
-export async function fetchTopScores(limit = GLOBAL_TOP_N): Promise<GlobalScoreRow[] | null> {
+export async function fetchTopScores(
+  limit = GLOBAL_TOP_N,
+): Promise<GlobalScoreRow[] | null> {
   if (!globalScoresEnabled()) return null;
-  const res = await authed(`/leaderboards/${LEADERBOARD_KEY}/list?count=${limit}`, { method: 'GET' });
+  const res = await authed(
+    `/leaderboards/${LEADERBOARD_KEY}/list?count=${limit}`,
+    { method: "GET" },
+  );
   if (!res || !res.ok) return null;
   try {
     const data = (await res.json()) as { items?: LLEntry[] | null };
@@ -315,13 +404,13 @@ interface LLEntry {
 }
 
 function toRow(e: LLEntry, me: string): GlobalScoreRow {
-  const { initials, hard, breakdown } = decodeMeta(e.metadata, e.score);
+  const { score, initials, hard, breakdown } = decodeMeta(e.metadata, e.score);
   return {
     rank: e.rank,
-    score: e.score,
+    score,
     name: initials,
     isYou: !!e.member_id && e.member_id === me,
     hard,
-    breakdown
+    breakdown,
   };
 }

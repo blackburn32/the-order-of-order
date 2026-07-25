@@ -217,6 +217,18 @@ export function simulateRun(
     rolls += 1;
     trackUnlocks(state, record.unlocksAchieved);
 
+    // Shop checkpoints take priority over the round end, matching GameScene: a
+    // final roll that lands on a checkpoint (roll 25 with bonus rolls) visits
+    // the shop first, then the round resolves below.
+    if (shouldOpenShop(state)) {
+      let offers = rollShopOffers(state, state.ownedLedger ? 5 : 3, rng);
+      // The simple bots always use their free full-store reroll when available.
+      if (state.hasDealersBell)
+        offers = rollShopOffers(state, state.ownedLedger ? 5 : 3, rng);
+      strategy.visit(state, offers, rng);
+      trackUnlocks(state, record.unlocksAchieved); // buys can change the grid
+    }
+
     if (state.roll >= roundRollTarget(state)) {
       record.trajectory.push({
         round: state.round,
@@ -235,15 +247,6 @@ export function simulateRun(
       }
       trackUnlocks(state, record.unlocksAchieved); // Foundry dice can satisfy dice-count unlocks
       continue;
-    }
-
-    if (shouldOpenShop(state)) {
-      let offers = rollShopOffers(state, state.ownedLedger ? 5 : 3, rng);
-      // The simple bots always use their free full-store reroll when available.
-      if (state.hasDealersBell)
-        offers = rollShopOffers(state, state.ownedLedger ? 5 : 3, rng);
-      strategy.visit(state, offers, rng);
-      trackUnlocks(state, record.unlocksAchieved); // buys can change the grid
     }
 
     if (rolls >= cfg.maxRollsPerRun) {

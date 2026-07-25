@@ -1206,8 +1206,23 @@ export class DicePool {
       const g = map.get(key);
       if (g) g.count += available;
       else
+        // Build the representative straight from the bucket we already hold —
+        // its flags define this group's key — rather than resolving it back
+        // through `dieAt(firstIndex)`. That index round-trip was the only way a
+        // group could ever carry an `undefined` die (a stale/out-of-range
+        // `firstIndex` yields `undefined`, which then crashes every consumer,
+        // e.g. the shop's target picker sort). `firstIndex` is still returned
+        // for targeting; it no longer gates whether the die exists.
         map.set(key, {
-          die: this.dieAt(firstIndex)!,
+          die: makeDie(
+            b.sides,
+            {
+              maxFaceBonus: b.maxFaceBonus,
+              loaded: b.loaded,
+              wildFace: b.wildFace,
+            },
+            b.source,
+          ),
           count: available,
           firstIndex,
         });

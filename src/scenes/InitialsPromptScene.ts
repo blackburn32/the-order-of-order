@@ -12,7 +12,7 @@ import {
 } from "../systems/GlobalScores";
 
 export interface InitialsPromptData {
-  score: number;
+  score: bigint;
   /** This run's per-item point attribution, packed into the leaderboard metadata
    *  (see systems/ItemPoints / GlobalScores.encodeMeta). */
   dicePoints?: PointMap;
@@ -33,7 +33,7 @@ export interface InitialsPromptData {
  * The base scene's input is disabled while we're open and restored on close.
  */
 export class InitialsPromptScene extends Phaser.Scene {
-  private score = 0;
+  private score = 0n;
   private dicePoints: PointMap = {};
   private itemPoints: PointMap = {};
   private hard = false;
@@ -232,7 +232,13 @@ export class InitialsPromptScene extends Phaser.Scene {
     const initials = this.slots.join("");
     setInitials(initials);
     // Fire-and-forget: don't block closing on the network round-trip.
-    void submitScore(this.score, initials, this.dicePoints, this.itemPoints, this.hard);
+    void submitScore(
+      this.score,
+      initials,
+      this.dicePoints,
+      this.itemPoints,
+      this.hard,
+    );
     this.close();
   }
 

@@ -143,6 +143,14 @@ export class GameScene extends Phaser.Scene {
 
     this.renderTutorial();
 
+    // Returning from a shop that opened on the round's final roll (roll 25 with
+    // bonus rolls): the round is over, so resolve it now instead of waiting for
+    // a roll the player has no rolls left to make.
+    if (this.state.roll >= roundRollTarget(this.state)) {
+      this.rolling = true;
+      this.resolveEndOfRound();
+    }
+
     const offResize = onResizeCoalesced(this, () => this.handleResize());
     const offInput = this.wireGridInput();
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -1188,7 +1196,7 @@ export class GameScene extends Phaser.Scene {
     const { personalBest } = recordRunEnd(s, won);
     if (personalBest && globalScoresEnabled()) {
       queuePendingSubmission({
-        score: Number(s.totalScore),
+        score: s.totalScore,
         won,
         hard: s.hardMode,
         dicePoints: toNumberPointMap(s.dicePoints),
@@ -1200,73 +1208,18 @@ export class GameScene extends Phaser.Scene {
   private afterRoll(autoReroll: boolean): void {
     const s = this.state;
 
-    if (s.roll >= roundRollTarget(s)) {
-      // The engine decides win/lose/advance and performs the score carryover and
-      // round-start passives on advance; the scene handles audio, banners, and
-      // scene transitions around it.
-      const outcome = resolveRoundEnd(s);
-      if (outcome.insuranceUsed) {
-        this.banners.push("Insurance Policy honored", {
-          holdMs: 1300,
-          detail: "The round clears at 75% of its target. The policy is destroyed.",
-        });
-      }
-      if (outcome.phase === "victory") {
-        audio.victory();
-        // Capture before endRun records the winning entry: true only if this is
-        // the player's first-ever win, which is exactly when Hard Mode unlocks.
-        const hardUnlocked = !hasBeatenGame();
-        this.endRun(s, true);
-        this.checkUnlocks();
-        this.banners.push(
-          `All ${WIN_ROUND} rounds survived — the Order is complete`,
-          { holdMs: 1300 },
-        );
-        if (hardUnlocked) {
-          this.banners.push("Hard Mode unlocked ☠", {
-            holdMs: 1500,
-            detail: "Enable it in Settings or on the next-run screen.",
-          });
-        }
-        this.time.delayedCall(1700, () => this.scene.start("Victory"));
-        return;
-      }
-      if (outcome.phase === "gameOver") {
-        audio.gameOver();
-        this.endRun(s, false);
-        this.banners.push("The Order is displeased. Your run ends.", {
-          holdMs: 1300,
-        });
-        this.time.delayedCall(1700, () => this.scene.start("GameOver"));
-        return;
-      }
-      // advanced — round was just incremented by the engine.
-      audio.roundUp();
-      this.banners.push(
-        `Round ${s.round - 1} survived — the Order is pleased`,
-        { holdMs: 1300 },
-      );
-      this.checkUnlocks();
-      this.time.delayedCall(1700, () => {
-        this.updateHud();
-        if (outcome.diceAdded > 0) {
-          this.syncGrid(this.layout);
-          this.cueCreatedDice(
-            outcome.diceAdded,
-            "foundry",
-            "FOUNDRY",
-            COLORS.rarityUncommon,
-            CSS.rarityUncommon,
-          );
-        }
-        this.rolling = false;
-      });
-      return;
-    }
-
+    // Shop checkpoints take priority over the round end: when a round's final
+    // roll also lands on a checkpoint (only possible at roll 25 with bonus
+    // rolls), visit the shop first. The round then resolves when we return to
+    // GameScene — see the resume check in create().
     if (shouldOpenShop(s)) {
       this.banners.push("The shop beckons…", { holdMs: 900 });
       this.time.delayedCall(800, () => this.scene.start("Shop"));
+      return;
+    }
+
+    if (s.roll >= roundRollTarget(s)) {
+      this.resolveEndOfRound();
       return;
     }
 
@@ -1275,5 +1228,73 @@ export class GameScene extends Phaser.Scene {
     } else {
       this.rolling = false;
     }
+  }
+
+  /** Resolve the end of a round (win/lose/advance) with the matching audio,
+   *  banners, and scene transition. Assumes `state.roll >= roundRollTarget`.
+   *  Called from afterRoll when the last roll isn't a shop checkpoint, and from
+   *  create() when returning from a shop that opened on the final roll. */
+  private resolveEndOfRound(): void {
+    const s = this.state;
+    // The engine decides win/lose/advance and performs the score carryover and
+    // round-start passives on advance; the scene handles audio, banners, and
+    // scene transitions around it.
+    const outcome = resolveRoundEnd(s);
+    if (outcome.insuranceUsed) {
+      this.banners.push("Insurance Policy honored", {
+        holdMs: 1300,
+        detail: "The round clears at 75% of its target. The policy is destroyed.",
+      });
+    }
+    if (outcome.phase === "victory") {
+      audio.victory();
+      // Capture before endRun records the winning entry: true only if this is
+      // the player's first-ever win, which is exactly when Hard Mode unlocks.
+      const hardUnlocked = !hasBeatenGame();
+      this.endRun(s, true);
+      this.checkUnlocks();
+      this.banners.push(
+        `All ${WIN_ROUND} rounds survived — the Order is complete`,
+        { holdMs: 1300 },
+      );
+      if (hardUnlocked) {
+        this.banners.push("Hard Mode unlocked ☠", {
+          holdMs: 1500,
+          detail: "Enable it in Settings or on the next-run screen.",
+        });
+      }
+      this.time.delayedCall(1700, () => this.scene.start("Victory"));
+      return;
+    }
+    if (outcome.phase === "gameOver") {
+      audio.gameOver();
+      this.endRun(s, false);
+      this.banners.push("The Order is displeased. Your run ends.", {
+        holdMs: 1300,
+      });
+      this.time.delayedCall(1700, () => this.scene.start("GameOver"));
+      return;
+    }
+    // advanced — round was just incremented by the engine.
+    audio.roundUp();
+    this.banners.push(
+      `Round ${s.round - 1} survived — the Order is pleased`,
+      { holdMs: 1300 },
+    );
+    this.checkUnlocks();
+    this.time.delayedCall(1700, () => {
+      this.updateHud();
+      if (outcome.diceAdded > 0) {
+        this.syncGrid(this.layout);
+        this.cueCreatedDice(
+          outcome.diceAdded,
+          "foundry",
+          "FOUNDRY",
+          COLORS.rarityUncommon,
+          CSS.rarityUncommon,
+        );
+      }
+      this.rolling = false;
+    });
   }
 }

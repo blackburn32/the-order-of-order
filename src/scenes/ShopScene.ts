@@ -544,11 +544,27 @@ export class ShopScene extends Phaser.Scene {
 
     if (affordable) {
       card.setInteractive({ useHandCursor: true });
+      // Buy on release, not press, and only when the press *started* on this
+      // same card. A shop rebuild (Dealer's Bell reroll, or completing a
+      // die-targeting item like Twins) fires on pointerdown and can spawn a
+      // fresh card directly under a still-held pointer; without requiring the
+      // matching pointerdown, the release that ended the previous interaction
+      // would land on the new card and instantly buy it. This also naturally
+      // rejects carousel drags/swipes (which start on a different card, or
+      // exceed the drag threshold).
+      let pressedHere = false;
       card.on("pointerover", () => img.setTint(0xfff2c8));
-      card.on("pointerout", () => img.clearTint());
-      // Buy on release, not press, and only if this wasn't a carousel drag/swipe.
+      card.on("pointerout", () => {
+        img.clearTint();
+        pressedHere = false;
+      });
+      card.on("pointerdown", () => {
+        pressedHere = true;
+      });
       card.on("pointerup", () => {
-        if (this.dragDistance < DRAG_THRESHOLD) this.choose(offer);
+        const buy = pressedHere && this.dragDistance < DRAG_THRESHOLD;
+        pressedHere = false;
+        if (buy) this.choose(offer);
       });
     } else {
       card.setAlpha(0.55);
@@ -644,11 +660,18 @@ export class ShopScene extends Phaser.Scene {
 
     const area = { x: W * 0.08, y: H * 0.2, width: W * 0.84, height: H * 0.58 };
     const grouped = this.state.dice.length > WINDOW_THRESHOLD;
-    items.push(
-      ...(grouped
-        ? this.buildGroupedPicker(offer, area)
-        : this.buildIndividualPicker(offer, area)),
-    );
+    // Build the die grid defensively: a throw here must never strand the player
+    // in a picker with no way back — the "Back to the Offerings" button below is
+    // always added regardless.
+    try {
+      items.push(
+        ...(grouped
+          ? this.buildGroupedPicker(offer, area)
+          : this.buildIndividualPicker(offer, area)),
+      );
+    } catch (err) {
+      console.error("Failed to build die picker", err);
+    }
 
     items.push(
       bannerButton(

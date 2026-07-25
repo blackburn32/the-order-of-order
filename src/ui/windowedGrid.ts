@@ -1,4 +1,3 @@
-import Phaser from "phaser";
 import { GridArea } from "./gridLayout";
 
 // Dense auxiliary pickers still use a threshold. The main game grid now uses
@@ -14,8 +13,8 @@ const CARD_TARGET_SCREEN_SIZE = 112;
 const LOD_HYSTERESIS = 0.9;
 
 export const GRID_LOD_THRESHOLDS = {
-  callouts: 1_000,
-  effects: 5_000,
+  callouts: 500,
+  effects: 2_000,
   cards: 10_000,
 } as const;
 
@@ -84,14 +83,13 @@ export interface VisibleDiceCard {
   };
 }
 
-interface AxisRegion {
-  start: number;
-  end: number;
-}
-
 export function clampZoom(zoom: number, area: GridArea): number {
   void area;
-  return Phaser.Math.Clamp(zoom, MIN_ZOOM, MAX_ZOOM);
+  return clamp(zoom, MIN_ZOOM, MAX_ZOOM);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 /** Select the representation for the amount of raw grid covered by the camera.
@@ -172,16 +170,8 @@ export function computeWindowedView(
   const originX = (virtualW - contentW) / 2;
   const originY = (virtualH - contentH) / 2;
 
-  const scrollX = Phaser.Math.Clamp(
-    view.scrollX,
-    0,
-    Math.max(0, virtualW - viewW),
-  );
-  const scrollY = Phaser.Math.Clamp(
-    view.scrollY,
-    0,
-    Math.max(0, virtualH - viewH),
-  );
+  const scrollX = clamp(view.scrollX, 0, Math.max(0, virtualW - viewW));
+  const scrollY = clamp(view.scrollY, 0, Math.max(0, virtualH - viewH));
 
   // This is the number of raw cells the viewport represents, independent of
   // whether those cells are about to become DieSprites or summary cards. The
@@ -260,8 +250,8 @@ export function computeVisibleDiceCards(
     1,
     2 ** Math.round(Math.log2(Math.max(1, idealCells))),
   );
-  const columnRegions = partitionAxis(view.cols, regionCells);
-  const rowRegions = partitionAxis(view.rows, regionCells);
+  const columnRegionCount = axisRegionCount(view.cols, regionCells);
+  const rowRegionCount = axisRegionCount(view.rows, regionCells);
 
   const colStart = Math.max(
     0,
@@ -281,21 +271,44 @@ export function computeVisibleDiceCards(
   );
 
   const [tileColStart, tileColEnd] = visibleRegionSpan(
-    columnRegions,
+    columnRegionCount,
+    regionCells,
     colStart,
     colEnd,
   );
   const [tileRowStart, tileRowEnd] = visibleRegionSpan(
-    rowRegions,
+    rowRegionCount,
+    regionCells,
     rowStart,
     rowEnd,
   );
 
   const cards: VisibleDiceCard[] = [];
-  for (let tileRow = tileRowStart; tileRow <= tileRowEnd; tileRow++) {
-    const { start: firstRow, end: lastRow } = rowRegions[tileRow];
-    for (let tileCol = tileColStart; tileCol <= tileColEnd; tileCol++) {
-      const { start: firstCol, end: lastCol } = columnRegions[tileCol];
+  // Iterate offsets rather than incrementing enormous tile indices directly.
+  // Above Number.MAX_SAFE_INTEGER, `tileRow++` can round back to the same value
+  // and turn a bounded visible-card loop into an infinite one.
+  const visibleRowRegions = Math.max(0, tileRowEnd - tileRowStart + 1);
+  const visibleColumnRegions = Math.max(0, tileColEnd - tileColStart + 1);
+  for (let rowOffset = 0; rowOffset < visibleRowRegions; rowOffset++) {
+    const tileRow = tileRowStart + rowOffset;
+    const { start: firstRow, end: lastRow } = axisRegionAt(
+      view.rows,
+      regionCells,
+      tileRow,
+      rowRegionCount,
+    );
+    for (
+      let columnOffset = 0;
+      columnOffset < visibleColumnRegions;
+      columnOffset++
+    ) {
+      const tileCol = tileColStart + columnOffset;
+      const { start: firstCol, end: lastCol } = axisRegionAt(
+        view.cols,
+        regionCells,
+        tileCol,
+        columnRegionCount,
+      );
       if (firstRow * view.cols + firstCol >= n) continue;
 
       const width = (lastCol - firstCol) * view.cell;
@@ -319,36 +332,40 @@ export function computeVisibleDiceCards(
   return cards;
 }
 
-/** Split an axis into near-equal card-sized regions. A very small remainder is
- *  folded into the preceding region instead of becoming an unreadable sliver. */
-function partitionAxis(total: number, target: number): AxisRegion[] {
-  const regions: AxisRegion[] = [];
-  let start = 0;
-  while (start + target <= total) {
-    regions.push({ start, end: start + target });
-    start += target;
-  }
-  if (start < total) {
-    const remainder = total - start;
-    if (regions.length > 0 && remainder <= target * 0.6) {
-      regions[regions.length - 1].end = total;
-    } else {
-      regions.push({ start, end: total });
-    }
-  }
-  return regions;
+/** Number of near-equal card regions on one virtual-grid axis. This is the
+ *  arithmetic equivalent of materialising every partition, but remains O(1)
+ *  when an axis contains trillions of cells. A small tail is folded into the
+ *  preceding region rather than becoming an unreadable sliver. */
+function axisRegionCount(total: number, target: number): number {
+  const full = Math.floor(total / target);
+  const remainder = total - full * target;
+  if (remainder <= 0) return full;
+  return full > 0 && remainder <= target * 0.6 ? full : full + 1;
+}
+
+function axisRegionAt(
+  total: number,
+  target: number,
+  index: number,
+  count: number,
+): { start: number; end: number } {
+  const start = index * target;
+  return {
+    start,
+    end: index >= count - 1 ? total : Math.min(total, start + target),
+  };
 }
 
 /** Inclusive region-index span intersecting a visible cell span, with one
  *  buffered region on either side to prevent pop-in while panning. */
 function visibleRegionSpan(
-  regions: readonly AxisRegion[],
+  regionCount: number,
+  target: number,
   visibleStart: number,
   visibleEnd: number,
 ): [number, number] {
-  let start = regions.findIndex((region) => region.end > visibleStart);
-  if (start < 0) start = regions.length - 1;
-  let end = regions.findIndex((region) => region.start > visibleEnd) - 1;
-  if (end < 0) end = regions.length - 1;
-  return [Math.max(0, start - 1), Math.min(regions.length - 1, end + 1)];
+  if (regionCount <= 0) return [0, -1];
+  const start = clamp(Math.floor(visibleStart / target), 0, regionCount - 1);
+  const end = clamp(Math.floor(visibleEnd / target), 0, regionCount - 1);
+  return [Math.max(0, start - 1), Math.min(regionCount - 1, end + 1)];
 }

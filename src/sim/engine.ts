@@ -18,7 +18,8 @@ export function roundRollTarget(s: RunState): number {
   return ROLLS_PER_ROUND + s.bonusRollsPerRound + s.bonusRollsThisRound;
 }
 
-/** True when `state.roll` has landed exactly on a shop checkpoint (rolls 5 & 15). */
+/** True when `state.roll` has landed exactly on a shop checkpoint (rolls 5, 15
+ *  & 25). Roll 25 is only reachable with bonus rolls. */
 export function shouldOpenShop(state: RunState): boolean {
   return SHOP_ROLLS.includes(state.roll);
 }
