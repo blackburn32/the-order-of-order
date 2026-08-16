@@ -6,8 +6,10 @@ import type { Die } from "../systems/Dice";
 import { ITEMS, describeUnlockAction } from "../systems/Items";
 import { toNumberPointMap } from "../systems/ItemPoints";
 import {
+  clearedEarly,
   resolveRoll,
   resolveRoundEnd,
+  roundComplete,
   roundRollTarget,
   shouldOpenShop,
 } from "../sim/engine";
@@ -143,10 +145,11 @@ export class GameScene extends Phaser.Scene {
 
     this.renderTutorial();
 
-    // Returning from a shop that opened on the round's final roll (roll 25 with
-    // bonus rolls): the round is over, so resolve it now instead of waiting for
-    // a roll the player has no rolls left to make.
-    if (this.state.roll >= roundRollTarget(this.state)) {
+    // Returning from a shop that opened on a completed round — the bonus shop an
+    // early clear earns, or a checkpoint landing on the round's final roll (roll
+    // 25 with bonus rolls). The round is over, so resolve it now instead of
+    // waiting for a roll the player has no reason (or no rolls left) to make.
+    if (roundComplete(this.state)) {
       this.rolling = true;
       this.resolveEndOfRound();
     }
@@ -239,12 +242,13 @@ export class GameScene extends Phaser.Scene {
       case TutorialStage.Target:
         anchor = plaqueRect(3);
         text =
-          "This is the target. Reach it before your rolls run out to survive and advance to the next round.";
+          "This is the target. Reach it before your rolls run out to survive and advance to the next round — the round ends the moment you do.";
         onContinue = advance;
         break;
       case TutorialStage.Rolls:
         anchor = plaqueRect(1);
-        text = "Your rolls this round. You get 20 rolls to reach the target.";
+        text =
+          "Your rolls this round. You get 20 rolls to reach the target; clear it with rolls to spare and the Order rewards you with a visit to the shop.";
         onContinue = advance;
         break;
       case TutorialStage.Round:
@@ -1208,17 +1212,31 @@ export class GameScene extends Phaser.Scene {
   private afterRoll(autoReroll: boolean): void {
     const s = this.state;
 
-    // Shop checkpoints take priority over the round end: when a round's final
-    // roll also lands on a checkpoint (only possible at roll 25 with bonus
-    // rolls), visit the shop first. The round then resolves when we return to
-    // GameScene — see the resume check in create().
+    // Shop checkpoints take priority over the round end: when the roll that
+    // completes a round also lands on a checkpoint (a clear on roll 5/15, or
+    // roll 25 with bonus rolls), that one visit serves as both — the round then
+    // resolves when we return to GameScene — see the resume check in create().
     if (shouldOpenShop(s)) {
       this.banners.push("The shop beckons…", { holdMs: 900 });
       this.time.delayedCall(800, () => this.scene.start("Shop"));
       return;
     }
 
-    if (s.roll >= roundRollTarget(s)) {
+    if (roundComplete(s)) {
+      // Meeting the target ends the round on the spot. Clearing with rolls still
+      // in hand earns a bonus shop visit, taken at the round's full score before
+      // the round end carries over only a fraction of it; the round then
+      // resolves when we return to GameScene — see the resume check in create().
+      // Clearing the final round wins outright: the points are never reset and
+      // nothing bought could matter, so the victory isn't interrupted by a shop.
+      if (clearedEarly(s) && s.round < WIN_ROUND) {
+        this.banners.push("Target met — the Order rewards you", {
+          holdMs: 1100,
+          detail: "The round ends early. Spend your points before they reset.",
+        });
+        this.time.delayedCall(1000, () => this.scene.start("Shop"));
+        return;
+      }
       this.resolveEndOfRound();
       return;
     }
@@ -1231,9 +1249,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Resolve the end of a round (win/lose/advance) with the matching audio,
-   *  banners, and scene transition. Assumes `state.roll >= roundRollTarget`.
-   *  Called from afterRoll when the last roll isn't a shop checkpoint, and from
-   *  create() when returning from a shop that opened on the final roll. */
+   *  banners, and scene transition. Assumes `roundComplete(state)`. Called from
+   *  afterRoll when the completed round owes no shop visit, and from create()
+   *  when returning from one that did. */
   private resolveEndOfRound(): void {
     const s = this.state;
     // The engine decides win/lose/advance and performs the score carryover and

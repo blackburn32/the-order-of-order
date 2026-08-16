@@ -7,6 +7,7 @@ export interface ItemCardOptions {
   locked: boolean;
   count?: number; // lifetime shop selections (ignored while locked or when caption hidden)
   showCaption?: boolean; // default true; false drops the bottom caption entirely
+  displayScale?: number; // render directly at this size instead of scaling the finished Text textures
 }
 
 // Text anchor offsets match ShopScene.buildCard so a gallery card reads the
@@ -35,26 +36,32 @@ export function buildItemCard(
   def: ItemDef,
   opts: ItemCardOptions,
 ): Phaser.GameObjects.Container {
+  const scale = opts.displayScale ?? 1;
+  // Minimums intentionally preserve the information hierarchy as cards
+  // shrink: edge metadata yields the most space, then body copy, then title.
+  const fontSize = (native: number, minimum: number) =>
+    `${Math.max(minimum, Math.round(native * scale))}px`;
   const img = scene.add.image(0, 0, "card");
+  img.setDisplaySize(260 * scale, 340 * scale);
 
   const rarityText = opts.locked ? "???" : def.rarity.toUpperCase();
   const rarity = scene.add
-    .text(0, RARITY_Y, rarityText, {
+    .text(0, RARITY_Y * scale, rarityText, {
       fontFamily: SERIF,
-      fontSize: "13px",
+      fontSize: fontSize(13, 8),
       color: opts.locked ? CSS.dim : RARITY_COLOR[def.rarity],
       fontStyle: "bold",
     })
     .setOrigin(0.5);
 
   const name = scene.add
-    .text(0, NAME_Y, opts.locked ? "???" : def.name, {
+    .text(0, NAME_Y * scale, opts.locked ? "???" : def.name, {
       fontFamily: SERIF,
-      fontSize: "26px",
+      fontSize: fontSize(26, 16),
       color: CSS.ink,
       fontStyle: "bold",
       align: "center",
-      wordWrap: { width: 220 },
+      wordWrap: { width: 220 * scale },
     })
     .setOrigin(0.5);
 
@@ -64,12 +71,12 @@ export function buildItemCard(
       ? def.desc(newRun())
       : def.desc;
   const desc = scene.add
-    .text(0, DESC_Y, descText, {
+    .text(0, DESC_Y * scale, descText, {
       fontFamily: SERIF,
-      fontSize: "19px",
+      fontSize: fontSize(19, 12),
       color: CSS.inkSoft,
       align: "center",
-      wordWrap: { width: 214 },
+      wordWrap: { width: 214 * scale },
     })
     .setOrigin(0.5);
 
@@ -84,20 +91,20 @@ export function buildItemCard(
     : `Selected ${opts.count ?? 0} time${opts.count === 1 ? "" : "s"}`;
   const caption = showCaption
     ? scene.add
-        .text(0, CAPTION_Y, captionText, {
+        .text(0, CAPTION_Y * scale, captionText, {
           fontFamily: SERIF,
-          fontSize: "18px",
+          fontSize: fontSize(18, 11),
           color: opts.locked ? CSS.inkSoft : CSS.ink,
           fontStyle: opts.locked ? "italic" : "bold",
           align: "center",
-          wordWrap: { width: 240 },
+          wordWrap: { width: 240 * scale },
         })
         .setOrigin(0.5)
     : undefined;
 
   const children = [img, rarity, name, desc, ...(caption ? [caption] : [])];
   const card = scene.add.container(0, 0, children);
-  card.setSize(img.width, img.height);
+  card.setSize(img.displayWidth, img.displayHeight);
   if (opts.locked) card.setAlpha(0.5);
   return card;
 }

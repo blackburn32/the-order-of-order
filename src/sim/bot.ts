@@ -14,19 +14,21 @@ import {
   ShopOffer,
 } from "../systems/Shop";
 import {
-  roundRollTarget,
+  clearedEarly,
   resolveRoll,
   resolveRoundEnd,
+  roundComplete,
   shouldOpenShop,
 } from "./engine";
-import { survivalTarget } from "../config";
+import { survivalTarget, WIN_ROUND } from "../config";
 import { mulberry32 } from "./localStorageShim";
 import { SimConfig } from "./config";
 
 export type StrategyName = "random" | "noBuy" | "greedy";
 
-/** One round's result, captured the moment its rolls run out (before the
- *  cleared-score carryover). `roundScore` is the peak reached that round. */
+/** One round's result, captured the moment it completes — target met or rolls
+ *  run out — and before the cleared-score carryover. `roundScore` is the peak
+ *  reached that round. */
 export interface RoundPoint {
   round: number;
   scoreAtEnd: number;
@@ -217,10 +219,13 @@ export function simulateRun(
     rolls += 1;
     trackUnlocks(state, record.unlocksAchieved);
 
-    // Shop checkpoints take priority over the round end, matching GameScene: a
-    // final roll that lands on a checkpoint (roll 25 with bonus rolls) visits
-    // the shop first, then the round resolves below.
-    if (shouldOpenShop(state)) {
+    // Shop visits happen before the round resolves below, matching GameScene:
+    // at the roll-5/15/25 checkpoints, and as the bonus visit a round cleared
+    // with rolls to spare earns (taken at the full pre-carryover score). A roll
+    // that is both only ever gets the one visit, and the winning clear of the
+    // final round gets none — the run ends there.
+    const bonusVisit = clearedEarly(state) && state.round < WIN_ROUND;
+    if (shouldOpenShop(state) || bonusVisit) {
       let offers = rollShopOffers(state, state.ownedLedger ? 5 : 3, rng);
       // The simple bots always use their free full-store reroll when available.
       if (state.hasDealersBell)
@@ -229,7 +234,7 @@ export function simulateRun(
       trackUnlocks(state, record.unlocksAchieved); // buys can change the grid
     }
 
-    if (state.roll >= roundRollTarget(state)) {
+    if (roundComplete(state)) {
       record.trajectory.push({
         round: state.round,
         scoreAtEnd: Number(state.score),

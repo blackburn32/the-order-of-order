@@ -13,9 +13,34 @@ export function addPanel(scene: Phaser.Scene, cx: number, cy: number, w: number,
   return scene.add.image(cx, cy, 'panel').setDisplaySize(w, h);
 }
 
-/** Parchment banner button with hover/press feedback. Pass `maxWidth` to shrink
- *  the whole button uniformly when the parchment would be wider than the space
- *  available (e.g. a narrow settings panel). */
+/** Horizontal breathing room kept between a button's label and the parchment
+ *  edge when the label is what drives the button's width. */
+const BUTTON_LABEL_PAD = 28;
+/** Margin kept between a button and the viewport edges when no explicit
+ *  `maxWidth` confines it. */
+const BUTTON_SCREEN_MARGIN = 32;
+
+/** Reduce a text object's actual font size until it fits `maxWidth`; a no-op
+ *  when it already does. Baking at the final size avoids the fractional object
+ *  scale that can make glyph edges look soft. */
+export function fitTextWidth(text: Phaser.GameObjects.Text, maxWidth: number): Phaser.GameObjects.Text {
+  if (text.width <= maxWidth) return text;
+
+  const fontSize = Number.parseFloat(String(text.style.fontSize));
+  if (Number.isFinite(fontSize) && fontSize > 0) {
+    text.setFontSize(Math.max(1, Math.floor(fontSize * (maxWidth / text.width))));
+  } else {
+    // Defensive fallback for an unusual non-pixel font style.
+    text.setScale(maxWidth / text.width);
+  }
+  return text;
+}
+
+/** Parchment banner button with hover/press feedback. Pass `maxWidth` to resize
+ *  it when it would be wider than the space available (e.g. a narrow settings
+ *  panel); without one it still stays inside the viewport. The background is
+ *  resized, while the label is re-rendered at its final font size instead of
+ *  fractionally scaling the whole container and blurring the text. */
 export function bannerButton(
   scene: Phaser.Scene,
   x: number,
@@ -29,10 +54,17 @@ export function bannerButton(
     .text(0, 0, label, { fontFamily: SERIF, fontSize: '26px', color: CSS.ink })
     .setOrigin(0.5);
   const container = scene.add.container(x, y, [img, text]);
-  container.setSize(img.width, img.height);
-  if (maxWidth !== undefined && img.width > maxWidth) {
-    container.setScale(maxWidth / img.width);
-  }
+  const contentW = Math.max(img.width, text.width + BUTTON_LABEL_PAD);
+  const limit = maxWidth ?? scene.scale.width - BUTTON_SCREEN_MARGIN;
+  const displayScale = Math.min(1, limit / contentW);
+  const displayW = img.width * displayScale;
+  const displayH = img.height * displayScale;
+  const labelPad = Math.max(12, BUTTON_LABEL_PAD * displayScale);
+
+  img.setDisplaySize(displayW, displayH);
+  text.setFontSize(Math.max(13, Math.round(26 * displayScale)));
+  fitTextWidth(text, Math.max(1, displayW - labelPad));
+  container.setSize(displayW, displayH);
   container.setInteractive({ useHandCursor: true });
   container.on('pointerover', () => img.setTint(0xfff2c8));
   container.on('pointerout', () => img.clearTint());

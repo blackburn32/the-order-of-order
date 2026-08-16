@@ -27,6 +27,7 @@ import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
 const CARD_W = 260;
 const CARD_H = 340;
 const CARD_GAP = 26;
+const MIN_READABLE_CARD_SCALE = 0.5;
 const DRAG_THRESHOLD = 8; // px of pointer movement before a press counts as a scroll, not a tap
 
 type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
@@ -273,8 +274,7 @@ export class ShopScene extends Phaser.Scene {
       () => this.exit(),
       footerButtonMaxW,
     );
-    const footerButtonImage = codex.getAt(0) as Phaser.GameObjects.Image;
-    const footerButtonW = footerButtonImage.width * codex.scaleX;
+    const footerButtonW = codex.width;
     const footerDx = footerButtonW / 2 + footerGap / 2;
     codex.setX(W / 2 - footerDx);
     decline.setX(W / 2 + footerDx);
@@ -299,25 +299,33 @@ export class ShopScene extends Phaser.Scene {
   ): { decor: Phaser.GameObjects.GameObject[] } {
     const n = this.offers.length;
 
-    const scaleFor = (cols: number) => {
+    const scaleFor = (cols: number, includeHeight = true) => {
       const rows = Math.ceil(n / cols);
       const unitW = cols * CARD_W + (cols - 1) * CARD_GAP;
       const unitH = rows * CARD_H + (rows - 1) * CARD_GAP;
-      return Math.min(availW / unitW, availH / unitH, 1);
+      return Math.min(availW / unitW, includeHeight ? availH / unitH : 1, 1);
     };
-    // Whichever column count yields the larger (more readable) cards wins.
-    const cols = scaleFor(Math.min(2, n)) > scaleFor(n) ? Math.min(2, n) : n;
+    const candidates = Array.from({ length: n }, (_, i) => i + 1);
+    let cols = candidates.reduce((best, candidate) =>
+      scaleFor(candidate) > scaleFor(best) ? candidate : best,
+    );
+    let scale = scaleFor(cols);
+    const needsScroll = scale < MIN_READABLE_CARD_SCALE;
+
+    if (needsScroll) {
+      // Use as many columns as fit at a readable width, ignoring height because
+      // the dedicated camera handles vertical overflow.
+      cols =
+        candidates
+          .filter(
+            (candidate) =>
+              scaleFor(candidate, false) >= MIN_READABLE_CARD_SCALE,
+          )
+          .pop() ?? 1;
+      scale = scaleFor(cols, false);
+    }
+
     const rows = Math.ceil(n / cols);
-
-    const unitW = cols * CARD_W + (cols - 1) * CARD_GAP;
-    const unitH = rows * CARD_H + (rows - 1) * CARD_GAP;
-    const fitScale = Math.min(availW / unitW, availH / unitH, 1);
-
-    const MIN_SCALE = 0.42;
-    const needsScroll = fitScale < MIN_SCALE;
-    // When scrolling, keep cards at the readable minimum (but never wider than
-    // the area) and let the grid overflow vertically.
-    const scale = needsScroll ? Math.min(availW / unitW, MIN_SCALE) : fitScale;
 
     const cw = CARD_W * scale;
     const ch = CARD_H * scale;
@@ -363,8 +371,7 @@ export class ShopScene extends Phaser.Scene {
     const decor: Phaser.GameObjects.GameObject[] = [];
     this.offers.forEach((offer, idx) => {
       const p = posFor(idx);
-      const card = this.buildCard(p.x, top + p.y, offer);
-      card.setScale(scale);
+      const card = this.buildCard(p.x, top + p.y, offer, scale);
       decor.push(card);
     });
     return { decor };
@@ -390,8 +397,7 @@ export class ShopScene extends Phaser.Scene {
     const track = this.add.container(0, areaTop);
     this.offers.forEach((offer, idx) => {
       const p = posFor(idx);
-      const card = this.buildCard(p.x, p.y, offer);
-      card.setScale(scale);
+      const card = this.buildCard(p.x, p.y, offer, scale);
       track.add(card);
     });
     this.track = track;
@@ -490,39 +496,45 @@ export class ShopScene extends Phaser.Scene {
     x: number,
     y: number,
     offer: ShopOffer,
+    scale: number,
   ): Phaser.GameObjects.Container {
     const affordable = canAfford(this.state, offer);
+    // Edge metadata (rarity and price) may shrink furthest; description and
+    // title retain progressively larger floors for the card's reading order.
+    const fontSize = (native: number, minimum: number) =>
+      `${Math.max(minimum, Math.round(native * scale))}px`;
     const img = this.add.image(0, 0, "card");
+    img.setDisplaySize(CARD_W * scale, CARD_H * scale);
     const rarityColor = {
       common: CSS.rarityCommon,
       uncommon: CSS.rarityUncommon,
       rare: CSS.rarityRare,
     }[offer.rarity];
     const rarityLabel = this.add
-      .text(0, -148, offer.rarity.toUpperCase(), {
+      .text(0, -148 * scale, offer.rarity.toUpperCase(), {
         fontFamily: SERIF,
-        fontSize: "13px",
+        fontSize: fontSize(13, 8),
         color: rarityColor,
         fontStyle: "bold",
       })
       .setOrigin(0.5);
     const name = this.add
-      .text(0, -110, offer.name, {
+      .text(0, -110 * scale, offer.name, {
         fontFamily: SERIF,
-        fontSize: "26px",
+        fontSize: fontSize(26, 16),
         color: CSS.ink,
         fontStyle: "bold",
         align: "center",
-        wordWrap: { width: 220 },
+        wordWrap: { width: 220 * scale },
       })
       .setOrigin(0.5);
     const desc = this.add
-      .text(0, -10, offer.desc, {
+      .text(0, -10 * scale, offer.desc, {
         fontFamily: SERIF,
-        fontSize: "19px",
+        fontSize: fontSize(19, 12),
         color: CSS.inkSoft,
         align: "center",
-        wordWrap: { width: 214 },
+        wordWrap: { width: 214 * scale },
       })
       .setOrigin(0.5);
     const costLabel = offer.freeByCoupon
@@ -531,16 +543,16 @@ export class ShopScene extends Phaser.Scene {
         ? "Free"
         : `${formatScore(offer.cost)} point${offer.cost > 1n ? "s" : ""}`;
     const cost = this.add
-      .text(0, 128, costLabel, {
+      .text(0, 128 * scale, costLabel, {
         fontFamily: SERIF,
-        fontSize: "24px",
+        fontSize: fontSize(24, 14),
         color: affordable ? CSS.gold : CSS.red,
         fontStyle: "bold",
       })
       .setOrigin(0.5);
 
     const card = this.add.container(x, y, [img, rarityLabel, name, desc, cost]);
-    card.setSize(img.width, img.height);
+    card.setSize(img.displayWidth, img.displayHeight);
 
     if (affordable) {
       card.setInteractive({ useHandCursor: true });
@@ -819,8 +831,7 @@ export class ShopScene extends Phaser.Scene {
     // These two items affect the remainder of the visit in which they are
     // purchased: Coupon Book makes one remaining card free, and Shopping Cart
     // immediately grants the second purchase.
-    if (offer.id === "coupon_book")
-      applyCouponFreebie(this.state, this.offers);
+    if (offer.id === "coupon_book") applyCouponFreebie(this.state, this.offers);
 
     if (this.remainingPurchases() > 0 && this.offers.length > 0) {
       this.rebuildShop();
@@ -833,10 +844,7 @@ export class ShopScene extends Phaser.Scene {
     if (!this.state.hasDealersBell || this.storeRerolled) return;
     this.storeRerolled = true;
     audio.click();
-    this.offers = rollShopOffers(
-      this.state,
-      this.state.ownedLedger ? 5 : 3,
-    );
+    this.offers = rollShopOffers(this.state, this.state.ownedLedger ? 5 : 3);
     this.rebuildShop();
   }
 

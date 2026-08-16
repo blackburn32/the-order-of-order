@@ -64,6 +64,28 @@ clean typecheck. The contents of `dist/` are fully self-contained (no server, no
 assets) and can be deployed to any static host — GitHub Pages, itch.io, Netlify, an S3 bucket,
 etc. Use `npm run preview` to serve that production build locally and confirm it before deploying.
 
+#### Build flags
+
+Build-time switches live in `src/buildFlags.ts` and are set from `VITE_*` env vars, so their
+values are frozen into `dist/` when it is built (unlike the gameplay knobs in `src/config.ts`
+or the player's own settings).
+
+| Flag          | Env var            | Default | What it does                              |
+| ------------- | ------------------ | ------- | ----------------------------------------- |
+| `GOLD_BORDER` | `VITE_GOLD_BORDER` | off     | Gold frame around the outside of the game |
+
+The itch.io builds are the only ones that turn anything on: they run in Vite's `itch` mode,
+which loads the committed `.env.itch` on top of the usual `.env`.
+
+```bash
+npm run package:itch  # itch build (flags on) + zip for upload
+npm run build:itch    # itch build only, into dist/
+npm run dev:itch      # dev server with the itch flags, to preview them
+```
+
+Plain `npm run build` (GitHub Pages, the Capacitor/Android bundle) and `npm run dev` leave every
+flag at its default, so the frame is absent outside itch.io.
+
 ### Other scripts
 
 ```bash

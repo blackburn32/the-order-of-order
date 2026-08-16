@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { COLORS, CSS, SERIF } from '../art/palette';
 import { getSelectionCount, loadProgress } from '../systems/SaveData';
 import { ITEMS } from '../systems/Items';
-import { addFelt, addPanel, bannerButton } from '../ui/widgets';
+import { addFelt, addPanel, bannerButton, fitTextWidth } from '../ui/widgets';
 import { buildItemCard } from '../ui/itemCard';
 import { onResizeCoalesced } from '../ui/layout';
 
@@ -14,8 +14,11 @@ export interface ItemsData {
 // Native card box plus caption room below — used for grid spacing/scaling.
 const CARD_W = 260;
 const CARD_H = 420;
-const COL_GAP = 24;
+// A compact gutter lets common 360px-wide phone layouts keep two cards per row
+// while each card remains just above the 50% readability threshold.
+const COL_GAP = 12;
 const ROW_GAP = 24;
+const MIN_READABLE_CARD_SCALE = 0.5;
 const RARITY_ORDER = { common: 0, uncommon: 1, rare: 2 } as const;
 
 type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
@@ -96,6 +99,9 @@ export class ItemsScene extends Phaser.Scene {
     const felt = addFelt(this);
     const panel = addPanel(this, cx, H / 2, panelW, panelH);
 
+    // Both header lines have a font-size floor, so on a narrow viewport the
+    // clamp bottoms out before they fit — shrink/wrap them to the panel instead.
+    const textMaxW = panelW * 0.86;
     const title = this.add
       .text(cx, panelTop + panelH * 0.09, 'The Codex of Items', {
         fontFamily: SERIF,
@@ -105,6 +111,7 @@ export class ItemsScene extends Phaser.Scene {
         align: 'center'
       })
       .setOrigin(0.5);
+    fitTextWidth(title, textMaxW);
 
     const unlocked = new Set(loadProgress().unlocked);
     const subtitle = this.add
@@ -113,7 +120,8 @@ export class ItemsScene extends Phaser.Scene {
         fontSize: `${Math.round(Phaser.Math.Clamp(panelW * 0.022, 13, 18))}px`,
         color: CSS.inkSoft,
         fontStyle: 'italic',
-        align: 'center'
+        align: 'center',
+        wordWrap: { width: textMaxW }
       })
       .setOrigin(0.5);
 
@@ -124,7 +132,8 @@ export class ItemsScene extends Phaser.Scene {
       cx,
       backY,
       this.openedAsOverlay ? 'Close Codex' : 'Return to the Vestibule',
-      () => this.close()
+      () => this.close(),
+      panelW * 0.9
     );
 
     // Grid area sits between the subtitle and the back button, inset in the panel.
@@ -158,9 +167,11 @@ export class ItemsScene extends Phaser.Scene {
     });
     const n = codexItems.length;
 
-    // Pick the column count that yields the largest (still readable) cards, then
-    // scale each card to its cell. Vertical overflow becomes scroll.
-    const cols = Math.max(2, Math.min(5, Math.floor(grid.width / 210)));
+    // Drop columns before cards become too small to read. Extra rows scroll,
+    // which is preferable to squeezing a full-size Text texture down to a
+    // fraction of a phone pixel grid.
+    const minCellW = CARD_W * MIN_READABLE_CARD_SCALE + COL_GAP;
+    const cols = Math.max(1, Math.min(5, Math.floor(grid.width / minCellW)));
     const rows = Math.ceil(n / cols);
     const cellW = grid.width / cols;
     const cardScale = Math.min((cellW - COL_GAP) / CARD_W, 1);
@@ -175,9 +186,9 @@ export class ItemsScene extends Phaser.Scene {
       const y = row * cellH + cellH / 2;
       const card = buildItemCard(this, def, {
         locked: isLocked(def),
-        count: getSelectionCount(def.id)
+        count: getSelectionCount(def.id),
+        displayScale: cardScale
       });
-      card.setScale(cardScale);
       card.setPosition(x, y);
       track.add(card);
     });

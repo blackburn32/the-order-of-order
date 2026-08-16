@@ -119,8 +119,10 @@ export function showCallout(scene: Phaser.Scene, opts: CalloutOptions): CalloutH
   objects.push(body);
 
   if (opts.onContinue) {
-    const btn = bannerButton(scene, px, py + panelH / 2 - 30, 'Continue', () => opts.onContinue!());
-    btn.setScale(0.7);
+    // 0.7 of the parchment is the look on a roomy viewport; on a narrow one the
+    // panel is the tighter constraint, so take whichever is smaller.
+    const btnMaxW = Math.min(panelW - 40, 340 * 0.7);
+    const btn = bannerButton(scene, px, py + panelH / 2 - 30, 'Continue', () => opts.onContinue!(), btnMaxW);
     btn.setDepth(BUTTON_DEPTH);
     objects.push(btn);
   }

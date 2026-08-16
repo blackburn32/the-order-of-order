@@ -6,8 +6,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:itch": "vite --mode itch",
     "build": "tsc --noEmit && vite build",
-    "package:itch": "npm run build && node scripts/package-itch.mjs",
+    "build:itch": "tsc --noEmit && vite build --mode itch",
+    "package:itch": "npm run build:itch && node scripts/package-itch.mjs",
+    "phone": "npm run build && npx cap copy",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint .",
@@ -16,9 +19,13 @@
     "balance": "tsx src/sim/runBatch.ts",
     "pricing:check": "tsx src/sim/pricingCheck.ts",
     "items:check": "tsx src/sim/itemCheck.ts",
+    "rounds:check": "tsx src/sim/roundEndCheck.ts",
     "scale:check": "tsx src/sim/scaleRegression.ts"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
     "phaser": "^4.2.1"
   },
   "devDependencies": {

@@ -24,6 +24,20 @@ export function shouldOpenShop(state: RunState): boolean {
   return SHOP_ROLLS.includes(state.roll);
 }
 
+/** True when the round is over — either its target has been met (`roundCleared`,
+ *  latched by resolveRoll) or its rolls have run out. The caller should then run
+ *  `resolveRoundEnd`, after any shop visit it owes the player. */
+export function roundComplete(state: RunState): boolean {
+  return state.roundCleared || state.roll >= roundRollTarget(state);
+}
+
+/** True when the round ended by meeting its target with rolls still in hand.
+ *  That earns one bonus shop visit, taken at the round's full score before
+ *  `resolveRoundEnd` carries over only a fraction of it. */
+export function clearedEarly(state: RunState): boolean {
+  return state.roundCleared && state.roll < roundRollTarget(state);
+}
+
 export interface RoundEndOutcome {
   phase: 'victory' | 'gameOver' | 'advanced';
   diceAdded: number; // Foundry dice added by applyRoundStart on advance (0 otherwise)
@@ -69,6 +83,10 @@ export function resolveRoll(
   if (finalRoll && scoreBefore < target && state.score >= target) {
     state.clutchClear = true;
   }
+
+  // Reaching the target ends the round here — the remaining rolls are forfeit.
+  // Latched on state so shop spending afterwards can't take the clear back.
+  if (state.score >= target) state.roundCleared = true;
 
   // Grid-growing passives, applied after scoring so the new copies don't score
   // the roll they were born on. The pool computes these from the cached roll and
@@ -117,21 +135,25 @@ export function resolveRoll(
 }
 
 /**
- * Resolve the end of a round once its rolls are exhausted (call only when
- * `state.roll >= roundRollTarget(state)`). Returns whether the run won, lost, or
- * advanced. On `advanced` it mutates `state`: increments the round, resets the
- * roll counter and this-round bonus, carries over a fraction of the cleared
- * score (Vault 33% + Reserve 75%/copy, capped at all of it), and runs the
- * round-start passives (Foundry dice). `victory`/`gameOver` leave `state`
- * untouched so the caller can record and present the ending.
+ * Resolve the end of a round once it is complete — its target met or its rolls
+ * exhausted (call only when `roundComplete(state)`). Returns whether the run
+ * won, lost, or advanced. On `advanced` it mutates `state`: increments the
+ * round, resets the roll counter, the cleared latch and this-round bonus,
+ * carries over a fraction of the cleared score (Vault 33% + Reserve 75%/copy,
+ * capped at all of it), and runs the round-start passives (Foundry dice).
+ * `victory`/`gameOver` leave `state` untouched so the caller can record and
+ * present the ending.
  */
 export function resolveRoundEnd(state: RunState): RoundEndOutcome {
   const target = survivalTarget(state.round, state.hardMode);
+  // An early clear is already banked, even if the bonus shop visit it earned
+  // has since spent the score back below the target.
+  const cleared = state.roundCleared || state.score >= target;
   const insuranceUsed =
-    state.score < target &&
+    !cleared &&
     state.hasInsurancePolicy &&
     state.score * 4n >= target * 3n;
-  if (state.score < target && !insuranceUsed)
+  if (!cleared && !insuranceUsed)
     return { phase: 'gameOver', diceAdded: 0, insuranceUsed: false };
 
   if (insuranceUsed) {
@@ -147,6 +169,7 @@ export function resolveRoundEnd(state: RunState): RoundEndOutcome {
 
   state.round += 1;
   state.roll = 0;
+  state.roundCleared = false;
   state.bonusRollsThisRound = 0;
   // Carry over a fraction of the cleared score: Vault 33% + Reserve 75% per
   // copy, added together and capped at keeping all of it. Expressed in per-mille

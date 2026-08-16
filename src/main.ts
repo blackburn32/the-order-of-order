@@ -13,9 +13,25 @@ import { InventoryScene } from './scenes/InventoryScene';
 import { InitialsPromptScene } from './scenes/InitialsPromptScene';
 import { AnalysisScene } from './scenes/AnalysisScene';
 import { installDevPanel } from './dev/DevPanel';
+import { GOLD_BORDER } from './buildFlags';
+import { installHighResolutionText } from './renderQuality';
+
+// Before the canvas exists, so the frame is part of the first layout rather
+// than a reflow after Phaser has sized itself.
+if (GOLD_BORDER) document.getElementById('game')?.classList.add('gold-border');
+
+installHighResolutionText();
 
 const game = new Phaser.Game({
-  type: Phaser.AUTO,
+  // Phaser 4's Canvas renderer is deprecated. Keeping the mobile build on the
+  // WebGL path also gives curves and transformed textures consistent AA.
+  type: Phaser.WEBGL,
+  antialias: true,
+  antialiasGL: true,
+  pixelArt: false,
+  // Prevent texture-backed objects (including Text) from landing between
+  // output pixels when their positions are otherwise safe to round.
+  roundPixels: true,
   parent: 'game',
   backgroundColor: '#0d0a12',
   scale: {

@@ -292,6 +292,7 @@ function setRound(game: Phaser.Game, round: number): string {
   state.round = round;
   state.roll = 0;
   state.score = 0n;
+  state.roundCleared = false;
   state.bonusRollsThisRound = 0;
   game.registry.set("run", state);
   refreshActiveScene(game);

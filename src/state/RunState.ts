@@ -6,6 +6,11 @@ export interface RunState {
   hardMode: boolean; // higher targets + pricier shop; set at run start, fixed for the run
   round: number; // 1-based
   roll: number; // rolls completed this round, 0..20
+  // Set the moment a roll takes `score` to the round's survival target: the
+  // round ends there rather than burning its remaining rolls. Latched (rather
+  // than recomputed from `score`) so the bonus shop an early clear earns can be
+  // spent back below the target without un-clearing the round. Reset on advance.
+  roundCleared: boolean;
   // Score magnitudes are bigint: with millions of dice and compounding Prism /
   // Last Call multipliers they race past Number.MAX_SAFE_INTEGER within a run.
   score: bigint; // one pool: survival score AND shop currency
@@ -85,6 +90,7 @@ export function newRun(
     hardMode,
     round: 1,
     roll: 0,
+    roundCleared: false,
     score: 0n,
     roundScore: 0n,
     totalScore: 0n,

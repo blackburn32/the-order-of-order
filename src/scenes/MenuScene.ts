@@ -3,7 +3,7 @@ import { COLORS, CSS, SERIF } from '../art/palette';
 import { audio } from '../systems/Audio';
 import { loadProgress, loadSettings } from '../systems/SaveData';
 import { beginRun } from '../systems/Tutorial';
-import { addFelt, bannerButton, showBanner } from '../ui/widgets';
+import { addFelt, bannerButton, fitTextWidth, showBanner } from '../ui/widgets';
 import { responsive } from '../ui/layout';
 
 export class MenuScene extends Phaser.Scene {
@@ -39,7 +39,13 @@ export class MenuScene extends Phaser.Scene {
       ease: 'Sine.easeInOut'
     });
 
-    this.add
+    // The font sizes have a legibility floor (30px / 16px), so below roughly a
+    // 330px-wide viewport the clamp stops shrinking them and the lines would run
+    // off the edges — fitTextWidth takes over from there. Same margin as the
+    // tagline below, so all three lines share one left/right edge.
+    const textMaxW = W - 24;
+
+    const title = this.add
       .text(cx, titleY, 'The Order of Order', {
         fontFamily: SERIF,
         fontSize: `${Math.round(Phaser.Math.Clamp(W * 0.053, 30, 68))}px`,
@@ -48,8 +54,9 @@ export class MenuScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setShadow(0, 4, '#000000', 10, false, true);
+    fitTextWidth(title, textMaxW);
 
-    this.add
+    const subtitle = this.add
       .text(cx, titleY + H * 0.09, 'An incremental rite of dice', {
         fontFamily: SERIF,
         fontSize: `${Math.round(Phaser.Math.Clamp(W * 0.019, 16, 24))}px`,
@@ -57,6 +64,7 @@ export class MenuScene extends Phaser.Scene {
         fontStyle: 'italic'
       })
       .setOrigin(0.5);
+    fitTextWidth(subtitle, textMaxW);
 
     const btnGap = Math.min(84, H * 0.12);
     const startY = H * 0.48;
@@ -92,7 +100,7 @@ export class MenuScene extends Phaser.Scene {
     // Game" / "Abandon Run" from the Vestibule.
     bannerButton(this, cx, startY + btnGap * 3, 'Settings', () => this.scene.start('Settings', { returnTo: 'Menu' }));
 
-    this.add
+    const tagline = this.add
       .text(cx, H - Math.min(28, H * 0.05), 'Roll ones. Appease the Order. Survive the thresholds.', {
         fontFamily: SERIF,
         fontSize: '16px',
@@ -100,5 +108,6 @@ export class MenuScene extends Phaser.Scene {
         fontStyle: 'italic'
       })
       .setOrigin(0.5);
+    fitTextWidth(tagline, textMaxW);
   }
 }

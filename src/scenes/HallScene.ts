@@ -113,6 +113,7 @@ export class HallScene extends Phaser.Scene {
       panelTop + panelH * 0.92,
       "Return to the Vestibule",
       () => this.scene.start("Menu"),
+      panelW * 0.9,
     );
 
     const contentTop = panelTop + panelH * 0.31;
@@ -127,8 +128,7 @@ export class HallScene extends Phaser.Scene {
 
   private buildTabs(cx: number, y: number, panelW: number): void {
     // Two tabs plus a gap between them must fit within the panel, so cap each
-    // button at half the available room; bannerButton scales the whole button
-    // down to honour the cap on narrow (portrait/mobile) viewports.
+    // button at half the available room.
     const gap = Math.max(16, panelW * 0.03);
     const maxBtnW = (panelW * 0.94 - gap) / 2;
     const local = bannerButton(
@@ -147,10 +147,9 @@ export class HallScene extends Phaser.Scene {
       () => this.switchTab("global"),
       maxBtnW,
     );
-    // Space the two tabs by half their (possibly shrunk) display width plus the
+    // Space the two tabs by half their resized display width plus the
     // gap so they sit side by side, always inside the panel.
-    const btnW =
-      (local.getAt(0) as Phaser.GameObjects.Image).width * local.scale;
+    const btnW = local.width;
     const dx = btnW / 2 + gap / 2;
     local.setX(cx - dx);
     global.setX(cx + dx);

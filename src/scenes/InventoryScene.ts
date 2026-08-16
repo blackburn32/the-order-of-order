@@ -3,7 +3,7 @@ import { COLORS, CSS, SERIF } from "../art/palette";
 import { getRun } from "../state/RunState";
 import { DIE_LADDER } from "../systems/Dice";
 import { ITEMS, ItemDef } from "../systems/Items";
-import { addPanel, bannerButton } from "../ui/widgets";
+import { addPanel, bannerButton, fitTextWidth } from "../ui/widgets";
 import { buildItemCard } from "../ui/itemCard";
 import { onResizeCoalesced } from "../ui/layout";
 
@@ -169,8 +169,7 @@ export class InventoryScene extends Phaser.Scene {
       () => this.scene.stop(),
       footerButtonMaxW,
     );
-    const footerButtonImage = codex.getAt(0) as Phaser.GameObjects.Image;
-    const footerButtonW = footerButtonImage.width * codex.scaleX;
+    const footerButtonW = codex.width;
     const footerDx = footerButtonW / 2 + footerGap / 2;
     codex.setX(cx - footerDx);
     close.setX(cx + footerDx);
@@ -238,8 +237,7 @@ export class InventoryScene extends Phaser.Scene {
       () => this.switchTab("dice"),
       maxButtonW,
     );
-    const buttonImage = items.getAt(0) as Phaser.GameObjects.Image;
-    const buttonW = buttonImage.width * items.scaleX;
+    const buttonW = items.width;
     const dx = buttonW / 2 + Math.max(10, panelW * 0.015);
     items.setX(cx - dx);
     dice.setX(cx + dx);
@@ -316,8 +314,7 @@ export class InventoryScene extends Phaser.Scene {
           fontStyle: "bold",
         })
         .setOrigin(0, 0.5);
-      if (label.width > availableTextW)
-        label.setScale(availableTextW / label.width);
+      fitTextWidth(label, availableTextW);
     });
   }
 
