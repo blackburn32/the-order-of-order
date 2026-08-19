@@ -57,6 +57,12 @@ export class DieSprite extends Phaser.GameObjects.Container {
   // Border overlay for effect flashes. Created up front (not lazily) so the
   // windowed grid camera's ignore-list snapshot covers it like the other children.
   private effectBorder: Phaser.GameObjects.Graphics;
+  // This die's own rocking motion during a roll — see beginTumble. Zero
+  // amplitude means "not tumbling", which is also the state a die created
+  // mid-roll starts in, so it simply sits still rather than snapping in.
+  private wobbleAmplitude = 0;
+  private wobbleRate = 0;
+  private wobblePhase = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number, die: Die) {
     super(scene, x, y);
@@ -148,12 +154,63 @@ export class DieSprite extends Phaser.GameObjects.Container {
     });
   }
 
+  /**
+   * Give this die its own rocking motion for the roll about to start.
+   *
+   * The wobble is a continuous sine rather than a fresh random angle per
+   * tumble tick: the ticks are 70ms apart, so re-randomising on each one made
+   * the grid chatter between unrelated angles instead of rattling. Amplitude,
+   * rate, and phase are all per-die, so the dice rock out of step with each
+   * other and the grid reads as a handful of dice rather than one object.
+   *
+   * Rotation is the only transform safe to drive here — position and scale are
+   * owned by the grid layout, which can re-run mid-roll (a spawn or a shrink)
+   * and would snap either of them back.
+   */
+  beginTumble(): void {
+    this.wobbleAmplitude = Phaser.Math.FloatBetween(0.06, 0.16);
+    this.wobbleRate = Phaser.Math.FloatBetween(18, 30);
+    this.wobblePhase = Phaser.Math.FloatBetween(0, Math.PI * 2);
+  }
+
+  /** Advance the wobble to `elapsed` seconds since the tumble began. Driven
+   *  from the scene's update loop, so the motion is smooth at whatever frame
+   *  rate the device is actually managing. */
+  tumbleTo(elapsed: number): void {
+    if (this.wobbleAmplitude === 0) return;
+    this.setRotation(
+      this.wobbleAmplitude *
+        Math.sin(this.wobbleRate * elapsed + this.wobblePhase)
+    );
+  }
+
+  /**
+   * Land the die square again. Callers stagger `delay` across the grid so the
+   * dice settle as a ripple rather than all at once; the overshoot ease gives
+   * each one a small rock as it comes to rest.
+   */
+  settle(delay: number): void {
+    this.wobbleAmplitude = 0;
+    if (this.rotation === 0) return;
+    this.scene.tweens.add({
+      targets: this,
+      rotation: 0,
+      duration: 260,
+      delay,
+      ease: 'Back.easeOut'
+    });
+  }
+
   /** Stop an in-flight pulse tween without waiting for it to finish — the
-   *  tween's own scale writes would otherwise fight a relayout's setScale(). */
+   *  tween's own scale writes would otherwise fight a relayout's setScale().
+   *  Also squares up a die caught mid-settle, since killing that tween would
+   *  otherwise strand it at whatever angle it had reached. */
   clearPulse(): void {
     this.scene.tweens.killTweensOf(this);
     this.scene.tweens.killTweensOf(this.effectBorder);
     this.effectBorder.clear();
     this.effectBorder.setAlpha(0);
+    this.wobbleAmplitude = 0;
+    this.setRotation(0);
   }
 }

@@ -14,11 +14,13 @@ import {
   shouldOpenShop,
 } from "../sim/engine";
 import { audio } from "../systems/Audio";
+import { fx } from "../systems/Effects";
 import { evaluateAndUnlock, hasBeatenGame, recordRunEnd } from "../systems/SaveData";
 import {
   globalScoresEnabled,
   queuePendingSubmission,
 } from "../systems/GlobalScores";
+import { AmbientLayer } from "../ui/AmbientLayer";
 import { DieSprite } from "../ui/DieSprite";
 import { DiceSummaryCard } from "../ui/DiceSummaryCard";
 import { formatScore } from "../ui/formatScore";
@@ -42,8 +44,55 @@ import {
   Viewport,
 } from "../ui/windowedGrid";
 
-const HUD_LABELS = ["ROUND", "ROLL", "SCORE", "TARGET"] as const;
+const HUD_STATS = [
+  { key: "roll", label: "ROLLS", weight: 0.95, color: CSS.ivory },
+  { key: "round", label: "ROUND", weight: 0.78, color: CSS.goldLight },
+  { key: "target", label: "GOAL", weight: 1.12, color: CSS.parchment },
+  { key: "score", label: "SCORE", weight: 1.35, color: CSS.goldLight },
+] as const;
+type HudStatKey = (typeof HUD_STATS)[number]["key"];
 const SEAL_RADIUS = 85; // half of the 170x170 seal texture
+
+/** Pixels the felt bleeds past the viewport, so a camera shake never drags a
+ *  bare edge into frame. */
+const FELT_OVERSCAN = 16;
+
+/** A roll worth this fraction of the round's target is a "big" one: it earns a
+ *  shake and a spark burst rather than passing quietly. */
+const BIG_SCORE_FRACTION = 0.08;
+
+/** Felt tint and grid backdrop at an empty score, at the round's target, and
+ *  on a final roll that arrived short of it. The scene warms as the target
+ *  comes into reach and goes cold and bloody when the round is about to be
+ *  lost — the same signal the sigil carries, spread across the whole table. */
+const TENSION_BACKDROP = {
+  idle: COLORS.felt,
+  met: 0x241a2e,
+  danger: 0x2a1220,
+};
+const TENSION_FELT_TINT = {
+  idle: 0xffffff,
+  met: 0xffe6bd,
+  danger: 0xffb8b8,
+};
+
+/** Halo opacity behind the roll seal, at rest and under the cursor. */
+const SEAL_HALO_IDLE = 0.16;
+const SEAL_HALO_HOVER = 0.32;
+
+/** How far apart the top and bottom rows of dice land, in ms. */
+const SETTLE_RIPPLE_MS = 140;
+
+/** Blend two packed RGB colours. */
+function blendColor(from: number, to: number, t: number): number {
+  const mix = Phaser.Display.Color.Interpolate.ColorWithColor(
+    Phaser.Display.Color.IntegerToColor(from),
+    Phaser.Display.Color.IntegerToColor(to),
+    100,
+    Phaser.Math.Clamp(t, 0, 1) * 100,
+  );
+  return Phaser.Display.Color.GetColor(mix.r, mix.g, mix.b);
+}
 
 interface HudCell {
   x: number;
@@ -53,7 +102,7 @@ interface HudCell {
 }
 
 interface Layout {
-  hud: HudCell[];
+  hud: Record<HudStatKey, HudCell>;
   footer: { numbersY: number; settingsY: number };
   grid: GridArea;
   button: { x: number; y: number };
@@ -96,6 +145,9 @@ export class GameScene extends Phaser.Scene {
   private rolling = false;
   private tumbling = false;
   private tumbleEvent?: Phaser.Time.TimerEvent;
+  // Scene clock reading when the current tumble began, so the per-frame wobble
+  // is a function of elapsed time rather than of how many frames have gone by.
+  private tumbleStartedAt = 0;
   private settleTimer?: Phaser.Time.TimerEvent;
   private effectTimer?: Phaser.Time.TimerEvent;
   private finishEffects?: (skipHold: boolean) => void;
@@ -105,7 +157,18 @@ export class GameScene extends Phaser.Scene {
   private hudScore!: Phaser.GameObjects.Text;
   private hudTarget!: Phaser.GameObjects.Text;
   private hudNumbers!: Phaser.GameObjects.Text;
+  private hudScorePlaque!: Phaser.GameObjects.Container;
+  // The score the HUD is currently *showing*, which lags state.score while a
+  // count-up runs. Reset (not tweened) whenever the HUD is rebuilt.
+  private shownScore = 0n;
+  private scoreTween?: Phaser.Time.TimerEvent;
+  private feltImage!: Phaser.GameObjects.Image;
+  // Sigil + motes behind the dice. Only built when effects are on; every use
+  // is optional-chained rather than guarded again at the call site.
+  private ambient?: AmbientLayer;
   private sealImage!: Phaser.GameObjects.Image;
+  private sealHalo?: Phaser.GameObjects.Image;
+  private sealBreathe?: Phaser.Tweens.Tween;
   // The live tutorial callout, if any — re-anchored to fresh HUD objects on
   // every rebuild (see renderTutorial). Only present during the first game.
   private tutorialCallout?: CalloutHandle;
@@ -136,7 +199,14 @@ export class GameScene extends Phaser.Scene {
     // non-main cameras on shutdown — these fields would otherwise dangle.
     this.gridCamera = undefined;
     this.overlayCamera = undefined;
+    // Phaser destroyed the previous run's display list on shutdown; drop the
+    // stale handle before buildAmbient() would try to destroy it a second time.
+    this.ambient = undefined;
+    this.shownScore = this.state.score;
+    this.scoreTween = undefined;
+    this.sealBreathe = undefined;
     this.gridContainer = this.add.container(0, 0);
+    this.buildAmbient();
     // Recreated each build: routes new banners through the overlay camera so
     // they composite above the windowed grid, just like other popups.
     this.banners = new BannerStack(this, (objs) => this.overlay(objs));
@@ -160,6 +230,19 @@ export class GameScene extends Phaser.Scene {
       offResize();
       offInput();
     });
+  }
+
+  /**
+   * Advance the dice wobble. Driven per frame rather than from the 70ms tumble
+   * tick that swaps the faces: at that rate the rotation moved in visible
+   * steps, and stepping between angles reads as stuttering however small the
+   * steps are. One sine per visible die is cheap, and the windowed grid caps
+   * how many of those there can ever be.
+   */
+  override update(time: number): void {
+    if (!this.tumbling || !fx.motion) return;
+    const elapsed = (time - this.tumbleStartedAt) / 1000;
+    for (const sprite of this.sprites.values()) sprite.tumbleTo(elapsed);
   }
 
   /** A resize mid-tumble would leave the flicker loop pointing at stale
@@ -196,11 +279,10 @@ export class GameScene extends Phaser.Scene {
     const t = getTutorial(this.registry);
     if (!t.active) return;
 
-    const plaqueRect = (i: number) => {
-      const c = this.layout.hud[i];
+    const plaqueRect = (key: HudStatKey) => {
+      const c = this.layout.hud[key];
       return new Phaser.Geom.Rectangle(c.x - c.w / 2, c.y - c.h / 2, c.w, c.h);
     };
-    // HUD_LABELS order: 0 ROUND, 1 ROLL, 2 SCORE, 3 TARGET.
     const advance = () => {
       advanceTutorial(this.registry);
       this.renderTutorial();
@@ -213,7 +295,7 @@ export class GameScene extends Phaser.Scene {
 
     switch (t.stage) {
       case TutorialStage.Score:
-        anchor = plaqueRect(2);
+        anchor = plaqueRect("score");
         text =
           "This is your score. Rolling a 1 on any die earns a point — items unlock more ways to score. Your final score is the total across every round.";
         onContinue = advance;
@@ -240,19 +322,19 @@ export class GameScene extends Phaser.Scene {
         onContinue = advance;
         break;
       case TutorialStage.Target:
-        anchor = plaqueRect(3);
+        anchor = plaqueRect("target");
         text =
-          "This is the target. Reach it before your rolls run out to survive and advance to the next round — the round ends the moment you do.";
+          "This is your goal. Reach it before your rolls run out to survive and advance to the next round — the round ends the moment you do.";
         onContinue = advance;
         break;
       case TutorialStage.Rolls:
-        anchor = plaqueRect(1);
+        anchor = plaqueRect("roll");
         text =
           "Your rolls this round. You get 20 rolls to reach the target; clear it with rolls to spare and the Order rewards you with a visit to the shop.";
         onContinue = advance;
         break;
       case TutorialStage.Round:
-        anchor = plaqueRect(0);
+        anchor = plaqueRect("round");
         text = `The current round. Survive to round ${WIN_ROUND} to restore order and win the game.`;
         onContinue = advance;
         break;
@@ -290,26 +372,26 @@ export class GameScene extends Phaser.Scene {
     const footerH = portrait ? 64 : 40;
     const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14 };
 
-    // HUD: a row across wide screens, 2 rows medium, a column of 4 narrow —
-    // pills always stretch to fill their column's width.
-    const hudCols = W >= 820 ? 4 : W >= 480 ? 2 : 1;
-    const hudRows = HUD_LABELS.length / hudCols;
-    const cellH = hudCols === 4 ? 58 : hudCols === 2 ? 52 : 44;
-    const gapX = 10;
-    const gapY = 8;
-    const cellW = (W - margin * 2 - gapX * (hudCols - 1)) / hudCols;
+    // One compact strip at every width. The score gets the broadest plaque,
+    // then the goal; the simple round counter needs the least room. Capping
+    // the strip keeps the four stats visually grouped on wide monitors, while
+    // proportional gaps and type let the same composition collapse on phones.
+    const hudMargin = Phaser.Math.Clamp(W * 0.015, 4, 12);
+    const hudWidth = Math.min(600, W - hudMargin * 2);
+    const gapX = Phaser.Math.Clamp(W * 0.012, 4, 10);
+    const cellH = Phaser.Math.Clamp(W * 0.19, 66, 76);
+    const cellsWidth = hudWidth - gapX * (HUD_STATS.length - 1);
+    const totalWeight = HUD_STATS.reduce((sum, stat) => sum + stat.weight, 0);
+    const hudY = hudMargin + cellH / 2;
+    let cursorX = (W - hudWidth) / 2;
+    const hud = {} as Record<HudStatKey, HudCell>;
 
-    const hud: HudCell[] = HUD_LABELS.map((_, i) => {
-      const col = i % hudCols;
-      const row = Math.floor(i / hudCols);
-      return {
-        x: margin + cellW / 2 + col * (cellW + gapX),
-        y: margin + cellH / 2 + row * (cellH + gapY),
-        w: cellW,
-        h: cellH,
-      };
-    });
-    const hudBottom = margin + hudRows * cellH + (hudRows - 1) * gapY;
+    for (const stat of HUD_STATS) {
+      const w = (cellsWidth * stat.weight) / totalWeight;
+      hud[stat.key] = { x: cursorX + w / 2, y: hudY, w, h: cellH };
+      cursorX += w + gapX;
+    }
+    const hudBottom = hudMargin + cellH;
 
     const gridTop = hudBottom + 16;
     const gridBottom = button.y - SEAL_RADIUS - 16;
@@ -336,10 +418,19 @@ export class GameScene extends Phaser.Scene {
   // ---- chrome: felt + HUD + roll button -------------------------------------
 
   private buildChrome(layout: Layout): void {
+    // Everything below is about to be destroyed and rebuilt, so drop the
+    // tweens that write to it — a count-up left running would keep setting
+    // text on a destroyed HUD object, and the score simply snaps instead.
+    this.scoreTween?.remove();
+    this.scoreTween = undefined;
+    this.shownScore = this.state.score;
+    this.stopSealBreathe();
+
     this.chrome?.destroy();
 
     const items: Phaser.GameObjects.GameObject[] = [];
-    items.push(addFelt(this));
+    this.feltImage = addFelt(this, fx.on ? FELT_OVERSCAN : 0);
+    items.push(this.feltImage);
     items.push(...this.buildHud(layout));
     items.push(...this.buildRollButton(layout));
     items.push(...this.buildWindowHint(layout));
@@ -386,12 +477,24 @@ export class GameScene extends Phaser.Scene {
     const W = this.scale.width;
     const items: Phaser.GameObjects.GameObject[] = [];
 
-    const refs = HUD_LABELS.map((label, i) => {
-      const plaque = this.makePlaque(layout.hud[i], label);
-      items.push(plaque.image, plaque.label, plaque.value);
-      return plaque.value;
+    const plaques = HUD_STATS.map((stat) => {
+      const plaque = this.makePlaque(
+        layout.hud[stat.key],
+        stat.label,
+        stat.color,
+      );
+      items.push(plaque.container);
+      return [stat.key, plaque] as const;
     });
-    [this.hudRound, this.hudRoll, this.hudScore, this.hudTarget] = refs;
+    const plaqueByKey = Object.fromEntries(plaques) as Record<
+      HudStatKey,
+      (typeof plaques)[number][1]
+    >;
+    this.hudRound = plaqueByKey.round.value;
+    this.hudRoll = plaqueByKey.roll.value;
+    this.hudScore = plaqueByKey.score.value;
+    this.hudTarget = plaqueByKey.target.value;
+    this.hudScorePlaque = plaqueByKey.score.container;
 
     const { numbersY, settingsY } = layout.footer;
     // Sacred numbers pinned bottom-left; Inventory (upper) and Settings (lower)
@@ -469,48 +572,174 @@ export class GameScene extends Phaser.Scene {
   private makePlaque(
     cell: HudCell,
     label: string,
+    valueColor: string,
   ): {
-    image: Phaser.GameObjects.Image;
+    container: Phaser.GameObjects.Container;
     label: Phaser.GameObjects.Text;
     value: Phaser.GameObjects.Text;
   } {
     const { x, y, w, h } = cell;
-    const fontScale = h / 58; // relative to the plaque texture's natural height
-    const image = this.add.image(x, y, "plaque").setDisplaySize(w, h);
+    const heightScale = h / 62;
+    const widthScale = Phaser.Math.Clamp(w / 92, 0.68, 1);
+    const fontScale = Math.min(heightScale, widthScale);
+    const container = this.add.container(x, y);
+    const image = this.add.image(0, 0, "plaque").setDisplaySize(w, h);
+    // Derive the badge position from its bottom inset. This guarantees the
+    // outer plaque contains it even at the minimum phone-sized HUD height.
+    const valuePillHeight = h * 0.5 - 4;
+    const valuePillBottomPadding = Math.max(14, h * 0.18);
+    const valuePillY = h / 2 - valuePillBottomPadding - valuePillHeight / 2;
+    const valuePill = this.add.graphics().setPosition(0, valuePillY);
     const labelText = this.add
-      .text(x, y - 18 * fontScale, label, {
+      .text(0, -h * 0.31, label, {
         fontFamily: SERIF,
-        fontSize: `${14 * fontScale}px`,
+        fontSize: `${Phaser.Math.Clamp(13 * fontScale, 9, 13)}px`,
         color: CSS.dim,
-        letterSpacing: 2,
+        fontStyle: "bold",
+        letterSpacing: Math.max(0, Math.round(fontScale)),
       })
       .setOrigin(0.5);
+    const valueFontSize = Phaser.Math.Clamp(25 * fontScale, 17, 25);
     const value = this.add
-      .text(x, y + 8 * fontScale, "", {
+      .text(0, valuePillY - 1, "", {
         fontFamily: SERIF,
-        fontSize: `${26 * fontScale}px`,
-        color: CSS.goldLight,
+        fontSize: `${valueFontSize}px`,
+        color: valueColor,
         fontStyle: "bold",
       })
-      .setOrigin(0.5);
-    return { image, label: labelText, value };
+      .setOrigin(0.5)
+      .setData("hudMaxWidth", Math.max(20, w - 28))
+      .setData("hudFontSize", valueFontSize)
+      .setData("hudPill", valuePill)
+      .setData("hudPillHeight", valuePillHeight)
+      .setData("hudPillWidth", Math.max(28, w - 18));
+    container.add([image, valuePill, labelText, value]);
+    return { container, label: labelText, value };
+  }
+
+  /** Set a plaque value at its preferred size, shrinking only when a very
+   *  large score or goal would otherwise spill into the neighbouring card. */
+  private setHudValue(text: Phaser.GameObjects.Text, value: string): void {
+    text
+      .setScale(1)
+      .setFontSize(text.getData("hudFontSize") as number)
+      .setText(value);
+    const maxWidth = text.getData("hudMaxWidth") as number;
+    if (text.width > maxWidth) text.setScale(maxWidth / text.width);
+
+    const pill = text.getData("hudPill") as Phaser.GameObjects.Graphics;
+    const pillHeight = text.getData("hudPillHeight") as number;
+    const pillWidth = text.getData("hudPillWidth") as number;
+    pill.clear();
+    pill.fillStyle(COLORS.feltLight, 1);
+    pill.fillRoundedRect(
+      -pillWidth / 2,
+      -pillHeight / 2,
+      pillWidth,
+      pillHeight,
+      Math.min(9, pillHeight / 2),
+    );
   }
 
   private updateHud(): void {
     const s = this.state;
-    this.hudRound.setText(String(s.round));
-    this.hudRoll.setText(`${s.roll}/${roundRollTarget(s)}`);
-    this.hudScore.setText(formatScore(s.score));
-    this.hudTarget.setText(formatScore(survivalTarget(s.round, s.hardMode)));
+    this.setHudValue(this.hudRound, String(s.round));
+    this.setHudValue(this.hudRoll, `${s.roll}/${roundRollTarget(s)}`);
+    this.setScoreDisplay(s.score);
+    this.setHudValue(
+      this.hudTarget,
+      formatScore(survivalTarget(s.round, s.hardMode)),
+    );
 
     const extras =
       s.extraPoints > 0 ? `  ·  +${s.extraPoints} bonus per scoring die` : "";
     this.hudNumbers.setText(
       `Sacred numbers: ${s.scoringNumbers.join(", ")}${extras}`,
     );
+
+    this.updateTension();
+  }
+
+  /**
+   * Ease the displayed score toward its real value and punch the plaque on the
+   * way up. The score is the whole game — currency, survival, and progress in
+   * one number — so it's worth watching it climb rather than finding it
+   * already arrived. `fx.countUp` snaps when effects are off, and `shownScore`
+   * is reset
+   * to match on every HUD rebuild, so both of those paths land here as a
+   * plain `setText`.
+   */
+  private setScoreDisplay(score: bigint): void {
+    if (score === this.shownScore) {
+      this.setHudValue(this.hudScore, formatScore(score));
+      return;
+    }
+    const rising = score > this.shownScore;
+    this.scoreTween?.remove();
+    this.scoreTween = fx.countUp(
+      this,
+      this.shownScore,
+      score,
+      rising ? 480 : 240,
+      (value) => this.setHudValue(this.hudScore, formatScore(value)),
+    );
+    this.shownScore = score;
+    if (rising) fx.punch(this, this.hudScorePlaque, 1.09, 120);
+  }
+
+  /**
+   * Colour the table by how the round is going: the felt and the grid backdrop
+   * warm toward gold as the score closes on the target, and go cold and bloody
+   * once the last roll arrives with the target still out of reach. The sigil
+   * behind the dice reads the same two numbers — see AmbientLayer.
+   */
+  private updateTension(): void {
+    if (!fx.on) return;
+    const s = this.state;
+    const target = survivalTarget(s.round, s.hardMode);
+    const progress = target > 0n ? Number(s.score) / Number(target) : 0;
+    const danger = roundRollTarget(s) - s.roll <= 1 && s.score < target;
+    const t = Phaser.Math.Clamp(progress, 0, 1);
+
+    this.ambient?.setProgress(t, danger);
+    this.gridCamera?.setBackgroundColor(
+      danger
+        ? TENSION_BACKDROP.danger
+        : blendColor(TENSION_BACKDROP.idle, TENSION_BACKDROP.met, t),
+    );
+    this.feltImage?.setTint(
+      danger
+        ? TENSION_FELT_TINT.danger
+        : blendColor(TENSION_FELT_TINT.idle, TENSION_FELT_TINT.met, t),
+    );
   }
 
   // ---- dice grid -----------------------------------------------------------
+
+  /**
+   * Build the sigil-and-motes backdrop, when effects are on.
+   *
+   * It's parented to the grid container because the grid camera paints an
+   * opaque backdrop across the whole grid area — anything drawn behind that
+   * camera simply doesn't exist there. Living in grid space means it pans and
+   * zooms with the dice by default, which is *not* what we want, so `syncGrid`
+   * re-anchors it to the camera's world centre at the inverse of its zoom on
+   * every step; the net effect is a layer that holds still behind moving dice.
+   */
+  private buildAmbient(): void {
+    this.ambient?.destroy();
+    this.ambient = undefined;
+    if (!fx.on) return;
+
+    const layer = new AmbientLayer(this);
+    this.gridContainer.add(layer);
+    this.gridContainer.sendToBack(layer);
+    // Same opt-out as the die sprites: drawn only through the clipped grid
+    // camera, never by the main or overlay cameras.
+    this.cameras.main.ignore(layer);
+    this.overlayCamera?.ignore(layer);
+    this.ambient = layer;
+  }
 
   /** Reconciles the live sprite pool against the current scroll/zoom window,
    *  creating sprites for newly-visible indices, destroying ones that
@@ -559,6 +788,20 @@ export class GameScene extends Phaser.Scene {
       view.scrollX + halfW * (1 / view.zoom - 1),
       view.scrollY + halfH * (1 / view.zoom - 1),
     );
+
+    // Pin the ambient backdrop to the middle of what the grid camera is
+    // showing, at the inverse of its zoom, so it stays put at a constant
+    // on-screen size while the dice pan and scale over it. Derived from
+    // `view` rather than `cam.worldView`, which Phaser only refreshes at
+    // pre-render and would still hold the previous frame's rect here.
+    if (this.ambient) {
+      this.ambient.setArea(layout.grid.width, layout.grid.height);
+      this.ambient.setPosition(
+        view.scrollX + halfW / view.zoom,
+        view.scrollY + halfH / view.zoom,
+      );
+      this.ambient.setScale(1 / view.zoom);
+    }
 
     if (this.gridDetail === "cards") {
       for (const sprite of this.sprites.values()) sprite.destroy();
@@ -830,6 +1073,21 @@ export class GameScene extends Phaser.Scene {
 
   private buildRollButton(layout: Layout): Phaser.GameObjects.GameObject[] {
     const { x, y } = layout.button;
+    const items: Phaser.GameObjects.GameObject[] = [];
+
+    // Warm halo under the wax. The seal is the one thing the player has to
+    // press, and a dark disc on a dark table doesn't say so on its own.
+    this.sealHalo = undefined;
+    if (fx.on) {
+      this.sealHalo = this.add
+        .image(x, y, "spark")
+        .setDisplaySize(SEAL_RADIUS * 5, SEAL_RADIUS * 5)
+        .setTint(COLORS.glow)
+        .setAlpha(SEAL_HALO_IDLE)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      items.push(this.sealHalo);
+    }
+
     this.sealImage = this.add.image(x, y, "seal");
     const label = this.add
       .text(x, y - 3, "ROLL", {
@@ -843,21 +1101,73 @@ export class GameScene extends Phaser.Scene {
       .setShadow(0, 2, "#000000", 4, false, true);
 
     this.sealImage.setInteractive({ useHandCursor: true });
-    this.sealImage.on(
-      "pointerover",
-      () => !this.rolling && this.sealImage.setScale(1.06),
-    );
-    this.sealImage.on("pointerout", () => this.sealImage.setScale(1));
+    this.sealImage.on("pointerover", () => {
+      if (this.rolling) return;
+      // Hover owns the seal's scale for as long as it lasts, so the idle pulse
+      // has to let go of it rather than fight for the same property.
+      this.stopSealBreathe();
+      this.sealImage.setScale(1.06);
+      this.setHaloAlpha(SEAL_HALO_HOVER);
+    });
+    this.sealImage.on("pointerout", () => {
+      this.sealImage.setScale(1);
+      this.setHaloAlpha(SEAL_HALO_IDLE);
+      this.startSealBreathe();
+    });
     this.sealImage.on("pointerdown", () => this.onRoll());
     label.setDepth(1);
-    return [this.sealImage, label];
+
+    items.push(this.sealImage, label);
+    this.startSealBreathe();
+    return items;
+  }
+
+  /** Slow pulse on the seal while it waits to be pressed — the only thing on
+   *  the screen that moves when the game is idle, which is the point. */
+  private startSealBreathe(): void {
+    if (!fx.motion) return;
+    this.sealBreathe?.remove();
+    this.sealImage.setScale(1);
+    this.sealBreathe = this.tweens.add({
+      targets: this.sealImage,
+      scaleX: 1.035,
+      scaleY: 1.035,
+      duration: 1400,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+  }
+
+  private stopSealBreathe(): void {
+    this.sealBreathe?.remove();
+    this.sealBreathe = undefined;
+  }
+
+  private setHaloAlpha(alpha: number): void {
+    if (!this.sealHalo) return;
+    this.tweens.killTweensOf(this.sealHalo);
+    this.tweens.add({ targets: this.sealHalo, alpha, duration: 200 });
   }
 
   // ---- roll flow -----------------------------------------------------------
 
   private onRoll(): void {
+    this.stopSealBreathe();
     this.sealImage.setScale(0.96);
-    this.time.delayedCall(120, () => this.sealImage.setScale(1));
+    this.time.delayedCall(120, () => {
+      this.sealImage.setScale(1);
+      this.startSealBreathe();
+    });
+    const press = fx.shockwave(
+      this,
+      this.layout.button.x,
+      this.layout.button.y,
+      SEAL_RADIUS,
+      COLORS.glow,
+      460,
+    );
+    if (press) this.overlay(press);
 
     // Tutorial "Roll" step: pressing the seal advances it. Clear the callout for
     // the roll; the viewport step appears once the roll settles.
@@ -901,6 +1211,13 @@ export class GameScene extends Phaser.Scene {
     this.rolling = true;
     this.tumbling = true;
 
+    // Each die picks its own rocking motion for this roll; `update()` advances
+    // all of them per frame from this timestamp.
+    this.tumbleStartedAt = this.time.now;
+    if (fx.motion) {
+      for (const sprite of this.sprites.values()) sprite.beginTumble();
+    }
+
     audio.roll(this.state.dice.length);
     this.state.dice.roll(
       Math.random,
@@ -938,12 +1255,28 @@ export class GameScene extends Phaser.Scene {
     const showPerDieCallouts = this.gridDetail === "full";
     const showPerDieEffects =
       this.gridDetail === "full" || this.gridDetail === "noCallouts";
+    // Dice land as a ripple down the grid rather than snapping flat together,
+    // so the roll reads as coming to rest. Measured over the visible sprites
+    // only — the windowed grid never holds more than a viewport's worth.
+    let topY = Infinity;
+    let bottomY = -Infinity;
+    if (fx.motion) {
+      for (const sprite of this.sprites.values()) {
+        topY = Math.min(topY, sprite.y);
+        bottomY = Math.max(bottomY, sprite.y);
+      }
+    }
+    const rippleSpan = Math.max(1, bottomY - topY);
+
     for (const [index, sprite] of this.sprites) {
       const die = s.dice.dieAt(index);
       if (!die) continue;
       sprite.die = die;
       sprite.refreshType();
       sprite.showFace(die.value);
+      if (fx.motion) {
+        sprite.settle(((sprite.y - topY) / rippleSpan) * SETTLE_RIPPLE_MS);
+      }
     }
     for (const [key, card] of this.cards) {
       const region = this.cardRegions.get(key);
@@ -1094,6 +1427,7 @@ export class GameScene extends Phaser.Scene {
           42,
         ),
       );
+      this.celebrateRoll(result.points);
       const listedEffects = result.modifiers.filter(
         (mod) => mod.float === "aggregate" || Boolean(mod.mult),
       );
@@ -1179,6 +1513,38 @@ export class GameScene extends Phaser.Scene {
     } else finishRoll(false);
   }
 
+  /**
+   * Shake and spark in proportion to what the roll was worth. Points are
+   * weighed against the round's own target rather than against an absolute
+   * number, because both grow by orders of magnitude across a run — a hundred
+   * points is the whole round in round 2 and a rounding error in round 10, and
+   * only the fraction says which.
+   *
+   * Below `BIG_SCORE_FRACTION` the roll passes quietly: an impact on every
+   * scoring roll would make all of them feel like nothing.
+   */
+  private celebrateRoll(points: bigint): void {
+    if (!fx.on) return;
+    const target = survivalTarget(this.state.round, this.state.hardMode);
+    const share = target > 0n ? Number(points) / Number(target) : 0;
+    if (share < BIG_SCORE_FRACTION) return;
+
+    const strength = Math.min(1, share);
+    const duration = 140 + 180 * strength;
+    fx.shakeCamera(this.cameras.main, duration, 0.002 + 0.006 * strength);
+    // The dice are drawn by a camera whose scroll is recomputed on every
+    // relayout, so they're displaced by their container instead — see
+    // Effects.shakeObject.
+    fx.shakeObject(this, this.gridContainer, duration, 4 + 12 * strength);
+
+    const burst = fx.burst(this, this.scale.width / 2, 150, {
+      count: 12 + Math.round(28 * strength),
+      tint: COLORS.glow,
+      speed: 180 + 220 * strength,
+    });
+    if (burst) this.overlay(burst);
+  }
+
   /** Evaluate persistent unlock criteria against the current run, announcing
    *  anything newly earned. No-ops cheaply once everything is unlocked. */
   private checkUnlocks(): void {
@@ -1191,6 +1557,46 @@ export class GameScene extends Phaser.Scene {
           : "Available next run.",
       });
     }
+  }
+
+  /**
+   * The full-screen punctuation on a round ending. Each outcome gets its own
+   * colour and weight so the three read apart before the banner text has been
+   * read: gold and open for a win, a warm sweep for surviving, a red lurch for
+   * a run ending.
+   */
+  private punctuate(outcome: "victory" | "gameOver" | "advanced"): void {
+    if (!fx.on) return;
+    const cx = this.scale.width / 2;
+    const cy = this.scale.height / 2;
+
+    if (outcome === "gameOver") {
+      fx.flash(this.cameras.main, COLORS.waxRed, 380);
+      fx.shakeCamera(this.cameras.main, 460, 0.012);
+      fx.shakeObject(this, this.gridContainer, 460, 16);
+      return;
+    }
+
+    const gold = outcome === "victory" ? COLORS.goldLight : COLORS.gold;
+    fx.flash(this.cameras.main, gold, outcome === "victory" ? 420 : 240);
+    const ring = fx.shockwave(
+      this,
+      cx,
+      cy,
+      Math.min(this.scale.width, this.scale.height) * 0.35,
+      gold,
+      outcome === "victory" ? 900 : 620,
+    );
+    if (ring) this.overlay(ring);
+
+    const burst = fx.burst(this, cx, cy, {
+      count: outcome === "victory" ? 80 : 30,
+      tint: gold,
+      speed: outcome === "victory" ? 520 : 300,
+      lifespan: outcome === "victory" ? 1500 : 800,
+      gravityY: 180,
+    });
+    if (burst) this.overlay(burst);
   }
 
   /** Record the finished run locally and, when it set a new personal best,
@@ -1266,6 +1672,7 @@ export class GameScene extends Phaser.Scene {
     }
     if (outcome.phase === "victory") {
       audio.victory();
+      this.punctuate("victory");
       // Capture before endRun records the winning entry: true only if this is
       // the player's first-ever win, which is exactly when Hard Mode unlocks.
       const hardUnlocked = !hasBeatenGame();
@@ -1286,6 +1693,7 @@ export class GameScene extends Phaser.Scene {
     }
     if (outcome.phase === "gameOver") {
       audio.gameOver();
+      this.punctuate("gameOver");
       this.endRun(s, false);
       this.banners.push("The Order is displeased. Your run ends.", {
         holdMs: 1300,
@@ -1295,6 +1703,7 @@ export class GameScene extends Phaser.Scene {
     }
     // advanced — round was just incremented by the engine.
     audio.roundUp();
+    this.punctuate("advanced");
     this.banners.push(
       `Round ${s.round - 1} survived — the Order is pleased`,
       { holdMs: 1300 },

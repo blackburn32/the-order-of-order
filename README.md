@@ -70,21 +70,25 @@ Build-time switches live in `src/buildFlags.ts` and are set from `VITE_*` env va
 values are frozen into `dist/` when it is built (unlike the gameplay knobs in `src/config.ts`
 or the player's own settings).
 
-| Flag          | Env var            | Default | What it does                              |
-| ------------- | ------------------ | ------- | ----------------------------------------- |
-| `GOLD_BORDER` | `VITE_GOLD_BORDER` | off     | Gold frame around the outside of the game |
+| Flag          | Env var            | Default | What it does                                     |
+| ------------- | ------------------ | ------- | ------------------------------------------------ |
+| `GOLD_BORDER` | `VITE_GOLD_BORDER` | off     | Gold frame around the outside of the game        |
+| `PHONE_BUILD` | `VITE_PHONE_BUILD` | off     | Hides browser-only UI in the Capacitor phone app |
 
-The itch.io builds are the only ones that turn anything on: they run in Vite's `itch` mode,
-which loads the committed `.env.itch` on top of the usual `.env`.
+Targeted builds use Vite modes, which load their committed mode-specific env file on top of
+the usual `.env`.
 
 ```bash
 npm run package:itch  # itch build (flags on) + zip for upload
 npm run build:itch    # itch build only, into dist/
 npm run dev:itch      # dev server with the itch flags, to preview them
+npm run phone         # phone build (fullscreen setting hidden) + Capacitor copy
+npm run build:phone   # phone build only, into dist/
+npm run dev:phone     # dev server with the phone flags, to preview them
 ```
 
-Plain `npm run build` (GitHub Pages, the Capacitor/Android bundle) and `npm run dev` leave every
-flag at its default, so the frame is absent outside itch.io.
+Plain `npm run build` (GitHub Pages and other static hosts) and `npm run dev` leave every flag
+at its default. The itch build enables the frame; the phone build hides the fullscreen setting.
 
 ### Other scripts
 
@@ -92,8 +96,9 @@ flag at its default, so the frame is absent outside itch.io.
 npm run sim      # headless balance simulation → sim-out/report.html (see src/sim)
 ```
 
-All art is drawn procedurally at runtime and all audio is synthesized with WebAudio — the
-repo contains no binary assets. Tuning knobs (round targets, shop rolls, win round) live in
+Nearly all art is drawn procedurally at runtime and most audio is synthesized with WebAudio; the
+only binary assets are the intro cutscene art in `images/` and the music track in `audio/songs/`.
+Tuning knobs (round targets, shop rolls, win round) live in
 `src/config.ts`. A Playwright smoke driver is included as a devDependency for headless
 playtesting; the game instance is exposed as `window.__game` for that purpose.
 
@@ -393,10 +398,42 @@ Settings controls:
 - Volume of sound effects
 - Show Intro
 - Show Tutorial
+- Visual Effects (see [Visual effects](#visual-effects) below)
 - Fullscreen
 - Abandon Run (mid-run only) — ends and records the current run as a loss, then shows Game Over
 - Reset all progress (from the menu) — wipes item unlocks, Codex selection counts, games-completed,
   and the Hall of High Scores (audio settings are kept); a two-tap confirm guards it
+
+## Visual effects
+
+Beyond the base feedback (die-border flashes, floating score labels, banners), the game layers
+on a set of flourishes: the HUD score eases up to its new value and its plaque punches, the dice
+rock as they tumble and settle in a ripple, a sigil turns behind the grid and brightens as the
+round's target comes into reach, the felt and grid backdrop warm toward gold with it (and go red
+on a final roll that arrives short), big rolls shake the screen and throw gold sparks, the roll
+seal breathes and rings when pressed, and shop cards are dealt onto the table with rare ones
+lit by a glow.
+
+All of it answers to one **Visual Effects** setting, on by default. What that setting *enables*
+is then capped by two things the game reads from the device, in `src/renderQuality.ts`:
+
+| Input                  | Source                                   | What it gates                                        |
+| ---------------------- | ---------------------------------------- | ---------------------------------------------------- |
+| Effect tier            | Renderer type + `hardwareConcurrency`    | Filter passes (glow), particle bursts, animated background art |
+| Reduce-motion          | `prefers-reduced-motion` media query     | Camera/grid shake, screen flashes, dice wobble, ambient drift |
+
+The tier is `full` on WebGL with more than 4 cores, and `basic` on a Canvas fallback or a
+low-core device — Phaser 4's filters and particle renderer are WebGL-only, so on that path the
+budget genuinely isn't there. The two axes are deliberately independent: capable hardware still
+shouldn't shake the screen at a player who asked it not to, while a player on a weak device who
+*hasn't* asked for less motion still gets the cheap motion cues.
+
+Everything resolves through the `fx` singleton in `src/systems/Effects.ts`, which mirrors the
+`audio` one — initialized once in `BootScene` from the live renderer, updated live by the
+Settings toggle. Call sites branch on `fx.on` / `fx.rich` / `fx.motion` rather than re-deriving
+any of this, and the helpers are self-gating, so calling `fx.burst` on a basic device is a
+no-op rather than a crash. New effects should be added the same way: pick the axis that
+describes the cost, and let the helper decline.
 
 ## Balance simulation
 
@@ -408,4 +445,15 @@ reflect the live rules. Run it with `npm run sim`; see `src/sim/README.md` for f
 
 ## License
 
-Released under the [MIT License](LICENSE).
+The source code is released under the [PolyForm Noncommercial License 1.0.0](LICENSE). You are
+free to read it, run it, fork it, modify it, and share those changes for any noncommercial
+purpose — personal projects, study, hobby work, and use by schools, charities, and public
+institutions. Selling it, or otherwise using it for commercial advantage, requires a separate
+license.
+
+The art and audio are **not** covered by that license. Everything in [`images/`](images/LICENSE)
+and [`audio/`](audio/LICENSE) is all rights reserved, so a noncommercial fork needs to supply its
+own assets. The name "The Order of Order" is likewise not licensed for use in derivative works.
+
+This project was previously MIT-licensed; commits published before the change remain available
+under those terms. Commercial licensing inquiries: alexblackburn32@gmail.com.

@@ -4,10 +4,8 @@
 // and not runtime player settings — the value is frozen into the bundle when it
 // is built, so a given dist/ is either an itch.io build or it isn't.
 //
-// The itch.io builds turn theirs on via `.env.itch`, which is loaded by
-// `npm run package:itch` / `npm run dev:itch` (both pass `--mode itch`). Every
-// other build (plain `npm run build` for GitHub Pages, the Capacitor/Android
-// bundle, `npm run dev`) leaves them at the defaults below.
+// Targeted builds opt in through mode-specific files such as `.env.itch` and
+// `.env.phone`; plain web builds leave the flags at their defaults below.
 
 /** Env vars are strings; anything but an explicit truthy value reads as off. */
 function flag(value: string | undefined): boolean {
@@ -21,3 +19,6 @@ function flag(value: string | undefined): boolean {
  *  the whole viewport — a Pages deploy, the Android app — the frame just reads
  *  as a stray line at the screen edge, so it is off by default. */
 export const GOLD_BORDER = flag(import.meta.env.VITE_GOLD_BORDER);
+
+/** Whether this bundle is intended for the Capacitor phone app. */
+export const PHONE_BUILD = flag(import.meta.env.VITE_PHONE_BUILD);

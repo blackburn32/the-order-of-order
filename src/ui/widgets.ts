@@ -2,10 +2,14 @@ import Phaser from 'phaser';
 import { COLORS, CSS, SERIF } from '../art/palette';
 import { audio } from '../systems/Audio';
 
-/** Felt tabletop background, stretched to cover the current viewport. */
-export function addFelt(scene: Phaser.Scene): Phaser.GameObjects.Image {
+/** Felt tabletop background, stretched to cover the current viewport.
+ *  `overscan` bleeds it past every edge — pass a few pixels in scenes that
+ *  shake the camera, so the shake never drags a bare edge into view. */
+export function addFelt(scene: Phaser.Scene, overscan = 0): Phaser.GameObjects.Image {
   const { width, height } = scene.scale;
-  return scene.add.image(width / 2, height / 2, 'felt').setDisplaySize(width, height);
+  return scene.add
+    .image(width / 2, height / 2, 'felt')
+    .setDisplaySize(width + overscan * 2, height + overscan * 2);
 }
 
 /** Parchment panel sized to an explicit display box (non-uniform scale is fine — procedural art). */

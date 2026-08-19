@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import { buildTextures } from '../art/textures';
 import { audio } from '../systems/Audio';
+import { fx } from '../systems/Effects';
 import { loadSettings } from '../systems/SaveData';
 import monasteryUrl from '../../images/monastery.png';
 import diceTwirlUrl from '../../images/dice-twirl.png';
@@ -24,6 +25,9 @@ export class BootScene extends Phaser.Scene {
     buildTextures(this);
     const settings = loadSettings();
     audio.setVolumes(settings.musicVol, settings.sfxVol);
+    // First point the live renderer is known — the config asks for WebGL, but
+    // Phaser falls back to Canvas where it isn't available.
+    fx.init(this.game.renderer.type, settings.visualEffects);
     this.scene.start('Menu');
   }
 }

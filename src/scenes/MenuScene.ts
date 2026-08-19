@@ -1,12 +1,34 @@
 import Phaser from 'phaser';
 import { COLORS, CSS, SERIF } from '../art/palette';
 import { audio } from '../systems/Audio';
+import { fx } from '../systems/Effects';
 import { loadProgress, loadSettings } from '../systems/SaveData';
 import { beginRun } from '../systems/Tutorial';
 import { addFelt, bannerButton, fitTextWidth, showBanner } from '../ui/widgets';
+import { AmbientLayer } from '../ui/AmbientLayer';
+import { RuleDice } from '../ui/RuleDice';
 import { responsive } from '../ui/layout';
 
+/**
+ * Fixed "round progress" handed to the menu's AmbientLayer. There's no round
+ * here to report, so the number is chosen purely for how it looks: it drives
+ * both the sigil's opacity and its spin, and this value lands on a faint gold
+ * ring turning about once every forty seconds.
+ */
+const MENU_AMBIENCE = 0.7;
+
+/** The light the pointer carries: its display size, its additive strength
+ *  (enough to bloom a parchment button as the pointer crosses it without
+ *  washing out the label), and the fraction of the gap to the pointer it
+ *  closes each frame — low enough that the light visibly trails the cursor
+ *  rather than being welded to it. */
+const CURSOR_GLOW_SIZE = 260;
+const CURSOR_GLOW_ALPHA = 0.22;
+const CURSOR_GLOW_EASING = 0.16;
+
 export class MenuScene extends Phaser.Scene {
+  private cursorGlow?: Phaser.GameObjects.Image;
+
   constructor() {
     super('Menu');
   }
@@ -27,17 +49,43 @@ export class MenuScene extends Phaser.Scene {
 
     addFelt(this);
 
+    // The same living backdrop that sits behind the dice grid, centered on the
+    // whole viewport so the sigil frames the menu rather than any one element.
+    // Created here, straight after the felt, so everything built below layers
+    // over it; `responsive` destroys and rebuilds it with the rest of the scene
+    // on resize, and AmbientLayer's own destroy tears down its looping tweens.
+    const ambient = new AmbientLayer(this, { ring: true });
+    ambient.setPosition(cx, H / 2);
+    ambient.setArea(W, H);
+    ambient.setProgress(MENU_AMBIENCE, false);
+
     const titleY = H * 0.22;
-    const glow = this.add.ellipse(cx, titleY, Math.min(720, W * 0.8), 260, COLORS.glow, 0.07);
-    this.tweens.add({
-      targets: glow,
-      alpha: { from: 0.5, to: 1 },
-      scaleX: { from: 0.95, to: 1.05 },
-      duration: 2400,
-      yoyo: true,
-      repeat: -1,
-      ease: 'Sine.easeInOut'
-    });
+
+    // A gradient halo rather than a filled shape. With the sigil turning
+    // behind it, any hard edge here reads as a second object laid over the
+    // rings instead of as light falling on them — and `spark` is drawn
+    // precisely to hold up as a light source when blown far past its own size.
+    const glow = this.add
+      .image(cx, titleY, 'spark')
+      .setTint(COLORS.glow)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDisplaySize(Math.min(720, W * 0.8), 300);
+    if (fx.motion) {
+      // setDisplaySize bakes the stretch into scaleX, so the breathe has to
+      // swing around that baked value instead of around 1.
+      const haloScaleX = glow.scaleX;
+      this.tweens.add({
+        targets: glow,
+        alpha: { from: 0.12, to: 0.26 },
+        scaleX: { from: haloScaleX * 0.95, to: haloScaleX * 1.05 },
+        duration: 2400,
+        yoyo: true,
+        repeat: -1,
+        ease: 'Sine.easeInOut'
+      });
+    } else {
+      glow.setAlpha(0.2);
+    }
 
     // The font sizes have a legibility floor (30px / 16px), so below roughly a
     // 330px-wide viewport the clamp stops shrinking them and the lines would run
@@ -45,15 +93,26 @@ export class MenuScene extends Phaser.Scene {
     // tagline below, so all three lines share one left/right edge.
     const textMaxW = W - 24;
 
+    const titleSize = Math.round(Phaser.Math.Clamp(W * 0.053, 30, 68));
     const title = this.add
       .text(cx, titleY, 'The Order of Order', {
         fontFamily: SERIF,
-        fontSize: `${Math.round(Phaser.Math.Clamp(W * 0.053, 30, 68))}px`,
+        fontSize: `${titleSize}px`,
         color: CSS.gold,
-        fontStyle: 'bold'
+        fontStyle: 'bold',
+        // The sigil's tick ring and arcs pass behind the letterforms now, and
+        // gold-on-gold at low alpha is exactly the collision a drop shadow
+        // underneath doesn't solve. A near-black stroke (felt dark, as
+        // `floatText` uses) cuts the glyphs out of whatever is turning behind
+        // them; scaled off the font size so it stays proportionate from the
+        // 30px floor to the 68px ceiling.
+        stroke: '#0d0a12',
+        strokeThickness: Math.max(3, Math.round(titleSize * 0.09))
       })
       .setOrigin(0.5)
-      .setShadow(0, 4, '#000000', 10, false, true);
+      // shadowStroke on as well, so the soft shadow follows the stroke's
+      // outline rather than only the gold fill sitting inside it.
+      .setShadow(0, 4, '#000000', 10, true, true);
     fitTextWidth(title, textMaxW);
 
     const subtitle = this.add
@@ -65,6 +124,29 @@ export class MenuScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
     fitTextWidth(subtitle, textMaxW);
+
+    // A broken rule binds the title and subtitle into one masthead instead of
+    // leaving two stranded lines of text: a thin gold line interrupted by a
+    // centered lozenge, the illuminated-manuscript vocabulary the rest of the
+    // game's art already speaks. Placed off the two lines' measured bounds
+    // rather than a fraction of H, so it stays centered in the gap at every
+    // viewport — the two font sizes hit their legibility floors at different
+    // widths, so that gap isn't a fixed proportion of anything.
+    const ruleY = (title.getBounds().bottom + subtitle.getBounds().top) / 2;
+    const ruleHalf = Math.min(title.width / 2 + 30, W / 2 - 24);
+
+    // Sized off the title rather than the measured gap between the two lines:
+    // the gap between their *bounds* is only a dozen pixels (Phaser's line
+    // height pads each box well past the ink), while the clear air between the
+    // glyphs themselves is several times that. Scaling with the title keeps
+    // the row proportionate to the masthead at every viewport.
+    const dice = new RuleDice(this, cx, ruleY, Phaser.Math.Clamp(titleSize * 0.26, 10, 18));
+    const ruleGap = dice.width / 2 + 12;
+
+    const rule = this.add.graphics();
+    rule.lineStyle(1.5, COLORS.gold, 0.6);
+    rule.lineBetween(cx - ruleHalf, ruleY, cx - ruleGap, ruleY);
+    rule.lineBetween(cx + ruleGap, ruleY, cx + ruleHalf, ruleY);
 
     const btnGap = Math.min(84, H * 0.12);
     const startY = H * 0.48;
@@ -109,5 +191,36 @@ export class MenuScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
     fitTextWidth(tagline, textMaxW);
+
+    // A light the pointer carries across the table. Created last so it lies
+    // over everything — additive gold on parchment gives each button a soft
+    // bloom as the pointer crosses it, which doubles as hover feedback the
+    // tint alone doesn't provide. `responsive` destroyed the previous one
+    // along with the rest of the display list, so this reassignment is what
+    // keeps the handle live across a resize.
+    this.cursorGlow = undefined;
+    if (fx.on) {
+      const pointer = this.input.activePointer;
+      this.cursorGlow = this.add
+        .image(pointer.worldX, pointer.worldY, 'spark')
+        .setTint(COLORS.glow)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDisplaySize(CURSOR_GLOW_SIZE, CURSOR_GLOW_SIZE)
+        .setAlpha(CURSOR_GLOW_ALPHA);
+    }
+  }
+
+  /**
+   * Ease the carried light toward the pointer. Read straight off
+   * `activePointer` rather than through a `pointermove` handler: the easing
+   * needs a per-frame step regardless, and polling here means there's no
+   * listener to unsubscribe when `responsive` tears the scene down.
+   */
+  override update(): void {
+    const glow = this.cursorGlow;
+    if (!glow?.active) return;
+    const pointer = this.input.activePointer;
+    glow.x = Phaser.Math.Linear(glow.x, pointer.worldX, CURSOR_GLOW_EASING);
+    glow.y = Phaser.Math.Linear(glow.y, pointer.worldY, CURSOR_GLOW_EASING);
   }
 }

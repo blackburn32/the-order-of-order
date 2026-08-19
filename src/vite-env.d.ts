@@ -7,6 +7,8 @@ interface ImportMetaEnv {
   /** Build flag: "true"/"1" draws the gold frame around the game (see
    *  src/buildFlags.ts). Set by `.env.itch` for itch.io builds only. */
   readonly VITE_GOLD_BORDER?: string;
+  /** Build flag: "true"/"1" identifies the Capacitor phone bundle. */
+  readonly VITE_PHONE_BUILD?: string;
 }
 
 interface ImportMeta {

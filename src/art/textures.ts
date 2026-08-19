@@ -17,6 +17,180 @@ export function buildTextures(scene: Phaser.Scene): void {
   buildButton(scene);
   buildPanel(scene);
   buildBanner(scene);
+  buildSpark(scene);
+  buildShockwave(scene);
+  buildSigil(scene);
+  buildSigilRing(scene);
+}
+
+/**
+ * Where each sigil texture's ink actually stops, as a fraction of half the
+ * texture's width — i.e. of the radius its display size implies. Nothing is
+ * drawn out to the very edge (a stroke centred on the boundary would clip), so
+ * a caller that needs the *drawn* radius, or that needs to leave a measured gap
+ * between the two rings, can't just halve the display size. `AmbientLayer`
+ * sizes the pair off these.
+ */
+export const SIGIL_INK_RADIUS = 248 / 256;
+export const SIGIL_RING_INNER_INK_RADIUS = 384 / 512;
+export const SIGIL_RING_OUTER_INK_RADIUS = 500 / 512;
+
+/**
+ * Soft white dot, the single particle of every burst and the glow halo behind
+ * the roll seal. Drawn white so a tint can colour it per use, and with a
+ * gradient falloff rather than a hard edge so it also reads as a light source
+ * when scaled up far past its own size.
+ */
+function buildSpark(scene: Phaser.Scene): void {
+  const size = 64;
+  const tex = scene.textures.createCanvas('spark', size, size);
+  if (!tex) return;
+  const ctx = tex.getContext();
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.35, 'rgba(255,255,255,0.65)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  tex.refresh();
+}
+
+/** Expanding ring for impact cues. White, for tinting at the call site. */
+function buildShockwave(scene: Phaser.Scene): void {
+  const g = scene.add.graphics();
+  g.lineStyle(6, 0xffffff, 1);
+  g.strokeCircle(128, 128, 118);
+  g.lineStyle(2, 0xffffff, 0.45);
+  g.strokeCircle(128, 128, 106);
+  g.generateTexture('shockwave', 256, 256);
+  g.destroy();
+}
+
+/**
+ * The Order's sigil: concentric rings, a tick ring, broken arcs, and an
+ * inscribed triangle. It sits far behind the dice at a low alpha and turns
+ * slowly, brightening and speeding up as the round's target comes into reach —
+ * a background that reads as a progress meter without asking to be read.
+ *
+ * Drawn white so the layer can tint it (gold while the round is going well,
+ * red once the last roll arrives short of target).
+ */
+function buildSigil(scene: Phaser.Scene): void {
+  const size = 512;
+  const c = size / 2;
+  const g = scene.add.graphics();
+
+  g.lineStyle(3, 0xffffff, 0.9);
+  g.strokeCircle(c, c, 248);
+  g.lineStyle(1.5, 0xffffff, 0.6);
+  g.strokeCircle(c, c, 232);
+
+  // Tick ring between the two outer circles, long marks on the quarters.
+  const TICKS = 36;
+  for (let i = 0; i < TICKS; i++) {
+    const angle = (Math.PI * 2 * i) / TICKS;
+    const long = i % 9 === 0;
+    const inner = long ? 214 : 224;
+    g.lineStyle(long ? 3 : 1.5, 0xffffff, long ? 0.9 : 0.5);
+    g.lineBetween(
+      c + Math.cos(angle) * inner,
+      c + Math.sin(angle) * inner,
+      c + Math.cos(angle) * 232,
+      c + Math.sin(angle) * 232
+    );
+  }
+
+  // Broken inner ring: four arcs with gaps on the diagonals.
+  g.lineStyle(2, 0xffffff, 0.7);
+  for (let i = 0; i < 4; i++) {
+    const start = Math.PI / 4 + (Math.PI / 2) * i + 0.16;
+    const end = Math.PI / 4 + (Math.PI / 2) * (i + 1) - 0.16;
+    g.beginPath();
+    g.arc(c, c, 168, start, end, false);
+    g.strokePath();
+  }
+
+  const triangle = polygonPoints(c, c, 150, 3, -90);
+  g.lineStyle(2, 0xffffff, 0.55);
+  g.strokePoints(triangle, true, true);
+
+  g.lineStyle(2, 0xffffff, 0.45);
+  g.strokeCircle(c, c, 76);
+  g.lineStyle(1.5, 0xffffff, 0.3);
+  g.strokeCircle(c, c, 62);
+
+  g.generateTexture('sigil', size, size);
+  g.destroy();
+}
+
+/**
+ * The sigil's outer ring: the same vocabulary — paired circles, a tick ring,
+ * broken arcs — arranged as a band rather than a disc, so it reads as a
+ * "donut" enclosing the sigil proper with clear felt between the two. Drawn on
+ * a wider canvas than `sigil` because all of its ink lives in the outermost
+ * quarter of the radius, which would be a handful of pixels at 512.
+ *
+ * Everything inside `SIGIL_RING_INNER_INK_RADIUS` is deliberately empty: that
+ * hollow is what the inner sigil is centred in. White, for tinting.
+ */
+function buildSigilRing(scene: Phaser.Scene): void {
+  const size = 1024;
+  const c = size / 2;
+  const outer = c * SIGIL_RING_OUTER_INK_RADIUS;
+  const inner = c * SIGIL_RING_INNER_INK_RADIUS;
+  const g = scene.add.graphics();
+
+  g.lineStyle(3, 0xffffff, 0.9);
+  g.strokeCircle(c, c, outer);
+  g.lineStyle(1.5, 0xffffff, 0.6);
+  g.strokeCircle(c, c, outer - 16);
+
+  // Tick ring hung inside the outer pair. Denser than the inner sigil's (the
+  // circumference is roughly twice as long, so the same 36 would read as a
+  // sparse dotted line), with a long mark every eighth — twelve of them, the
+  // hour marks of a clock face.
+  const TICKS = 96;
+  for (let i = 0; i < TICKS; i++) {
+    const angle = (Math.PI * 2 * i) / TICKS;
+    const long = i % 8 === 0;
+    const from = long ? outer - 46 : outer - 30;
+    g.lineStyle(long ? 3 : 1.5, 0xffffff, long ? 0.9 : 0.45);
+    g.lineBetween(
+      c + Math.cos(angle) * from,
+      c + Math.sin(angle) * from,
+      c + Math.cos(angle) * (outer - 16),
+      c + Math.sin(angle) * (outer - 16)
+    );
+  }
+
+  // Broken ring of six arcs. The inner sigil breaks its arcs on the diagonals,
+  // so this one's gaps are offset to the twelve/two/four o'clock spokes — the
+  // two rings never line their gaps up as they counter-rotate past each other.
+  const arcR = (inner + outer - 46) / 2;
+  g.lineStyle(2, 0xffffff, 0.7);
+  for (let i = 0; i < 6; i++) {
+    const start = (Math.PI / 3) * i + 0.1;
+    const end = (Math.PI / 3) * (i + 1) - 0.1;
+    g.beginPath();
+    g.arc(c, c, arcR, start, end, false);
+    g.strokePath();
+  }
+
+  // A lozenge in each gap, the same broken-rule mark the menu's masthead uses.
+  g.fillStyle(0xffffff, 0.6);
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 3) * i;
+    const pts = polygonPoints(c + Math.cos(angle) * arcR, c + Math.sin(angle) * arcR, 9, 4, 0);
+    g.fillPoints(pts, true);
+  }
+
+  g.lineStyle(2, 0xffffff, 0.5);
+  g.strokeCircle(c, c, inner + 14);
+  g.lineStyle(1.5, 0xffffff, 0.3);
+  g.strokeCircle(c, c, inner);
+
+  g.generateTexture('sigil-ring', size, size);
+  g.destroy();
 }
 
 /** Dark table felt with speckle noise and a vignette; stretched to fit any viewport. */
@@ -247,10 +421,14 @@ function buildCard(scene: Phaser.Scene): void {
 /** Small dark plaque for HUD stats. */
 function buildPlaque(scene: Phaser.Scene): void {
   const g = scene.add.graphics();
-  g.fillStyle(COLORS.feltDark, 0.85);
-  g.fillRoundedRect(0, 0, 250, 58, 10);
-  g.lineStyle(2, COLORS.gold, 0.9);
-  g.strokeRoundedRect(1, 1, 248, 56, 9);
+  // Heavy lower edge and inset face give the HUD the compact, tactile stack
+  // of game counters used as the reference, translated into our felt and gold.
+  g.fillStyle(COLORS.feltDark, 0.7);
+  g.fillRoundedRect(0, 4, 250, 54, 10);
+  g.fillStyle(COLORS.feltDark, 0.98);
+  g.fillRoundedRect(3, 1, 244, 53, 8);
+  g.lineStyle(2, COLORS.gold, 0.75);
+  g.strokeRoundedRect(5, 3, 240, 49, 7);
   g.generateTexture('plaque', 250, 58);
   g.destroy();
 }

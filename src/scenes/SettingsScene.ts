@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
 import { COLORS, CSS, SERIF } from '../art/palette';
+import { PHONE_BUILD } from '../buildFlags';
 import { getRun } from '../state/RunState';
 import { audio } from '../systems/Audio';
+import { fx } from '../systems/Effects';
 import { hasBeatenGame, loadSettings, recordRunEnd, resetAllProgress, saveSettings, Settings } from '../systems/SaveData';
 import { addFelt, addPanel, bannerButton, checkboxRow, showBanner } from '../ui/widgets';
 import { onResizeCoalesced } from '../ui/layout';
@@ -132,6 +134,14 @@ export class SettingsScene extends Phaser.Scene {
     );
     y += 48;
 
+    content.add(
+      checkboxRow(this, cx, y, 'Visual Effects', this.settings.visualEffects, (value) => {
+        this.settings.visualEffects = value;
+        this.apply();
+      })
+    );
+    y += 48;
+
     // Hard Mode only appears once the player has beaten the game at least once.
     if (hasBeatenGame()) {
       content.add(
@@ -143,8 +153,10 @@ export class SettingsScene extends Phaser.Scene {
       y += 48;
     }
 
-    content.add(this.buildFullscreenToggle(cx, y));
-    y += 58;
+    if (!PHONE_BUILD) {
+      content.add(this.buildFullscreenToggle(cx, y));
+      y += 58;
+    }
 
     if (this.returnTo === 'Game') {
       content.add(
@@ -312,6 +324,7 @@ export class SettingsScene extends Phaser.Scene {
 
   private apply(): void {
     audio.setVolumes(this.settings.musicVol, this.settings.sfxVol);
+    fx.setEnabled(this.settings.visualEffects);
     saveSettings(this.settings);
   }
 

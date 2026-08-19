@@ -28,6 +28,10 @@ export interface Settings {
   showIntro: boolean; // play the 3-page intro when a run starts from the menu
   showTutorial: boolean; // play the first-game callout tutorial; self-disables after one run
   hardMode: boolean; // play the next run on Hard Mode (only settable once unlocked)
+  // Master switch for every non-essential visual flourish (see systems/Effects).
+  // On by default; how much it actually turns on is capped by the device's
+  // effect tier and the OS reduce-motion preference.
+  visualEffects: boolean;
 }
 
 export function loadHall(): HallEntry[] {
@@ -109,6 +113,7 @@ export function loadSettings(): Settings {
         showIntro: parsed.showIntro ?? true,
         showTutorial: parsed.showTutorial ?? true,
         hardMode: parsed.hardMode ?? false,
+        visualEffects: parsed.visualEffects ?? true,
       };
     }
   } catch {
@@ -120,6 +125,7 @@ export function loadSettings(): Settings {
     showIntro: true,
     showTutorial: true,
     hardMode: false,
+    visualEffects: true,
   };
 }
 

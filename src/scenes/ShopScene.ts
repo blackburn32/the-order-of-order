@@ -16,6 +16,7 @@ import {
   TutorialStage,
 } from "../systems/Tutorial";
 import { audio } from "../systems/Audio";
+import { fx } from "../systems/Effects";
 import { DieSprite } from "../ui/DieSprite";
 import { formatScore } from "../ui/formatScore";
 import { addFelt, addPanel, bannerButton } from "../ui/widgets";
@@ -63,6 +64,10 @@ export class ShopScene extends Phaser.Scene {
   private tutorialCallout?: CalloutHandle;
   private purchasesMade = 0;
   private storeRerolled = false;
+  // The cards are dealt onto the table once, when the shop opens. Resizes and
+  // the die-picker sub-screen rebuild the same offers, and re-dealing them
+  // there would read as a new shop rather than the one already being read.
+  private dealt = false;
 
   constructor() {
     super("Shop");
@@ -72,6 +77,7 @@ export class ShopScene extends Phaser.Scene {
     this.state = getRun(this.registry);
     this.purchasesMade = 0;
     this.storeRerolled = false;
+    this.dealt = false;
     this.offers = rollShopOffers(this.state, this.state.ownedLedger ? 5 : 3);
     // The scene instance is reused across restarts, but Phaser destroys all
     // non-main cameras on shutdown — this field would otherwise dangle.
@@ -95,6 +101,7 @@ export class ShopScene extends Phaser.Scene {
   private build(): void {
     const felt = addFelt(this);
     this.buildCards();
+    this.dealt = true;
     // The carousel camera must ignore literally everything except `track`
     // (built inside buildCards -> buildCarousel) — otherwise it renders the
     // *entire* scene, unclipped-by-content, into its own small viewport rect.
@@ -371,7 +378,7 @@ export class ShopScene extends Phaser.Scene {
     const decor: Phaser.GameObjects.GameObject[] = [];
     this.offers.forEach((offer, idx) => {
       const p = posFor(idx);
-      const card = this.buildCard(p.x, top + p.y, offer, scale);
+      const card = this.buildCard(p.x, top + p.y, offer, scale, idx, true);
       decor.push(card);
     });
     return { decor };
@@ -397,7 +404,10 @@ export class ShopScene extends Phaser.Scene {
     const track = this.add.container(0, areaTop);
     this.offers.forEach((offer, idx) => {
       const p = posFor(idx);
-      const card = this.buildCard(p.x, p.y, offer, scale);
+      // No filters in the carousel: a filtered object renders through its own
+      // camera, which sidesteps the scissor rect this one relies on for
+      // clipping — a glowing card would bleed past the card area's edges.
+      const card = this.buildCard(p.x, p.y, offer, scale, idx, false);
       track.add(card);
     });
     this.track = track;
@@ -497,6 +507,8 @@ export class ShopScene extends Phaser.Scene {
     y: number,
     offer: ShopOffer,
     scale: number,
+    index: number,
+    allowFilters: boolean,
   ): Phaser.GameObjects.Container {
     const affordable = canAfford(this.state, offer);
     // Edge metadata (rarity and price) may shrink furthest; description and
@@ -581,7 +593,48 @@ export class ShopScene extends Phaser.Scene {
     } else {
       card.setAlpha(0.55);
     }
+
+    if (allowFilters && offer.rarity === "rare") this.markRare(img);
+    this.dealIn(card, index);
     return card;
+  }
+
+  /** Deal the offers onto the table rather than having them appear on it:
+   *  each card drops in from below with a slight tilt, staggered along the
+   *  row. Runs only on the shop's first build — see `dealt`. */
+  private dealIn(card: Phaser.GameObjects.Container, index: number): void {
+    if (!fx.on || this.dealt) return;
+    const restY = card.y;
+    // Unaffordable cards rest dimmed, so tween to whatever alpha the card was
+    // given rather than assuming 1.
+    const restAlpha = card.alpha;
+    card.setAlpha(0).setY(restY + 46);
+    if (fx.motion) card.setRotation(Phaser.Math.FloatBetween(-0.08, 0.08));
+    this.tweens.add({
+      targets: card,
+      y: restY,
+      alpha: restAlpha,
+      rotation: 0,
+      duration: 320,
+      delay: index * 70,
+      ease: "Cubic.easeOut",
+    });
+  }
+
+  /** Slow gold pulse around a rare card, so rarity is legible before the
+   *  rarity line is read. A filter pass per card is exactly the cost the rich
+   *  tier gates — and a shop holds at most one or two rares. */
+  private markRare(img: Phaser.GameObjects.Image): void {
+    const glow = fx.glow(img, COLORS.goldLight, 0);
+    if (!glow) return;
+    this.tweens.add({
+      targets: glow,
+      outerStrength: 5,
+      duration: 1600,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
   }
 
   private choose(offer: ShopOffer): void {
