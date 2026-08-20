@@ -1,19 +1,31 @@
-import { HALL_SIZE } from "../config";
+import { HALL_SIZE, rankOf, trialInRank } from "../config";
 import type { RunState } from "../state/RunState";
 import type { DiceStack } from "./DicePool";
 import { windfallFactor } from "./Dice";
 import { ITEMS, meetsCriterion, ShopItemId } from "./Items";
 
-const KEY_SCORES = "ooo_high_scores_v1";
-const KEY_SETTINGS = "ooo_settings_v1";
-const KEY_PROGRESS = "ooo_progress_v1";
+// Bumped to v2 for the ranks/trials/gold restructure. Runs recorded under the
+// v1 keys measured a different game (ten flat rounds, score-as-currency, Hard
+// Mode) and cannot be ranked against v2 runs, so those keys are simply never
+// read again — no migration, and the old data is left in place rather than
+// deleted in case a player ever wants to go looking for it.
+const KEY_SCORES = "ooo_high_scores_v2";
+const KEY_SETTINGS = "ooo_settings_v2";
+const KEY_PROGRESS = "ooo_progress_v2";
+
+/** Schema stamp on every Hall entry written by this version. Entries without
+ *  it are dropped on load. */
+export const HALL_SCHEMA = 2;
 
 export interface HallEntry {
+  schema: number; // HALL_SCHEMA; anything else is discarded on load
   startedAt: number; // run start, epoch ms
-  round: number; // round reached
-  score: bigint; // total points accumulated across the whole run
-  won: boolean; // true if the run cleared all rounds (victory)
-  hard?: boolean; // true if the run was played on Hard Mode
+  rank: number; // rank reached — the PRIMARY ranking key
+  trial: number; // trial reached within that rank (1..3)
+  score: bigint; // total points accumulated across the whole run; the tiebreak
+  won: boolean; // true if the run cleared the final rank
+  endless?: boolean; // true if the run continued past the final rank
+  goldEarned?: number; // lifetime gold earned during the run
   dice: DiceStack[];
   // Per-item point attribution for the run (see systems/ItemPoints). Optional so
   // pre-existing entries load fine; the Hall's analysis button is hidden when
@@ -27,7 +39,6 @@ export interface Settings {
   sfxVol: number; // 0..1
   showIntro: boolean; // play the 3-page intro when a run starts from the menu
   showTutorial: boolean; // play the first-game callout tutorial; self-disables after one run
-  hardMode: boolean; // play the next run on Hard Mode (only settable once unlocked)
   // Master switch for every non-essential visual flourish (see systems/Effects).
   // On by default; how much it actually turns on is capped by the device's
   // effect tier and the OS reduce-motion preference.
@@ -39,31 +50,36 @@ export function loadHall(): HallEntry[] {
     const raw = localStorage.getItem(KEY_SCORES);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Array<Record<string, unknown>>;
-    return parsed.map((entry) => ({
-      startedAt: Number(entry.startedAt),
-      round: Number(entry.round),
-      score: BigInt((entry.score as string | number | undefined) ?? 0),
-      won: Boolean(entry.won),
-      hard: Boolean(entry.hard),
-      dice: (Array.isArray(entry.dice) ? entry.dice : []).map((rawDie) => {
-        const d = rawDie as Partial<DiceStack>;
-        return {
-          sides: d.sides ?? 6,
-          // Older hall entries stored this as a boolean. Resolve it from the
-          // die's then-current size once, while new entries persist ×2/×4.
-          maxFaceBonus: windfallFactor(
-            d.maxFaceBonus as number | boolean | undefined,
-            d.sides ?? 6,
-          ),
-          loaded: d.loaded ?? false,
-          wildFace: d.wildFace ?? false,
-          source: d.source ?? "starter",
-          count: d.count ?? 1,
-        } as DiceStack;
-      }),
-      dicePoints: bigintMap(entry.dicePoints),
-      itemPoints: bigintMap(entry.itemPoints),
-    }));
+    return parsed
+      .filter((entry) => Number(entry.schema) === HALL_SCHEMA)
+      .map((entry) => ({
+        schema: HALL_SCHEMA,
+        startedAt: Number(entry.startedAt),
+        rank: Number(entry.rank),
+        trial: Number(entry.trial),
+        score: BigInt((entry.score as string | number | undefined) ?? 0),
+        won: Boolean(entry.won),
+        endless: Boolean(entry.endless),
+        goldEarned: Number(entry.goldEarned ?? 0),
+        dice: (Array.isArray(entry.dice) ? entry.dice : []).map((rawDie) => {
+          const d = rawDie as Partial<DiceStack>;
+          return {
+            sides: d.sides ?? 6,
+            // Older hall entries stored this as a boolean. Resolve it from the
+            // die's then-current size once, while new entries persist ×2/×4.
+            maxFaceBonus: windfallFactor(
+              d.maxFaceBonus as number | boolean | undefined,
+              d.sides ?? 6,
+            ),
+            loaded: d.loaded ?? false,
+            wildFace: d.wildFace ?? false,
+            source: d.source ?? "starter",
+            count: d.count ?? 1,
+          } as DiceStack;
+        }),
+        dicePoints: bigintMap(entry.dicePoints),
+        itemPoints: bigintMap(entry.itemPoints),
+      }));
   } catch {
     return [];
   }
@@ -79,16 +95,19 @@ function bigintMap(value: unknown): Record<string, bigint> | undefined {
   );
 }
 
+/** Rank reached first, points as the tiebreak, then the trial within the rank,
+ *  then recency. Getting further is the achievement; the score only separates
+ *  runs that got equally far. */
+export function compareHallEntries(a: HallEntry, b: HallEntry): number {
+  if (a.rank !== b.rank) return b.rank - a.rank;
+  if (a.score !== b.score) return a.score > b.score ? -1 : 1;
+  return b.trial - a.trial || b.startedAt - a.startedAt;
+}
+
 export function saveHallEntry(entry: HallEntry): void {
   const hall = loadHall();
   hall.push(entry);
-  hall.sort((a, b) =>
-    a.score === b.score
-      ? b.round - a.round || b.startedAt - a.startedAt
-      : a.score > b.score
-        ? -1
-        : 1,
-  );
+  hall.sort(compareHallEntries);
   hall.length = Math.min(hall.length, HALL_SIZE);
   try {
     localStorage.setItem(
@@ -112,7 +131,6 @@ export function loadSettings(): Settings {
         sfxVol: clamp01(parsed.sfxVol ?? 0.7),
         showIntro: parsed.showIntro ?? true,
         showTutorial: parsed.showTutorial ?? true,
-        hardMode: parsed.hardMode ?? false,
         visualEffects: parsed.visualEffects ?? true,
       };
     }
@@ -124,7 +142,6 @@ export function loadSettings(): Settings {
     sfxVol: 0.7,
     showIntro: true,
     showTutorial: true,
-    hardMode: false,
     visualEffects: true,
   };
 }
@@ -214,8 +231,8 @@ export function recordSelection(id: ShopItemId): void {
   saveProgress(progress);
 }
 
-/** True once the player has ever cleared all rounds. Gates the Hard Mode
- *  unlock — derived from the Hall rather than a dedicated flag. */
+/** True once the player has ever cleared the final rank. Derived from the Hall
+ *  rather than a dedicated flag. */
 export function hasBeatenGame(): boolean {
   return loadHall().some((entry) => entry.won);
 }
@@ -227,8 +244,8 @@ export function recordGameCompleted(): void {
 }
 
 /** End the current run: record it in the Hall of High Scores and bump the
- *  games-completed tally. Shared by the natural win/lose endings and the
- *  mid-run Abandon Run option. Returns whether this run set a new local best
+ *  games-completed tally. Shared by the victory stop choice, natural losses,
+ *  and the mid-run Abandon Run option. Returns whether this run set a new local best
  *  score, so callers can decide whether to offer it to the global leaderboard.
  *  (The check is made before the entry is saved, comparing against the prior
  *  top score.) */
@@ -236,17 +253,24 @@ export function recordRunEnd(
   state: RunState,
   won: boolean,
 ): { personalBest: boolean } {
-  const personalBest = state.totalScore > (loadHall()[0]?.score ?? -1n);
-  saveHallEntry({
+  const entry: HallEntry = {
+    schema: HALL_SCHEMA,
     startedAt: state.startedAt,
-    round: state.round,
+    rank: rankOf(state.trial),
+    trial: trialInRank(state.trial),
     score: state.totalScore,
     won,
-    hard: state.hardMode,
+    endless: state.endless,
+    goldEarned: state.goldEarned,
     dice: state.dice.summarize(),
     dicePoints: { ...state.dicePoints },
     itemPoints: { ...state.itemPoints },
-  });
+  };
+  // "Personal best" now means beating the top of the Hall on its own terms —
+  // rank first, score second — not merely out-scoring it.
+  const best = loadHall()[0];
+  const personalBest = !best || compareHallEntries(entry, best) < 0;
+  saveHallEntry(entry);
   recordGameCompleted();
   return { personalBest };
 }
@@ -275,14 +299,6 @@ export function resetAllProgress(): void {
   try {
     localStorage.removeItem(KEY_PROGRESS);
     localStorage.removeItem(KEY_SCORES);
-    // Relock Hard Mode: the reset wipes the Hall (so hasBeatenGame() is false
-    // again), and Hard Mode must default back to off so a later re-unlock starts
-    // disabled. Other settings (audio, intro, tutorial) are intentionally kept.
-    const settings = loadSettings();
-    if (settings.hardMode) {
-      settings.hardMode = false;
-      saveSettings(settings);
-    }
   } catch {
     // non-fatal
   }

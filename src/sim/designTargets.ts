@@ -1,12 +1,14 @@
-// Target-curve designer for the 10-round game (throwaway balancing tooling).
+// Goal-curve designer for the 15-trial, 5-rank game (throwaway balancing tooling).
 //
-// Like analyze.ts, it captures each run's per-round PEAK score once (trivial
-// targets, so nobody is culled) and then designs a target curve analytically.
-// The difference: instead of a per-round KILL fraction, this takes an explicit
-// ABSOLUTE survivor schedule S[r] = fraction of the ORIGINAL population still
-// alive after round r, and solves sequentially for the target that leaves that
-// many alive. That matches the balancing intent, which is stated in absolute
-// terms ("~60% survive rounds 1-3", "8% cut at the final round").
+// Captures each run's per-trial PEAK score once against trivial goals (so nobody
+// is culled and every run reaches trial 15), then designs a goal curve
+// analytically from an explicit ABSOLUTE survivor schedule: S[r] = the fraction
+// of the ORIGINAL field still alive after rank r. That matches how the balancing
+// intent is actually stated ("~85% survive rank 1", "rank 5 is the ~23% win").
+//
+// Within a rank the cull is split across the three trials by CULL_SHARE below,
+// weighted toward the Boss Trial — its modifier is already doing work, and a
+// Lesser Trial that kills is one the player never got a shop to prepare for.
 //
 // Run: npx tsx src/sim/designTargets.ts
 //
@@ -16,12 +18,14 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { DEFAULT_CONFIG } from "./config";
 import { installStorage, seedGlobalRandom } from "./localStorageShim";
 import { simulateRun } from "./bot";
-import { seriesSeed, SHOPPER_SERIES } from "./series";
-import { setRoundTargets, WIN_ROUND } from "../config";
+import { setCulling } from "./engine";
+import { seriesConfig, seriesSeed, SHOPPER_SERIES } from "./series";
+import { setTrialGoals, TRIALS_PER_RANK, WIN_RANK, WIN_TRIAL } from "../config";
 
 const RUNS = Number(process.env.RUNS ?? 3000);
-// v2 = one-purchase shopping + Random/Greedy × base/all unlock pools.
-const CACHE = `sim-out/trajectories-v2-${RUNS}.json`;
+// v3 = ranks/trials/gold. The v2 cache measured the ten-round game and cannot be
+// reused, so the filename changes with the shape of the run.
+const CACHE = `sim-out/trajectories-v3-${RUNS}.json`;
 
 type Peaks = Record<string, number[][]>;
 
@@ -30,7 +34,12 @@ function collect(): Peaks {
     console.log(`(loaded cached trajectories from ${CACHE})`);
     return JSON.parse(readFileSync(CACHE, "utf8"));
   }
-  setRoundTargets(new Array(WIN_ROUND).fill(1)); // trivial: nobody dies on target
+  // Unreachable goals + no culling: every run plays all 15 trials to the end of
+  // their roll budgets, so `trialScore` is the true capacity of that build at
+  // that point on the ladder. A LOW goal would not do — the trial would end on
+  // its first scoring roll and every peak would be 1.
+  setTrialGoals(new Array(WIN_TRIAL).fill(Number.MAX_SAFE_INTEGER));
+  setCulling(false);
 
   const out: Peaks = {};
   for (const series of SHOPPER_SERIES) {
@@ -41,24 +50,27 @@ function collect(): Peaks {
       const rec = simulateRun(
         series.strategy,
         seriesSeed(DEFAULT_CONFIG.seed, i, series.seedOffset),
-        DEFAULT_CONFIG,
+        seriesConfig(DEFAULT_CONFIG, series),
       );
-      const peaks = new Array(WIN_ROUND).fill(0);
-      for (const p of rec.trajectory) peaks[p.round - 1] = p.roundScore;
+      const peaks = new Array(WIN_TRIAL).fill(0);
+      for (const p of rec.trajectory) {
+        if (p.trial <= WIN_TRIAL) peaks[p.trial - 1] = p.trialScore;
+      }
       runs.push(peaks);
     }
     out[series.id] = runs;
   }
-  setRoundTargets(null);
+  setTrialGoals(null);
+  setCulling(true);
   writeFileSync(CACHE, JSON.stringify(out));
   console.log(`(cached trajectories to ${CACHE})`);
   return out;
 }
 
-// Round a target to 2 significant figures. Reconstructed from the mantissa/
-// exponent digits so the value is a CLEAN round number (36_000…000), not a
-// float-tailed approximation — important now that targets reach 1e28+ where
-// doubles can't represent the intended integer exactly.
+// Round a goal to 2 significant figures. Reconstructed from the mantissa/
+// exponent digits so the value is a CLEAN round number (36_000...000), not a
+// float-tailed approximation — important once goals reach 1e28+ where doubles
+// can't represent the intended integer exactly.
 function round2sig(n: number): number {
   if (n < 100) return Math.max(1, Math.ceil(n));
   const exp = Math.floor(Math.log10(n));
@@ -66,13 +78,10 @@ function round2sig(n: number): number {
   return Number(bigLiteralValue(mant, exp));
 }
 
-// The exact 2-sig-fig integer (as a bigint) for mantissa `mant` (10..100) and
-// order-of-magnitude `exp`, e.g. mant=36 exp=28 -> 36 * 10^27.
 function bigLiteralValue(mant: number, exp: number): bigint {
   return BigInt(mant) * 10n ** BigInt(Math.max(0, exp - 1));
 }
 
-// Clean, underscore-grouped bigint literal for a 2-sig-fig target value.
 function bigLiteral(n: number): string {
   let v: bigint;
   if (n < 100) v = BigInt(Math.max(1, Math.ceil(n)));
@@ -84,9 +93,7 @@ function bigLiteral(n: number): string {
 }
 
 // Largest peak-score threshold T such that the fraction of `col` with peak >= T
-// is >= keepFrac. `col` is sorted ascending. We want to KEEP keepFrac of the
-// column, i.e. cull (1-keepFrac) from the bottom, so T is the (1-keepFrac)
-// quantile of the column.
+// is >= keepFrac. `col` is sorted ascending.
 function thresholdForKeep(colAsc: number[], keepFrac: number): number {
   if (!colAsc.length) return 1;
   const cullFrac = Math.min(1, Math.max(0, 1 - keepFrac));
@@ -97,101 +104,123 @@ function thresholdForKeep(colAsc: number[], keepFrac: number): number {
 const fmt = (n: number) =>
   n >= 1000 ? Math.round(n).toLocaleString() : String(Math.round(n));
 
-// Solve a target curve from an ABSOLUTE survivor schedule. survive[r-1] is the
-// fraction of the ORIGINAL population that should still be alive AFTER round r.
-// We walk the rounds in order, each time conditioning on the runs still alive
-// and picking the target that leaves the desired absolute fraction alive.
+// How a rank's cull is divided between its three trials. The Lesser Trial is
+// nearly free — it follows a Boss Trial with only one shop in between — and the
+// Boss Trial carries most of the weight.
+const CULL_SHARE = [0.15, 0.3, 0.55];
+
+/**
+ * Solve a goal curve from an ABSOLUTE survivor schedule over RANKS.
+ * `survive[r-1]` is the fraction of the ORIGINAL field that should still be
+ * alive after rank r. Walks the ladder in order, conditioning on the runs still
+ * alive, and picks the goal that leaves the intended fraction alive at each
+ * trial.
+ */
 function solveCurve(pool: number[][], survive: number[]): number[] {
   const N = pool.length;
-  const T = new Array(WIN_ROUND).fill(1);
+  const T = new Array(WIN_TRIAL).fill(1);
   let alive = pool;
-  let prevSurvivors = N;
-  for (let r = 1; r <= WIN_ROUND; r++) {
-    const wantAlive = Math.round(survive[r - 1] * N); // absolute survivors after round r
-    const keepOfEntrants = prevSurvivors > 0 ? wantAlive / prevSurvivors : 0;
-    const col = alive.map((p) => p[r - 1]).sort((a, b) => a - b);
-    let t = thresholdForKeep(col, keepOfEntrants);
-    t = round2sig(t);
-    if (r > 1) t = Math.max(T[r - 2] + 1, t); // keep the curve strictly increasing
-    T[r - 1] = t;
-    alive = alive.filter((p) => p[r - 1] >= t);
-    prevSurvivors = alive.length;
+
+  for (let rank = 1; rank <= WIN_RANK; rank++) {
+    const startOfRank = rank === 1 ? 1 : survive[rank - 2];
+    const rankCull = startOfRank - survive[rank - 1];
+
+    for (let inRank = 1; inRank <= TRIALS_PER_RANK; inRank++) {
+      const trial = (rank - 1) * TRIALS_PER_RANK + inRank;
+      // Absolute survivors wanted after this trial: walk down from the rank's
+      // starting share by this trial's slice of the rank's cull.
+      const consumed = CULL_SHARE.slice(0, inRank).reduce((a, b) => a + b, 0);
+      const wantAlive = Math.round((startOfRank - rankCull * consumed) * N);
+      const keepOfEntrants = alive.length > 0 ? wantAlive / alive.length : 0;
+
+      const col = alive.map((p) => p[trial - 1]).sort((a, b) => a - b);
+      let t = round2sig(thresholdForKeep(col, keepOfEntrants));
+      // Monotonic per SLOT, not across the whole ladder. A Lesser Trial has
+      // seven rolls where the Boss Trial before it had twenty, so its goal
+      // genuinely should be lower — forcing the whole curve upward instead
+      // flattens each rank into a plateau and then jumps. What must always rise
+      // is the same slot rank over rank: this rank's Lesser Trial is harder than
+      // the last one's.
+      if (trial > TRIALS_PER_RANK) {
+        t = Math.max(T[trial - TRIALS_PER_RANK - 1] + 1, t);
+      }
+      T[trial - 1] = t;
+      alive = alive.filter((p) => p[trial - 1] >= t);
+    }
   }
   return T;
 }
 
-// Evaluate a concrete curve on the pool: per-round deaths + win rate, in both
-// absolute (share of the whole field) and conditional (share of entrants) terms.
 function report(label: string, pool: number[][], T: number[]): void {
   const N = pool.length;
   console.log(`\n=== ${label} ===`);
-  console.log("curve = [" + T.join(", ") + "]");
   console.log(
-    "round |   target |  entrants | died | die% field | die% entrants | survivors | field alive",
+    "trial | rank |     goal | entrants | died | die% field | survivors | field alive",
   );
   let alive = pool;
-  for (let r = 1; r <= WIN_ROUND; r++) {
+  for (let trial = 1; trial <= WIN_TRIAL; trial++) {
+    const rank = Math.ceil(trial / TRIALS_PER_RANK);
     const entrants = alive.length;
-    const survivors = alive.filter((p) => p[r - 1] >= T[r - 1]);
+    const survivors = alive.filter((p) => p[trial - 1] >= T[trial - 1]);
     const died = entrants - survivors.length;
     console.log(
-      `${String(r).padStart(5)} | ${fmt(T[r - 1]).padStart(8)} | ${String(entrants).padStart(9)} | ` +
-        `${String(died).padStart(4)} | ${((died / N) * 100).toFixed(1).padStart(10)}% | ` +
-        `${((died / Math.max(1, entrants)) * 100).toFixed(1).padStart(12)}% | ` +
+      `${String(trial).padStart(5)} | ${String(rank).padStart(4)} | ${fmt(T[trial - 1]).padStart(8)} | ` +
+        `${String(entrants).padStart(8)} | ${String(died).padStart(4)} | ` +
+        `${((died / N) * 100).toFixed(1).padStart(10)}% | ` +
         `${String(survivors.length).padStart(9)} | ${((survivors.length / N) * 100).toFixed(1).padStart(10)}%`,
     );
     alive = survivors;
   }
   console.log(
-    `WIN RATE (reached round ${WIN_ROUND} and cleared it): ${((alive.length / N) * 100).toFixed(1)}%`,
+    `WIN RATE (cleared rank ${WIN_RANK}): ${((alive.length / N) * 100).toFixed(1)}%`,
   );
 }
 
 // ---- design intent ---------------------------------------------------------
-// Absolute survivors after each round (fraction of the whole field):
-//   r1-3 : gentle on-ramp down to ~60% alive entering round 4
-//   r4-9 : ~5 percentage points of the field culled at each step
-//   r10  : final wall culls ~8% of the field
+// Absolute survivors after each RANK (fraction of the whole field):
 const SURVIVE = [
-  0.87, // r1
-  0.73, // r2
-  0.6, // r3  -> ~60% survive rounds 1-3
-  0.55, // r4  -5%
-  0.5, // r5  -5%
-  0.45, // r6  -5%
-  0.4, // r7  -5%
-  0.35, // r8  -5%
-  0.3, // r9  -5%
-  0.22, // r10 -8% final wall  -> ~22% win rate
+  0.97, // rank 1 — a free on-ramp: peaks here are small integers, so any goal
+  0.88, // rank 2   that culls at all culls almost everyone. The early ranks
+  0.7, //  rank 3   teach the loop; they are not where runs are supposed to end.
+  0.47, // rank 4
+  0.25, // rank 5 — the win rate
 ];
 
 const peaks = collect();
 const pool = SHOPPER_SERIES.flatMap((series) => peaks[series.id]);
 
 console.log(
-  `\nRUNS=${RUNS}/series · ${SHOPPER_SERIES.length} buying series · pooled field ${pool.length} · seed ${DEFAULT_CONFIG.seed}`,
+  `\nRUNS=${RUNS}/series - ${SHOPPER_SERIES.length} series - pooled field ${pool.length} - seed ${DEFAULT_CONFIG.seed}`,
 );
-console.log("target survivor schedule (% of field alive after each round):");
+console.log("target survivor schedule (% of field alive after each rank):");
 console.log(
-  "  " + SURVIVE.map((s, i) => `r${i + 1}=${(s * 100).toFixed(0)}%`).join("  "),
+  "  " +
+    SURVIVE.map((s, i) => `rank${i + 1}=${(s * 100).toFixed(0)}%`).join("  "),
+);
+console.log(
+  `within a rank, cull split Lesser/Greater/Boss = ${CULL_SHARE.map((c) => `${Math.round(c * 100)}%`).join("/")}`,
 );
 
 const T = solveCurve(pool, SURVIVE);
 report("DESIGNED curve", pool, T);
 
-console.log("\nROUND_TARGETS (paste into src/config.ts, bigint literals):");
-console.log("[" + T.map((t) => bigLiteral(t)).join(", ") + "]");
+console.log("\nTRIAL_GOALS (paste into src/config.ts, bigint literals):");
+for (let rank = 1; rank <= WIN_RANK; rank++) {
+  const slice = T.slice((rank - 1) * TRIALS_PER_RANK, rank * TRIALS_PER_RANK);
+  console.log(`  // rank ${rank}`);
+  console.log("  " + slice.map(bigLiteral).join(",\n  ") + ",");
+}
 
 // Stash under a label so validate.ts can re-run it against REAL culling.
 const candidatePath = "sim-out/candidate.json";
 const curves = existsSync(candidatePath)
   ? JSON.parse(readFileSync(candidatePath, "utf8"))
   : {};
-curves["DESIGNED (10-round intent)"] = T;
+curves["DESIGNED (5-rank intent)"] = T;
 writeFileSync(candidatePath, JSON.stringify(curves, null, 2));
 console.log(
-  `\n(wrote curve to ${candidatePath} under "DESIGNED (10-round intent)")`,
+  `\n(wrote curve to ${candidatePath} under "DESIGNED (5-rank intent)")`,
 );
 console.log(
-  'validate with real culling:  CURVE="DESIGNED (10-round intent)" npx tsx src/sim/validate.ts',
+  'validate with real culling:  CURVE="DESIGNED (5-rank intent)" npx tsx src/sim/validate.ts',
 );

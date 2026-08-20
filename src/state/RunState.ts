@@ -1,21 +1,43 @@
+import { STARTING_DICE } from "../config";
 import { makeDie, DieSides } from "../systems/Dice";
 import { DicePool } from "../systems/DicePool";
+import type { BossModifierId } from "../systems/Boss";
+import { STARTING_GOLD } from "../systems/Gold";
 import type { ShopItemId } from "../systems/Items";
 
 export interface RunState {
-  hardMode: boolean; // higher targets + pricier shop; set at run start, fixed for the run
-  round: number; // 1-based
-  roll: number; // rolls completed this round, 0..20
-  // Set the moment a roll takes `score` to the round's survival target: the
-  // round ends there rather than burning its remaining rolls. Latched (rather
-  // than recomputed from `score`) so the bonus shop an early clear earns can be
-  // spent back below the target without un-clearing the round. Reset on advance.
-  roundCleared: boolean;
+  // Ladder position. `trial` runs straight through the whole run (1..15 for the
+  // five ranks, then 16+ in endless); rank and trial-within-rank are derived
+  // from it by config's rankOf/trialInRank rather than stored.
+  trial: number; // 1-based
+  endless: boolean; // set when the player continues past the final rank
+  roll: number; // rolls completed this trial
+  // The boss assigned to this rank. It is previewable on all three trials but
+  // only active during the Boss Trial (see systems/Boss.activeBoss).
+  bossModifier: BossModifierId | null;
+  // Set by clearing a Boss Trial; makes the next shop draw with the boosted
+  // rarity odds, then cleared when that shop opens.
+  boonNextShop: boolean;
+  bossesCleared: number;
+  // Set the moment a roll takes `score` to the trial's goal: the trial ends
+  // there rather than burning its remaining rolls. Latched (rather than
+  // recomputed from `score`) so nothing later in the trial can un-clear it.
+  // Reset on advance.
+  trialCleared: boolean;
   // Score magnitudes are bigint: with millions of dice and compounding Prism /
   // Last Call multipliers they race past Number.MAX_SAFE_INTEGER within a run.
-  score: bigint; // one pool: survival score AND shop currency
-  roundScore: bigint; // peak `score` reached in the current round (for unlock criteria)
+  score: bigint; // progress toward this trial's goal; resets to 0 every trial
+  trialScore: bigint; // peak `score` reached in the current trial (unlock criteria)
   totalScore: bigint; // cumulative points across the whole run, never reset
+  // The shop currency, kept deliberately separate from `score` — and a plain
+  // `number`, not a bigint, because it is designed to stay in the low double
+  // digits all run. See systems/Gold.ts.
+  gold: number;
+  goldEarned: number; // lifetime gold earned this run, for the run summary
+  // Gold earned during rolls in the current trial. Clear rewards are returned
+  // by resolveTrialEnd; these two counters let Results account for the whole
+  // trial, including Tithe Bowl and Lucky Coin.
+  trialRollGold: { titheBowl: number; luckyCoin: number };
   dice: DicePool; // the grid; per-die below BUCKET_THRESHOLD, bucketed above
   scoringNumbers: number[]; // starts [1]; Extra number adds 2, then 3
   // Persistent size auras (Loaded Die / Wild Face). A die size listed here means
@@ -27,12 +49,12 @@ export interface RunState {
   extraPoints: number; // +1 per stack each time a die scores
   extraNumberCount: number; // 0..3
   startedAt: number; // epoch ms, for the Hall of High Scores
-  bonusRollsThisRound: number; // Overtime — consumed at round end
+  bonusRollsThisRound: number; // Overtime — consumed at trial end
   bonusRollsPerRound: number; // Metronome — permanent
   ownedLedger: boolean;
   hasSnakeEyes: boolean;
   hasAmplifier: boolean;
-  hasVault: boolean;
+  hasVault: boolean; // raises the gold interest cap
   hasDoubleTheFun: boolean; // duplicate any die that rolls a 6
   hasLuckySeven: boolean;
   hasParade: boolean;
@@ -40,31 +62,38 @@ export interface RunState {
   hasUniform: boolean;
   hasHourglass: boolean;
   hasInsurancePolicy: boolean;
-  hasCouponBook: boolean;
-  hasDealersBell: boolean;
-  hasShoppingCart: boolean;
+  hasCouponBook: boolean; // one card free in every shop
+  hasDealersBell: boolean; // first reroll each shop is free
+  hasShoppingCart: boolean; // every card costs less
+  hasProspector: boolean; // gold per die held, on a clear
+  hasReliquary: boolean; // gold for every Boss Trial cleared
+  hasPawnbroker: boolean; // every card costs less, flat
   // Stacking passives — the count of each owned (incremented per purchase), read
-  // at their relevant moment (scoring, round start, round clear). Unlike the
+  // at their relevant moment (scoring, trial start, trial clear). Unlike the
   // boolean flags above, these items are repeatable and their effects compound.
   pocketChange: number; // +2 pts every roll, per copy
   whetstone: number; // 10% chance per copy each roll to shrink a random die
   dividend: number; // +1 pt per 3 dice every roll, per copy
   momentum: number; // +2 × momentumStreak per copy on each scoring roll
   keenEdge: number; // +2 per copy when a d1 scores
-  foundry: number; // +5 copies of the smallest die at round start, per copy
+  foundry: number; // +5 copies of the smallest die at trial start, per copy
   jackpot: number; // 3+ matching dice score face×count, per copy
   genesis: number; // scoring dice spawn copies, cap +20/roll per copy
-  reserve: number; // keep 75% of points on round clear, per copy
+  reserve: number; // +1 gold per unused roll on a clear, per copy
   prism: number; // ×3 all roll points per copy
   lastCall: number; // ×4 points on the final roll per copy
   brickMold: number; // add one d6 after every roll per copy
+  titheBowl: number; // +1 gold per copy on a roll that scores nothing
+  luckyCoin: number; // 10% chance per copy each roll of +1 gold
+  countingHouse: number; // +1 gold per copy at every trial clear
   // Always-maintained trackers that drive unlock criteria (not tied to owning
   // any particular item).
   scoreStreak: number; // consecutive scoring rolls this run; a dud resets it
   // Consecutive scoring rolls since Momentum was first purchased. Kept
   // separately so rolls before that purchase never increase its payout.
   momentumStreak: number;
-  clutchClear: boolean; // has ever crossed the target on a round's final roll
+  clutchClear: boolean; // has ever crossed the goal on a trial's final roll
+  peakGold: number; // highest gold ever held this run (unlock criteria)
   // Snapshot of persistent unlocks taken when this run began. Newly-earned
   // cards are persisted immediately, but do not enter the shop until the next
   // run takes a fresh snapshot.
@@ -82,19 +111,24 @@ export interface RunState {
   itemPoints: Record<string, bigint>;
 }
 
-export function newRun(
-  shopUnlocks: readonly ShopItemId[] = [],
-  hardMode = false,
-): RunState {
+export function newRun(shopUnlocks: readonly ShopItemId[] = []): RunState {
   return {
-    hardMode,
-    round: 1,
+    trial: 1,
+    endless: false,
     roll: 0,
-    roundCleared: false,
+    bossModifier: null,
+    boonNextShop: false,
+    bossesCleared: 0,
+    trialCleared: false,
     score: 0n,
-    roundScore: 0n,
+    trialScore: 0n,
     totalScore: 0n,
-    dice: DicePool.fromDice([makeDie(6)]),
+    gold: STARTING_GOLD,
+    goldEarned: STARTING_GOLD,
+    trialRollGold: { titheBowl: 0, luckyCoin: 0 },
+    dice: DicePool.fromDice(
+      Array.from({ length: STARTING_DICE }, () => makeDie(6)),
+    ),
     scoringNumbers: [1],
     loadedSizes: [],
     wildSizes: [],
@@ -118,6 +152,9 @@ export function newRun(
     hasCouponBook: false,
     hasDealersBell: false,
     hasShoppingCart: false,
+    hasProspector: false,
+    hasReliquary: false,
+    hasPawnbroker: false,
     pocketChange: 0,
     whetstone: 0,
     dividend: 0,
@@ -130,9 +167,13 @@ export function newRun(
     prism: 0,
     lastCall: 0,
     brickMold: 0,
+    titheBowl: 0,
+    luckyCoin: 0,
+    countingHouse: 0,
     scoreStreak: 0,
     momentumStreak: 0,
     clutchClear: false,
+    peakGold: STARTING_GOLD,
     shopUnlocks: [...shopUnlocks],
     ownedUnique: [],
     purchases: {},

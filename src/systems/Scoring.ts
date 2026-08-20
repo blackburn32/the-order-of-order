@@ -1,7 +1,19 @@
 import { COLORS } from "../art/palette";
-import { ROLLS_PER_ROUND } from "../config";
+import {
+  applyBossMultiplier,
+  applyDeadDice,
+  applyDeadDiceCounts,
+  bossSuppresses,
+  extraPointsFor,
+  jackpotFor,
+  keenEdgeFor,
+  luckySevenFor,
+  scoringNumbersFor,
+  snakeEyesFor,
+} from "./Boss";
 import { Die } from "./Dice";
 import { RunState } from "../state/RunState";
+import { trialRollTarget } from "./Trial";
 
 export function countSevens(value: number): number {
   let remaining = Math.abs(Math.trunc(value));
@@ -15,8 +27,7 @@ export function countSevens(value: number): number {
 
 export function isHourglassRoll(state: RunState): boolean {
   const roll = state.roll + 1;
-  const total =
-    ROLLS_PER_ROUND + state.bonusRollsPerRound + state.bonusRollsThisRound;
+  const total = trialRollTarget(state);
   return roll <= 2 || roll >= total - 1;
 }
 
@@ -57,7 +68,7 @@ export interface RollResult {
 
 /** Options that vary a roll's scoring beyond the run state itself. */
 export interface ScoreOpts {
-  finalRoll?: boolean; // this is the last roll of the round (Last Call triples it)
+  finalRoll?: boolean; // this is the last roll of the trial (Last Call multiplies it)
 }
 
 /** Score an explicit array of rolled dice against the run's scoring numbers.
@@ -77,19 +88,23 @@ export function scoreRoll(
   const allSizes = new Set<number>();
   const scoringSizes = new Set<number>();
   const seenFaces = new Set<number>();
-  let basePoints = 0;
-  let extraPointBonus = 0;
-  let keenEdgeBonus = 0;
+  const rawValueCounts = new Map<number, number>();
+  let rawScoringCount = 0;
+  let rawScoringD1Count = 0;
   let extraNumberScoringCount = 0;
   let wildFaceScoringCount = 0;
   let royalSealScoringCount = 0;
   let windfallScoringCount = 0;
-  let luckySevenBonus = 0;
+
+  // Boss suppressions are read through the shared accessors so this reference
+  // scorer and the live histogram scorer can never disagree about them.
+  const scoringNumbers = scoringNumbersFor(state);
 
   dice.forEach((die, i) => {
     allSizes.add(die.sides);
     seenFaces.add(die.value);
-    const numberScores = state.scoringNumbers.includes(die.value);
+    rawValueCounts.set(die.value, (rawValueCounts.get(die.value) ?? 0) + 1);
+    const numberScores = scoringNumbers.includes(die.value);
     const windfallHit =
       die.maxFaceBonus > 0 && !die.loaded && die.value === die.sides;
     const royalSealHit =
@@ -97,7 +112,7 @@ export function scoreRoll(
     // A Rollplayer/Centurion die's current highest face is always a scoring
     // face, even when that number has not otherwise been unlocked.
     if (numberScores || die.wildFace || windfallHit || royalSealHit) {
-      basePoints += 1;
+      rawScoringCount += 1;
       scoringSizes.add(die.sides);
       if (numberScores && die.value !== 1) extraNumberScoringCount += 1;
       else if (!numberScores && die.wildFace) wildFaceScoringCount += 1;
@@ -105,11 +120,8 @@ export function scoreRoll(
         windfallScoringCount += 1;
       else if (!numberScores && !die.wildFace && !windfallHit && royalSealHit)
         royalSealScoringCount += 1;
-      // Extra Point: +1 per copy for every scoring die.
-      extraPointBonus += state.extraPoints;
-      // Keen Edge: a scoring d1 is worth +2 more per copy owned.
-      if (die.sides === 1 && state.keenEdge > 0) {
-        keenEdgeBonus += state.keenEdge * 2;
+      if (die.sides === 1) {
+        rawScoringD1Count += 1;
         keenDice.push(i);
       }
       scoringDice.push(i);
@@ -120,21 +132,43 @@ export function scoreRoll(
       windfallFactors.add(die.maxFaceBonus);
       windfallDice.push(i);
     }
-    const sevens = countSevens(die.value);
-    if (sevens > 0) {
-      luckySevenBonus += sevens * 7;
-      luckySevenDice.push(i);
-    }
+    if (countSevens(die.value) > 0) luckySevenDice.push(i);
   });
   let windfallMult = 1n;
   for (const factor of windfallFactors) windfallMult *= BigInt(factor);
+
+  // The Toll makes a fraction of the grid inert. Scaling the COUNTS (rather than
+  // dropping specific dice) is what keeps this identical to the histogram
+  // scorer, which has no individual dice to drop once the pool is bucketed.
+  // The Silence: mirrors the histogram scorer exactly — `scoringNumbersFor`
+  // above already excluded them, so this subtraction is a no-op here, but the
+  // two scorers state the rule identically rather than relying on it.
+  const silenced = bossSuppresses(state, "extraNumber");
+  const extraNumberScored = silenced ? 0 : extraNumberScoringCount;
+  const basePoints = applyDeadDice(
+    state,
+    rawScoringCount - (silenced ? extraNumberScoringCount : 0),
+  );
+  const scoringD1Count = applyDeadDice(state, rawScoringD1Count);
+  const valueCounts = applyDeadDiceCounts(state, rawValueCounts);
+  extraNumberScoringCount = applyDeadDice(state, extraNumberScored);
+  wildFaceScoringCount = applyDeadDice(state, wildFaceScoringCount);
+  royalSealScoringCount = applyDeadDice(state, royalSealScoringCount);
+  windfallScoringCount = applyDeadDice(state, windfallScoringCount);
+
+  const extraPointBonus = basePoints * extraPointsFor(state);
+  const keenEdge = keenEdgeFor(state);
+  const keenEdgeBonus = keenEdge > 0 ? scoringD1Count * keenEdge * 2 : 0;
+  let luckySevenBonus = 0;
+  for (const [value, count] of valueCounts)
+    luckySevenBonus += countSevens(value) * 7 * count;
   // NOTE: this per-die scoreRoll is retained only for the parity harness
   // (src/sim/compareScoring.ts). The live game and sim score through
   // scoreRollHistogram, which is O(distinct faces) and works when bucketed.
 
   const modifiers: ScoreModifier[] = [];
 
-  if (scoringDice.length > 0) {
+  if (basePoints > 0) {
     modifiers.push({
       id: "scoring",
       name: "Scoring",
@@ -215,11 +249,7 @@ export function scoreRoll(
   // Snake Eyes: any face value shared by 2+ dice scores that value times the
   // number of dice showing it, regardless of whether it's a scoring number.
   // Every die showing a matched value flashes for feedback.
-  if (state.hasSnakeEyes) {
-    const valueCounts = new Map<number, number>();
-    for (const die of dice) {
-      valueCounts.set(die.value, (valueCounts.get(die.value) ?? 0) + 1);
-    }
+  if (snakeEyesFor(state)) {
     let bonus = 0n;
     for (const [value, count] of valueCounts) {
       if (count >= 2) bonus += BigInt(value) * BigInt(count);
@@ -244,10 +274,8 @@ export function scoreRoll(
   // Jackpot (item): any face shown by 3+ dice scores that face × the number of
   // dice showing it; each qualifying face adds separately, and the whole payout
   // scales with the number of Jackpot copies owned.
-  if (state.jackpot > 0) {
-    const valueCounts = new Map<number, number>();
-    for (const die of dice)
-      valueCounts.set(die.value, (valueCounts.get(die.value) ?? 0) + 1);
+  const jackpot = jackpotFor(state);
+  if (jackpot > 0) {
     let bonus = 0n;
     for (const [value, count] of valueCounts) {
       if (count >= 3) bonus += BigInt(value) * BigInt(count);
@@ -260,7 +288,7 @@ export function scoreRoll(
       modifiers.push({
         id: "jackpot",
         name: "Jackpot",
-        points: bonus * BigInt(state.jackpot),
+        points: bonus * BigInt(jackpot),
         color: COLORS.goldLight,
         dice: flash,
         bigPulse: true,
@@ -269,7 +297,7 @@ export function scoreRoll(
     }
   }
 
-  if (state.hasLuckySeven && luckySevenBonus > 0) {
+  if (luckySevenFor(state) && luckySevenBonus > 0) {
     modifiers.push({
       id: "luckySeven",
       name: "Lucky Seven",
@@ -349,27 +377,25 @@ export function scoreRoll(
 
   const subtotal = modifiers.reduce((sum, m) => sum + m.points, 0n);
   const paradeActive =
-    state.hasParade &&
-    seenFaces.has(1) &&
-    seenFaces.has(2) &&
-    seenFaces.has(3);
-  const menagerieActive =
-    state.hasMenagerie && scoringSizes.size >= 3;
+    state.hasParade && seenFaces.has(1) && seenFaces.has(2) && seenFaces.has(3);
+  const menagerieActive = state.hasMenagerie && scoringSizes.size >= 3;
   const uniformActive =
     state.hasUniform && dice.length > 0 && allSizes.size === 1;
   const hourglassActive = state.hasHourglass && isHourglassRoll(state);
   // Amplifier ×2, Prism ×3 per copy, Last Call ×4 per copy on the final roll,
   // and Windfall (Rollplayer/Centurion top-face) — all compound into one run
   // multiplier.
-  const multiplier =
+  const multiplier = applyBossMultiplier(
+    state,
     (state.hasAmplifier ? 2n : 1n) *
-    3n ** BigInt(state.prism) *
-    (opts.finalRoll ? 4n ** BigInt(state.lastCall) : 1n) *
-    (paradeActive ? 2n : 1n) *
-    (menagerieActive ? 2n : 1n) *
-    (uniformActive ? 3n : 1n) *
-    (hourglassActive ? 2n : 1n) *
-    windfallMult;
+      3n ** BigInt(state.prism) *
+      (opts.finalRoll ? 4n ** BigInt(state.lastCall) : 1n) *
+      (paradeActive ? 2n : 1n) *
+      (menagerieActive ? 2n : 1n) *
+      (uniformActive ? 3n : 1n) *
+      (hourglassActive ? 2n : 1n) *
+      windfallMult,
+  );
 
   // Surface every item-owned multiplier through the same modifier list as the
   // additive effects. These entries are display-only; the factors above remain

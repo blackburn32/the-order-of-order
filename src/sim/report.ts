@@ -203,6 +203,66 @@ function legend(stats: StrategyStats[]): string {
 
 // ---- sections --------------------------------------------------------------
 
+/** Per-modifier clear rates. A Boss Trial is only fair if beating it is roughly
+ *  as likely whichever modifier turns up, so this table is read for OUTLIERS,
+ *  not for absolute numbers: anything far off its peers wants retuning. */
+function bossSection(stats: StrategyStats[]): string {
+  const cards = stats
+    .map((s, i) => {
+      const faced = s.bosses.filter((b) => b.faced > 0);
+      if (faced.length === 0) return "";
+      const meanRate =
+        faced.reduce((a, b) => a + b.clearRate, 0) / faced.length;
+      const rows = faced
+        .slice()
+        .sort((a, b) => b.clearRate - a.clearRate)
+        .map((b) => {
+          const ratio = meanRate > 0 ? b.clearRate / meanRate : 1;
+          const out = ratio < 0.6 || ratio > 1.4;
+          return {
+            label: b.name,
+            value: b.clearRate,
+            display: `${pct(b.clearRate)}${out ? " !" : ""}`,
+            hint: `${b.name}: cleared ${pct(b.clearRate)} of ${int(b.faced)} encounters (${ratio.toFixed(2)}x this strategy's mean)`,
+          };
+        });
+      return `<div class="unlock-card"><div class="tile-strat"><span class="sw" style="background:${seriesVar(i)}"></span>${esc(strategyLabel(s.name))} <span class="cap">· mean ${pct(meanRate)}</span></div>${hbars(rows, seriesVar(i))}</div>`;
+    })
+    .join("");
+  if (!cards) return "";
+  return (
+    `<section><h2>Boss Trial clear rates</h2>` +
+    `<p class="note">How often each modifier was beaten when it turned up. Read this for outliers rather than absolute numbers: a modifier marked ! is more than 40% away from its strategy's mean, which means it is either a wall or a free pass compared to its peers.</p>` +
+    `<div class="unlock-grid">${cards}</div>` +
+    `</section>`
+  );
+}
+
+/** Where the purse went. Gold is the whole shop economy now, so a strategy that
+ *  ends runs sitting on unspent gold is either priced out or hoarding. */
+function goldSection(stats: StrategyStats[]): string {
+  const rows = stats.map((s, i) => ({
+    label: strategyLabel(s.name),
+    value: s.gold.earned > 0 ? s.gold.spent / s.gold.earned : 0,
+    text: `${int(s.gold.spent)} / ${int(s.gold.earned)}`,
+    hint: `${strategyLabel(s.name)}: spent ${int(s.gold.spent)} of ${int(s.gold.earned)} gold earned; median ${int(s.gold.medianHeld)} held at a trial clear`,
+    color: seriesVar(i),
+  }));
+  return (
+    `<section><h2>Gold earned and spent</h2>` +
+    `<p class="note">Mean gold spent as a share of gold earned, per run. A low bar means the strategy could not find anything worth buying (or was priced out); a bar near 100% means it is spending everything it makes, and its ceiling is income rather than choice.</p>` +
+    `<div class="hbars">${rows
+      .map(
+        (r) =>
+          `<div class="hbar-row" title="${esc(r.hint)}"><span class="hbar-label">${esc(r.label)}</span>` +
+          `<span class="hbar-track"><span class="hbar-fill" style="width:${(Math.min(1, r.value) * 100).toFixed(1)}%;background:${r.color}"></span></span>` +
+          `<span class="hbar-val">${esc(r.text)}</span></div>`,
+      )
+      .join("")}</div>` +
+    `</section>`
+  );
+}
+
 function summaryTiles(stats: StrategyStats[]): string {
   return `<div class="tiles">${stats
     .map(
@@ -210,48 +270,60 @@ function summaryTiles(stats: StrategyStats[]): string {
         `<div class="tile"><div class="tile-strat"><span class="sw" style="background:${seriesVar(i)}"></span>${esc(strategyLabel(s.name))}</div>` +
         `<div class="tile-grid">` +
         `<div><span class="big">${pct(s.winRate)}</span><span class="cap">win rate</span></div>` +
-        `<div><span class="big">${n1(s.round.median)}</span><span class="cap">median round</span></div>` +
+        `<div><span class="big">${n1(s.rank.median)}</span><span class="cap">median rank</span></div>` +
         `<div><span class="big">${int(s.score.median)}</span><span class="cap">median score</span></div>` +
         `<div><span class="big">${int(s.finalDice.median)}</span><span class="cap">median dice</span></div>` +
+        `<div><span class="big">${int(s.gold.earned)}</span><span class="cap">gold earned</span></div>` +
+        `<div><span class="big">${int(s.gold.medianHeld)}</span><span class="cap">gold held</span></div>` +
         `</div></div>`,
     )
     .join("")}</div>`;
 }
 
-function histogramSection(stats: StrategyStats[]): string {
-  const rounds = stats[0].round.histogram.map((_, i) => String(i + 1));
+function histogramSection(
+  stats: StrategyStats[],
+  trialsPerRank: number,
+): string {
+  // Labelled "rank-trial" rather than 1..15, because which trial of a rank a run
+  // died on is the interesting part — a rank that kills on its Lesser Trial is
+  // a very different problem from one that kills on its boss.
+  const trials = stats[0].trial.histogram.map((_, i) => {
+    const rank = Math.floor(i / trialsPerRank) + 1;
+    return `${rank}-${(i % trialsPerRank) + 1}`;
+  });
   const series = stats.map((s, i) => ({
     name: strategyLabel(s.name),
     color: seriesVar(i),
-    values: s.round.histogram,
+    values: s.trial.histogram,
   }));
+  const last = stats[0]?.trial.histogram.length ?? 15;
   return (
     `<section><h2>Where runs end</h2>` +
-    `<p class="note">Number of runs that ended on each round (the round they died, or ${stats[0]?.round.histogram.length ?? 20} = cleared all rounds / victory). Tall early bars mark a difficulty wall.</p>` +
+    `<p class="note">Number of runs that ended on each trial, labelled rank-trial (the trial they died on, or the ${last}th = cleared the final rank / victory). Tall bars on a rank's third column mean the Boss Trial is doing the killing.</p>` +
     legend(stats) +
-    groupedBars(rounds, series, { fmt: (v) => int(v) }) +
+    groupedBars(trials, series, { fmt: (v) => int(v) }) +
     `</section>`
   );
 }
 
 function survivalSection(stats: StrategyStats[]): string {
-  const maxRound = stats[0].round.histogram.length; // = WIN_ROUND
-  const xs = Array.from({ length: maxRound }, (_, i) => i + 1);
+  const maxTrial = stats[0].trial.histogram.length; // = WIN_TRIAL
+  const xs = Array.from({ length: maxTrial }, (_, i) => i + 1);
   // Survival curve from the death histogram: the share of runs that reached at
-  // least round r (roundReached >= r). Starts at 100% on round 1 and decreases
-  // monotonically; the value on the final round is the win rate.
+  // least trial t. Starts at 100% on trial 1 and decreases monotonically; the
+  // value on the final trial is the win rate.
   const series = stats.map((s, i) => {
     const total = s.runs || 1;
-    const points = xs.map((r) => {
+    const points = xs.map((t) => {
       let reached = 0;
-      for (let k = r; k <= maxRound; k++) reached += s.round.histogram[k - 1];
-      return { x: r, y: reached / total };
+      for (let k = t; k <= maxTrial; k++) reached += s.trial.histogram[k - 1];
+      return { x: t, y: reached / total };
     });
     return { name: strategyLabel(s.name), color: seriesVar(i), points };
   });
   return (
-    `<section><h2>Runs still alive by round</h2>` +
-    `<p class="note">Share of runs that survived to reach each round (roundReached ≥ r). Every run starts at 100% on round 1 and the curve drops as runs die; its height on round ${maxRound} is the share reaching the final round, a hair above the win rate since some reach round ${maxRound} but die there. A steep drop marks a difficulty wall.</p>` +
+    `<section><h2>Runs still alive by trial</h2>` +
+    `<p class="note">Share of runs that survived to reach each trial. Every run starts at 100% on trial 1 and the curve drops as runs die; its height on trial ${maxTrial} is the share reaching the final trial, a hair above the win rate since some reach it but die there. A steep drop marks a difficulty wall — and the attrition intent wants those drops spread evenly, not stacked.</p>` +
     legend(stats) +
     lineChart(xs, series, { fmt: (v) => pct(v) }) +
     `</section>`
@@ -259,43 +331,43 @@ function survivalSection(stats: StrategyStats[]): string {
 }
 
 function curveSection(stats: StrategyStats[]): string {
-  const maxRound = Math.max(
-    ...stats.flatMap((s) => s.roundCurve.map((p) => p.round)),
+  const maxTrial = Math.max(
+    ...stats.flatMap((s) => s.trialCurve.map((p) => p.trial)),
     1,
   );
-  const xs = Array.from({ length: maxRound }, (_, i) => i + 1);
-  const target = stats[0]
+  const xs = Array.from({ length: maxTrial }, (_, i) => i + 1);
+  const goal = stats[0]
     ? {
-        name: "Round target",
+        name: "Trial goal",
         color: "var(--muted)",
         dashed: true,
-        points: xs.map((x) => ({ x, y: roundTargetFrom(stats, x) })),
+        points: xs.map((x) => ({ x, y: trialGoalFrom(stats, x) })),
       }
-    : { name: "target", color: "var(--muted)", points: [] };
+    : { name: "goal", color: "var(--muted)", points: [] };
   const series = [
     ...stats.map((s, i) => ({
       name: strategyLabel(s.name),
       color: seriesVar(i),
-      points: s.roundCurve.map((p) => ({
-        x: p.round,
-        y: Math.max(1, p.medianRoundScore),
+      points: s.trialCurve.map((p) => ({
+        x: p.trial,
+        y: Math.max(1, p.medianTrialScore),
       })),
     })),
-    target,
+    goal,
   ];
   return (
-    `<section><h2>Peak score vs. target, by round</h2>` +
-    `<p class="note">Median peak score reached each round (log scale) against the survival target (dashed). Where a strategy's line dips toward the target, runs are scraping by; where it crosses below, they die. The target grows 1.85×/round.</p>` +
+    `<section><h2>Peak score vs. goal, by trial</h2>` +
+    `<p class="note">Median peak score reached each trial (log scale) against that trial's goal (dashed). Where a strategy's line dips toward the goal, runs are scraping by; where it crosses below, they die. The saw-tooth is the shape of a rank: a short Lesser Trial scores less than the long Boss Trial that follows it.</p>` +
     legend(stats) +
     lineChart(xs, series, { log: true, fmt: (v) => int(v) }) +
     `</section>`
   );
 }
 
-function roundTargetFrom(stats: StrategyStats[], round: number): number {
+function trialGoalFrom(stats: StrategyStats[], trial: number): number {
   for (const s of stats) {
-    const p = s.roundCurve.find((c) => c.round === round);
-    if (p) return p.target;
+    const p = s.trialCurve.find((c) => c.trial === trial);
+    if (p) return p.goal;
   }
   return 0;
 }
@@ -394,9 +466,9 @@ function unlockSection(stats: StrategyStats[]): string {
           value: it.unlockRate,
           display:
             it.unlockRate > 0
-              ? `${pct(it.unlockRate)}${it.medianUnlockRound != null ? ` · r${it.medianUnlockRound}` : ""}`
+              ? `${pct(it.unlockRate)}${it.medianUnlockTrial != null ? ` · r${it.medianUnlockTrial}` : ""}`
               : "0%",
-          hint: `${it.name}: unlocked in ${pct(it.unlockRate)} of runs${it.medianUnlockRound != null ? `, median round ${it.medianUnlockRound}` : ""}`,
+          hint: `${it.name}: unlocked in ${pct(it.unlockRate)} of runs${it.medianUnlockTrial != null ? `, median round ${it.medianUnlockTrial}` : ""}`,
         }))
         .sort((a, b) => b.value - a.value);
       return `<div class="unlock-card"><div class="tile-strat"><span class="sw" style="background:${seriesVar(i)}"></span>${esc(strategyLabel(s.name))}</div>${hbars(rows, seriesVar(i))}</div>`;
@@ -474,11 +546,13 @@ td.num,.num{text-align:right;font-variant-numeric:tabular-nums}
 <h1>The Order of Order — Balance Report</h1>
 <p class="sub">${esc(meta)}</p>
 <section><h2>Strategy summary</h2>
-<p class="note">No-buy is the raw survival floor. Random and greedy are each shown with only base items available and with every gated item unlocked; each matched pair uses the same seed stream.</p>
+<p class="note">Greedy and thrifty bracket how far a purse stretches — most expensive first versus cheapest first — and are each shown with only base items available and with every gated item unlocked, using the same seed stream. The five themed shoppers each chase one build archetype with the full pool, so their spread shows whether every archetype is viable.</p>
 ${summaryTiles(ordered)}</section>
-${histogramSection(ordered)}
+${histogramSection(ordered, stats.trialsPerRank)}
 ${survivalSection(ordered)}
 ${curveSection(ordered)}
+${bossSection(ordered)}
+${goldSection(ordered)}
 ${itemPointsSection(ordered)}
 ${itemTableSection(ordered)}
 ${unlockSection(ordered)}

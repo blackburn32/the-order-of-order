@@ -1,13 +1,12 @@
-// Validation pass for a candidate target curve (the "re-test" step).
+// Validation pass for a candidate goal curve (the "re-test" step).
 //
-// analyze.ts designs curves analytically from trivial-target trajectories. This
-// script sets one of those curves as the live override and runs the REAL sim
-// (actual survival gate + Last Call coupling + real culling), so it confirms the
-// predicted death spread holds up, and regenerates sim-out/report.html against
-// the new curve so it can be inspected in the browser.
+// designTargets.ts designs curves analytically from trivial-goal trajectories,
+// where nothing is ever culled. This script sets one of those curves as the live
+// override and runs the REAL sim — actual survival gate, real culling, real
+// gold spent on real shops — so it confirms the predicted death spread holds up,
+// and regenerates sim-out/report.html against the new curve.
 //
-// Run: npx tsx src/sim/validate.ts            (defaults to MEDIUM)
-//      CURVE="HARD    (~5% bot win)" npx tsx src/sim/validate.ts
+// Run: CURVE="DESIGNED (5-rank intent)" npx tsx src/sim/validate.ts
 //
 // Not shipped with the game; delete when balancing is done.
 
@@ -18,23 +17,29 @@ import { installStorage, seedGlobalRandom } from "./localStorageShim";
 import { RunRecord, simulateRun } from "./bot";
 import { aggregate } from "./stats";
 import { buildReport } from "./report";
-import { seriesSeed, SHOPPER_SERIES, SIM_SERIES } from "./series";
-import { roundTarget, setRoundTargets, WIN_ROUND } from "../config";
+import { seriesConfig, seriesSeed, SHOPPER_SERIES, SIM_SERIES } from "./series";
+import {
+  setTrialGoals,
+  TRIALS_PER_RANK,
+  trialGoal,
+  WIN_RANK,
+  WIN_TRIAL,
+} from "../config";
 
 const curves = JSON.parse(
   readFileSync("sim-out/candidate.json", "utf8"),
 ) as Record<string, number[]>;
-const label = process.env.CURVE ?? "DESIGNED (10-round intent)";
+const label = process.env.CURVE ?? "DESIGNED (5-rank intent)";
 const curve = curves[label];
 if (!curve)
   throw new Error(
     `No curve "${label}" in candidate.json. Have: ${Object.keys(curves).join(" | ")}`,
   );
 
-setRoundTargets(curve); // <-- the real survival gate now uses the candidate curve
+setTrialGoals(curve); // <-- the real survival gate now uses the candidate curve
 
 console.log(
-  `Validating "${label}" with REAL culling · ${DEFAULT_CONFIG.runs} runs/series`,
+  `Validating "${label}" with REAL culling - ${DEFAULT_CONFIG.runs} runs/series`,
 );
 console.log("curve = [" + curve.join(", ") + "]\n");
 
@@ -48,42 +53,73 @@ for (const series of SIM_SERIES) {
       simulateRun(
         series.strategy,
         seriesSeed(DEFAULT_CONFIG.seed, i, series.seedOffset),
-        DEFAULT_CONFIG,
+        seriesConfig(DEFAULT_CONFIG, series),
       ),
     );
   }
   byStrategy[series.id] = records;
   const wins = records.filter((r) => r.won).length;
-  const hist = new Array(WIN_ROUND).fill(0);
-  for (const r of records) hist[Math.min(WIN_ROUND, r.roundReached) - 1]++;
+  const hist = new Array(WIN_RANK).fill(0);
+  for (const r of records) hist[Math.min(WIN_RANK, r.rankReached) - 1]++;
   const bars = hist
-    .map((c, i) => (c > 0 ? `r${i + 1}=${c}` : ""))
+    .map((c, i) => (c > 0 ? `rank${i + 1}=${c}` : ""))
     .filter(Boolean)
     .join("  ");
   console.log(
-    `${series.id.padEnd(12)} win ${((wins / records.length) * 100).toFixed(1)}%  | deaths: ${bars}`,
+    `${series.id.padEnd(20)} win ${((wins / records.length) * 100).toFixed(1)}%  | deaths: ${bars}`,
   );
 }
 
 const pooled = SHOPPER_SERIES.flatMap((series) => byStrategy[series.id]);
 let alive = pooled;
-console.log("\nPooled buying field (README attrition measure):");
+console.log("\nPooled field (the README attrition measure):");
 console.log(
-  "round | target | entrants | died | die% field | survivors | field alive",
+  "trial | rank |     goal | entrants | died | die% field | survivors | field alive",
 );
-for (let round = 1; round <= WIN_ROUND; round++) {
+for (let trial = 1; trial <= WIN_TRIAL; trial++) {
+  const rank = Math.ceil(trial / TRIALS_PER_RANK);
   const entrants = alive.length;
   const survivors = alive.filter(
-    (record) => record.won || record.roundReached > round,
+    (record) => record.won || record.trialReached > trial,
   );
   const died = entrants - survivors.length;
   console.log(
-    `${String(round).padStart(5)} | ${roundTarget(round).toLocaleString().padStart(8)} | ` +
+    `${String(trial).padStart(5)} | ${String(rank).padStart(4)} | ${trialGoal(trial).toLocaleString().padStart(8)} | ` +
       `${String(entrants).padStart(8)} | ${String(died).padStart(4)} | ` +
-      `${((died / pooled.length) * 100).toFixed(1).padStart(9)}% | ` +
+      `${((died / pooled.length) * 100).toFixed(1).padStart(10)}% | ` +
       `${String(survivors.length).padStart(9)} | ${((survivors.length / pooled.length) * 100).toFixed(1).padStart(10)}%`,
   );
   alive = survivors;
+}
+
+// Per-boss clear rates: the signal for whether any one modifier is unfair. A
+// modifier far outside the average is doing more (or less) than its peers.
+const bossTally = new Map<string, { faced: number; cleared: number }>();
+for (const record of pooled) {
+  for (const [id, tally] of Object.entries(record.bossesFaced)) {
+    const acc = bossTally.get(id) ?? { faced: 0, cleared: 0 };
+    acc.faced += tally!.faced;
+    acc.cleared += tally!.cleared;
+    bossTally.set(id, acc);
+  }
+}
+if (bossTally.size > 0) {
+  const rates = [...bossTally.entries()].map(([id, t]) => ({
+    id,
+    faced: t.faced,
+    rate: t.faced > 0 ? t.cleared / t.faced : 0,
+  }));
+  const mean = rates.reduce((a, r) => a + r.rate, 0) / rates.length;
+  console.log(
+    "\nBoss Trial clear rates (mean " + (mean * 100).toFixed(1) + "%):",
+  );
+  for (const r of rates.sort((a, b) => b.rate - a.rate)) {
+    const ratio = mean > 0 ? r.rate / mean : 1;
+    const flag = ratio < 0.6 || ratio > 1.4 ? "  <-- out of band" : "";
+    console.log(
+      `  ${r.id.padEnd(11)} ${(r.rate * 100).toFixed(1).padStart(5)}%  (${r.faced} faced, ${ratio.toFixed(2)}x mean)${flag}`,
+    );
+  }
 }
 
 const stats = aggregate(byStrategy, {
@@ -96,4 +132,4 @@ const stats = aggregate(byStrategy, {
 const out = resolve(process.cwd(), "sim-out/report.html");
 mkdirSync(resolve(process.cwd(), "sim-out"), { recursive: true });
 writeFileSync(out, buildReport(stats), "utf8");
-console.log(`\nRegenerated report against the candidate curve → ${out}`);
+console.log(`\nRegenerated report against the candidate curve -> ${out}`);

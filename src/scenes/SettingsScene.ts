@@ -1,41 +1,68 @@
-import Phaser from 'phaser';
-import { COLORS, CSS, SERIF } from '../art/palette';
-import { PHONE_BUILD } from '../buildFlags';
-import { getRun } from '../state/RunState';
-import { audio } from '../systems/Audio';
-import { fx } from '../systems/Effects';
-import { hasBeatenGame, loadSettings, recordRunEnd, resetAllProgress, saveSettings, Settings } from '../systems/SaveData';
-import { addFelt, addPanel, bannerButton, checkboxRow, showBanner } from '../ui/widgets';
-import { onResizeCoalesced } from '../ui/layout';
+import Phaser from "phaser";
+import { COLORS, CSS, SERIF } from "../art/palette";
+import { PHONE_BUILD } from "../buildFlags";
+import { getRun } from "../state/RunState";
+import { audio } from "../systems/Audio";
+import { fx } from "../systems/Effects";
+import {
+  loadSettings,
+  resetAllProgress,
+  saveSettings,
+  Settings,
+} from "../systems/SaveData";
+import { finalizeRun } from "../systems/RunEnd";
+import {
+  addFelt,
+  addPanel,
+  bannerButton,
+  checkboxRow,
+  showBanner,
+} from "../ui/widgets";
+import { onResizeCoalesced } from "../ui/layout";
 
 interface SettingsData {
-  returnTo?: 'Menu' | 'Game';
+  returnTo?: string;
+  overlay?: boolean;
 }
 
 type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
-type WheelHandler = (pointer: Phaser.Input.Pointer, over: unknown, dx: number, dy: number, dz: number) => void;
+type WheelHandler = (
+  pointer: Phaser.Input.Pointer,
+  over: unknown,
+  dx: number,
+  dy: number,
+  dz: number,
+) => void;
 
 export class SettingsScene extends Phaser.Scene {
   private settings!: Settings;
-  private returnTo: 'Menu' | 'Game' = 'Menu';
+  private returnTo = "Menu";
+  private overlay = false;
   // The settings rows live in a container the player can scroll when they don't
   // all fit the panel. It's clipped by a dedicated camera (Phaser 4 WebGL masks
   // are unreliable for nested content — same rationale as the shop carousel).
   private scrollCamera?: Phaser.Cameras.Scene2D.Camera;
-  private scrollInput?: { down: PointerHandler; move: PointerHandler; up: PointerHandler; wheel: WheelHandler };
+  private scrollInput?: {
+    down: PointerHandler;
+    move: PointerHandler;
+    up: PointerHandler;
+    wheel: WheelHandler;
+  };
 
   constructor() {
-    super('Settings');
+    super("Settings");
   }
 
   /** Called before create() when the scene is started with data — lets the
    *  "back" button and the mid-run Abandon Run option know where "back" is. */
   init(data: SettingsData): void {
-    this.returnTo = data?.returnTo === 'Game' ? 'Game' : 'Menu';
+    this.returnTo = data?.returnTo ?? "Menu";
+    this.overlay = data?.overlay === true && this.returnTo !== "Menu";
   }
 
   create(): void {
     this.settings = loadSettings();
+    if (this.overlay) this.scene.get(this.returnTo).input.enabled = false;
     // Not using responsive() — its children.removeAll doesn't clear the extra
     // camera / input listeners a scroll view needs, so drive rebuilds manually.
     this.scrollCamera = undefined;
@@ -49,16 +76,17 @@ export class SettingsScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       off();
       this.teardown();
+      if (this.overlay) this.scene.get(this.returnTo).input.enabled = true;
     });
   }
 
   private teardown(): void {
     if (this.scrollInput) {
-      this.input.off('pointerdown', this.scrollInput.down);
-      this.input.off('pointermove', this.scrollInput.move);
-      this.input.off('pointerup', this.scrollInput.up);
-      this.input.off('pointerupoutside', this.scrollInput.up);
-      this.input.off('wheel', this.scrollInput.wheel);
+      this.input.off("pointerdown", this.scrollInput.down);
+      this.input.off("pointermove", this.scrollInput.move);
+      this.input.off("pointerup", this.scrollInput.up);
+      this.input.off("pointerupoutside", this.scrollInput.up);
+      this.input.off("wheel", this.scrollInput.wheel);
       this.scrollInput = undefined;
     }
     if (this.scrollCamera) {
@@ -67,7 +95,7 @@ export class SettingsScene extends Phaser.Scene {
     }
     this.scale.off(Phaser.Scale.Events.ENTER_FULLSCREEN);
     this.scale.off(Phaser.Scale.Events.LEAVE_FULLSCREEN);
-    this.input.setDefaultCursor('default');
+    this.input.setDefaultCursor("default");
   }
 
   private build(): void {
@@ -81,11 +109,11 @@ export class SettingsScene extends Phaser.Scene {
     const felt = addFelt(this);
     const panel = addPanel(this, cx, H / 2, panelW, panelH);
     const title = this.add
-      .text(cx, panelTop + panelH * 0.1, 'Settings', {
+      .text(cx, panelTop + panelH * 0.1, "Settings", {
         fontFamily: SERIF,
         fontSize: `${Math.round(Phaser.Math.Clamp(panelH * 0.068, 22, 40))}px`,
         color: CSS.ink,
-        fontStyle: 'bold'
+        fontStyle: "bold",
       })
       .setOrigin(0.5);
 
@@ -108,84 +136,135 @@ export class SettingsScene extends Phaser.Scene {
     // the clip camera's top edge instead of being sheared off.
     let y = viewportTop + 42;
 
-    this.makeSlider(content, cx, y, trackX0, trackX1, 'Music Volume', this.settings.musicVol, (v) => {
-      this.settings.musicVol = v;
-      this.apply();
-    });
+    this.makeSlider(
+      content,
+      cx,
+      y,
+      trackX0,
+      trackX1,
+      "Music Volume",
+      this.settings.musicVol,
+      (v) => {
+        this.settings.musicVol = v;
+        this.apply();
+      },
+    );
     y += 72;
-    this.makeSlider(content, cx, y, trackX0, trackX1, 'Sound Effects', this.settings.sfxVol, (v) => {
-      this.settings.sfxVol = v;
-      this.apply();
-    });
+    this.makeSlider(
+      content,
+      cx,
+      y,
+      trackX0,
+      trackX1,
+      "Sound Effects",
+      this.settings.sfxVol,
+      (v) => {
+        this.settings.sfxVol = v;
+        this.apply();
+      },
+    );
     y += 62;
 
     content.add(
-      checkboxRow(this, cx, y, 'Show Intro', this.settings.showIntro, (value) => {
-        this.settings.showIntro = value;
-        this.apply();
-      })
-    );
-    y += 48;
-    content.add(
-      checkboxRow(this, cx, y, 'Show Tutorial', this.settings.showTutorial, (value) => {
-        this.settings.showTutorial = value;
-        this.apply();
-      })
-    );
-    y += 48;
-
-    content.add(
-      checkboxRow(this, cx, y, 'Visual Effects', this.settings.visualEffects, (value) => {
-        this.settings.visualEffects = value;
-        this.apply();
-      })
-    );
-    y += 48;
-
-    // Hard Mode only appears once the player has beaten the game at least once.
-    if (hasBeatenGame()) {
-      content.add(
-        checkboxRow(this, cx, y, 'Hard Mode ☠', this.settings.hardMode, (value) => {
-          this.settings.hardMode = value;
+      checkboxRow(
+        this,
+        cx,
+        y,
+        "Show Intro",
+        this.settings.showIntro,
+        (value) => {
+          this.settings.showIntro = value;
           this.apply();
-        })
-      );
-      y += 48;
-    }
+        },
+      ),
+    );
+    y += 48;
+    content.add(
+      checkboxRow(
+        this,
+        cx,
+        y,
+        "Show Tutorial",
+        this.settings.showTutorial,
+        (value) => {
+          this.settings.showTutorial = value;
+          this.apply();
+        },
+      ),
+    );
+    y += 48;
+
+    content.add(
+      checkboxRow(
+        this,
+        cx,
+        y,
+        "Visual Effects",
+        this.settings.visualEffects,
+        (value) => {
+          this.settings.visualEffects = value;
+          this.apply();
+        },
+      ),
+    );
+    y += 48;
 
     if (!PHONE_BUILD) {
       content.add(this.buildFullscreenToggle(cx, y));
       y += 58;
     }
 
-    if (this.returnTo === 'Game') {
+    if (this.returnTo !== "Menu") {
       content.add(
         bannerButton(
           this,
           cx,
           y,
-          'Abandon Run',
+          "Abandon Run",
           () => {
             audio.click();
-            recordRunEnd(getRun(this.registry), false);
-            this.scene.start('GameOver');
+            finalizeRun(getRun(this.registry));
+            if (this.overlay) this.scene.stop(this.returnTo);
+            this.scene.start("GameOver");
           },
-          btnMaxW
-        )
+          btnMaxW,
+        ),
       );
     } else {
       content.add(this.buildResetButton(cx, y, btnMaxW));
     }
     y += 64;
 
-    const backLabel = this.returnTo === 'Game' ? 'Return to Game' : 'Return to the Vestibule';
-    content.add(bannerButton(this, cx, y, backLabel, () => this.scene.start(this.returnTo), btnMaxW));
+    const backLabel =
+      this.returnTo === "Menu" ? "Return to the Vestibule" : "Return";
+    content.add(
+      bannerButton(
+        this,
+        cx,
+        y,
+        backLabel,
+        () => {
+          if (this.overlay) this.scene.stop();
+          else this.scene.start(this.returnTo);
+        },
+        btnMaxW,
+      ),
+    );
 
     const contentBottom = y + 34;
     const contentH = contentBottom - viewportTop;
 
     if (contentH > viewportH) {
-      this.enableScroll(content, [felt, panel, title], viewportX, viewportTop, viewportW, viewportH, contentH, cx);
+      this.enableScroll(
+        content,
+        [felt, panel, title],
+        viewportX,
+        viewportTop,
+        viewportW,
+        viewportH,
+        contentH,
+        cx,
+      );
     }
   }
 
@@ -199,7 +278,7 @@ export class SettingsScene extends Phaser.Scene {
     viewportW: number,
     viewportH: number,
     contentH: number,
-    cx: number
+    cx: number,
   ): void {
     const minY = viewportH - contentH; // most-scrolled (negative)
     const maxY = 0; // top
@@ -214,9 +293,23 @@ export class SettingsScene extends Phaser.Scene {
 
     // Vertical scrollbar (display-only; driven by drag/wheel).
     const barX = viewportX + viewportW + 6;
-    const barTrack = this.add.rectangle(barX, viewportTop + viewportH / 2, 5, viewportH, COLORS.inkSoft, 0.4);
+    const barTrack = this.add.rectangle(
+      barX,
+      viewportTop + viewportH / 2,
+      5,
+      viewportH,
+      COLORS.inkSoft,
+      0.4,
+    );
     const thumbH = Math.max(30, (viewportH * viewportH) / contentH);
-    const thumb = this.add.rectangle(barX, viewportTop + thumbH / 2, 5, thumbH, COLORS.gold, 0.9);
+    const thumb = this.add.rectangle(
+      barX,
+      viewportTop + thumbH / 2,
+      5,
+      thumbH,
+      COLORS.gold,
+      0.9,
+    );
     cam.ignore([barTrack, thumb]);
     const updateThumb = () => {
       const progress = (maxY - content.y) / (maxY - minY);
@@ -224,7 +317,10 @@ export class SettingsScene extends Phaser.Scene {
     };
 
     const inBounds = (p: Phaser.Input.Pointer) =>
-      p.x >= viewportX && p.x <= viewportX + viewportW && p.y >= viewportTop && p.y <= viewportTop + viewportH;
+      p.x >= viewportX &&
+      p.x <= viewportX + viewportW &&
+      p.y >= viewportTop &&
+      p.y <= viewportTop + viewportH;
 
     let dragging = false;
     let startPointerY = 0;
@@ -241,10 +337,14 @@ export class SettingsScene extends Phaser.Scene {
     };
     const onMove: PointerHandler = (p) => {
       if (!dragging) {
-        this.input.setDefaultCursor(inBounds(p) ? 'grab' : 'default');
+        this.input.setDefaultCursor(inBounds(p) ? "grab" : "default");
         return;
       }
-      content.y = Phaser.Math.Clamp(startContentY + (p.y - startPointerY), minY, maxY);
+      content.y = Phaser.Math.Clamp(
+        startContentY + (p.y - startPointerY),
+        minY,
+        maxY,
+      );
       updateThumb();
     };
     const onUp: PointerHandler = () => {
@@ -256,33 +356,47 @@ export class SettingsScene extends Phaser.Scene {
       updateThumb();
     };
 
-    this.input.on('pointerdown', onDown);
-    this.input.on('pointermove', onMove);
-    this.input.on('pointerup', onUp);
-    this.input.on('pointerupoutside', onUp);
-    this.input.on('wheel', onWheel);
+    this.input.on("pointerdown", onDown);
+    this.input.on("pointermove", onMove);
+    this.input.on("pointerup", onUp);
+    this.input.on("pointerupoutside", onUp);
+    this.input.on("wheel", onWheel);
     this.scrollInput = { down: onDown, move: onMove, up: onUp, wheel: onWheel };
 
     const hint = this.add
-      .text(cx, viewportTop + viewportH + 3, 'drag or scroll for more', {
+      .text(cx, viewportTop + viewportH + 3, "drag or scroll for more", {
         fontFamily: SERIF,
-        fontSize: '13px',
+        fontSize: "13px",
         color: CSS.dim,
-        fontStyle: 'italic'
+        fontStyle: "italic",
       })
       .setOrigin(0.5, 0);
     cam.ignore(hint);
   }
 
-  private buildFullscreenToggle(cx: number, y: number): Phaser.GameObjects.Container {
-    const row = checkboxRow(this, cx, y, 'Fullscreen', this.scale.isFullscreen, (value) => {
-      if (value) this.scale.startFullscreen();
-      else this.scale.stopFullscreen();
-    });
+  private buildFullscreenToggle(
+    cx: number,
+    y: number,
+  ): Phaser.GameObjects.Container {
+    const row = checkboxRow(
+      this,
+      cx,
+      y,
+      "Fullscreen",
+      this.scale.isFullscreen,
+      (value) => {
+        if (value) this.scale.startFullscreen();
+        else this.scale.stopFullscreen();
+      },
+    );
     // Keep the checkbox in sync when fullscreen is exited/entered outside the UI
     // (Esc, F11); setChecked doesn't re-fire onChange, so there's no loop.
-    this.scale.on(Phaser.Scale.Events.ENTER_FULLSCREEN, () => row.setChecked(true));
-    this.scale.on(Phaser.Scale.Events.LEAVE_FULLSCREEN, () => row.setChecked(false));
+    this.scale.on(Phaser.Scale.Events.ENTER_FULLSCREEN, () =>
+      row.setChecked(true),
+    );
+    this.scale.on(Phaser.Scale.Events.LEAVE_FULLSCREEN, () =>
+      row.setChecked(false),
+    );
     return row;
   }
 
@@ -290,8 +404,12 @@ export class SettingsScene extends Phaser.Scene {
    *  helper): the first tap arms it, a second within a few seconds wipes item
    *  unlocks, selection counts, games-completed, and the Hall of High Scores.
    *  Audio settings are kept. */
-  private buildResetButton(cx: number, y: number, maxWidth: number): Phaser.GameObjects.Container {
-    const DEFAULT = 'Reset All Progress';
+  private buildResetButton(
+    cx: number,
+    y: number,
+    maxWidth: number,
+  ): Phaser.GameObjects.Container {
+    const DEFAULT = "Reset All Progress";
     let confirming = false;
     let timer: Phaser.Time.TimerEvent | undefined;
 
@@ -304,7 +422,7 @@ export class SettingsScene extends Phaser.Scene {
         const label = button.getAt(1) as Phaser.GameObjects.Text;
         if (!confirming) {
           confirming = true;
-          label.setText('Tap again to confirm');
+          label.setText("Tap again to confirm");
           timer = this.time.delayedCall(3000, () => {
             confirming = false;
             label.setText(DEFAULT);
@@ -314,10 +432,10 @@ export class SettingsScene extends Phaser.Scene {
         timer?.remove();
         confirming = false;
         resetAllProgress();
-        label.setText('Progress reset');
-        showBanner(this, 'All progress has been reset', 1200);
+        label.setText("Progress reset");
+        showBanner(this, "All progress has been reset", 1200);
       },
-      maxWidth
+      maxWidth,
     );
     return button;
   }
@@ -336,16 +454,32 @@ export class SettingsScene extends Phaser.Scene {
     trackX1: number,
     label: string,
     initial: number,
-    onChange: (v: number) => void
+    onChange: (v: number) => void,
   ): void {
     const labelText = this.add
-      .text(labelX, y - 26, label, { fontFamily: SERIF, fontSize: '22px', color: CSS.ink })
+      .text(labelX, y - 26, label, {
+        fontFamily: SERIF,
+        fontSize: "22px",
+        color: CSS.ink,
+      })
       .setOrigin(0.5);
 
     const trackY = y + 6;
-    const track = this.add.rectangle((trackX0 + trackX1) / 2, trackY, trackX1 - trackX0, 6, COLORS.inkSoft, 0.6);
+    const track = this.add.rectangle(
+      (trackX0 + trackX1) / 2,
+      trackY,
+      trackX1 - trackX0,
+      6,
+      COLORS.inkSoft,
+      0.6,
+    );
 
-    const knob = this.add.circle(trackX0 + initial * (trackX1 - trackX0), trackY, 15, COLORS.gold);
+    const knob = this.add.circle(
+      trackX0 + initial * (trackX1 - trackX0),
+      trackY,
+      15,
+      COLORS.gold,
+    );
     knob.setStrokeStyle(2, COLORS.ink, 0.8);
     knob.setInteractive({ useHandCursor: true });
     this.input.setDraggable(knob);
@@ -353,11 +487,11 @@ export class SettingsScene extends Phaser.Scene {
     // dragX arrives in the content container's local space (Phaser accounts for
     // the parent transform), and the track x-range is expressed in the same
     // space, so clamp directly.
-    knob.on('drag', (_pointer: Phaser.Input.Pointer, dragX: number) => {
+    knob.on("drag", (_pointer: Phaser.Input.Pointer, dragX: number) => {
       knob.x = Phaser.Math.Clamp(dragX, trackX0, trackX1);
       onChange((knob.x - trackX0) / (trackX1 - trackX0));
     });
-    knob.on('dragend', () => audio.click());
+    knob.on("dragend", () => audio.click());
 
     content.add([labelText, track, knob]);
   }

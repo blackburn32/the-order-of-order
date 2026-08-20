@@ -18,7 +18,9 @@ export interface InitialsPromptData {
   dicePoints?: PointMap;
   itemPoints?: PointMap;
   /** Whether the run was played on Hard Mode (tags the leaderboard entry). */
-  hard?: boolean;
+  rank: number;
+  trial: number;
+  endless?: boolean;
   /** Scene key to re-enable input on when the prompt closes. */
   returnTo: string;
 }
@@ -36,7 +38,7 @@ export class InitialsPromptScene extends Phaser.Scene {
   private score = 0n;
   private dicePoints: PointMap = {};
   private itemPoints: PointMap = {};
-  private hard = false;
+  private run = { rank: 1, trial: 1, endless: false };
   private returnTo = "Menu";
   private slots: string[] = ["A", "A", "A"];
   private sel = 0;
@@ -49,7 +51,11 @@ export class InitialsPromptScene extends Phaser.Scene {
     this.score = data.score;
     this.dicePoints = data.dicePoints ?? {};
     this.itemPoints = data.itemPoints ?? {};
-    this.hard = data.hard ?? false;
+    this.run = {
+      rank: data.rank,
+      trial: data.trial,
+      endless: data.endless ?? false,
+    };
     this.returnTo = data.returnTo;
     const seed = normalizeInitials(getInitials());
     this.slots = [seed[0] ?? "A", seed[1] ?? "A", seed[2] ?? "A"];
@@ -237,7 +243,7 @@ export class InitialsPromptScene extends Phaser.Scene {
       initials,
       this.dicePoints,
       this.itemPoints,
-      this.hard,
+      this.run,
     );
     this.close();
   }

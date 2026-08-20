@@ -86,20 +86,15 @@ function scenarios(): Scenario[] {
     s("prism + amplifier", many(50, 6), { prism: 2, hasAmplifier: true }),
     s("last call final roll", many(50, 6), { lastCall: 2 }, true),
     s("lucky seven digits", many(500, 100), { hasLuckySeven: true }),
-    s(
-      "royal seal scoring",
-      [...many(80, 6), ...many(80, 20)],
-      { royalSealSizes: [6, 20], extraPoints: 2 },
-    ),
-    s(
-      "parade + menagerie",
-      [...many(80, 4), ...many(80, 6), ...many(80, 8)],
-      {
-        scoringNumbers: [1, 2, 3],
-        hasParade: true,
-        hasMenagerie: true,
-      },
-    ),
+    s("royal seal scoring", [...many(80, 6), ...many(80, 20)], {
+      royalSealSizes: [6, 20],
+      extraPoints: 2,
+    }),
+    s("parade + menagerie", [...many(80, 4), ...many(80, 6), ...many(80, 8)], {
+      scoringNumbers: [1, 2, 3],
+      hasParade: true,
+      hasMenagerie: true,
+    }),
     s("uniform + hourglass", many(100, 6), {
       hasUniform: true,
       hasHourglass: true,
@@ -133,6 +128,56 @@ function scenarios(): Scenario[] {
         hasHourglass: true,
       },
       true,
+    ),
+
+    // Boss modifiers. Both scorers read them through the shared accessors in
+    // systems/Boss, so these cases are what proves a modifier means the same
+    // thing on a per-die grid and on a bucketed one.
+    s("boss: the famine", many(60, 6), {
+      trial: 3,
+      bossModifier: "famine",
+      extraPoints: 4,
+      keenEdge: 2,
+    }),
+    s("boss: the silence", many(60, 6), {
+      trial: 3,
+      bossModifier: "silence",
+      scoringNumbers: [1, 2, 3],
+      extraNumberCount: 2,
+    }),
+    s("boss: the warden", many(60, 6), {
+      trial: 3,
+      bossModifier: "warden",
+      hasSnakeEyes: true,
+      jackpot: 2,
+      hasLuckySeven: true,
+    }),
+    s("boss: the eclipse", many(60, 6), {
+      trial: 3,
+      bossModifier: "eclipse",
+      hasAmplifier: true,
+      prism: 1,
+    }),
+    s("boss: the toll", many(100, 6), {
+      trial: 3,
+      bossModifier: "toll",
+      extraPoints: 2,
+      hasSnakeEyes: true,
+    }),
+    s(
+      "boss: the toll, everything on",
+      [...many(60, 6), ...many(30, 4), ...many(10, 20, { maxFaceBonus: 2 })],
+      {
+        trial: 3,
+        bossModifier: "toll",
+        scoringNumbers: [1, 2, 3],
+        extraPoints: 3,
+        keenEdge: 2,
+        hasSnakeEyes: true,
+        jackpot: 1,
+        hasLuckySeven: true,
+        prism: 1,
+      },
     ),
   ];
 }
@@ -180,11 +225,7 @@ function correctness(): boolean {
 
     state.scoreStreak = scoreStreakBefore; // replay on identical dice
     state.momentumStreak = momentumStreakBefore;
-    const agg = aggFromDice(
-      dice,
-      state.scoringNumbers,
-      state.royalSealSizes,
-    );
+    const agg = aggFromDice(dice, state.scoringNumbers, state.royalSealSizes);
     const hist = scoreRollHistogram(state, agg, { finalRoll });
     const streaksAfterHist = [state.scoreStreak, state.momentumStreak];
 

@@ -1,24 +1,26 @@
-import Phaser from 'phaser';
-import { BootScene } from './scenes/BootScene';
-import { MenuScene } from './scenes/MenuScene';
-import { IntroScene } from './scenes/IntroScene';
-import { GameScene } from './scenes/GameScene';
-import { ShopScene } from './scenes/ShopScene';
-import { GameOverScene } from './scenes/GameOverScene';
-import { VictoryScene } from './scenes/VictoryScene';
-import { HallScene } from './scenes/HallScene';
-import { SettingsScene } from './scenes/SettingsScene';
-import { ItemsScene } from './scenes/ItemsScene';
-import { InventoryScene } from './scenes/InventoryScene';
-import { InitialsPromptScene } from './scenes/InitialsPromptScene';
-import { AnalysisScene } from './scenes/AnalysisScene';
-import { installDevPanel } from './dev/DevPanel';
-import { GOLD_BORDER } from './buildFlags';
-import { installHighResolutionText } from './renderQuality';
+import Phaser from "phaser";
+import { BootScene } from "./scenes/BootScene";
+import { MenuScene } from "./scenes/MenuScene";
+import { IntroScene } from "./scenes/IntroScene";
+import { GameScene } from "./scenes/GameScene";
+import { ShopScene } from "./scenes/ShopScene";
+import { GameOverScene } from "./scenes/GameOverScene";
+import { VictoryScene } from "./scenes/VictoryScene";
+import { HallScene } from "./scenes/HallScene";
+import { SettingsScene } from "./scenes/SettingsScene";
+import { ItemsScene } from "./scenes/ItemsScene";
+import { InventoryScene } from "./scenes/InventoryScene";
+import { InitialsPromptScene } from "./scenes/InitialsPromptScene";
+import { AnalysisScene } from "./scenes/AnalysisScene";
+import { TrialOverviewScene } from "./scenes/TrialOverviewScene";
+import { TrialResultsScene } from "./scenes/TrialResultsScene";
+import { installDevPanel } from "./dev/DevPanel";
+import { GOLD_BORDER } from "./buildFlags";
+import { installHighResolutionText } from "./renderQuality";
 
 // Before the canvas exists, so the frame is part of the first layout rather
 // than a reflow after Phaser has sized itself.
-if (GOLD_BORDER) document.getElementById('game')?.classList.add('gold-border');
+if (GOLD_BORDER) document.getElementById("game")?.classList.add("gold-border");
 
 installHighResolutionText();
 
@@ -32,17 +34,36 @@ const game = new Phaser.Game({
   // Prevent texture-backed objects (including Text) from landing between
   // output pixels when their positions are otherwise safe to round.
   roundPixels: true,
-  parent: 'game',
-  backgroundColor: '#0d0a12',
+  parent: "game",
+  // This is exposed briefly while scene cameras slide between screens. Match
+  // the standard tabletop felt so the transition reads as continuous motion
+  // instead of a near-black frame pushing in behind the departing scene.
+  backgroundColor: "#161226",
   scale: {
     // The canvas is resized (not letterboxed) to fill the page, in whatever
     // orientation the player is in; every scene lays itself out from
     // `scene.scale.width/height` rather than the fixed design size.
     mode: Phaser.Scale.RESIZE,
     width: window.innerWidth,
-    height: window.innerHeight
+    height: window.innerHeight,
   },
-  scene: [BootScene, MenuScene, IntroScene, GameScene, ShopScene, GameOverScene, VictoryScene, HallScene, ItemsScene, SettingsScene, InventoryScene, InitialsPromptScene, AnalysisScene]
+  scene: [
+    BootScene,
+    MenuScene,
+    IntroScene,
+    TrialOverviewScene,
+    GameScene,
+    TrialResultsScene,
+    ShopScene,
+    GameOverScene,
+    VictoryScene,
+    HallScene,
+    ItemsScene,
+    SettingsScene,
+    InventoryScene,
+    InitialsPromptScene,
+    AnalysisScene,
+  ],
 });
 
 // Exposed for smoke tests / debugging in the console.

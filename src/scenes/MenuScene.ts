@@ -10,7 +10,7 @@ import { RuleDice } from '../ui/RuleDice';
 import { responsive } from '../ui/layout';
 
 /**
- * Fixed "round progress" handed to the menu's AmbientLayer. There's no round
+ * Fixed "trial progress" handed to the menu's AmbientLayer. There's no trial
  * here to report, so the number is chosen purely for how it looks: it drives
  * both the sigil's opacity and its spin, and this value lands on a faint gold
  * ring turning about once every forty seconds.
@@ -28,13 +28,27 @@ const CURSOR_GLOW_EASING = 0.16;
 
 export class MenuScene extends Phaser.Scene {
   private cursorGlow?: Phaser.GameObjects.Image;
+  private cursorGlowActivated = false;
 
   constructor() {
     super('Menu');
   }
 
   create(): void {
+    this.cursorGlowActivated = false;
     responsive(this, () => this.build());
+
+    // Phaser initializes the active pointer at a default position before the
+    // player has interacted. Keep its light hidden until a real mouse/touch
+    // event arrives, then start it at that event instead of easing in from the
+    // default corner.
+    const activateCursorGlow = (pointer: Phaser.Input.Pointer) => {
+      if (this.cursorGlowActivated) return;
+      this.cursorGlowActivated = true;
+      this.cursorGlow?.setPosition(pointer.worldX, pointer.worldY).setAlpha(CURSOR_GLOW_ALPHA);
+    };
+    this.input.once('pointermove', activateCursorGlow);
+    this.input.once('pointerdown', activateCursorGlow);
 
     // Browsers require a gesture before audio; first click starts the soundtrack.
     this.input.once('pointerdown', () => {
@@ -206,7 +220,7 @@ export class MenuScene extends Phaser.Scene {
         .setTint(COLORS.glow)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setDisplaySize(CURSOR_GLOW_SIZE, CURSOR_GLOW_SIZE)
-        .setAlpha(CURSOR_GLOW_ALPHA);
+        .setAlpha(this.cursorGlowActivated ? CURSOR_GLOW_ALPHA : 0);
     }
   }
 
@@ -218,7 +232,7 @@ export class MenuScene extends Phaser.Scene {
    */
   override update(): void {
     const glow = this.cursorGlow;
-    if (!glow?.active) return;
+    if (!this.cursorGlowActivated || !glow?.active) return;
     const pointer = this.input.activePointer;
     glow.x = Phaser.Math.Linear(glow.x, pointer.worldX, CURSOR_GLOW_EASING);
     glow.y = Phaser.Math.Linear(glow.y, pointer.worldY, CURSOR_GLOW_EASING);

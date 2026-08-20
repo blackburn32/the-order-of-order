@@ -209,7 +209,7 @@ export class HallScene extends Phaser.Scene {
     }
 
     // Column positions are derived from each column's actual measured text
-    // width (not a guessed font metric), so DATE/ROUND/SCORE can never collide
+    // width (not a guessed font metric), so DATE/RANK/SCORE can never collide
     // regardless of font size, locale date format, or digit count — the grid
     // column just absorbs whatever room is left over.
     const headerSize = Math.round(Phaser.Math.Clamp(panelW * 0.032, 11, 16));
@@ -221,7 +221,7 @@ export class HallScene extends Phaser.Scene {
     const rowStep = Math.min(36, (panelH * 0.55) / Math.max(1, entries.length));
 
     const dateTexts = [this.header(headerY, "DATE", headerSize)];
-    const roundTexts = [this.header(headerY, "ROUND", headerSize)];
+    const rankTexts = [this.header(headerY, "RANK", headerSize)];
     const scoreTexts = [this.header(headerY, "SCORE", headerSize)];
     const gridHeader = this.header(headerY, "FINAL GRID", headerSize, 0);
 
@@ -233,7 +233,9 @@ export class HallScene extends Phaser.Scene {
         day: "numeric",
       });
       dateTexts.push(this.cell(y, date, cellSize));
-      roundTexts.push(this.cell(y, String(entry.round), cellSize));
+      // Rank is the ranking key now, so it reads as "rank-trial" — the same
+      // shorthand the in-game HUD uses.
+      rankTexts.push(this.cell(y, `${entry.rank}-${entry.trial}`, cellSize));
       scoreTexts.push(this.cell(y, formatScore(entry.score), cellSize));
       return { y, entry };
     });
@@ -241,17 +243,17 @@ export class HallScene extends Phaser.Scene {
     const widest = (texts: Phaser.GameObjects.Text[]) =>
       Math.max(...texts.map((t) => t.width));
     const dateW = widest(dateTexts);
-    const roundW = widest(roundTexts);
+    const rankW = widest(rankTexts);
     const scoreW = widest(scoreTexts);
 
     const col1 = panelLeft + panelW * 0.06 + dateW / 2;
-    const col2 = col1 + dateW / 2 + colGap + roundW / 2;
-    const col3 = col2 + roundW / 2 + colGap + scoreW / 2;
+    const col2 = col1 + dateW / 2 + colGap + rankW / 2;
+    const col3 = col2 + rankW / 2 + colGap + scoreW / 2;
     const col4 = col3 + scoreW / 2 + colGap * 1.4;
     const gridColW = panelLeft + panelW * 0.95 - col4;
 
     dateTexts.forEach((t) => t.setX(col1));
-    roundTexts.forEach((t) => t.setX(col2));
+    rankTexts.forEach((t) => t.setX(col2));
     scoreTexts.forEach((t) => t.setX(col3));
     gridHeader.setX(col4);
 
@@ -267,13 +269,14 @@ export class HallScene extends Phaser.Scene {
           })
           .setOrigin(0.5);
       }
-      // Hard Mode runs get a skull just left of the score column.
-      if (entry.hard) {
+      // Runs that pressed on past the final rank get an infinity mark just
+      // left of the score column.
+      if (entry.endless) {
         this.add
-          .text(col3 - scoreW / 2 - 6, y, "☠", {
+          .text(col3 - scoreW / 2 - 6, y, "∞", {
             fontFamily: SERIF,
             fontSize: `${cellSize}px`,
-            color: CSS.red,
+            color: CSS.parchment,
           })
           .setOrigin(1, 0.5);
       }
@@ -351,7 +354,7 @@ export class HallScene extends Phaser.Scene {
     this.scene.launch("Analysis", {
       returnTo: "Hall",
       title: `Run Analysis · ${formatScore(entry.score)} pts`,
-      subtitle: `${date} · round ${entry.round}${entry.won ? " · victory" : ""}`,
+      subtitle: `${date} · rank ${entry.rank}-${entry.trial}${entry.won ? " · victory" : ""}`,
       dicePoints: toNumberPointMap(entry.dicePoints ?? {}),
       itemPoints: toNumberPointMap(entry.itemPoints ?? {}),
     });
@@ -474,14 +477,15 @@ export class HallScene extends Phaser.Scene {
         .text(lScore, y, formatScore(row.score), style)
         .setOrigin(1, 0.5);
       track.add(scoreText);
-      // Hard Mode runs get a skull just left of the (right-aligned) score.
-      if (row.hard) {
+      // Endless runs get an infinity mark just left of the (right-aligned)
+      // score.
+      if (row.endless) {
         track.add(
           this.add
-            .text(lScore - scoreText.width - 6, y, "☠", {
+            .text(lScore - scoreText.width - 6, y, "∞", {
               fontFamily: SERIF,
               fontSize: `${cellSize}px`,
-              color: CSS.red,
+              color: CSS.parchment,
             })
             .setOrigin(1, 0.5),
         );

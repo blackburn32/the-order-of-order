@@ -1,7 +1,9 @@
 // Aggregate raw RunRecords into the numbers the HTML report charts. Pure — takes
 // records in, returns plain data out, no I/O.
 
-import { WIN_ROUND, roundTarget } from "../config";
+import { TRIALS_PER_RANK, trialGoal, WIN_TRIAL } from "../config";
+import type { BossModifierId } from "../systems/Boss";
+import { BOSS_MODIFIERS } from "../systems/Boss";
 import { ITEMS, PriceBand, Rarity, ShopItemId } from "../systems/Items";
 import { sourceLabel } from "../systems/ItemPoints";
 import { RunRecord } from "./bot";
@@ -37,9 +39,9 @@ export interface ItemStat {
   totalBought: number; // copies bought across all runs
   avgPerRun: number;
   winRateIfBought: number; // win rate among runs that bought it
-  avgRoundIfBought: number; // mean round reached among runs that bought it
+  avgTrialIfBought: number; // mean trial reached among runs that bought it
   unlockRate: number; // (gated) fraction of runs whose play met the criterion
-  medianUnlockRound: number | null; // (gated) median round it was first met
+  medianUnlockTrial: number | null; // (gated) median trial it was first met
 }
 
 /** How many points a single item contributed, averaged over winning runs. */
@@ -52,12 +54,23 @@ export interface ItemPointStat {
   shareOfWinPoints: number; // fraction of all points earned across winning runs
 }
 
-export interface RoundCurvePoint {
-  round: number;
-  meanRoundScore: number;
-  medianRoundScore: number;
-  target: number;
-  runsReached: number; // runs that played this round
+export interface TrialCurvePoint {
+  trial: number;
+  meanTrialScore: number;
+  medianTrialScore: number;
+  goal: number;
+  runsReached: number; // runs that played this trial
+}
+
+/** How a single boss modifier fared: how often runs met it, and how often they
+ *  got past it. The signal for whether one modifier is out of line with its
+ *  peers. */
+export interface BossStat {
+  id: BossModifierId;
+  name: string;
+  faced: number;
+  cleared: number;
+  clearRate: number;
 }
 
 export interface StrategyStats {
@@ -65,13 +78,14 @@ export interface StrategyStats {
   runs: number;
   wins: number;
   winRate: number;
-  round: {
+  trial: {
     mean: number;
     median: number;
     min: number;
     max: number;
     histogram: number[];
-  }; // histogram[r-1]
+  }; // histogram[trial-1]
+  rank: { mean: number; median: number };
   score: {
     mean: number;
     median: number;
@@ -79,8 +93,12 @@ export interface StrategyStats {
     p90: number;
     max: number;
   };
+  /** The purse over a run: what it earned, what it spent, and what it was
+   *  holding at each trial clear. */
+  gold: { earned: number; spent: number; medianHeld: number };
+  bosses: BossStat[];
   finalDice: { mean: number; median: number; max: number };
-  roundCurve: RoundCurvePoint[];
+  trialCurve: TrialCurvePoint[];
   items: ItemStat[];
   winningRuns: number; // runs used for the point ranking below
   itemPointRanking: ItemPointStat[]; // points per item across winning runs, desc
@@ -88,11 +106,12 @@ export interface StrategyStats {
 
 export interface BatchStats {
   generatedAt: string;
-  winRound: number;
+  winTrial: number;
+  trialsPerRank: number;
   runsPerStrategy: number;
   seed: number;
   unlockPools: { name: string; gatedItems: number }[];
-  targets: { round: number; target: number }[];
+  goals: { trial: number; goal: number }[];
   strategies: StrategyStats[];
 }
 
@@ -102,9 +121,9 @@ function itemStats(records: RunRecord[]): ItemStat[] {
     let buyRuns = 0;
     let totalBought = 0;
     let winsIfBought = 0;
-    const roundsIfBought: number[] = [];
+    const trialsIfBought: number[] = [];
     let unlockRuns = 0;
-    const unlockRounds: number[] = [];
+    const unlockTrials: number[] = [];
 
     for (const r of records) {
       const n = r.purchases[def.id] ?? 0;
@@ -112,12 +131,12 @@ function itemStats(records: RunRecord[]): ItemStat[] {
         buyRuns += 1;
         totalBought += n;
         if (r.won) winsIfBought += 1;
-        roundsIfBought.push(r.roundReached);
+        trialsIfBought.push(r.trialReached);
       }
       const ur = r.unlocksAchieved[def.id];
       if (ur !== undefined) {
         unlockRuns += 1;
-        unlockRounds.push(ur);
+        unlockTrials.push(ur);
       }
     }
 
@@ -132,9 +151,9 @@ function itemStats(records: RunRecord[]): ItemStat[] {
       totalBought,
       avgPerRun: runs ? totalBought / runs : 0,
       winRateIfBought: buyRuns ? winsIfBought / buyRuns : 0,
-      avgRoundIfBought: mean(roundsIfBought),
+      avgTrialIfBought: mean(trialsIfBought),
       unlockRate: runs ? unlockRuns / runs : 0,
-      medianUnlockRound: unlockRounds.length ? median(unlockRounds) : null,
+      medianUnlockTrial: unlockTrials.length ? median(unlockTrials) : null,
     };
   });
 }
@@ -184,49 +203,74 @@ function strategyStats(name: string, records: RunRecord[]): StrategyStats {
   const runs = records.length;
   const wins = records.filter((r) => r.won).length;
   const ranking = itemPointRanking(records);
-  const rounds = records.map((r) => r.roundReached);
+  const trials = records.map((r) => r.trialReached);
+  const ranks = records.map((r) => r.rankReached);
   const scores = records.map((r) => r.totalScore).sort((a, b) => a - b);
   const dice = records.map((r) => r.finalDiceTotal);
 
-  const histogram = new Array(WIN_ROUND).fill(0);
-  for (const r of rounds)
-    histogram[Math.min(WIN_ROUND, Math.max(1, r)) - 1] += 1;
+  const histogram = new Array(WIN_TRIAL).fill(0);
+  for (const t of trials)
+    histogram[Math.min(WIN_TRIAL, Math.max(1, t)) - 1] += 1;
 
-  // Achieved-vs-target curve: peak score reached per round, across runs that
-  // played that round.
-  const byRound = new Map<number, number[]>();
+  // Achieved-vs-goal curve: peak score reached per trial, across runs that
+  // played that trial.
+  const byTrial = new Map<number, number[]>();
+  const goldHeld: number[] = [];
   for (const rec of records) {
     for (const p of rec.trajectory) {
-      const arr = byRound.get(p.round) ?? [];
-      arr.push(p.roundScore);
-      byRound.set(p.round, arr);
+      if (p.trial > WIN_TRIAL) continue; // endless tail would skew the curve
+      const arr = byTrial.get(p.trial) ?? [];
+      arr.push(p.trialScore);
+      byTrial.set(p.trial, arr);
+      goldHeld.push(p.goldAfter);
     }
   }
-  const roundCurve: RoundCurvePoint[] = [...byRound.keys()]
+  const trialCurve: TrialCurvePoint[] = [...byTrial.keys()]
     .sort((a, b) => a - b)
-    .map((round) => {
-      const peaks = byRound.get(round)!;
+    .map((trial) => {
+      const peaks = byTrial.get(trial)!;
       return {
-        round,
-        meanRoundScore: mean(peaks),
-        medianRoundScore: median(peaks),
-        target: Number(roundTarget(round)), // sim reporting is Number
+        trial,
+        meanTrialScore: mean(peaks),
+        medianTrialScore: median(peaks),
+        goal: Number(trialGoal(trial)), // sim reporting is Number
         runsReached: peaks.length,
       };
     });
+
+  const bossTally = new Map<string, { faced: number; cleared: number }>();
+  for (const rec of records) {
+    for (const [id, tally] of Object.entries(rec.bossesFaced)) {
+      const acc = bossTally.get(id) ?? { faced: 0, cleared: 0 };
+      acc.faced += tally!.faced;
+      acc.cleared += tally!.cleared;
+      bossTally.set(id, acc);
+    }
+  }
+  const bosses: BossStat[] = BOSS_MODIFIERS.map((boss) => {
+    const tally = bossTally.get(boss.id) ?? { faced: 0, cleared: 0 };
+    return {
+      id: boss.id,
+      name: boss.name,
+      faced: tally.faced,
+      cleared: tally.cleared,
+      clearRate: tally.faced ? tally.cleared / tally.faced : 0,
+    };
+  });
 
   return {
     name,
     runs,
     wins,
     winRate: runs ? wins / runs : 0,
-    round: {
-      mean: mean(rounds),
-      median: median(rounds),
-      min: rounds.length ? Math.min(...rounds) : 0,
-      max: rounds.length ? Math.max(...rounds) : 0,
+    trial: {
+      mean: mean(trials),
+      median: median(trials),
+      min: trials.length ? Math.min(...trials) : 0,
+      max: trials.length ? Math.max(...trials) : 0,
       histogram,
     },
+    rank: { mean: mean(ranks), median: median(ranks) },
     score: {
       mean: mean(scores),
       median: median(scores),
@@ -234,12 +278,18 @@ function strategyStats(name: string, records: RunRecord[]): StrategyStats {
       p90: percentile(scores, 90),
       max: scores.length ? scores[scores.length - 1] : 0,
     },
+    gold: {
+      earned: mean(records.map((r) => r.goldEarned)),
+      spent: mean(records.map((r) => r.goldSpent)),
+      medianHeld: median(goldHeld),
+    },
+    bosses,
     finalDice: {
       mean: mean(dice),
       median: median(dice),
       max: dice.length ? Math.max(...dice) : 0,
     },
-    roundCurve,
+    trialCurve,
     items: itemStats(records),
     winningRuns: ranking.winningRuns,
     itemPointRanking: ranking.ranking,
@@ -255,17 +305,18 @@ export function aggregate(
 ): BatchStats {
   const names = Object.keys(byStrategy);
   const runsPerStrategy = names.length ? byStrategy[names[0]].length : 0;
-  const targets = Array.from({ length: WIN_ROUND }, (_, i) => ({
-    round: i + 1,
-    target: Number(roundTarget(i + 1)),
+  const goals = Array.from({ length: WIN_TRIAL }, (_, i) => ({
+    trial: i + 1,
+    goal: Number(trialGoal(i + 1)),
   }));
   return {
     generatedAt: new Date().toISOString(),
-    winRound: WIN_ROUND,
+    winTrial: WIN_TRIAL,
+    trialsPerRank: TRIALS_PER_RANK,
     runsPerStrategy,
     seed: meta.seed,
     unlockPools: meta.unlockPools,
-    targets,
+    goals,
     strategies: names.map((n) => strategyStats(n, byStrategy[n])),
   };
 }

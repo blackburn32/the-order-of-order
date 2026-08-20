@@ -23,7 +23,7 @@ import { combinePointsByItem, sourceLabel, STARTER_SOURCE } from "./ItemPoints";
 import {
   buildLeaderboardSubmissionBody,
   normalizeLeaderboardScore,
-  scoreToWireOrdinal,
+  runToWireOrdinal,
 } from "./LeaderboardWire";
 
 const API = "https://api.lootlocker.io/game";
@@ -48,11 +48,13 @@ export interface GlobalBreakdownEntry {
 }
 
 export interface GlobalScoreRow {
-  rank: number;
-  score: bigint;
+  rank: number; // position on the leaderboard
+  runRank: number; // the rank the run reached — what the board is sorted by
+  trial: number; // trial within that rank (1..3)
+  endless: boolean;
+  score: bigint; // total points, the tiebreak
   name: string; // initials (from metadata), uppercased; may be ''
   isYou: boolean;
-  hard?: boolean; // run was played on Hard Mode (from metadata)
   breakdown?: GlobalBreakdownEntry[]; // top items by points, when metadata carried them
 }
 
@@ -61,8 +63,10 @@ export type PointMap = Record<string, number>;
 
 export interface PendingSubmission {
   score: bigint;
+  rank: number;
+  trial: number;
   won: boolean;
-  hard: boolean;
+  endless: boolean;
   dicePoints: PointMap;
   itemPoints: PointMap;
 }
@@ -207,30 +211,31 @@ async function authed(
 // --- Public API -------------------------------------------------------------
 
 // LootLocker's generic-leaderboard `metadata` is a single string with a length
-// cap (~256 chars). We pack the display initials plus a compact per-item points
-// breakdown into a JSON envelope { i, s, b }. `s` is the exact decimal score;
-// `b` is an array of [code, permille]
-// for the top items by points, where `code` is the item's index in ITEMS (or 's'
-// for the starter die) and `permille` is that item's share of the run's total
-// (×1000). Absolute points are reconstructed on read as share × the row's score.
+// cap (~256 chars). We pack the display initials, the run's ladder position and
+// a compact per-item points breakdown into a JSON envelope { i, r, t, e, s, b }.
+// `r`/`t` are the rank and trial reached, `e` marks an endless run, `s` is the
+// exact decimal score, and `b` is an array of [code, permille] for the top items
+// by points, where `code` is the item's ID and `permille` is that item's share
+// of the run's total (×1000). Absolute points are reconstructed on read as
+// share × the row's score.
+//
+// Codes are item IDs rather than indices into ITEMS. Indices made the array
+// append-only — reordering or removing an item silently rewrote the history of
+// every stored row — and the ids cost only a few characters.
 const META_MAX = 250;
 const MAX_BREAKDOWN_ITEMS = 14;
 
-/** Stable compact code for a point-source key (item id or starter sentinel).
- *  Uses the item's index in ITEMS; items are only ever appended, so existing
- *  codes stay valid. Returns null for an unknown id. */
+/** Compact code for a point-source key: the item's own id, or `*` for the
+ *  starter die. Returns null for an id no longer in the roster. */
 function codeForSource(source: string): string | null {
-  if (source === STARTER_SOURCE) return "s";
-  const i = ITEMS.findIndex((it) => it.id === source);
-  return i >= 0 ? String(i) : null;
+  if (source === STARTER_SOURCE) return "*";
+  return ITEMS.some((it) => it.id === source) ? source : null;
 }
 
 function sourceForCode(code: unknown): string | null {
-  if (code === "s") return STARTER_SOURCE;
-  if (typeof code === "string" && /^\d+$/.test(code))
-    return ITEMS[Number(code)]?.id ?? null;
-  if (typeof code === "number") return ITEMS[code]?.id ?? null;
-  return null;
+  if (code === "*") return STARTER_SOURCE;
+  if (typeof code !== "string") return null;
+  return ITEMS.some((it) => it.id === code) ? code : null;
 }
 
 /** Pack initials + a top-N points breakdown into the one metadata string. Packs
@@ -240,7 +245,7 @@ function encodeMeta(
   initials: string,
   dicePoints: PointMap,
   itemPoints: PointMap,
-  hard: boolean,
+  run: { rank: number; trial: number; endless: boolean },
   score: bigint,
 ): string {
   const entries = combinePointsByItem(dicePoints, itemPoints).filter(
@@ -253,9 +258,13 @@ function encodeMeta(
     const permille = total > 0 ? Math.round((e.points / total) * 1000) : 0;
     if (code !== null && permille > 0) coded.push([code, permille]);
   }
-  // `h: 1` marks a Hard Mode run (1 char, always kept even when the breakdown is
-  // dropped to fit the length cap). Omitted entirely on normal runs.
-  const hardField = hard ? { h: 1 } : {};
+  // The ladder position is what the board sorts by, so it is never dropped to
+  // fit the length cap — the breakdown is.
+  const runField = {
+    r: run.rank,
+    t: run.trial,
+    ...(run.endless ? { e: 1 } : {}),
+  };
   // LootLocker's response is parsed through JavaScript Number, so it cannot
   // reproduce large integers exactly. Keep the canonical decimal score in
   // metadata for lossless display while the numeric field remains the value the
@@ -264,69 +273,74 @@ function encodeMeta(
   for (let n = Math.min(coded.length, MAX_BREAKDOWN_ITEMS); n > 0; n--) {
     const s = JSON.stringify({
       i: initials,
-      ...hardField,
+      ...runField,
       ...scoreField,
       b: coded.slice(0, n),
     });
     if (s.length <= META_MAX) return s;
   }
-  return JSON.stringify({ i: initials, ...hardField, ...scoreField });
+  return JSON.stringify({ i: initials, ...runField, ...scoreField });
 }
 
-/** Decode initials and (when present) the points breakdown from a metadata
- *  string, tolerating legacy rows where metadata was the bare initials or an
- *  older `{ i, p }` purchases envelope (whose extra key is simply ignored). */
+/** Decode a row's metadata. Returns null for anything that does not carry the
+ *  current envelope — rows submitted before the ranks/trials/gold restructure
+ *  measured a different game and cannot be ranked against these, so they are
+ *  dropped from the board rather than shown with invented values. */
 function decodeMeta(
   meta: string | undefined,
   wireScore: number,
 ): {
   score: bigint;
   initials: string;
-  hard: boolean;
+  runRank: number;
+  trial: number;
+  endless: boolean;
   breakdown?: GlobalBreakdownEntry[];
-} {
-  const fallbackScore = wireScoreToBigInt(wireScore);
-  if (!meta) return { score: fallbackScore, initials: "", hard: false };
+} | null {
+  if (!meta) return null;
+  let parsed: {
+    i?: unknown;
+    r?: unknown;
+    t?: unknown;
+    e?: unknown;
+    s?: unknown;
+    b?: unknown;
+  };
   try {
-    const parsed = JSON.parse(meta) as {
-      i?: unknown;
-      h?: unknown;
-      s?: unknown;
-      b?: unknown;
-    };
-    const score =
-      typeof parsed.s === "string" && /^\d+$/.test(parsed.s)
-        ? BigInt(parsed.s)
-        : fallbackScore;
-    const initials = typeof parsed.i === "string" ? parsed.i.toUpperCase() : "";
-    const hard = parsed.h === 1 || parsed.h === true;
-    let breakdown: GlobalBreakdownEntry[] | undefined;
-    const approximateScore = Number(score);
-    if (Array.isArray(parsed.b)) {
-      breakdown = parsed.b
-        .map((pair) => {
-          if (!Array.isArray(pair)) return null;
-          const id = sourceForCode(pair[0]);
-          const permille = Number(pair[1]);
-          if (id === null || !Number.isFinite(permille)) return null;
-          return {
-            id,
-            label: sourceLabel(id),
-            points: (permille / 1000) * approximateScore,
-          };
-        })
-        .filter((e): e is GlobalBreakdownEntry => e !== null);
-      if (breakdown.length === 0) breakdown = undefined;
-    }
-    return { score, initials, hard, breakdown };
+    parsed = JSON.parse(meta);
   } catch {
-    // legacy row: metadata was the bare initials string
-    return {
-      score: fallbackScore,
-      initials: meta.toUpperCase(),
-      hard: false,
-    };
+    return null; // legacy row: metadata was the bare initials string
   }
+  const runRank = Number(parsed.r);
+  if (!Number.isFinite(runRank) || runRank <= 0) return null;
+
+  const score =
+    typeof parsed.s === "string" && /^\d+$/.test(parsed.s)
+      ? BigInt(parsed.s)
+      : wireScoreToBigInt(wireScore);
+  const initials = typeof parsed.i === "string" ? parsed.i.toUpperCase() : "";
+  const trial = Number.isFinite(Number(parsed.t)) ? Number(parsed.t) : 1;
+  const endless = parsed.e === 1 || parsed.e === true;
+
+  let breakdown: GlobalBreakdownEntry[] | undefined;
+  const approximateScore = Number(score);
+  if (Array.isArray(parsed.b)) {
+    breakdown = parsed.b
+      .map((pair) => {
+        if (!Array.isArray(pair)) return null;
+        const id = sourceForCode(pair[0]);
+        const permille = Number(pair[1]);
+        if (id === null || !Number.isFinite(permille)) return null;
+        return {
+          id,
+          label: sourceLabel(id),
+          points: (permille / 1000) * approximateScore,
+        };
+      })
+      .filter((e): e is GlobalBreakdownEntry => e !== null);
+    if (breakdown.length === 0) breakdown = undefined;
+  }
+  return { score, initials, runRank, trial, endless, breakdown };
 }
 
 function wireScoreToBigInt(score: number): bigint {
@@ -341,7 +355,11 @@ export async function submitScore(
   initials: string,
   dicePoints: PointMap = {},
   itemPoints: PointMap = {},
-  hard = false,
+  run: { rank: number; trial: number; endless: boolean } = {
+    rank: 1,
+    trial: 1,
+    endless: false,
+  },
 ): Promise<boolean> {
   if (!globalScoresEnabled()) return false;
   const exactScore = normalizeLeaderboardScore(score);
@@ -349,15 +367,14 @@ export async function submitScore(
     normalizeInitials(initials),
     dicePoints,
     itemPoints,
-    hard,
+    run,
     exactScore,
   );
-  // LootLocker ranks by a signed int64 `score` field, which real scores now
-  // overflow (target 1e35). Submit an order-preserving projection into that
-  // field instead — existing rows (all below ~1.93e18) pass through unchanged,
-  // larger scores compress into the headroom above them — while the exact value
-  // stays in metadata `s` for lossless display (see encodeMeta / decodeMeta).
-  const wireScore = scoreToWireOrdinal(exactScore);
+  // LootLocker ranks by one signed int64 `score` field, so the run's rank and
+  // its point total are packed into it together — rank in the high digits,
+  // compressed points in the low ones — while the exact total stays in metadata
+  // `s` for lossless display (see encodeMeta / decodeMeta).
+  const wireScore = runToWireOrdinal(run.rank, exactScore);
   // Do not hand the score to JSON.stringify: once a Number reaches 1e21 it
   // emits exponent notation (`1e+21`), which LootLocker's integer validator
   // rejects, and converting bigint to Number already loses low digits. The
@@ -389,7 +406,11 @@ export async function fetchTopScores(
   try {
     const data = (await res.json()) as { items?: LLEntry[] | null };
     const me = getPlayerId();
-    return (data.items ?? []).map((e) => toRow(e, me));
+    // Rows from before the restructure decode to null and are dropped: they
+    // measured a different game and have no rank to sort by.
+    return (data.items ?? [])
+      .map((e) => toRow(e, me))
+      .filter((row): row is GlobalScoreRow => row !== null);
   } catch {
     return null;
   }
@@ -403,14 +424,17 @@ interface LLEntry {
   member_id?: string;
 }
 
-function toRow(e: LLEntry, me: string): GlobalScoreRow {
-  const { score, initials, hard, breakdown } = decodeMeta(e.metadata, e.score);
+function toRow(e: LLEntry, me: string): GlobalScoreRow | null {
+  const meta = decodeMeta(e.metadata, e.score);
+  if (!meta) return null;
   return {
     rank: e.rank,
-    score,
-    name: initials,
+    runRank: meta.runRank,
+    trial: meta.trial,
+    endless: meta.endless,
+    score: meta.score,
+    name: meta.initials,
     isYou: !!e.member_id && e.member_id === me,
-    hard,
-    breakdown,
+    breakdown: meta.breakdown,
   };
 }

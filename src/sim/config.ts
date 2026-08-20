@@ -47,10 +47,6 @@ export interface SimConfig {
 
   /** Safety cap on total rolls per run, in case a build could loop forever. */
   maxRollsPerRun: number;
-
-  /** Simulate on Hard Mode: higher survival targets + pricier shop. Off by
-   *  default so the main balance batch measures normal difficulty. */
-  hardMode?: boolean;
 }
 
 export const DEFAULT_CONFIG: SimConfig = {
@@ -58,5 +54,4 @@ export const DEFAULT_CONFIG: SimConfig = {
   runs: 1000,
   seed: 1,
   maxRollsPerRun: 100_000,
-  hardMode: false,
 };

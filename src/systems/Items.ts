@@ -1,5 +1,6 @@
-import { MAX_EXTRA_NUMBERS, survivalTarget, WIN_ROUND } from "../config";
+import { MAX_EXTRA_NUMBERS, WIN_RANK, rankOf } from "../config";
 import { RunState } from "../state/RunState";
+import { bossBlocksGrowth, goalFor } from "./Boss";
 import { DieOpts, DieSides } from "./Dice";
 
 export type ShopItemId =
@@ -47,11 +48,29 @@ export type ShopItemId =
   | "coupon_book"
   | "dealers_bell"
   | "shopping_cart"
-  | "brick_mold";
+  | "brick_mold"
+  | "tithe_bowl"
+  | "lucky_coin"
+  | "counting_house"
+  | "prospector"
+  | "reliquary"
+  | "pawnbroker";
 
 export type Rarity = "common" | "uncommon" | "rare";
 export type PriceBand = "free" | "low" | "standard" | "strong" | "build";
 export type StackPricing = "none" | "linear" | "explosive";
+
+/** The build archetype an item belongs to. Purely descriptive — nothing in the
+ *  live game branches on a theme. It exists so the balance simulation can run
+ *  bots that buy toward a coherent build instead of by price alone, which is
+ *  what makes its win-rate numbers resemble how the game is actually played.
+ *  See ITEM_THEMES below. */
+export type ItemTheme =
+  | "swarm" // grow the grid
+  | "multiplier" // compound the run multiplier
+  | "precision" // make each die score more often
+  | "economy" // generate and stretch gold
+  | "tempo"; // more rolls, and safety nets
 
 /** Boolean run flags an item can switch on (Snake Eyes, Ledger, etc.). */
 type RunFlag =
@@ -68,7 +87,10 @@ type RunFlag =
   | "hasInsurancePolicy"
   | "hasCouponBook"
   | "hasDealersBell"
-  | "hasShoppingCart";
+  | "hasShoppingCart"
+  | "hasProspector"
+  | "hasReliquary"
+  | "hasPawnbroker";
 
 /** Integer run counters a repeatable item bumps on each purchase — its effect
  *  compounds with the count (see the stacking passives on RunState). */
@@ -84,7 +106,10 @@ type RunCounter =
   | "reserve"
   | "prism"
   | "lastCall"
-  | "brickMold";
+  | "brickMold"
+  | "titheBowl"
+  | "luckyCoin"
+  | "countingHouse";
 
 /**
  * A persistent-unlock condition on an item. Items without one are available
@@ -94,14 +119,16 @@ type RunCounter =
  */
 export type UnlockCriterion =
   | { kind: "diceInGrid"; count: number } // more than `count` dice in the grid at once
-  | { kind: "winGame" } // clear the final round
-  | { kind: "reachRound"; round: number } // reach at least this round
-  | { kind: "scoreInRound"; points: number } // score at least this many points in one round
+  | { kind: "winGame" } // clear the final rank
+  | { kind: "reachRank"; rank: number } // reach at least this rank
+  | { kind: "scoreInRound"; points: number } // score at least this many points in one trial
   | { kind: "diceOfSize"; sides: DieSides; count: number } // hold `count`+ dice of this size at once
   | { kind: "scoreStreak"; count: number } // score on `count` rolls in a row (one run)
   | { kind: "sameFaceCount"; count: number } // show one face on `count`+ dice in a single roll
-  | { kind: "clutchClear" } // cross the target on a round's final roll
-  | { kind: "scoreVsTarget"; factor: number }; // reach `factor`× the current round's target
+  | { kind: "clutchClear" } // cross the goal on a trial's final roll
+  | { kind: "scoreVsTarget"; factor: number } // reach `factor`× the current trial's goal
+  | { kind: "clearBosses"; count: number } // clear `count` Boss Trials in one run
+  | { kind: "goldHeld"; amount: number }; // hold `amount` gold at once
 
 /**
  * The mutations an item can apply to the run. Items are composed from these
@@ -184,8 +211,8 @@ const incCounter = (counter: RunCounter): Effect => ({
 export interface ItemDef {
   id: ShopItemId;
   name: string;
-  /** Target-relative price tier. The concrete point cost is resolved by the
-   *  shop from the current round, checkpoint, and copies already owned. */
+  /** Gold price tier. The concrete cost is resolved by the shop from the band,
+   *  the copies already owned, and that visit's market adjustment. */
   priceBand: PriceBand;
   /** Repeat-purchase surcharge. Unique/free items use `none`. */
   stackPricing?: StackPricing;
@@ -291,7 +318,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
-    desc: "Add two rolls to this round only.",
+    desc: "Add two rolls to this trial only.",
     effects: [bonusRollThisRound(), bonusRollThisRound()],
   },
   {
@@ -327,7 +354,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
-    desc: "Add one permanent roll to every round.",
+    desc: "Add one permanent roll to every trial.",
     effects: [bonusRollPerRound()],
   },
   {
@@ -367,7 +394,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     rarity: "uncommon",
     unique: true,
-    desc: "The shop offers 5 cards from now on.",
+    desc: "Shops offer 5 loose cards, and booster packs reveal 5 choices.",
     effects: [setFlag("ownedLedger")],
   },
   {
@@ -442,7 +469,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     rarity: "rare",
     unique: true,
-    desc: "Keep 33% of your points (rounded down) when a round clears.",
+    desc: "Interest pays out to 10 gold per trial instead of 5.",
     effects: [setFlag("hasVault")],
   },
   {
@@ -509,7 +536,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     rarity: "rare",
     unique: true,
-    desc: "The first two and final two rolls of every round earn double points.",
+    desc: "The first two and final two rolls of every trial earn double points.",
     effects: [setFlag("hasHourglass")],
   },
   {
@@ -518,7 +545,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     rarity: "rare",
     unique: true,
-    desc: "If a round ends at 75% of its target, clear it anyway and destroy this item.",
+    desc: "If a trial ends at 75% of its goal, clear it anyway and destroy this item.",
     effects: [setFlag("hasInsurancePolicy")],
   },
   {
@@ -536,7 +563,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     rarity: "rare",
     unique: true,
-    desc: "Once per shop, reroll the entire store.",
+    desc: "The first reroll in every shop is free.",
     effects: [setFlag("hasDealersBell")],
   },
   {
@@ -545,7 +572,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     rarity: "rare",
     unique: true,
-    desc: "Purchase one extra item from the store each visit.",
+    desc: "Every item in the shop costs 15% less gold.",
     effects: [setFlag("hasShoppingCart")],
   },
   {
@@ -566,7 +593,7 @@ export const ITEMS: ItemDef[] = [
     stackPricing: "linear",
     rarity: "common",
     desc: "On every roll, gain 1 point for every 3 dice you own.",
-    unlock: { kind: "reachRound", round: 6 },
+    unlock: { kind: "reachRank", rank: 2 },
     effects: [incCounter("dividend")],
   },
   {
@@ -596,7 +623,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "uncommon",
-    desc: "At the start of each round, add 5 copies of your smallest die.",
+    desc: "At the start of each trial, add 5 copies of your smallest die.",
     unlock: { kind: "diceInGrid", count: 29 },
     effects: [incCounter("foundry")],
   },
@@ -616,7 +643,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "uncommon",
-    desc: "Points earned on the final roll of each round are quadrupled.",
+    desc: "Points earned on the final roll of each trial are quadrupled.",
     unlock: { kind: "clutchClear" },
     effects: [incCounter("lastCall")],
   },
@@ -627,7 +654,7 @@ export const ITEMS: ItemDef[] = [
     stackPricing: "explosive",
     rarity: "rare",
     desc: "Whenever a die scores, add a copy of that die to the grid (max +20 dice per roll).",
-    unlock: { kind: "reachRound", round: 10 },
+    unlock: { kind: "reachRank", rank: 4 },
     effects: [incCounter("genesis")],
   },
   {
@@ -636,7 +663,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     stackPricing: "linear",
     rarity: "rare",
-    desc: "Keep 75% of your points (rounded down) when a round clears.",
+    desc: "Each roll left in hand when a trial clears pays 1 extra gold.",
     unlock: { kind: "scoreVsTarget", factor: 2 },
     effects: [incCounter("reserve")],
   },
@@ -650,6 +677,67 @@ export const ITEMS: ItemDef[] = [
     unlock: { kind: "winGame" },
     effects: [incCounter("prism")],
   },
+  // --- Gold items ----------------------------------------------------------
+  // These pay in gold rather than points. They do nothing for the trial in
+  // front of you and everything for the shop after it, which is the trade the
+  // whole economy is built on.
+  {
+    id: "tithe_bowl",
+    name: "Tithe Bowl",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    desc: "Gain 1 gold on every roll that scores nothing.",
+    effects: [incCounter("titheBowl")],
+  },
+  {
+    id: "lucky_coin",
+    name: "Lucky Coin",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    desc: "Each roll, a 10% chance to turn up 1 gold.",
+    effects: [incCounter("luckyCoin")],
+  },
+  {
+    id: "counting_house",
+    name: "Counting House",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: "Gain 1 extra gold every time you clear a trial.",
+    effects: [incCounter("countingHouse")],
+  },
+  {
+    id: "prospector",
+    name: "Prospector",
+    priceBand: "standard",
+    rarity: "uncommon",
+    unique: true,
+    desc: "Clearing a trial pays 1 gold for every 25 dice you hold, up to 5.",
+    unlock: { kind: "goldHeld", amount: 25 },
+    effects: [setFlag("hasProspector")],
+  },
+  {
+    id: "reliquary",
+    name: "Reliquary",
+    priceBand: "strong",
+    rarity: "rare",
+    unique: true,
+    desc: "Gain 3 extra gold every time you clear a Boss Trial.",
+    unlock: { kind: "clearBosses", count: 3 },
+    effects: [setFlag("hasReliquary")],
+  },
+  {
+    id: "pawnbroker",
+    name: "Pawnbroker",
+    priceBand: "build",
+    rarity: "rare",
+    unique: true,
+    desc: "Every item in the shop costs 2 less gold.",
+    unlock: { kind: "goldHeld", amount: 40 },
+    effects: [setFlag("hasPawnbroker")],
+  },
 ];
 
 /** Human-readable hint for a locked item's unlock condition (shown in the
@@ -660,10 +748,10 @@ export function describeCriterion(c: UnlockCriterion): string {
       return `Locked — hold over ${c.count} dice in one run`;
     case "winGame":
       return "Locked — win a run";
-    case "reachRound":
-      return `Locked — reach round ${c.round}`;
+    case "reachRank":
+      return `Locked — reach rank ${c.rank}`;
     case "scoreInRound":
-      return `Locked — score ${c.points} in a single round`;
+      return `Locked — score ${c.points} in a single trial`;
     case "diceOfSize":
       return `Locked — hold ${c.count} d${c.sides} at once`;
     case "scoreStreak":
@@ -671,9 +759,13 @@ export function describeCriterion(c: UnlockCriterion): string {
     case "sameFaceCount":
       return `Locked — show the same number on ${c.count} dice in one roll`;
     case "clutchClear":
-      return "Locked — clear a round on its final roll";
+      return "Locked — clear a trial on its final roll";
     case "scoreVsTarget":
-      return `Locked — reach ${c.factor}× the round's target score`;
+      return `Locked — reach ${c.factor}× a trial's goal`;
+    case "clearBosses":
+      return `Locked — clear ${c.count} Boss Trials in one run`;
+    case "goldHeld":
+      return `Locked — hold ${c.amount} gold at once`;
   }
 }
 
@@ -687,10 +779,10 @@ export function describeUnlockAction(c: UnlockCriterion): string {
       return `Held over ${c.count} dice in one run`;
     case "winGame":
       return "Won a run";
-    case "reachRound":
-      return `Reached round ${c.round}`;
+    case "reachRank":
+      return `Reached rank ${c.rank}`;
     case "scoreInRound":
-      return `Scored ${c.points} in a single round`;
+      return `Scored ${c.points} in a single trial`;
     case "diceOfSize":
       return `Held ${c.count} d${c.sides} at once`;
     case "scoreStreak":
@@ -698,24 +790,28 @@ export function describeUnlockAction(c: UnlockCriterion): string {
     case "sameFaceCount":
       return `Showed the same number on ${c.count} dice in one roll`;
     case "clutchClear":
-      return "Cleared a round on its final roll";
+      return "Cleared a trial on its final roll";
     case "scoreVsTarget":
-      return `Reached ${c.factor}× the round's target score`;
+      return `Reached ${c.factor}× a trial's goal`;
+    case "clearBosses":
+      return `Cleared ${c.count} Boss Trials in one run`;
+    case "goldHeld":
+      return `Held ${c.amount} gold at once`;
   }
 }
 
-/** Whether the current run satisfies an unlock criterion. `roundScore` is the
- *  peak points reached within the current round (see RunState). */
+/** Whether the current run satisfies an unlock criterion. `trialScore` is the
+ *  peak points reached within the current trial (see RunState). */
 export function meetsCriterion(c: UnlockCriterion, state: RunState): boolean {
   switch (c.kind) {
     case "diceInGrid":
       return state.dice.length > c.count;
     case "winGame":
-      return state.round >= WIN_ROUND;
-    case "reachRound":
-      return state.round >= c.round;
+      return rankOf(state.trial) >= WIN_RANK;
+    case "reachRank":
+      return rankOf(state.trial) >= c.rank;
     case "scoreInRound":
-      return state.roundScore >= BigInt(c.points);
+      return state.trialScore >= BigInt(c.points);
     case "diceOfSize":
       return state.dice.countOfSize(c.sides) >= c.count;
     case "scoreStreak":
@@ -726,10 +822,11 @@ export function meetsCriterion(c: UnlockCriterion, state: RunState): boolean {
     case "clutchClear":
       return state.clutchClear;
     case "scoreVsTarget":
-      return (
-        state.score >=
-        BigInt(c.factor) * survivalTarget(state.round, state.hardMode)
-      );
+      return state.score >= BigInt(c.factor) * goalFor(state);
+    case "clearBosses":
+      return state.bossesCleared >= c.count;
+    case "goldHeld":
+      return state.peakGold >= c.amount;
   }
 }
 
@@ -858,16 +955,91 @@ export function applyEffect(
 }
 
 /**
- * Apply the round-start passives (Foundry dice) to the run and return the number
+ * Apply the trial-start passives (Foundry dice) to the run and return the number
  * of dice added, so the caller can decide whether to re-lay the grid. Called
- * once as each round begins (see GameScene.afterRoll). Pocket Change and
+ * once as each trial begins (see engine.resolveTrialEnd). Pocket Change and
  * Dividend are not here — they pay out every roll, so they live in scoreRoll.
  */
-export function applyRoundStart(state: RunState): number {
+export function applyTrialStart(state: RunState): number {
+  // The Drought shuts off every source of new dice for its Boss Trial, Foundry
+  // included — otherwise a Foundry build would walk straight through it.
+  if (bossBlocksGrowth(state)) return 0;
   // Foundry: add copies of the smallest die per copy owned, scaled to the grid
   // (5% of it, at least 5) so the payout keeps pace late game instead of a flat
   // 5. The pool no-ops when Foundry isn't owned or the grid is empty.
   if (state.foundry <= 0) return 0;
   const perCopy = Math.max(5, Math.floor(state.dice.length * 0.05));
   return state.dice.foundry(perCopy * state.foundry);
+}
+
+/**
+ * Which build archetype each item serves. A total Record rather than an
+ * optional field on ItemDef: adding an id to ShopItemId without theming it is a
+ * compile error, so the balance simulation's themed bots can never silently
+ * drift out of step with the roster. Items may belong to more than one theme,
+ * and a few genuinely belong to none.
+ */
+export const ITEM_THEMES: Record<ShopItemId, ItemTheme[]> = {
+  extra_die: ["swarm"],
+  extra_dice: ["swarm"],
+  chip: ["swarm", "precision"],
+  spike: ["swarm", "precision"],
+  twin: ["swarm"],
+  mult2: ["swarm"],
+  mult3: ["swarm"],
+  brick_mold: ["swarm"],
+  foundry: ["swarm"],
+  genesis: ["swarm"],
+  double_the_fun: ["swarm"],
+  refinement: ["swarm", "precision"],
+
+  amplifier: ["multiplier"],
+  prism: ["multiplier"],
+  last_call: ["multiplier"],
+  parade: ["multiplier"],
+  menagerie: ["multiplier"],
+  uniform: ["multiplier"],
+  hourglass: ["multiplier", "tempo"],
+  rollplayer: ["multiplier", "precision"],
+  centurion: ["multiplier", "precision"],
+
+  shrink: ["precision"],
+  whetstone: ["precision"],
+  grindstone: ["precision"],
+  loaded_die: ["precision"],
+  wild_face: ["precision"],
+  royal_seal: ["precision"],
+  extra_number: ["precision"],
+  extra_point: ["precision"],
+  keen_edge: ["precision"],
+  snake_eyes: ["precision"],
+  jackpot: ["precision"],
+  lucky_seven: ["precision"],
+  pocket_change: ["precision"],
+  dividend: ["precision"],
+  momentum: ["precision"],
+
+  tithe_bowl: ["economy"],
+  lucky_coin: ["economy"],
+  counting_house: ["economy"],
+  prospector: ["economy"],
+  reliquary: ["economy"],
+  pawnbroker: ["economy"],
+  vault: ["economy"],
+  reserve: ["economy", "tempo"],
+  coupon_book: ["economy"],
+  shopping_cart: ["economy"],
+  ledger: ["economy"],
+  dealers_bell: ["economy"],
+
+  overtime: ["tempo"],
+  metronome: ["tempo"],
+  insurance_policy: ["tempo"],
+};
+
+/** Every item that serves `theme`, in roster order. */
+export function itemsInTheme(theme: ItemTheme): ShopItemId[] {
+  return ITEMS.filter((it) => ITEM_THEMES[it.id].includes(theme)).map(
+    (it) => it.id,
+  );
 }

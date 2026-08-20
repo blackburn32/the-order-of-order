@@ -4,101 +4,201 @@
 // orientation — scenes lay themselves out from `scene.scale.width/height`,
 // there is no fixed design resolution.
 
-export const ROLLS_PER_ROUND = 20;
-// Rolls that trigger a shop mid-round. 25 is only reachable with bonus rolls
-// (Metronome/Overtime); when a round's final roll lands on 25 the shop opens
-// first and the round end resolves on return to GameScene.
-export const SHOP_ROLLS = [5, 15, 25];
+// ---- Progression shape -----------------------------------------------------
+//
+// A run is a ladder of TRIALS grouped into RANKS. Each rank is three trials —
+// the Lesser Trial, the Greater Trial, and the Boss Trial — with a shop between
+// every one of them. Clearing a rank's Boss Trial raises the rank and returns
+// the player to a Lesser Trial with all three goals raised.
+//
+// `RunState.trial` is a single 1-based counter that runs straight through the
+// whole ladder (1..15 for ranks 1-5, then 16+ in endless). Rank and
+// trial-within-rank are derived from it rather than stored, so every consumer
+// that just wants "how far did they get" — the Hall, the leaderboard, unlock
+// criteria, the sim's trajectories — keeps working off one number.
 
-// Clearing this many rounds wins the game.
-export const WIN_ROUND = 10;
+export const TRIALS_PER_RANK = 3;
 
-// Round survival targets for the 10-round game, hand-authored per round (index =
-// round-1). Designed against the balance simulation (src/sim) to a deliberate
+/** Clearing this rank's Boss Trial wins the game. Past it the run only
+ *  continues if the player chose to go endless. */
+export const WIN_RANK = 5;
+export const WIN_TRIAL = WIN_RANK * TRIALS_PER_RANK; // 15
+
+/** Rolls granted by each trial in a rank, indexed by `trialInRank() - 1`. The
+ *  Lesser Trial is deliberately the shortest: it is a sprint against a small
+ *  goal, not a gentler version of the same thing. */
+export const ROLLS_PER_TRIAL = [7, 15, 20] as const;
+
+/**
+ * Dice a run opens with.
+ *
+ * A single d6 makes the opening trials meaningfully risky: it has a 28% chance
+ * to miss every scoring face across the Lesser Trial's seven rolls. That early
+ * variance is intentional rather than protected against.
+ */
+export const STARTING_DICE = 1;
+
+export const TRIAL_NAMES = [
+  "Lesser Trial",
+  "Greater Trial",
+  "Boss Trial",
+] as const;
+
+/** 1-based rank containing `trial`. */
+export function rankOf(trial: number): number {
+  return Math.floor((trial - 1) / TRIALS_PER_RANK) + 1;
+}
+
+/** 1-based position of `trial` within its rank (1 = Lesser, 3 = Boss). */
+export function trialInRank(trial: number): number {
+  return ((trial - 1) % TRIALS_PER_RANK) + 1;
+}
+
+export function isBossTrial(trial: number): boolean {
+  return trialInRank(trial) === TRIALS_PER_RANK;
+}
+
+export function trialName(trial: number): string {
+  return TRIAL_NAMES[trialInRank(trial) - 1];
+}
+
+/** Base rolls for a trial, before Metronome/Overtime and any boss modifier. */
+export function rollsForTrial(trial: number): number {
+  return ROLLS_PER_TRIAL[trialInRank(trial) - 1];
+}
+
+// ---- Goal curve ------------------------------------------------------------
+//
+// Score goals for the 15 trials of the 5-rank game (index = trial - 1),
+// hand-authored against the balance simulation (src/sim) to a deliberate
 // attrition curve rather than a single geometric ratio, because shopping
 // creates a highly skewed score distribution that diverges across builds.
 //
-// Attrition intent (measured on the pooled naive-bot field; a thinking player
-// does better):
-//   • Rounds 1-3  — gentle on-ramp; ~60% of the field survives to round 4.
-//   • Rounds 4-9  — steady wall; ~5% of the whole field is culled at each step.
-//   • Round 10    — final wall; culls ~8% of the field, landing a ~22% bot win.
-// Deaths land on every round (no single difficulty spike). See
-// src/sim/designTargets.ts to redesign the curve and src/sim/validate.ts to
+// Attrition intent (measured on the pooled bot field; a thinking player does
+// better) — fraction of the whole field still alive after each rank:
+//   rank 1 — 97%   a free on-ramp
+//   rank 2 — 88%
+//   rank 3 — 70%
+//   rank 4 — 47%
+//   rank 5 — 25%   the win rate
+// Early goals remain small integers, but the single starting die deliberately
+// allows bad luck to end some runs in the first rank.
+// Within a rank most of the cull lands on the Boss Trial, whose modifier is
+// already doing work.
+//
+// The curve SAWTOOTHS, and that is deliberate: a rank opens with a seven-roll
+// Lesser Trial and closes with a twenty-roll Boss Trial, so the Lesser Trial of
+// rank 3 asks for less than the Boss Trial of rank 2. What always rises is the
+// same slot generally rises from one rank to the next.
+//
+// See src/sim/designTargets.ts to redesign the curve and src/sim/validate.ts to
 // re-test it against the real survival gate.
-export const ROUND_TARGETS: bigint[] = [
+export const TRIAL_GOALS: bigint[] = [
+  // rank 1
+  1n,
   3n,
-  19n,
-  62n,
-  110n,
-  200n,
-  420n,
-  920n,
-  2_400n,
-  7_400n,
-  33_000n,
+  5n,
+  // rank 2
+  2n,
+  7n,
+  10n,
+  // rank 3
+  48n,
+  100n,
+  580n,
+  // rank 4
+  590n,
+  1_000n,
+  5_600n,
+  // rank 5
+  4_000n,
+  10_000n,
+  50_000n,
 ];
 
-// Legacy geometric-growth constants, kept as the fallback for any round beyond
-// the authored table (rounds 1..WIN_ROUND are covered by ROUND_TARGETS above).
-export const BASE_TARGET = 5;
-export const TARGET_GROWTH = 1.85;
+// Endless growth past WIN_TRIAL. A flat geometric ratio can be outrun forever,
+// because builds themselves grow geometrically (3^prism, 4^lastCall compound
+// every roll). So the growth RATE itself grows: each trial past the win is
+// multiplied by ENDLESS_BASE raised to a power that climbs with distance. That
+// guarantees the goal eventually outpaces any build and the run ends.
+//
+//   goal(t) = goal(t-1) × ENDLESS_BASE^(1 + (t - 1 - WIN_TRIAL) × ENDLESS_ACCEL)
+export const ENDLESS_BASE = 2.1;
+export const ENDLESS_ACCEL = 0.05;
 
-// Optional per-round override table for the survival targets (index = round-1).
-// The balance simulation sets this to trial alternate difficulty curves without
-// editing ROUND_TARGETS; a null/undefined entry (or a null table) falls back to
+// Optional per-trial override table for the goals (index = trial - 1). The
+// balance simulation sets this to trial alternate difficulty curves without
+// editing TRIAL_GOALS; a null/undefined entry (or a null table) falls back to
 // the authored table. The shipping game never sets it.
-let ROUND_TARGET_OVERRIDES: (number | null | undefined)[] | null = null;
-export function setRoundTargets(
-  targets: (number | null | undefined)[] | null,
+let TRIAL_GOAL_OVERRIDES: (number | null | undefined)[] | null = null;
+export function setTrialGoals(
+  goals: (number | null | undefined)[] | null,
 ): void {
-  ROUND_TARGET_OVERRIDES = targets;
+  TRIAL_GOAL_OVERRIDES = goals;
+  ENDLESS_CACHE.length = 0;
 }
+
+// Endless goals are computed by walking out from the last authored trial, so
+// they are memoized rather than recomputed on every HUD update.
+const ENDLESS_CACHE: bigint[] = [];
+
+function endlessGoal(trial: number): bigint {
+  let value =
+    ENDLESS_CACHE[ENDLESS_CACHE.length - 1] ?? authoredGoal(WIN_TRIAL);
+  for (let t = WIN_TRIAL + ENDLESS_CACHE.length + 1; t <= trial; t++) {
+    const exponent = 1 + (t - 1 - WIN_TRIAL) * ENDLESS_ACCEL;
+    // Per-mille integer math so the fractional growth applies exactly to the
+    // bigint goal (truncates, like floor).
+    const mult = BigInt(Math.round(Math.pow(ENDLESS_BASE, exponent) * 1000));
+    value = (value * mult) / 1000n;
+    ENDLESS_CACHE.push(value);
+  }
+  return ENDLESS_CACHE[trial - WIN_TRIAL - 1];
+}
+
+function authoredGoal(trial: number): bigint {
+  const override = TRIAL_GOAL_OVERRIDES?.[trial - 1];
+  if (override != null) return BigInt(override);
+  return TRIAL_GOALS[trial - 1] ?? TRIAL_GOALS[TRIAL_GOALS.length - 1];
+}
+
+/** The score a trial must reach to be cleared. Boss modifiers that raise the
+ *  goal (The Hoard) are applied by the caller via `Boss.goalFor`, not here, so
+ *  this stays a pure function of the ladder position. */
+export function trialGoal(trial: number): bigint {
+  if (trial <= WIN_TRIAL) return authoredGoal(trial);
+  const override = TRIAL_GOAL_OVERRIDES?.[trial - 1];
+  if (override != null) return BigInt(override);
+  return endlessGoal(trial);
+}
+
+// ---- Shop ------------------------------------------------------------------
+
+export interface RarityWeights {
+  common: number;
+  uncommon: number;
+  rare: number;
+}
+
+/** How often each rarity tier is offered. Kept here (rather than in Shop.ts)
+ *  so both weight tables sit side by side and can be tuned together. */
+export const RARITY_WEIGHTS: RarityWeights = {
+  common: 60,
+  uncommon: 30,
+  rare: 10,
+};
+
+/** The boosted odds a shop uses after the player clears a Boss Trial — the
+ *  reward for beating the boss is better cards, not just more gold. */
+export const BOON_RARITY_WEIGHTS: RarityWeights = {
+  common: 25,
+  uncommon: 45,
+  rare: 30,
+};
+
+// ---- Misc ------------------------------------------------------------------
 
 // "Extra number" unlocks 2, then 3, then 4, then stops appearing.
 export const MAX_EXTRA_NUMBERS = 3;
 
 export const HALL_SIZE = 10;
-
-// Hard Mode difficulty knobs (unlocked after the first win). Tuned against the
-// balance simulation (src/sim/hardMode.ts) so that only ~10% of the pooled
-// naive-bot field survives to round 10, versus ~26% on normal. Re-run the sweep
-// (`npx tsx src/sim/hardMode.ts`) whenever the item roster changes — new items
-// shift the survival curve and this multiplier drifts off the 10% target.
-//   • HARD_TARGET_MULT scales every round's survival target (the wall). Because
-//     raw dice output is absolute, a higher wall is genuinely harder.
-//   • HARD_PRICE_MULT is an *additional* shop-price bump on top of the (already
-//     target-scaled) price, so items are relatively pricier than on normal.
-export const HARD_TARGET_MULT = 2.25;
-export const HARD_PRICE_MULT = 1.25;
-
-// Sim-only runtime overrides for the two Hard Mode multipliers, so the tuning
-// script (src/sim/hardMode.ts) can sweep values without editing the shipped
-// constants. null = use the shipped constant. The live game never sets these.
-let HARD_TARGET_MULT_OVERRIDE: number | null = null;
-let HARD_PRICE_MULT_OVERRIDE: number | null = null;
-export function setHardMultipliers(target: number | null, price: number | null): void {
-  HARD_TARGET_MULT_OVERRIDE = target;
-  HARD_PRICE_MULT_OVERRIDE = price;
-}
-export function hardPriceMult(): number {
-  return HARD_PRICE_MULT_OVERRIDE ?? HARD_PRICE_MULT;
-}
-
-export function roundTarget(round: number): bigint {
-  const override = ROUND_TARGET_OVERRIDES?.[round - 1];
-  if (override != null) return BigInt(override);
-  const authored = ROUND_TARGETS[round - 1];
-  if (authored != null) return authored;
-  return BigInt(Math.ceil(BASE_TARGET * Math.pow(TARGET_GROWTH, round - 1)));
-}
-
-/** The effective survival target for a round: the base curve on normal, scaled
- *  by HARD_TARGET_MULT on Hard Mode. Uses per-mille math so the fractional
- *  multiplier applies exactly to the bigint target (truncates, like floor). */
-export function survivalTarget(round: number, hard: boolean): bigint {
-  const base = roundTarget(round);
-  if (!hard) return base;
-  const mult = HARD_TARGET_MULT_OVERRIDE ?? HARD_TARGET_MULT;
-  return (base * BigInt(Math.round(mult * 1000))) / 1000n;
-}

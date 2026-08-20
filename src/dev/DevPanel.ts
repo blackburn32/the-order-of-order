@@ -6,6 +6,19 @@ import {
   DieSides,
   makeDie,
 } from "../systems/Dice";
+import {
+  TRIALS_PER_RANK,
+  WIN_RANK,
+  WIN_TRIAL,
+  rankOf,
+  trialName,
+} from "../config";
+import {
+  activeBoss,
+  BOSS_MODIFIERS,
+  BossModifierId,
+  rollBossModifier,
+} from "../systems/Boss";
 import { DicePool } from "../systems/DicePool";
 import { getRun, RunState } from "../state/RunState";
 import {
@@ -20,7 +33,7 @@ import {
   globalScoresEnabled,
   submitScore,
 } from "../systems/GlobalScores";
-import { scoreToWireOrdinal } from "../systems/LeaderboardWire";
+import { runToWireOrdinal } from "../systems/LeaderboardWire";
 
 const PRESET_COUNTS = [10, 100, 1000, 1500, 3000, 10000, 100000];
 
@@ -74,14 +87,27 @@ export function installDevPanel(game: Phaser.Game): void {
       Apply
     </button>
     <hr style="border:none;border-top:1px solid #5a4a2e;margin:10px 0 8px;" />
-    <h4 style="margin:0 0 6px;font-size:12px;color:#e6c65a;">Set Round</h4>
-    <label style="display:block;margin-top:2px;font-size:11px;opacity:.85;">Round number</label>
+    <h4 style="margin:0 0 6px;font-size:12px;color:#e6c65a;">Set Trial</h4>
+    <label style="display:block;margin-top:2px;font-size:11px;opacity:.85;">Trial number (1-15, then endless)</label>
     <input id="dp-round" type="number" min="1" max="1000" value="1"
       style="width:100%;box-sizing:border-box;margin-top:2px;background:#1a1526;color:#e9d8a6;
              border:1px solid #5a4a2e;border-radius:3px;padding:3px 5px;font:inherit;" />
+    <label style="display:block;margin-top:6px;font-size:11px;opacity:.85;">Boss modifier (Boss Trials only)</label>
+    <select id="dp-boss"
+      style="width:100%;box-sizing:border-box;margin-top:2px;background:#1a1526;color:#e9d8a6;
+             border:1px solid #5a4a2e;border-radius:3px;padding:3px 5px;font:inherit;"></select>
     <button id="dp-set-round" style="margin-top:8px;width:100%;padding:5px;background:#8a1f2b;
       color:#e9d8a6;border:none;border-radius:3px;cursor:pointer;font:inherit;font-weight:bold;">
-      Set (restarts round)
+      Set (restarts trial)
+    </button>
+    <hr style="border:none;border-top:1px solid #5a4a2e;margin:10px 0 8px;" />
+    <h4 style="margin:0 0 6px;font-size:12px;color:#e6c65a;">Set Gold</h4>
+    <input id="dp-gold" type="number" min="0" max="9999" value="20"
+      style="width:100%;box-sizing:border-box;margin-top:2px;background:#1a1526;color:#e9d8a6;
+             border:1px solid #5a4a2e;border-radius:3px;padding:3px 5px;font:inherit;" />
+    <button id="dp-set-gold" style="margin-top:8px;width:100%;padding:5px;background:#8a1f2b;
+      color:#e9d8a6;border:none;border-radius:3px;cursor:pointer;font:inherit;font-weight:bold;">
+      Grant gold
     </button>
     <hr style="border:none;border-top:1px solid #5a4a2e;margin:10px 0 8px;" />
     <h4 style="margin:0 0 6px;font-size:12px;color:#e6c65a;">Grant Item</h4>
@@ -115,6 +141,8 @@ export function installDevPanel(game: Phaser.Game): void {
   const typeSelect = panel.querySelector("#dp-type") as HTMLSelectElement;
   const bonusCheckbox = panel.querySelector("#dp-bonus") as HTMLInputElement;
   const roundInput = panel.querySelector("#dp-round") as HTMLInputElement;
+  const goldInput = panel.querySelector("#dp-gold") as HTMLInputElement;
+  const bossSelect = panel.querySelector("#dp-boss") as HTMLSelectElement;
   const itemSelect = panel.querySelector("#dp-item") as HTMLSelectElement;
   const lbScoreInput = panel.querySelector("#dp-lb-score") as HTMLInputElement;
   const status = panel.querySelector("#dp-status") as HTMLDivElement;
@@ -129,9 +157,28 @@ export function installDevPanel(game: Phaser.Game): void {
     itemSelect.appendChild(opt);
   }
 
+  {
+    const random = document.createElement("option");
+    random.value = "";
+    random.textContent = "(random)";
+    bossSelect.appendChild(random);
+    for (const boss of BOSS_MODIFIERS) {
+      const opt = document.createElement("option");
+      opt.value = boss.id;
+      opt.textContent = boss.name;
+      bossSelect.appendChild(opt);
+    }
+  }
+
   panel.querySelector("#dp-set-round")!.addEventListener("click", () => {
-    const round = Math.max(1, Math.floor(Number(roundInput.value) || 1));
-    status.textContent = setRound(game, round);
+    const trial = Math.max(1, Math.floor(Number(roundInput.value) || 1));
+    const boss = (bossSelect.value || null) as BossModifierId | null;
+    status.textContent = setTrial(game, trial, boss);
+  });
+
+  panel.querySelector("#dp-set-gold")!.addEventListener("click", () => {
+    const gold = Math.max(0, Math.floor(Number(goldInput.value) || 0));
+    status.textContent = setGold(game, gold);
   });
 
   panel.querySelector("#dp-grant")!.addEventListener("click", () => {
@@ -214,10 +261,11 @@ async function submitLeaderboardTest(
     report("Leaderboard disabled (LootLocker keys not configured).");
     return;
   }
-  const wire = scoreToWireOrdinal(score);
+  const devRun = { rank: WIN_RANK, trial: TRIALS_PER_RANK, endless: false };
+  const wire = runToWireOrdinal(devRun.rank, score);
   report(`Submitting ${score.toString()} (wire ${wire.toString()})…`);
 
-  const ok = await submitScore(score, getInitials() || "DEV", {}, {}, false);
+  const ok = await submitScore(score, getInitials() || "DEV", {}, {}, devRun);
   if (!ok) {
     report(`Submit FAILED for ${score.toString()} (wire ${wire.toString()}).`);
     return;
@@ -284,26 +332,48 @@ function autoTargets(
   }
 }
 
-/** Jump the run to a given round, restarting it fresh (roll/score reset) so
- *  the round can be played from the top — mainly for testing the win at
- *  WIN_ROUND without grinding through every round. Returns a status message. */
-function setRound(game: Phaser.Game, round: number): string {
+/** Jump the run to a given trial, restarting it fresh (roll/score reset) so
+ *  the trial can be played from the top — mainly for testing the win at rank
+ *  WIN_RANK, and the endless ladder past it, without grinding up to them.
+ *  `boss` forces a specific modifier on a Boss Trial; null rolls one. Returns a
+ *  status message. */
+function setTrial(
+  game: Phaser.Game,
+  trial: number,
+  boss: BossModifierId | null,
+): string {
   const state = getRun(game.registry);
-  state.round = round;
+  state.trial = trial;
   state.roll = 0;
   state.score = 0n;
-  state.roundCleared = false;
+  state.trialScore = 0n;
+  state.trialCleared = false;
   state.bonusRollsThisRound = 0;
+  // Past the final rank the ladder only continues for an endless run, so a jump
+  // there implies one — otherwise the very first resolve would declare victory.
+  if (trial > WIN_TRIAL) state.endless = true;
+  state.bossModifier = boss ?? rollBossModifier();
   game.registry.set("run", state);
   refreshActiveScene(game);
-  return `Set to round ${round} (roll/score reset).`;
+  const name = activeBoss(state)?.name;
+  return `Set to trial ${trial} — rank ${rankOf(trial)} ${trialName(trial)}${name ? ` (${name})` : ""}.`;
+}
+
+/** Set the run's purse outright, for testing the shop without playing to it. */
+function setGold(game: Phaser.Game, gold: number): string {
+  const state = getRun(game.registry);
+  state.gold = gold;
+  if (gold > state.peakGold) state.peakGold = gold;
+  game.registry.set("run", state);
+  refreshActiveScene(game);
+  return `Set gold to ${gold}.`;
 }
 
 /** Grant any shop item to the current run for free, auto-targeting dice where
  *  the item would normally prompt. Returns a status message. */
 function grantItem(game: Phaser.Game, id: ShopItemId): string {
   const state = getRun(game.registry);
-  const offer = { ...offerFor(id, state), cost: 0n };
+  const offer = { ...offerFor(id, state), cost: 0 };
 
   const targets = autoTargets(state, id);
   if (!targets) return `No eligible die to target for ${offer.name}.`;
@@ -328,7 +398,7 @@ function grantAllItems(game: Phaser.Game): string {
   const skipped: string[] = [];
 
   for (const id of ALL_SHOP_ITEM_IDS) {
-    const offer = { ...offerFor(id, state), cost: 0n };
+    const offer = { ...offerFor(id, state), cost: 0 };
     const targets = autoTargets(state, id);
     if (!targets || !applyOffer(state, offer, targets.index, targets.indices)) {
       skipped.push(offer.name);

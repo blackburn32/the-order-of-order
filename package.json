@@ -19,10 +19,10 @@
     "preview": "vite preview",
     "sim": "tsx src/sim/runBatch.ts",
     "balance": "tsx src/sim/runBatch.ts",
-    "pricing:check": "tsx src/sim/pricingCheck.ts",
     "items:check": "tsx src/sim/itemCheck.ts",
-    "rounds:check": "tsx src/sim/roundEndCheck.ts",
-    "scale:check": "tsx src/sim/scaleRegression.ts"
+    "trials:check": "tsx src/sim/trialEndCheck.ts",
+    "gold:check": "tsx src/sim/goldCheck.ts",
+    "scoring:check": "tsx src/sim/compareScoring.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",

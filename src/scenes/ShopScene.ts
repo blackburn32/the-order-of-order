@@ -1,28 +1,42 @@
 import Phaser from "phaser";
 import { CSS, SERIF, COLORS } from "../art/palette";
+import type { RarityWeights } from "../config";
 import { getRun, RunState } from "../state/RunState";
 import { canLoad, canShrink, Die } from "../systems/Dice";
 import {
   applyCouponFreebie,
+  applyBoosterChoice,
   applyOffer,
+  boosterPrice,
+  type BoosterOffer,
   canAfford,
+  discountOffersForPawnbroker,
+  openBooster,
+  rerollCost,
+  rerollIsFree,
+  rerollShopOffers,
+  rollBoosterOffers,
   rollShopOffers,
   ShopOffer,
+  weightsFor,
 } from "../systems/Shop";
 import { recordSelection } from "../systems/SaveData";
 import {
-  completeTutorial,
+  advanceTutorial,
   getTutorial,
   TutorialStage,
+  TUTORIAL_TEXT,
 } from "../systems/Tutorial";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { DieSprite } from "../ui/DieSprite";
-import { formatScore } from "../ui/formatScore";
-import { addFelt, addPanel, bannerButton } from "../ui/widgets";
+import { AmbientLayer } from "../ui/AmbientLayer";
+import { addFelt, bannerButton } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
 import { computeGridPositions, GridArea } from "../ui/gridLayout";
 import { onResizeCoalesced } from "../ui/layout";
+import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
+import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
 
 const CARD_W = 260;
@@ -31,7 +45,10 @@ const CARD_GAP = 26;
 const MIN_READABLE_CARD_SCALE = 0.5;
 const DRAG_THRESHOLD = 8; // px of pointer movement before a press counts as a scroll, not a tap
 
-type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
+type PointerHandler = (
+  pointer: Phaser.Input.Pointer,
+  currentlyOver?: Phaser.GameObjects.GameObject[],
+) => void;
 type WheelHandler = (
   pointer: Phaser.Input.Pointer,
   currentlyOver: unknown,
@@ -40,17 +57,62 @@ type WheelHandler = (
   dz: number,
 ) => void;
 
+interface PackOrigin {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  source: Phaser.GameObjects.Container;
+}
+
+interface CarouselCardEntry {
+  offer: ShopOffer;
+  card: Phaser.GameObjects.Container;
+  baseX: number;
+  baseY: number;
+  baseRotation: number;
+  baseDepth: number;
+  baseAlpha: number;
+}
+
+interface CarouselLayout {
+  viewportX: number;
+  contentX: number;
+  contentW: number;
+  trackX: number;
+  cardW: number;
+  step: number;
+  centerY: number;
+  arcStep: number;
+}
+
 export class ShopScene extends Phaser.Scene {
   private state!: RunState;
   private offers: ShopOffer[] = [];
   private cardGroup!: Phaser.GameObjects.Container;
   private pickGroup?: Phaser.GameObjects.Container;
-  // When the card grid is too tall to fit and has to scroll, its cards render
-  // through their own camera, clipped to the card area's screen rect — Phaser
-  // 4's WebGL renderer doesn't reliably support GameObject masks for content
-  // this deep, so a mask here would let cards render past the panel's border.
+  private packGroup?: Phaser.GameObjects.Container;
+  private packs: BoosterOffer[] = [];
+  private packChoices?: ShopOffer[];
+  private openingPack?: BoosterOffer;
+  private visitWeights!: RarityWeights;
+  // Scrolling cards render through their own camera, clipped to the card
+  // area's screen rect — Phaser 4's WebGL renderer doesn't reliably support
+  // GameObject masks for content this deep, so a mask here would let cards
+  // render past the panel's border.
   private track?: Phaser.GameObjects.Container;
   private carouselCamera?: Phaser.Cameras.Scene2D.Camera;
+  private carouselCards: CarouselCardEntry[] = [];
+  private carouselLayout?: CarouselLayout;
+  private offerCards = new Map<ShopOffer, Phaser.GameObjects.Container>();
+  private carouselDragging = false;
+  private focusedCarouselIndex?: number;
+  private selectedCarouselIndex?: number;
+  private carouselBuyButton?: Phaser.GameObjects.Container;
+  private carouselBuyLabel?: Phaser.GameObjects.Text;
+  private carouselBuyPlate?: Phaser.GameObjects.Rectangle;
+  private purchaseAnimating = false;
+  private pendingCarouselPan = 0;
   private dragDistance = 0;
   private carouselInput?: {
     down: PointerHandler;
@@ -59,15 +121,22 @@ export class ShopScene extends Phaser.Scene {
     wheel: WheelHandler;
   };
   private pickedIndices: number[] = []; // dice chosen so far for a multi-target offer (Grindstone)
-  // Screen rect of the card row and the live tutorial callout (first-game only).
+  // Screen rects of the card row and the booster pair, and the live tutorial
+  // callout (first-game only). The shop's step lights both bands, since the
+  // gold it is talking about buys from either.
   private cardBand?: Phaser.Geom.Rectangle;
+  private packBand?: Phaser.Geom.Rectangle;
   private tutorialCallout?: CalloutHandle;
   private purchasesMade = 0;
-  private storeRerolled = false;
+  private rerollsThisVisit = 0;
   // The cards are dealt onto the table once, when the shop opens. Resizes and
   // the die-picker sub-screen rebuild the same offers, and re-dealing them
   // there would read as a new shop rather than the one already being read.
   private dealt = false;
+  // Whether this visit is the one bought by a Boss Trial clear (drives the
+  // header note; the odds themselves were already applied by rollShopOffers).
+  private boonSpent = false;
+  private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super("Shop");
@@ -76,20 +145,37 @@ export class ShopScene extends Phaser.Scene {
   create(): void {
     this.state = getRun(this.registry);
     this.purchasesMade = 0;
-    this.storeRerolled = false;
+    this.rerollsThisVisit = 0;
     this.dealt = false;
-    this.offers = rollShopOffers(this.state, this.state.ownedLedger ? 5 : 3);
+    this.pendingCarouselPan = 0;
+    this.purchaseAnimating = false;
+    this.visitWeights = { ...weightsFor(this.state) };
+    // The boon a Boss Trial clear earns is spent on this one visit's rarity
+    // odds, so it is consumed the moment those odds have been rolled against.
+    this.boonSpent = this.state.boonNextShop;
+    this.offers = rollShopOffers(
+      this.state,
+      this.state.ownedLedger ? 5 : 3,
+      Math.random,
+      this.visitWeights,
+    );
+    this.packs = rollBoosterOffers(this.state, 2, this.boonSpent);
+    this.packChoices = undefined;
+    this.openingPack = undefined;
+    this.state.boonNextShop = false;
     // The scene instance is reused across restarts, but Phaser destroys all
     // non-main cameras on shutdown — this field would otherwise dangle.
     this.carouselCamera = undefined;
 
     this.build();
+    slideSceneIn(this, this.slideBackdrop);
 
     const off = onResizeCoalesced(this, () => {
       this.pickGroup = undefined; // drop the shrink-picker sub-screen; back to the offer cards
       this.teardownCarouselInput();
       this.children.removeAll(true);
       this.build();
+      if (this.packChoices && this.openingPack) this.showBoosterChoices(false);
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       off();
@@ -99,26 +185,63 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private build(): void {
+    const W = this.scale.width;
+    const H = this.scale.height;
     const felt = addFelt(this);
+    const ambient = new AmbientLayer(this, { ring: true });
+    ambient.setPosition(W / 2, H / 2);
+    ambient.setArea(W, H);
+    ambient.setProgress(0.62, false);
+
+    const titleGlow = this.add
+      .image(
+        W / 2,
+        Math.max(42, H / 2 - Math.min(H - 28, 760) / 2 + 48),
+        "spark",
+      )
+      .setTint(COLORS.glow)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDisplaySize(Math.min(680, W * 0.76), 220)
+      .setAlpha(0.18);
+    if (fx.motion) {
+      const baseScaleX = titleGlow.scaleX;
+      this.tweens.add({
+        targets: titleGlow,
+        alpha: { from: 0.1, to: 0.22 },
+        scaleX: { from: baseScaleX * 0.96, to: baseScaleX * 1.04 },
+        duration: 2600,
+        yoyo: true,
+        repeat: -1,
+        ease: "Sine.easeInOut",
+      });
+    }
     this.buildCards();
+    const footerLinks = buildRunFooterLinks(this, "Shop");
+    this.slideBackdrop = [felt, ambient, titleGlow, ...footerLinks];
     this.dealt = true;
     // The carousel camera must ignore literally everything except `track`
     // (built inside buildCards -> buildCarousel) — otherwise it renders the
     // *entire* scene, unclipped-by-content, into its own small viewport rect.
-    this.carouselCamera?.ignore(felt);
+    this.carouselCamera?.ignore(this.slideBackdrop);
     this.carouselCamera?.ignore(this.cardGroup);
     this.renderShopTutorial();
   }
 
-  /** First-game tutorial: a callout over the card row prompting the player to
-   *  pick an item. The card band is left open so cards stay selectable and the
-   *  carousel scrolls; only the areas above/below it dim. */
+  /** First-game tutorial: a callout over the loose cards and the boosters,
+   *  prompting the player to spend. Both bands are left open so cards stay
+   *  selectable and the carousel scrolls; only what surrounds them dims, and
+   *  the panel takes whatever room is left over neither. Picking an item ends
+   *  the step, but a player who would rather save their gold can dismiss it
+   *  with Continue. */
   private renderShopTutorial(): void {
     const t = getTutorial(this.registry);
     if (!t.active || t.stage !== TutorialStage.Shop || !this.cardBand) return;
+    const bands = [this.cardBand];
+    if (this.packBand) bands.push(this.packBand);
     this.tutorialCallout = showCallout(this, {
-      anchor: this.cardBand,
-      text: "Choose an item to add a new mechanic. Items are needed to win — but each one costs points this round, so spend carefully.",
+      anchor: bands,
+      text: TUTORIAL_TEXT[TutorialStage.Shop],
+      onContinue: () => this.endShopTutorial(),
       interactiveAnchor: true,
     });
     // The carousel camera renders only `track`; keep the callout off it.
@@ -134,6 +257,7 @@ export class ShopScene extends Phaser.Scene {
       this.input.off("wheel", this.carouselInput.wheel);
       this.carouselInput = undefined;
     }
+    this.carouselDragging = false;
   }
 
   /** The carousel camera is destroyed and recreated on every rebuild (the
@@ -144,7 +268,7 @@ export class ShopScene extends Phaser.Scene {
       this.cameras.remove(this.carouselCamera, true);
     }
     const cam = this.cameras.add(0, 0, 1, 1);
-    cam.setBackgroundColor(COLORS.parchment);
+    cam.setBackgroundColor();
     this.carouselCamera = cam;
     return cam;
   }
@@ -152,104 +276,115 @@ export class ShopScene extends Phaser.Scene {
   private buildCards(): void {
     const W = this.scale.width;
     const H = this.scale.height;
-    const panelW = Math.min(W - 40, 1100);
-    const panelH = Math.min(H - 40, 620);
+    this.offerCards.clear();
+    this.carouselCards = [];
+    this.carouselLayout = undefined;
+    this.focusedCarouselIndex = undefined;
+    this.selectedCarouselIndex = undefined;
+    this.carouselBuyButton = undefined;
+    this.carouselBuyLabel = undefined;
+    this.carouselBuyPlate = undefined;
+    const panelW = Math.min(W - 28, 1180);
+    const panelH = Math.min(H - 28, 760);
     const panelTop = H / 2 - panelH / 2;
     const panelBottom = H / 2 + panelH / 2;
 
     const items: Phaser.GameObjects.GameObject[] = [];
-    items.push(addPanel(this, W / 2, H / 2, panelW, panelH));
 
-    // Laid out sequentially from the top so nothing overlaps regardless of
-    // aspect ratio — a fixed fraction-of-panelH per element can collide once
-    // the panel gets tall and narrow (portrait) instead of short and wide.
     const titleSize = Math.round(
-      Phaser.Math.Clamp(Math.min(panelW * 0.075, panelH * 0.07), 20, 40),
+      Phaser.Math.Clamp(Math.min(panelW * 0.066, panelH * 0.06), 20, 40),
     );
-    const subtitleSize = Math.round(
+    const metaSize = Math.round(
       Phaser.Math.Clamp(Math.min(panelW * 0.032, panelH * 0.033), 13, 19),
     );
 
-    let cursorY = panelTop + Math.max(30, panelH * 0.09);
+    let cursorY = panelTop + Math.max(28, panelH * 0.07);
     const title = this.add
       .text(W / 2, cursorY, "The Shop of the Order", {
         fontFamily: SERIF,
         fontSize: `${titleSize}px`,
-        color: CSS.ink,
+        color: CSS.gold,
         fontStyle: "bold",
         align: "center",
+        stroke: "#0d0a12",
+        strokeThickness: Math.max(3, Math.round(titleSize * 0.09)),
         wordWrap: { width: panelW * 0.92 },
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setShadow(0, 4, "#000000", 10, true, true);
     items.push(title);
-    cursorY += title.height / 2 + subtitleSize + 10;
+    cursorY += title.height / 2 + 10;
 
-    const subtitle = this.add
-      .text(
-        W / 2,
-        cursorY,
-        `Your score: ${formatScore(this.state.score)} point${this.state.score === 1n ? "" : "s"} — choose ${this.remainingPurchases()} offering${this.remainingPurchases() === 1 ? "" : "s"}`,
-        {
-          fontFamily: SERIF,
-          fontSize: `${subtitleSize}px`,
-          color: CSS.inkSoft,
-          fontStyle: "italic",
-          align: "center",
-          wordWrap: { width: panelW * 0.92 },
-        },
-      )
-      .setOrigin(0.5);
-    items.push(subtitle);
-    cursorY += subtitle.height / 2 + 12;
-
-    // A quick affordance to review what you've already bought this run, opened
-    // as an overlay so the shop stays put underneath.
-    const invLink = this.add
-      .text(W / 2, cursorY, "View Inventory", {
+    const gold = this.add
+      .text(0, cursorY, `${this.state.gold} gold`, {
         fontFamily: SERIF,
-        fontSize: `${subtitleSize}px`,
+        fontSize: `${metaSize}px`,
+        color: CSS.goldLight,
+        fontStyle: "bold",
+      })
+      .setOrigin(0, 0);
+
+    const codexLink = this.add
+      .text(0, cursorY, "Codex", {
+        fontFamily: SERIF,
+        fontSize: `${metaSize}px`,
         color: CSS.gold,
         fontStyle: "bold",
       })
-      .setOrigin(0.5, 0)
+      .setOrigin(0, 0)
       .setInteractive({ useHandCursor: true });
-    invLink.on("pointerover", () => invLink.setColor(CSS.goldLight));
-    invLink.on("pointerout", () => invLink.setColor(CSS.gold));
-    invLink.on("pointerdown", () => {
+    codexLink.on("pointerover", () => codexLink.setColor(CSS.goldLight));
+    codexLink.on("pointerout", () => codexLink.setColor(CSS.gold));
+    codexLink.on("pointerdown", () => {
       audio.click();
-      this.scene.launch("Inventory", { returnTo: "Shop" });
+      this.scene.launch("Items", { returnTo: "Shop" });
     });
-    items.push(invLink);
-    cursorY += invLink.height + 18;
+    const metaGap = Phaser.Math.Clamp(panelW * 0.025, 16, 28);
+    const metaW = gold.width + metaGap + codexLink.width;
+    gold.setX(W / 2 - metaW / 2);
+    codexLink.setX(gold.x + gold.width + metaGap);
+    items.push(gold, codexLink);
+    cursorY += Math.max(gold.height, codexLink.height) + 10;
 
-    if (this.state.hasDealersBell && !this.storeRerolled) {
-      const bell = this.add
-        .text(W / 2, cursorY, "Ring Dealer's Bell — Reroll Store", {
-          fontFamily: SERIF,
-          fontSize: `${subtitleSize}px`,
-          color: CSS.gold,
-          fontStyle: "bold",
-        })
-        .setOrigin(0.5, 0)
-        .setInteractive({ useHandCursor: true });
-      bell.on("pointerover", () => bell.setColor(CSS.goldLight));
-      bell.on("pointerout", () => bell.setColor(CSS.gold));
-      bell.on("pointerdown", () => this.rerollStore());
-      items.push(bell);
-      cursorY += bell.height + 14;
-    }
+    const sectionSize = Math.round(Phaser.Math.Clamp(metaSize * 0.78, 10, 14));
+    const section = this.add
+      .text(W / 2, cursorY + 3, "LOOSE OFFERINGS", {
+        fontFamily: SERIF,
+        fontSize: `${sectionSize}px`,
+        color: CSS.goldLight,
+        fontStyle: "bold",
+        letterSpacing: 2,
+      })
+      .setOrigin(0.5, 0);
+    const sectionRule = this.add.graphics();
+    const ruleGap = Math.min(115, section.width / 2 + 18);
+    const ruleHalf = Math.min(panelW * 0.38, W / 2 - 24);
+    const sectionY = cursorY + section.height / 2 + 3;
+    sectionRule.lineStyle(1, COLORS.gold, 0.45);
+    sectionRule.lineBetween(
+      W / 2 - ruleHalf,
+      sectionY,
+      W / 2 - ruleGap,
+      sectionY,
+    );
+    sectionRule.lineBetween(
+      W / 2 + ruleGap,
+      sectionY,
+      W / 2 + ruleHalf,
+      sectionY,
+    );
+    items.push(sectionRule, section);
+    cursorY += section.height + 12;
 
-    const buttonH = 70;
-    const bottomPad = 26;
-    const buttonY = panelBottom - bottomPad - buttonH / 2;
-
-    // The card grid fills the space between the header and the Decline button,
-    // kept inside the panel's inner border (1072/1100 of the panel width in the
-    // source texture) with a little breathing room.
+    const availW = panelW * (1072 / 1100) - 28;
+    const narrow = panelW < 650;
+    const secondH = narrow
+      ? Phaser.Math.Clamp(panelH * 0.36, 190, 270)
+      : Phaser.Math.Clamp(panelH * 0.28, 145, 215);
+    const secondTop = panelBottom - secondH - 20;
     const areaTop = cursorY;
-    const areaBottom = buttonY - buttonH / 2 - 16;
+    const areaBottom = secondTop - 12;
     const availH = Math.max(0, areaBottom - areaTop);
-    const availW = panelW * (1072 / 1100) - 32;
 
     // Screen rect of the card area, for anchoring the tutorial callout's open
     // "hole".
@@ -260,51 +395,324 @@ export class ShopScene extends Phaser.Scene {
       availH,
     );
 
-    const grid = this.buildCardGrid(W, areaTop, availW, availH);
+    const grid = this.buildCardGrid(W, areaTop, availW, availH, narrow);
     items.push(...grid.decor);
-
-    const footerGap = Math.max(10, Math.min(20, panelW * 0.02));
-    const footerButtonMaxW = (panelW * 0.92 - footerGap) / 2;
-    const codex = bannerButton(
-      this,
-      W / 2,
-      buttonY,
-      "Codex",
-      () => this.scene.launch("Items", { returnTo: "Shop" }),
-      footerButtonMaxW,
-    );
-    const decline = bannerButton(
-      this,
-      W / 2,
-      buttonY,
-      "Decline the Offerings",
-      () => this.exit(),
-      footerButtonMaxW,
-    );
-    const footerButtonW = codex.width;
-    const footerDx = footerButtonW / 2 + footerGap / 2;
-    codex.setX(W / 2 - footerDx);
-    decline.setX(W / 2 + footerDx);
-    items.push(codex, decline);
+    items.push(...this.buildSecondRow(W, secondTop, availW, secondH, narrow));
 
     this.cardGroup = this.add.container(0, 0, items);
+    if (fx.motion && !this.dealt) {
+      this.cardGroup.setAlpha(0).setY(18);
+      this.tweens.add({
+        targets: this.cardGroup,
+        alpha: 1,
+        y: 0,
+        duration: 360,
+        ease: "Cubic.easeOut",
+      });
+    }
+  }
+
+  private buildSecondRow(
+    W: number,
+    top: number,
+    width: number,
+    height: number,
+    narrow: boolean,
+  ): Phaser.GameObjects.GameObject[] {
+    const objects: Phaser.GameObjects.GameObject[] = [];
+    const packGap = Phaser.Math.Clamp(width * 0.018, 10, 18);
+    const sectionGap = Phaser.Math.Clamp(width * 0.035, 18, 36);
+    const controlsH = narrow
+      ? Phaser.Math.Clamp(height * 0.26, 74, 84)
+      : height;
+    const controlsW = narrow ? width : (width - sectionGap * 2) / 3;
+    const packAreaH = narrow ? height - controlsH - sectionGap : height;
+    const packAreaW = narrow ? width : width - controlsW - sectionGap;
+    // Booster wrappers share the loose-card silhouette. Size them uniformly
+    // inside an invisible group instead of stretching them to wide, short
+    // tiles. Only `packGap` separates the two packs.
+    const packW = Math.min(
+      (packAreaW - packGap) / 2,
+      packAreaH * (CARD_W / CARD_H),
+    );
+    const packH = packW * (CARD_H / CARD_W);
+    const packGroupW = packW * 2 + packGap;
+    // On wide screens, keep the group and controls together. Once their gap
+    // reaches 120px, additional width becomes balanced outer margin.
+    const controlsGap = Math.min(
+      120,
+      Math.max(sectionGap, width - packGroupW - controlsW),
+    );
+    const rowW = packGroupW + controlsGap + controlsW;
+    const rowStartX = W / 2 - rowW / 2;
+    const packGroupX = narrow ? W / 2 : rowStartX + packGroupW / 2;
+    const packGroupY = narrow ? top + packH / 2 : top + height / 2;
+    const packTiles: Phaser.GameObjects.Container[] = [];
+    for (let i = 0; i < 2; i++) {
+      const pack = this.packs[i];
+      if (pack) {
+        packTiles.push(
+          this.buildPackTile(
+            pack,
+            -packGroupW / 2 + packW / 2 + i * (packW + packGap),
+            0,
+            packW,
+            packH,
+          ),
+        );
+      }
+    }
+    const packGroup = this.add
+      .container(packGroupX, packGroupY, packTiles)
+      .setSize(packGroupW, packH);
+    objects.push(packGroup);
+    // A visit with no packs on offer leaves no band to light, and must clear
+    // the one the previous build left behind.
+    this.packBand =
+      packTiles.length > 0
+        ? new Phaser.Geom.Rectangle(
+            packGroupX - packGroupW / 2,
+            packGroupY - packH / 2,
+            packGroupW,
+            packH,
+          )
+        : undefined;
+
+    const controlsX = narrow
+      ? W / 2
+      : rowStartX + packGroupW + controlsGap + controlsW / 2;
+    const controlsY = narrow ? top + height - controlsH / 2 : top + height / 2;
+    objects.push(
+      this.buildControlTile(controlsX, controlsY, controlsW, controlsH),
+    );
+    return objects;
+  }
+
+  private buildPackTile(
+    pack: BoosterOffer,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): Phaser.GameObjects.Container {
+    const price = boosterPrice(this.state, pack);
+    const affordable = this.state.gold >= price && !pack.sold;
+    const bg = this.add
+      .rectangle(0, 0, w, h, pack.color, pack.sold ? 0.22 : 0.94)
+      .setStrokeStyle(3, pack.sold ? COLORS.inkSoft : COLORS.gold, 0.9);
+    const ribs = this.buildPackRibs(w, h);
+    const flourish = this.add
+      .image(0, 0, "sigil")
+      .setDisplaySize(Math.min(w, h) * 0.75, Math.min(w, h) * 0.75)
+      .setTint(COLORS.goldLight)
+      .setAlpha(0.13);
+    const name = this.add
+      .text(0, -h * 0.22, pack.sold ? "OPENED" : pack.name, {
+        fontFamily: SERIF,
+        fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.09, h * 0.18), 12, 21)}px`,
+        color: CSS.ivory,
+        fontStyle: "bold",
+        align: "center",
+        wordWrap: { width: w * 0.9 },
+      })
+      .setOrigin(0.5);
+    const desc = this.add
+      .text(0, h * 0.05, pack.sold ? "One card claimed" : pack.desc, {
+        fontFamily: SERIF,
+        fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.066, h * 0.12), 10, 15)}px`,
+        color: CSS.parchment,
+        align: "center",
+        wordWrap: { width: w * 0.86 },
+      })
+      .setOrigin(0.5);
+    const cost = this.add
+      .text(0, h * 0.34, pack.sold ? "SOLD" : `${price} gold`, {
+        fontFamily: SERIF,
+        fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.075, h * 0.14), 11, 17)}px`,
+        color: affordable ? CSS.goldLight : CSS.red,
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+    const tile = this.add.container(x, y, [
+      bg,
+      ...ribs,
+      flourish,
+      name,
+      desc,
+      cost,
+    ]);
+    tile.setSize(w, h);
+    if (affordable) {
+      tile.setInteractive({ useHandCursor: true });
+      tile.on("pointerover", () => tile.setScale(1.025));
+      tile.on("pointerout", () => tile.setScale(1));
+      tile.on("pointerdown", () => {
+        const center = tile.getWorldTransformMatrix().transformPoint(0, 0);
+        this.openPack(pack, {
+          x: center.x,
+          y: center.y,
+          width: w,
+          height: h,
+          source: tile,
+        });
+      });
+    } else if (!pack.sold) tile.setAlpha(0.58);
+    return tile;
+  }
+
+  /** Crimped foil at both ends gives a booster its sealed-pack silhouette.
+   * The ribs are separate from the coloured wrapper so every pack category
+   * shares the same manufacturing detail. */
+  private buildPackRibs(w: number, h: number): Phaser.GameObjects.GameObject[] {
+    const bandH = Phaser.Math.Clamp(h * 0.12, 10, 22);
+    const topY = -h / 2 + bandH / 2;
+    const bottomY = h / 2 - bandH / 2;
+    const topBand = this.add.rectangle(0, topY, w, bandH, COLORS.feltDark, 0.3);
+    const bottomBand = this.add.rectangle(
+      0,
+      bottomY,
+      w,
+      bandH,
+      COLORS.feltDark,
+      0.3,
+    );
+    const grooves = this.add.graphics();
+    grooves.lineStyle(1, COLORS.goldLight, 0.38);
+    const spacing = Phaser.Math.Clamp(w / 34, 6, 11);
+    for (let ribX = -w / 2 + spacing; ribX < w / 2; ribX += spacing) {
+      grooves.lineBetween(ribX, -h / 2 + 2, ribX, -h / 2 + bandH - 2);
+      grooves.lineBetween(ribX, h / 2 - bandH + 2, ribX, h / 2 - 2);
+    }
+    grooves.lineStyle(1.5, COLORS.gold, 0.6);
+    grooves.lineBetween(-w / 2, -h / 2 + bandH, w / 2, -h / 2 + bandH);
+    grooves.lineBetween(-w / 2, h / 2 - bandH, w / 2, h / 2 - bandH);
+    return [topBand, bottomBand, grooves];
+  }
+
+  private buildOpeningPack(
+    pack: BoosterOffer,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): Phaser.GameObjects.Container {
+    const bg = this.add
+      .rectangle(0, 0, w, h, pack.color, 1)
+      .setStrokeStyle(4, COLORS.goldLight, 1);
+    const ribs = this.buildPackRibs(w, h);
+    const flourish = this.add
+      .image(0, 0, "sigil")
+      .setDisplaySize(Math.min(w, h) * 0.64, Math.min(w, h) * 0.64)
+      .setTint(COLORS.goldLight)
+      .setAlpha(0.15);
+    const name = this.add
+      .text(0, 0, pack.name, {
+        fontFamily: SERIF,
+        fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.12, h * 0.09), 18, 30)}px`,
+        color: CSS.ivory,
+        fontStyle: "bold",
+        align: "center",
+        wordWrap: { width: w * 0.82 },
+      })
+      .setOrigin(0.5);
+    return this.add
+      .container(x, y, [bg, ...ribs, flourish, name])
+      .setSize(w, h);
+  }
+
+  private buildControlTile(
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+  ): Phaser.GameObjects.Container {
+    const rerollPrice = rerollIsFree(this.state, this.rerollsThisVisit)
+      ? 0
+      : rerollCost(this.rerollsThisVisit);
+    const canReroll = this.state.gold >= rerollPrice;
+    const label =
+      rerollPrice === 0
+        ? "Reroll cards · FREE"
+        : `Reroll cards · ${rerollPrice}g`;
+    const buttonGap = Math.min(12, h * 0.08);
+    const bh = Math.max(30, (h - buttonGap * 3) / 2);
+    const make = (
+      yy: number,
+      text: string,
+      enabled: boolean,
+      action: () => void,
+    ) => {
+      const plate = this.add
+        .rectangle(0, yy, w * 0.88, bh, COLORS.feltLight, 0.96)
+        .setStrokeStyle(2, enabled ? COLORS.gold : COLORS.inkSoft, 0.75);
+      const copy = this.add
+        .text(0, yy, text, {
+          fontFamily: SERIF,
+          fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.075, bh * 0.42), 11, 18)}px`,
+          color: enabled ? CSS.ivory : CSS.dim,
+          fontStyle: "bold",
+          align: "center",
+          wordWrap: { width: w * 0.82 },
+        })
+        .setOrigin(0.5);
+      if (enabled) {
+        plate.setInteractive({ useHandCursor: true });
+        plate.on("pointerover", () => plate.setFillStyle(0x30264b));
+        plate.on("pointerout", () => plate.setFillStyle(COLORS.feltLight));
+        plate.on("pointerdown", action);
+      }
+      return [plate, copy];
+    };
+    const topY = -buttonGap / 2 - bh / 2;
+    const bottomY = buttonGap / 2 + bh / 2;
+    const reroll = make(topY, label, canReroll, () => this.rerollStore());
+    const next = make(bottomY, "Continue to Trials", true, () => this.exit());
+    return this.add.container(x, y, [...reroll, ...next]).setSize(w, h);
   }
 
   /**
-   * Lay the offer cards out in a grid sized to fit the available area. The
-   * column count is chosen to maximize card size — a single row on wide/short
-   * areas (desktop), a 2-wide grid on narrow/tall ones (phones), which gives a
-   * 2x2 grid for four offers. Cards shrink to fit; only when they'd have to
-   * shrink below a readable minimum does the grid fall back to vertical
-   * scrolling.
+   * Lay the offer cards out in the available area. Narrow screens always use a
+   * single horizontal carousel. Wider screens use the largest fitting grid;
+   * only unusually short wide layouts fall back to vertical scrolling.
    */
   private buildCardGrid(
     W: number,
     areaTop: number,
     availW: number,
     availH: number,
+    narrow: boolean,
   ): { decor: Phaser.GameObjects.GameObject[] } {
     const n = this.offers.length;
+    if (n === 0) {
+      if (this.carouselCamera) {
+        this.cameras.remove(this.carouselCamera, true);
+        this.carouselCamera = undefined;
+      }
+      this.track = undefined;
+      return {
+        decor: [
+          this.add
+            .text(
+              W / 2,
+              areaTop + availH / 2,
+              "The loose offerings are exhausted.",
+              {
+                fontFamily: SERIF,
+                fontSize: "18px",
+                color: CSS.dim,
+                fontStyle: "italic",
+              },
+            )
+            .setOrigin(0.5),
+        ],
+      };
+    }
+
+    if (narrow) {
+      return {
+        decor: this.buildHorizontalCarousel(W, areaTop, availW, availH),
+      };
+    }
 
     const scaleFor = (cols: number, includeHeight = true) => {
       const rows = Math.ceil(n / cols);
@@ -382,6 +790,512 @@ export class ShopScene extends Phaser.Scene {
       decor.push(card);
     });
     return { decor };
+  }
+
+  /** A one-row carousel for narrow screens. Larger cards overlap in a fan with
+   * up to three visible positions, then overflow horizontally through the
+   * clipped card camera. */
+  private buildHorizontalCarousel(
+    W: number,
+    areaTop: number,
+    availW: number,
+    availH: number,
+  ): Phaser.GameObjects.GameObject[] {
+    const paddingX = Phaser.Math.Clamp(availW * 0.045, 12, 24);
+    const paddingY = 8;
+    const viewportX = W / 2 - availW / 2;
+    const viewportW = availW;
+    const contentX = viewportX + paddingX;
+    const contentW = viewportW - paddingX * 2;
+    const viewportTop = areaTop;
+    const viewportH = availH;
+    const indicatorH = 10;
+    const contentH = Math.max(1, viewportH - paddingY * 2 - indicatorH);
+    // At phone widths, 2.5 card widths fit across the viewport: three cards
+    // remain visible, but overlap enough to be substantially larger than the
+    // old edge-to-edge row.
+    const scale = Math.min(contentH / CARD_H, contentW / (CARD_W * 2.5), 0.68);
+    const cw = CARD_W * scale;
+    const step = (contentW - cw) / 2;
+    const trackW = cw + (this.offers.length - 1) * step;
+    const overflow = trackW > contentW + 0.5 ? trackW - contentW : 0;
+
+    const trackX = contentX + Math.max(0, (contentW - trackW) / 2);
+    const track = this.add.container(trackX, 0);
+    const fanCenter = (this.offers.length - 1) / 2;
+    const centerY = viewportTop + paddingY + contentH / 2;
+    const arcStep = Math.min(5, contentH * 0.018);
+    this.carouselLayout = {
+      viewportX,
+      contentX,
+      contentW,
+      trackX,
+      cardW: cw,
+      step,
+      centerY,
+      arcStep,
+    };
+    this.offers.forEach((offer, idx) => {
+      const distanceFromCenter = idx - fanCenter;
+      const angle = Phaser.Math.DegToRad(
+        Phaser.Math.Clamp(distanceFromCenter * 5, -10, 10),
+      );
+      const arcY = Math.abs(distanceFromCenter) * arcStep;
+      const depth = this.offers.length - Math.abs(distanceFromCenter);
+      const card = this.buildCard(
+        cw / 2 + idx * step,
+        centerY + arcY,
+        offer,
+        scale,
+        idx,
+        false,
+        true,
+        angle,
+      );
+      card.setDepth(depth);
+      track.add(card);
+      this.carouselCards.push({
+        offer,
+        card,
+        baseX: card.x,
+        baseY: card.y,
+        baseRotation: angle,
+        baseDepth: depth,
+        baseAlpha: 1,
+      });
+    });
+    track.sort("depth");
+    this.track = track;
+
+    let pan = Phaser.Math.Clamp(this.pendingCarouselPan, 0, overflow);
+    this.pendingCarouselPan = 0;
+    const cam = this.ensureCarouselCamera();
+    cam.setViewport(viewportX, viewportTop, viewportW, viewportH);
+    cam.setScroll(viewportX + pan, viewportTop);
+    this.cameras.main.ignore(track);
+
+    this.dragDistance = 0;
+    this.carouselDragging = false;
+
+    const decor: Phaser.GameObjects.GameObject[] = [];
+    let updateThumb = () => {};
+    if (overflow > 0) {
+      const barY = viewportTop + viewportH - 3;
+      const barTrack = this.add.rectangle(
+        W / 2,
+        barY,
+        contentW,
+        5,
+        COLORS.inkSoft,
+        0.4,
+      );
+      const thumbW = Math.max(30, (contentW * contentW) / trackW);
+      const thumb = this.add.rectangle(
+        contentX + thumbW / 2,
+        barY,
+        thumbW,
+        5,
+        COLORS.gold,
+        0.9,
+      );
+      updateThumb = () => {
+        thumb.x =
+          contentX + thumbW / 2 + (pan / overflow) * (contentW - thumbW);
+      };
+      decor.push(barTrack, thumb);
+    }
+
+    const apply = () => {
+      pan = Phaser.Math.Clamp(pan, 0, overflow);
+      cam.setScroll(viewportX + pan, viewportTop);
+      updateThumb();
+      if (
+        this.selectedCarouselIndex !== undefined &&
+        this.carouselBuyButton?.visible
+      ) {
+        this.carouselBuyButton.x = this.carouselBuyButtonPosition(
+          this.selectedCarouselIndex,
+        ).x;
+      }
+    };
+
+    const inBounds = (p: Phaser.Input.Pointer) =>
+      p.x >= viewportX &&
+      p.x <= viewportX + viewportW &&
+      p.y >= viewportTop &&
+      p.y <= viewportTop + viewportH;
+
+    let dragging = false;
+    let startPointerX = 0;
+    let startPan = 0;
+
+    const onDown: PointerHandler = (p, currentlyOver = []) => {
+      const selectedEntry =
+        this.selectedCarouselIndex === undefined
+          ? undefined
+          : this.carouselCards[this.selectedCarouselIndex];
+      const clickedSelection =
+        !!selectedEntry &&
+        (currentlyOver.includes(selectedEntry.card) ||
+          (!!this.carouselBuyPlate &&
+            currentlyOver.includes(this.carouselBuyPlate)));
+      if (selectedEntry && !clickedSelection) {
+        this.deselectCarouselCard(true);
+      }
+      if (!inBounds(p)) return;
+      dragging = true;
+      this.carouselDragging = true;
+      startPointerX = p.x;
+      startPan = pan;
+      this.dragDistance = 0;
+    };
+    const onMove: PointerHandler = (p) => {
+      if (!dragging) {
+        this.input.setDefaultCursor(inBounds(p) ? "grab" : "default");
+        return;
+      }
+      const dx = p.x - startPointerX;
+      this.dragDistance = Math.abs(dx);
+      if (this.dragDistance >= DRAG_THRESHOLD) {
+        this.deselectCarouselCard(false);
+        this.clearCarouselFocus();
+      }
+      pan = startPan - dx;
+      apply();
+    };
+    const onUp: PointerHandler = () => {
+      dragging = false;
+      this.carouselDragging = false;
+    };
+    const onWheel: WheelHandler = (p, _over, dx, dy) => {
+      if (!inBounds(p)) return;
+      this.deselectCarouselCard(false);
+      this.clearCarouselFocus();
+      pan += Math.abs(dx) > Math.abs(dy) ? dx : dy;
+      apply();
+    };
+
+    this.input.on("pointerdown", onDown);
+    this.input.on("pointermove", onMove);
+    this.input.on("pointerup", onUp);
+    this.input.on("pointerupoutside", onUp);
+    this.input.on("wheel", onWheel);
+    this.carouselInput = {
+      down: onDown,
+      move: onMove,
+      up: onUp,
+      wheel: onWheel,
+    };
+
+    decor.push(this.buildCarouselBuyButton());
+    apply();
+    return decor;
+  }
+
+  private buildCarouselBuyButton(): Phaser.GameObjects.Container {
+    const width = Phaser.Math.Clamp(
+      (this.carouselLayout?.contentW ?? 300) * 0.42,
+      108,
+      154,
+    );
+    const height = 34;
+    const plate = this.add
+      .rectangle(0, 0, width, height, COLORS.feltLight, 0.98)
+      .setStrokeStyle(2, COLORS.gold, 0.9)
+      .setInteractive({ useHandCursor: true });
+    const label = this.add
+      .text(0, 0, "BUY", {
+        fontFamily: SERIF,
+        fontSize: "13px",
+        color: CSS.ivory,
+        fontStyle: "bold",
+        letterSpacing: 1,
+      })
+      .setOrigin(0.5);
+    const button = this.add
+      .container(0, 0, [plate, label])
+      .setSize(width, height)
+      .setAlpha(0)
+      .setVisible(false);
+    plate.on("pointerover", () => {
+      if (this.selectedCarouselIndex !== undefined) {
+        plate.setFillStyle(0x30264b, 1);
+      }
+    });
+    plate.on("pointerout", () => plate.setFillStyle(COLORS.feltLight, 0.98));
+    plate.on("pointerup", () => this.confirmCarouselPurchase());
+    this.carouselBuyButton = button;
+    this.carouselBuyLabel = label;
+    this.carouselBuyPlate = plate;
+    return button;
+  }
+
+  private carouselBuyButtonPosition(index: number): { x: number; y: number } {
+    const layout = this.carouselLayout;
+    const entry = this.carouselCards[index];
+    if (!layout || !entry) return { x: 0, y: 0 };
+    const pan = this.carouselCamera
+      ? this.carouselCamera.scrollX - layout.viewportX
+      : 0;
+    const cardH = layout.cardW * (CARD_H / CARD_W);
+    return {
+      x: layout.trackX + entry.baseX - pan,
+      y: entry.baseY - 12 + cardH * 0.53 + 18,
+    };
+  }
+
+  private selectCarouselCard(index: number): void {
+    if (this.purchaseAnimating || !this.carouselCards[index]) return;
+    if (this.selectedCarouselIndex === index) {
+      this.deselectCarouselCard(false);
+      return;
+    }
+
+    const reveal = () => {
+      const entry = this.carouselCards[index];
+      const button = this.carouselBuyButton;
+      const label = this.carouselBuyLabel;
+      const plate = this.carouselBuyPlate;
+      if (!entry || !button || !label || !plate) return;
+      this.selectedCarouselIndex = index;
+      this.focusCarouselCard(index, true);
+      const affordable = canAfford(this.state, entry.offer);
+      const price =
+        entry.offer.cost === 0 ? "FREE" : `${entry.offer.cost} GOLD`;
+      label.setText(affordable ? `BUY · ${price}` : `NEED ${price}`);
+      label.setColor(affordable ? CSS.ivory : CSS.red);
+      plate.setStrokeStyle(2, affordable ? COLORS.gold : COLORS.waxRed, 0.9);
+      const target = this.carouselBuyButtonPosition(index);
+      this.tweens.killTweensOf(button);
+      button
+        .setPosition(target.x, target.y + 7)
+        .setAlpha(0)
+        .setVisible(true);
+      this.tweens.add({
+        targets: button,
+        y: target.y,
+        alpha: 1,
+        duration: 150,
+        ease: "Cubic.easeOut",
+      });
+    };
+
+    if (this.selectedCarouselIndex !== undefined) {
+      this.selectedCarouselIndex = undefined;
+      this.fadeOutCarouselBuyButton(reveal);
+    } else {
+      reveal();
+    }
+  }
+
+  private fadeOutCarouselBuyButton(onComplete?: () => void): void {
+    const button = this.carouselBuyButton;
+    if (!button || !button.visible) {
+      onComplete?.();
+      return;
+    }
+    this.tweens.killTweensOf(button);
+    this.tweens.add({
+      targets: button,
+      y: button.y + 7,
+      alpha: 0,
+      duration: 120,
+      ease: "Cubic.easeIn",
+      onComplete: () => {
+        button.setVisible(false);
+        onComplete?.();
+      },
+    });
+  }
+
+  private deselectCarouselCard(clearFocus = true): void {
+    if (this.selectedCarouselIndex === undefined) return;
+    this.selectedCarouselIndex = undefined;
+    this.fadeOutCarouselBuyButton();
+    if (clearFocus) this.clearCarouselFocus();
+  }
+
+  private confirmCarouselPurchase(): void {
+    const index = this.selectedCarouselIndex;
+    if (index === undefined || this.purchaseAnimating) return;
+    const entry = this.carouselCards[index];
+    if (!entry || !canAfford(this.state, entry.offer)) {
+      audio.deny();
+      return;
+    }
+    this.selectedCarouselIndex = undefined;
+    this.fadeOutCarouselBuyButton();
+    this.clearCarouselFocus();
+    this.choose(entry.offer);
+  }
+
+  /** Bring one fanned card forward while its immediate neighbors slide down
+   * and outward, exposing the focused card's full text and silhouette. */
+  private focusCarouselCard(index: number, force = false): void {
+    if (
+      this.purchaseAnimating ||
+      (this.carouselDragging && !force) ||
+      !this.carouselLayout ||
+      this.focusedCarouselIndex === index
+    ) {
+      return;
+    }
+    this.focusedCarouselIndex = index;
+    const duckX = Phaser.Math.Clamp(this.carouselLayout.cardW * 0.3, 30, 55);
+    const duckY = Phaser.Math.Clamp(this.carouselLayout.cardW * 0.1, 10, 20);
+
+    this.carouselCards.forEach((entry, cardIndex) => {
+      const distance = cardIndex - index;
+      const magnitude = Math.abs(distance);
+      const direction = Math.sign(distance);
+      this.tweens.killTweensOf(entry.card);
+      entry.card.setDepth(distance === 0 ? 1000 : entry.baseDepth);
+      this.tweens.add({
+        targets: entry.card,
+        x: entry.baseX + direction * (magnitude === 1 ? duckX : duckX * 0.4),
+        y:
+          entry.baseY +
+          (distance === 0 ? -12 : magnitude === 1 ? duckY : duckY * 0.45),
+        rotation:
+          distance === 0
+            ? 0
+            : entry.baseRotation + Phaser.Math.DegToRad(direction * 3),
+        scaleX: distance === 0 ? 1.06 : 1,
+        scaleY: distance === 0 ? 1.06 : 1,
+        alpha: entry.baseAlpha,
+        duration: 150,
+        ease: "Cubic.easeOut",
+      });
+    });
+    this.track?.sort("depth");
+  }
+
+  private clearCarouselFocus(): void {
+    if (this.purchaseAnimating || this.focusedCarouselIndex === undefined)
+      return;
+    this.focusedCarouselIndex = undefined;
+    this.carouselCards.forEach((entry) => {
+      this.tweens.killTweensOf(entry.card);
+      entry.card.setDepth(entry.baseDepth);
+      this.tweens.add({
+        targets: entry.card,
+        x: entry.baseX,
+        y: entry.baseY,
+        rotation: entry.baseRotation,
+        scaleX: 1,
+        scaleY: 1,
+        alpha: entry.baseAlpha,
+        duration: 130,
+        ease: "Cubic.easeOut",
+      });
+    });
+    this.track?.sort("depth");
+  }
+
+  /** Lift and dissolve the purchased card, while the cards left in the fan
+   * slide into the geometry they will occupy after the shop rebuild. */
+  private animateCardPurchase(
+    offer: ShopOffer,
+    card: Phaser.GameObjects.Container,
+    onComplete: () => void,
+  ): void {
+    if (!fx.motion || this.purchaseAnimating) {
+      onComplete();
+      return;
+    }
+
+    this.purchaseAnimating = true;
+    this.teardownCarouselInput();
+    this.offerCards.forEach((candidate) => candidate.disableInteractive());
+    this.tweens.killTweensOf(card);
+    card.setDepth(2000);
+
+    const world = card.getWorldTransformMatrix().transformPoint(0, 0);
+    const cam = this.carouselCamera;
+    const burstX =
+      cam && this.carouselCards.some((entry) => entry.offer === offer)
+        ? world.x - cam.scrollX + cam.x
+        : world.x;
+    const burstY =
+      cam && this.carouselCards.some((entry) => entry.offer === offer)
+        ? world.y - cam.scrollY + cam.y
+        : world.y;
+    const burst = fx.burst(this, burstX, burstY, {
+      count: 22,
+      tint: COLORS.goldLight,
+      speed: 230,
+      lifespan: 720,
+    });
+    if (burst && cam) cam.ignore(burst);
+
+    const layout = this.carouselLayout;
+    const purchasedInFan = this.carouselCards.some(
+      (entry) => entry.offer === offer,
+    );
+    if (purchasedInFan) this.track?.bringToTop(card);
+    if (layout && purchasedInFan) {
+      const remaining = this.carouselCards.filter(
+        (entry) => entry.offer !== offer,
+      );
+      const count = remaining.length;
+      const trackW = count > 0 ? layout.cardW + (count - 1) * layout.step : 0;
+      const trackX =
+        layout.contentX + Math.max(0, (layout.contentW - trackW) / 2);
+      const overflow = Math.max(0, trackW - layout.contentW);
+      const currentPan = cam ? cam.scrollX - layout.viewportX : 0;
+      const targetPan = Phaser.Math.Clamp(currentPan, 0, overflow);
+      this.pendingCarouselPan = targetPan;
+      const fanCenter = (count - 1) / 2;
+
+      remaining.forEach((entry, index) => {
+        const distanceFromCenter = index - fanCenter;
+        const targetRotation = Phaser.Math.DegToRad(
+          Phaser.Math.Clamp(distanceFromCenter * 5, -10, 10),
+        );
+        const targetDepth = count - Math.abs(distanceFromCenter);
+        const targetAlpha = 1;
+        this.tweens.killTweensOf(entry.card);
+        entry.card.setDepth(targetDepth);
+        this.tweens.add({
+          targets: entry.card,
+          x: trackX - layout.trackX + layout.cardW / 2 + index * layout.step,
+          y: layout.centerY + Math.abs(distanceFromCenter) * layout.arcStep,
+          rotation: targetRotation,
+          scaleX: 1,
+          scaleY: 1,
+          alpha: targetAlpha,
+          duration: 360,
+          delay: 60,
+          ease: "Cubic.easeInOut",
+        });
+      });
+      this.track?.sort("depth");
+      this.track?.bringToTop(card);
+      if (cam) {
+        this.tweens.add({
+          targets: cam,
+          scrollX: layout.viewportX + targetPan,
+          duration: 360,
+          delay: 60,
+          ease: "Cubic.easeInOut",
+        });
+      }
+    }
+
+    this.tweens.add({
+      targets: card,
+      y: card.y - 54,
+      rotation: 0,
+      scaleX: 1.18,
+      scaleY: 1.18,
+      alpha: 0,
+      duration: 420,
+      ease: "Back.easeIn",
+      onComplete: () => {
+        this.purchaseAnimating = false;
+        onComplete();
+      },
+    });
   }
 
   /** A vertically scrollable grid of offer cards (drag/swipe, mouse wheel, and a
@@ -509,12 +1423,16 @@ export class ShopScene extends Phaser.Scene {
     scale: number,
     index: number,
     allowFilters: boolean,
+    compact = false,
+    rotation = 0,
   ): Phaser.GameObjects.Container {
     const affordable = canAfford(this.state, offer);
     // Edge metadata (rarity and price) may shrink furthest; description and
     // title retain progressively larger floors for the card's reading order.
-    const fontSize = (native: number, minimum: number) =>
-      `${Math.max(minimum, Math.round(native * scale))}px`;
+    const fontSize = (native: number, minimum: number) => {
+      const floor = compact ? Math.round(minimum * 0.55) : minimum;
+      return `${Math.max(floor, Math.round(native * scale))}px`;
+    };
     const img = this.add.image(0, 0, "card");
     img.setDisplaySize(CARD_W * scale, CARD_H * scale);
     const rarityColor = {
@@ -551,9 +1469,9 @@ export class ShopScene extends Phaser.Scene {
       .setOrigin(0.5);
     const costLabel = offer.freeByCoupon
       ? "Coupon Book: Free"
-      : offer.cost === 0n
+      : offer.cost === 0
         ? "Free"
-        : `${formatScore(offer.cost)} point${offer.cost > 1n ? "s" : ""}`;
+        : `${offer.cost} gold`;
     const cost = this.add
       .text(0, 128 * scale, costLabel, {
         fontFamily: SERIF,
@@ -563,35 +1481,62 @@ export class ShopScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    const card = this.add.container(x, y, [img, rarityLabel, name, desc, cost]);
+    const card = this.add
+      .container(x, y, [img, rarityLabel, name, desc, cost])
+      .setRotation(rotation);
     card.setSize(img.displayWidth, img.displayHeight);
+    this.offerCards.set(offer, card);
 
-    if (affordable) {
+    if (compact || affordable) {
       card.setInteractive({ useHandCursor: true });
-      // Buy on release, not press, and only when the press *started* on this
-      // same card. A shop rebuild (Dealer's Bell reroll, or completing a
-      // die-targeting item like Twins) fires on pointerdown and can spawn a
-      // fresh card directly under a still-held pointer; without requiring the
-      // matching pointerdown, the release that ended the previous interaction
-      // would land on the new card and instantly buy it. This also naturally
-      // rejects carousel drags/swipes (which start on a different card, or
-      // exceed the drag threshold).
+      // Compact cards select on press and require the separate buy button;
+      // selecting immediately pins the hover pose instead of briefly returning
+      // to the resting scale before pointer release. Wide layouts retain their
+      // direct-card interaction on release.
       let pressedHere = false;
-      card.on("pointerover", () => img.setTint(0xfff2c8));
+      card.on("pointerover", () => {
+        const hoverAllowed =
+          !compact ||
+          this.selectedCarouselIndex === undefined ||
+          this.selectedCarouselIndex === index;
+        if (affordable && hoverAllowed) img.setTint(0xfff2c8);
+        if (compact && hoverAllowed) this.focusCarouselCard(index);
+      });
       card.on("pointerout", () => {
-        img.clearTint();
+        if (affordable) img.clearTint();
         pressedHere = false;
+        if (compact && !this.carouselDragging) {
+          if (this.selectedCarouselIndex !== undefined) {
+            this.focusCarouselCard(this.selectedCarouselIndex);
+          } else {
+            this.clearCarouselFocus();
+          }
+        }
       });
       card.on("pointerdown", () => {
-        pressedHere = true;
+        if (compact) {
+          pressedHere = false;
+          this.focusCarouselCard(index, true);
+          this.selectCarouselCard(index);
+        } else {
+          pressedHere = affordable;
+        }
       });
       card.on("pointerup", () => {
-        const buy = pressedHere && this.dragDistance < DRAG_THRESHOLD;
+        const activate = pressedHere && this.dragDistance < DRAG_THRESHOLD;
         pressedHere = false;
-        if (buy) this.choose(offer);
+        if (activate && affordable) this.choose(offer);
       });
-    } else {
-      card.setAlpha(0.55);
+    }
+    if (!affordable) {
+      // Keep the parchment itself opaque so overlapping unavailable cards do
+      // not compound container alpha. Tinting the face and softening its copy
+      // produces the same dim read without revealing the card underneath.
+      img.setTint(0x978e79);
+      rarityLabel.setAlpha(0.72);
+      name.setAlpha(0.72);
+      desc.setAlpha(0.68);
+      cost.setAlpha(0.86);
     }
 
     if (allowFilters && offer.rarity === "rare") this.markRare(img);
@@ -605,6 +1550,7 @@ export class ShopScene extends Phaser.Scene {
   private dealIn(card: Phaser.GameObjects.Container, index: number): void {
     if (!fx.on || this.dealt) return;
     const restY = card.y;
+    const restRotation = card.rotation;
     // Unaffordable cards rest dimmed, so tween to whatever alpha the card was
     // given rather than assuming 1.
     const restAlpha = card.alpha;
@@ -614,7 +1560,7 @@ export class ShopScene extends Phaser.Scene {
       targets: card,
       y: restY,
       alpha: restAlpha,
-      rotation: 0,
+      rotation: restRotation,
       duration: 320,
       delay: index * 70,
       ease: "Cubic.easeOut",
@@ -637,24 +1583,249 @@ export class ShopScene extends Phaser.Scene {
     });
   }
 
-  private choose(offer: ShopOffer): void {
-    // Selecting any item satisfies the tutorial's final step (fires for both
-    // direct and target-picking offers, since both funnel through here).
-    const t = getTutorial(this.registry);
-    if (t.active && t.stage === TutorialStage.Shop) {
-      completeTutorial(this.registry);
-      this.tutorialCallout?.destroy();
-      this.tutorialCallout = undefined;
+  private openPack(pack: BoosterOffer, origin: PackOrigin): void {
+    if (pack.sold || this.openingPack) return;
+    const price = boosterPrice(this.state, pack);
+    if (this.state.gold < price) {
+      audio.deny();
+      return;
     }
+    const choices = openBooster(
+      this.state,
+      pack,
+      this.state.ownedLedger ? 5 : 3,
+      Math.random,
+      this.visitWeights,
+    );
+    if (choices.length === 0) {
+      audio.deny();
+      return;
+    }
+    this.state.gold -= price;
+    pack.sold = true;
+    this.openingPack = pack;
+    this.packChoices = choices;
+    audio.buy();
+    this.showBoosterChoices(true, origin);
+  }
+
+  /** Focus a purchased pack over the shop, break its seal, then flip its free
+   * choices into view. Reused without animation after a resize. */
+  private showBoosterChoices(animate: boolean, origin?: PackOrigin): void {
+    if (!this.packChoices || !this.openingPack) return;
+    this.packGroup?.destroy();
+    const staged = animate && fx.motion && !!origin;
+    if (staged) origin.source.setVisible(false);
+    if (!staged) {
+      this.cardGroup?.setVisible(false);
+      this.track?.setVisible(false);
+      if (this.carouselCamera) this.carouselCamera.visible = false;
+    }
+
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const objects: Phaser.GameObjects.GameObject[] = [];
+    const shade = this.add
+      .rectangle(W / 2, H / 2, W, H, COLORS.feltDark, 0.94)
+      .setInteractive();
+    if (staged) shade.setAlpha(0);
+    objects.push(shade);
+    const title = this.add
+      .text(
+        W / 2,
+        Math.max(38, H * 0.07),
+        `${this.openingPack.name} · CHOOSE ONE`,
+        {
+          fontFamily: SERIF,
+          fontSize: `${Phaser.Math.Clamp(W * 0.038, 21, 38)}px`,
+          color: CSS.goldLight,
+          fontStyle: "bold",
+          align: "center",
+          wordWrap: { width: W - 36 },
+        },
+      )
+      .setOrigin(0.5);
+    objects.push(title);
+
+    const n = this.packChoices.length;
+    const portrait = H > W * 1.05;
+    const cols = portrait ? Math.min(2, n) : n;
+    const rows = Math.ceil(n / cols);
+    const gap = 14;
+    const top = Math.max(78, H * 0.13);
+    const bottom = H - 25;
+    const scale = Math.min(
+      0.78,
+      (W - 34) / (cols * CARD_W + (cols - 1) * gap),
+      (bottom - top) / (rows * CARD_H + (rows - 1) * gap),
+    );
+    const cw = CARD_W * scale;
+    const ch = CARD_H * scale;
+    const scaledGap = gap * scale;
+    const gridH = rows * ch + (rows - 1) * scaledGap;
+    const gridTop = top + Math.max(0, (bottom - top - gridH) / 2);
+    const cards: Phaser.GameObjects.Container[] = [];
+    this.packChoices.forEach((offer, index) => {
+      const row = Math.floor(index / cols);
+      const rowStart = row * cols;
+      const rowCount = Math.min(cols, n - rowStart);
+      const col = index - rowStart;
+      const rowW = rowCount * cw + (rowCount - 1) * scaledGap;
+      const x = W / 2 - rowW / 2 + cw / 2 + col * (cw + scaledGap);
+      const y = gridTop + ch / 2 + row * (ch + scaledGap);
+      const card = this.buildCard(x, y, offer, scale, index, true);
+      card.setDepth(102);
+      cards.push(card);
+      objects.push(card);
+    });
+
+    const shellW = Math.min(260, W * 0.48);
+    const shellH = Math.min(340, H * 0.55);
+    const shell = this.buildOpeningPack(
+      this.openingPack,
+      W / 2,
+      H / 2,
+      shellW,
+      shellH,
+    );
+    objects.push(shell);
+    this.packGroup = this.add.container(0, 0, objects).setDepth(100);
+
+    if (!staged) {
+      shell.destroy();
+      cards.forEach((card) => card.setAlpha(1).setScale(1));
+      return;
+    }
+
+    title.setAlpha(0);
+    cards.forEach((card) => {
+      card.setAlpha(0).setScale(0.04, 1);
+      if (card.input) card.input.enabled = false;
+    });
+    shell
+      .setPosition(origin.x, origin.y)
+      .setScale(origin.width / shellW, origin.height / shellH);
+    this.tweens.add({
+      targets: shade,
+      alpha: 0.94,
+      duration: 420,
+      ease: "Sine.easeInOut",
+    });
+    if (this.carouselCamera) {
+      this.tweens.add({
+        targets: this.carouselCamera,
+        alpha: 0,
+        duration: 320,
+        onComplete: () => {
+          if (this.carouselCamera) {
+            this.carouselCamera.visible = false;
+            this.carouselCamera.alpha = 1;
+          }
+        },
+      });
+    }
+    this.tweens.add({
+      targets: shell,
+      x: W / 2,
+      y: H / 2,
+      scaleX: 1,
+      scaleY: 1,
+      angle: -2,
+      duration: 500,
+      ease: "Cubic.easeInOut",
+      onComplete: () => {
+        this.cardGroup?.setVisible(false);
+        this.track?.setVisible(false);
+        this.tweens.add({
+          targets: shell,
+          angle: { from: -2, to: 2 },
+          duration: 75,
+          yoyo: true,
+          repeat: 4,
+          onComplete: () => {
+            fx.burst(this, W / 2, H / 2, {
+              count: 48,
+              tint: COLORS.goldLight,
+              speed: 360,
+              lifespan: 900,
+            });
+            shell.destroy();
+            this.tweens.add({ targets: title, alpha: 1, duration: 220 });
+            cards.forEach((card, index) => {
+              this.tweens.add({
+                targets: card,
+                alpha: 1,
+                scaleX: 1,
+                scaleY: 1,
+                duration: 330,
+                delay: index * 115,
+                ease: "Back.easeOut",
+                onComplete: () => {
+                  if (card.input) card.input.enabled = true;
+                },
+              });
+            });
+          },
+        });
+      },
+    });
+  }
+
+  /** Close the shop step for good: advancing is what keeps it from coming back
+   *  on the next rebuild (a reroll, a resize, the die picker). */
+  private endShopTutorial(): void {
+    const t = getTutorial(this.registry);
+    if (!t.active || t.stage !== TutorialStage.Shop) return;
+    advanceTutorial(this.registry);
+    this.tutorialCallout?.destroy();
+    this.tutorialCallout = undefined;
+  }
+
+  private choose(offer: ShopOffer): void {
+    // Selecting any item satisfies the tutorial's shop step (fires for both
+    // direct and target-picking offers, since both funnel through here).
+    this.endShopTutorial();
     if (offer.needsTarget) {
       this.enterPickMode(offer);
       return;
     }
-    if (applyOffer(this.state, offer)) {
-      this.completePurchase(offer);
+    if (this.applyChosenOffer(offer)) {
+      this.completeChosenOffer(offer);
     } else {
       audio.deny();
     }
+  }
+
+  private applyChosenOffer(
+    offer: ShopOffer,
+    targetIndex?: number,
+    targetIndices?: number[],
+  ): boolean {
+    return this.packChoices?.includes(offer)
+      ? applyBoosterChoice(this.state, offer, targetIndex, targetIndices)
+      : applyOffer(this.state, offer, targetIndex, targetIndices);
+  }
+
+  private completeChosenOffer(offer: ShopOffer): void {
+    // These cards were priced when the visit opened. Pawnbroker takes effect
+    // on the current row immediately, including when claimed from a pack.
+    if (offer.id === "pawnbroker") {
+      discountOffersForPawnbroker(this.offers);
+    }
+
+    if (this.packChoices?.includes(offer)) {
+      recordSelection(offer.id);
+      audio.buy();
+      if (offer.id === "coupon_book") {
+        applyCouponFreebie(this.state, this.offers);
+      }
+      this.packChoices = undefined;
+      this.openingPack = undefined;
+      this.packGroup = undefined;
+      this.rebuildShop();
+      return;
+    }
+    this.completePurchase(offer);
   }
 
   /** Which dice a given offer may target. */
@@ -701,6 +1872,7 @@ export class ShopScene extends Phaser.Scene {
   private enterPickMode(offer: ShopOffer): void {
     this.cardGroup.setVisible(false);
     this.track?.setVisible(false);
+    this.packGroup?.setVisible(false);
     if (this.carouselCamera) this.carouselCamera.visible = false;
     this.pickedIndices = [];
     this.renderPicker(offer);
@@ -747,9 +1919,13 @@ export class ShopScene extends Phaser.Scene {
         () => {
           this.pickGroup?.destroy();
           this.pickGroup = undefined;
-          this.cardGroup.setVisible(true);
-          this.track?.setVisible(true);
-          if (this.carouselCamera) this.carouselCamera.visible = true;
+          if (this.packChoices) {
+            this.packGroup?.setVisible(true);
+          } else {
+            this.cardGroup.setVisible(true);
+            this.track?.setVisible(true);
+            if (this.carouselCamera) this.carouselCamera.visible = true;
+          }
         },
       ),
     );
@@ -853,51 +2029,65 @@ export class ShopScene extends Phaser.Scene {
         this.renderPicker(offer);
         return;
       }
-      if (applyOffer(this.state, offer, undefined, this.pickedIndices)) {
-        this.completePurchase(offer);
+      if (this.applyChosenOffer(offer, undefined, this.pickedIndices)) {
+        this.completeChosenOffer(offer);
       } else {
         audio.deny();
       }
       return;
     }
-    if (applyOffer(this.state, offer, index)) {
-      this.completePurchase(offer);
+    if (this.applyChosenOffer(offer, index)) {
+      this.completeChosenOffer(offer);
     } else {
       audio.deny();
     }
   }
 
-  private purchaseLimit(): number {
-    return this.state.hasShoppingCart ? 2 : 1;
-  }
-
-  private remainingPurchases(): number {
-    return Math.max(0, this.purchaseLimit() - this.purchasesMade);
-  }
-
   private completePurchase(offer: ShopOffer): void {
+    const purchasedCard = this.offerCards.get(offer);
     recordSelection(offer.id);
     audio.buy();
     this.purchasesMade += 1;
     this.offers = this.offers.filter((candidate) => candidate !== offer);
 
-    // These two items affect the remainder of the visit in which they are
-    // purchased: Coupon Book makes one remaining card free, and Shopping Cart
-    // immediately grants the second purchase.
+    // Coupon Book affects the rest of the visit in which it is bought: one of
+    // the remaining cards becomes free.
     if (offer.id === "coupon_book") applyCouponFreebie(this.state, this.offers);
 
-    if (this.remainingPurchases() > 0 && this.offers.length > 0) {
-      this.rebuildShop();
-      return;
+    // Running the loose-card row dry no longer closes the shop: sealed packs
+    // remain separate purchases and the player may still want either one.
+    if (purchasedCard && this.pickGroup) {
+      this.pickGroup.destroy();
+      this.pickGroup = undefined;
+      this.cardGroup.setVisible(true);
+      this.track?.setVisible(true);
+      if (this.carouselCamera) this.carouselCamera.visible = true;
     }
-    this.exit();
+    if (purchasedCard) {
+      this.animateCardPurchase(offer, purchasedCard, () => this.rebuildShop());
+    } else {
+      this.rebuildShop();
+    }
   }
 
   private rerollStore(): void {
-    if (!this.state.hasDealersBell || this.storeRerolled) return;
-    this.storeRerolled = true;
+    const price = rerollIsFree(this.state, this.rerollsThisVisit)
+      ? 0
+      : rerollCost(this.rerollsThisVisit);
+    if (this.state.gold < price) {
+      audio.deny();
+      return;
+    }
+    this.state.gold -= price;
+    this.rerollsThisVisit += 1;
+    this.pendingCarouselPan = 0;
     audio.click();
-    this.offers = rollShopOffers(this.state, this.state.ownedLedger ? 5 : 3);
+    this.offers = rerollShopOffers(
+      this.state,
+      this.state.ownedLedger ? 5 : 3,
+      Math.random,
+      this.visitWeights,
+    );
     this.rebuildShop();
   }
 
@@ -905,6 +2095,7 @@ export class ShopScene extends Phaser.Scene {
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
     this.pickGroup = undefined;
+    this.packGroup = undefined;
     this.track = undefined;
     this.teardownCarouselInput();
     this.children.removeAll(true);
@@ -912,6 +2103,10 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private exit(): void {
-    this.scene.start("Game");
+    slideSceneOut(
+      this,
+      () => this.scene.start("TrialOverview"),
+      this.slideBackdrop,
+    );
   }
 }

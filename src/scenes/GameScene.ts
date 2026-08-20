@@ -1,25 +1,21 @@
 import Phaser from "phaser";
-import { WIN_ROUND, survivalTarget } from "../config";
+import { rankOf, trialInRank } from "../config";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { getRun, RunState } from "../state/RunState";
+import { getRun, type RunState } from "../state/RunState";
 import type { Die } from "../systems/Dice";
-import { ITEMS, describeUnlockAction } from "../systems/Items";
-import { toNumberPointMap } from "../systems/ItemPoints";
+import type { ShopItemId } from "../systems/Items";
+import { activeBoss, goalFor } from "../systems/Boss";
 import {
-  clearedEarly,
   resolveRoll,
-  resolveRoundEnd,
-  roundComplete,
-  roundRollTarget,
-  shouldOpenShop,
+  resolveTrialEnd,
+  trialComplete,
+  trialRollTarget,
 } from "../sim/engine";
+import { scoringNumbersFor } from "../systems/Boss";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
-import { evaluateAndUnlock, hasBeatenGame, recordRunEnd } from "../systems/SaveData";
-import {
-  globalScoresEnabled,
-  queuePendingSubmission,
-} from "../systems/GlobalScores";
+import { evaluateAndUnlock } from "../systems/SaveData";
+import { finalizeRun } from "../systems/RunEnd";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { DieSprite } from "../ui/DieSprite";
 import { DiceSummaryCard } from "../ui/DiceSummaryCard";
@@ -29,10 +25,14 @@ import { showCallout, CalloutHandle } from "../ui/Callout";
 import {
   advanceTutorial,
   getTutorial,
+  tutorialForcesRoll,
   TutorialStage,
+  TUTORIAL_TEXT,
 } from "../systems/Tutorial";
 import { isPortrait, onResizeCoalesced } from "../ui/layout";
 import { GridArea } from "../ui/gridLayout";
+import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
+import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import {
   clampZoom,
   computeVisibleDiceCards,
@@ -44,11 +44,16 @@ import {
   Viewport,
 } from "../ui/windowedGrid";
 
+// The HUD strip. Adding an entry here is all it takes: computeLayout sizes the
+// cells proportionally by `weight`, and buildHud/makePlaque draw them. RANK
+// shows "rank-trial" (2-3 is the Boss Trial of rank 2) so the ladder position
+// fits one narrow cell instead of needing two.
 const HUD_STATS = [
-  { key: "roll", label: "ROLLS", weight: 0.95, color: CSS.ivory },
-  { key: "round", label: "ROUND", weight: 0.78, color: CSS.goldLight },
-  { key: "target", label: "GOAL", weight: 1.12, color: CSS.parchment },
-  { key: "score", label: "SCORE", weight: 1.35, color: CSS.goldLight },
+  { key: "roll", label: "ROLLS", weight: 0.9, color: CSS.ivory },
+  { key: "rank", label: "RANK", weight: 0.8, color: CSS.goldLight },
+  { key: "target", label: "GOAL", weight: 1.15, color: CSS.parchment },
+  { key: "score", label: "SCORE", weight: 1.3, color: CSS.goldLight },
+  { key: "gold", label: "GOLD", weight: 0.75, color: CSS.gold },
 ] as const;
 type HudStatKey = (typeof HUD_STATS)[number]["key"];
 const SEAL_RADIUS = 85; // half of the 170x170 seal texture
@@ -57,19 +62,14 @@ const SEAL_RADIUS = 85; // half of the 170x170 seal texture
  *  bare edge into frame. */
 const FELT_OVERSCAN = 16;
 
-/** A roll worth this fraction of the round's target is a "big" one: it earns a
+/** A roll worth this fraction of the trial's goal is a "big" one: it earns a
  *  shake and a spark burst rather than passing quietly. */
 const BIG_SCORE_FRACTION = 0.08;
 
-/** Felt tint and grid backdrop at an empty score, at the round's target, and
- *  on a final roll that arrived short of it. The scene warms as the target
- *  comes into reach and goes cold and bloody when the round is about to be
+/** Felt tint at an empty score, at the trial's goal, and on a final roll that
+ *  arrived short of it. The scene warms as the target
+ *  comes into reach and goes cold and bloody when the trial is about to be
  *  lost — the same signal the sigil carries, spread across the whole table. */
-const TENSION_BACKDROP = {
-  idle: COLORS.felt,
-  met: 0x241a2e,
-  danger: 0x2a1220,
-};
 const TENSION_FELT_TINT = {
   idle: 0xffffff,
   met: 0xffe6bd,
@@ -123,10 +123,10 @@ export class GameScene extends Phaser.Scene {
   // WebGL renderer doesn't reliably support masking a container this deep.
   private gridCamera?: Phaser.Cameras.Scene2D.Camera;
   // Only created alongside the grid camera: a transparent full-screen camera
-  // stacked *above* it, so popups (banners, float-ups) land on top of the grid
-  // camera's opaque backdrop instead of being painted over by it. See overlay().
+  // stacked above it, so popups (banners, float-ups) land on top of dice drawn
+  // by the grid camera's later render pass. See overlay().
   private overlayCamera?: Phaser.Cameras.Scene2D.Camera;
-  // Vertically-stacked announcement banners (unlocks, shop, round end) so that
+  // Vertically-stacked announcement banners (unlocks, boss, trial end) so that
   // several firing at once never overlap — see BannerStack.
   private banners!: BannerStack;
   private viewport: Viewport = { scrollX: 0, scrollY: 0, zoom: 1 };
@@ -152,11 +152,13 @@ export class GameScene extends Phaser.Scene {
   private effectTimer?: Phaser.Time.TimerEvent;
   private finishEffects?: (skipHold: boolean) => void;
   private pendingAdvance?: Phaser.Time.TimerEvent;
-  private hudRound!: Phaser.GameObjects.Text;
+  private hudRank!: Phaser.GameObjects.Text;
+  private hudGold!: Phaser.GameObjects.Text;
   private hudRoll!: Phaser.GameObjects.Text;
   private hudScore!: Phaser.GameObjects.Text;
   private hudTarget!: Phaser.GameObjects.Text;
   private hudNumbers!: Phaser.GameObjects.Text;
+  private runFooterLinks: Phaser.GameObjects.Text[] = [];
   private hudScorePlaque!: Phaser.GameObjects.Container;
   // The score the HUD is currently *showing*, which lags state.score while a
   // count-up runs. Reset (not tweened) whenever the HUD is rebuilt.
@@ -172,6 +174,12 @@ export class GameScene extends Phaser.Scene {
   // The live tutorial callout, if any — re-anchored to fresh HUD objects on
   // every rebuild (see renderTutorial). Only present during the first game.
   private tutorialCallout?: CalloutHandle;
+  // The Boss tutorial step waits out the "presides" banner, which the callout's
+  // dim would otherwise bury (the banner sits below it).
+  private bossCalloutHeld = true;
+  // Unlocks still persist at the moment their criterion is met, but their
+  // presentation waits for TrialResults so the roll itself stays readable.
+  private trialUnlocks: ShopItemId[] = [];
 
   constructor() {
     super("Game");
@@ -205,23 +213,28 @@ export class GameScene extends Phaser.Scene {
     this.shownScore = this.state.score;
     this.scoreTween = undefined;
     this.sealBreathe = undefined;
+    this.trialUnlocks = [];
+    this.bossCalloutHeld = true;
     this.gridContainer = this.add.container(0, 0);
-    this.buildAmbient();
     // Recreated each build: routes new banners through the overlay camera so
     // they composite above the windowed grid, just like other popups.
     this.banners = new BannerStack(this, (objs) => this.overlay(objs));
 
     this.build();
+    slideSceneIn(this, this.transitionBackdrop());
 
     this.renderTutorial();
 
-    // Returning from a shop that opened on a completed round — the bonus shop an
-    // early clear earns, or a checkpoint landing on the round's final roll (roll
-    // 25 with bonus rolls). The round is over, so resolve it now instead of
-    // waiting for a roll the player has no reason (or no rolls left) to make.
-    if (roundComplete(this.state)) {
+    // The shop now runs AFTER the trial resolves, so returning from it always
+    // lands on a fresh trial — there is nothing left to finish here. The one
+    // case that still needs handling is a trial that is somehow already complete
+    // on entry (a dev-panel jump), which would otherwise wait for a roll the
+    // player has no reason to make.
+    if (trialComplete(this.state)) {
       this.rolling = true;
-      this.resolveEndOfRound();
+      this.resolveEndOfTrial();
+    } else {
+      this.announceBoss();
     }
 
     const offResize = onResizeCoalesced(this, () => this.handleResize());
@@ -289,15 +302,15 @@ export class GameScene extends Phaser.Scene {
     };
 
     let anchor: Phaser.Geom.Rectangle;
-    let text: string;
     let onContinue: (() => void) | undefined;
     let interactiveAnchor = false;
 
-    switch (t.stage) {
+    // Only where the callout points and what dismisses it are decided here;
+    // the copy comes from the shared script, keyed off the same stage.
+    const stage = t.stage;
+    switch (stage) {
       case TutorialStage.Score:
         anchor = plaqueRect("score");
-        text =
-          "This is your score. Rolling a 1 on any die earns a point — items unlock more ways to score. Your final score is the total across every round.";
         onContinue = advance;
         break;
       case TutorialStage.Roll:
@@ -307,7 +320,6 @@ export class GameScene extends Phaser.Scene {
           SEAL_RADIUS * 2,
           SEAL_RADIUS * 2,
         );
-        text = "Press the seal to roll all of your dice.";
         interactiveAnchor = true; // the roll press itself advances the tutorial
         break;
       case TutorialStage.Viewport:
@@ -317,42 +329,40 @@ export class GameScene extends Phaser.Scene {
           this.layout.grid.width,
           this.layout.grid.height,
         );
-        text =
-          "Click and drag to pan the dice viewport. Scroll to zoom in and out.";
         onContinue = advance;
         break;
-      case TutorialStage.Target:
+      case TutorialStage.Goal:
         anchor = plaqueRect("target");
-        text =
-          "This is your goal. Reach it before your rolls run out to survive and advance to the next round — the round ends the moment you do.";
         onContinue = advance;
         break;
       case TutorialStage.Rolls:
         anchor = plaqueRect("roll");
-        text =
-          "Your rolls this round. You get 20 rolls to reach the target; clear it with rolls to spare and the Order rewards you with a visit to the shop.";
         onContinue = advance;
         break;
-      case TutorialStage.Round:
-        anchor = plaqueRect("round");
-        text = `The current round. Survive to round ${WIN_ROUND} to restore order and win the game.`;
+      case TutorialStage.Rank:
+        anchor = plaqueRect("rank");
+        onContinue = advance;
+        break;
+      case TutorialStage.Boss:
+        // Nothing to point at until a Boss Trial is actually running, and
+        // nothing to read while its banner is still on screen.
+        if (this.bossCalloutHeld || !activeBoss(this.state)) return;
+        anchor = plaqueRect("target");
         onContinue = advance;
         break;
       default:
-        return; // Shop stage (and Done) are handled outside GameScene.
+        // Route, Results and Shop steps belong to their own scenes.
+        return;
     }
 
     this.tutorialCallout = showCallout(this, {
       anchor,
-      text,
+      text: TUTORIAL_TEXT[stage],
       onContinue,
       interactiveAnchor,
     });
     // If the grid has gone windowed, route the callout through the overlay
-    // camera so it draws *above* the grid camera's opaque backdrop. A plain
-    // gridCamera.ignore() only stops the grid camera from drawing the callout —
-    // its felt backdrop (drawn after the main camera) would still paint over any
-    // part of the panel that overlaps the viewport, partially obscuring it.
+    // camera so the grid camera's later dice pass cannot cover it.
     this.overlay(this.tutorialCallout.objects);
   }
 
@@ -373,7 +383,7 @@ export class GameScene extends Phaser.Scene {
     const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14 };
 
     // One compact strip at every width. The score gets the broadest plaque,
-    // then the goal; the simple round counter needs the least room. Capping
+    // then the goal; the ladder position needs the least room. Capping
     // the strip keeps the four stats visually grouped on wide monitors, while
     // proportional gaps and type let the same composition collapse on phones.
     const hudMargin = Phaser.Math.Clamp(W * 0.015, 4, 12);
@@ -426,14 +436,23 @@ export class GameScene extends Phaser.Scene {
     this.shownScore = this.state.score;
     this.stopSealBreathe();
 
+    // Ambient is part of chrome for draw order, but survives HUD rebuilds so
+    // its rotation and any transition morph remain continuous across resize.
+    if (this.ambient && this.chrome) this.chrome.remove(this.ambient);
     this.chrome?.destroy();
 
     const items: Phaser.GameObjects.GameObject[] = [];
     this.feltImage = addFelt(this, fx.on ? FELT_OVERSCAN : 0);
     items.push(this.feltImage);
+    if (!this.ambient) this.buildAmbient();
+    if (this.ambient) {
+      this.ambient.setPosition(this.scale.width / 2, this.scale.height / 2);
+      this.ambient.setScale(1);
+      this.ambient.setArea(this.scale.width, this.scale.height);
+      items.push(this.ambient);
+    }
     items.push(...this.buildHud(layout));
     items.push(...this.buildRollButton(layout));
-    items.push(...this.buildWindowHint(layout));
 
     this.chrome = this.add.container(0, 0, items);
     // A fresh container always lands on top of the display list — but the
@@ -443,34 +462,6 @@ export class GameScene extends Phaser.Scene {
     // chrome reference they were ignoring is gone, so point them at the new one.
     this.gridCamera?.ignore(this.chrome);
     this.overlayCamera?.ignore(this.chrome);
-  }
-
-  /** Border + caption around the grid area once it's scrollable, so it's
-   *  obvious the grid isn't showing every die at once. */
-  private buildWindowHint(layout: Layout): Phaser.GameObjects.GameObject[] {
-    const area = layout.grid;
-    const border = this.add
-      .rectangle(
-        area.x + area.width / 2,
-        area.y + area.height / 2,
-        area.width,
-        area.height,
-      )
-      .setStrokeStyle(2, COLORS.gold, 0.35);
-    const hint = this.add
-      .text(
-        area.x + area.width / 2,
-        area.y + 14,
-        `Dice viewport — drag to pan, scroll to zoom`,
-        {
-          fontFamily: SERIF,
-          fontSize: "13px",
-          color: CSS.dim,
-          fontStyle: "italic",
-        },
-      )
-      .setOrigin(0.5, 0);
-    return [border, hint];
   }
 
   private buildHud(layout: Layout): Phaser.GameObjects.GameObject[] {
@@ -490,13 +481,14 @@ export class GameScene extends Phaser.Scene {
       HudStatKey,
       (typeof plaques)[number][1]
     >;
-    this.hudRound = plaqueByKey.round.value;
+    this.hudRank = plaqueByKey.rank.value;
+    this.hudGold = plaqueByKey.gold.value;
     this.hudRoll = plaqueByKey.roll.value;
     this.hudScore = plaqueByKey.score.value;
     this.hudTarget = plaqueByKey.target.value;
     this.hudScorePlaque = plaqueByKey.score.container;
 
-    const { numbersY, settingsY } = layout.footer;
+    const { numbersY } = layout.footer;
     // Sacred numbers pinned bottom-left; Inventory (upper) and Settings (lower)
     // pinned bottom-right. The left text wraps within the half-width gap so it
     // never runs under the right-hand links on narrow portrait screens.
@@ -509,64 +501,11 @@ export class GameScene extends Phaser.Scene {
         wordWrap: { width: W * 0.5 },
       })
       .setOrigin(0, 0.5);
-    items.push(
-      this.hudNumbers,
-      this.buildInventoryLink(W - 24, settingsY - 22, 1),
-      this.buildSettingsLink(W - 24, settingsY, 1),
-    );
+    this.runFooterLinks = buildRunFooterLinks(this, "Game");
+    items.push(this.hudNumbers, ...this.runFooterLinks);
 
     this.updateHud();
     return items;
-  }
-
-  /** Opens the Inventory overlay for the current run — sits just above the
-   *  Settings link and mirrors its footer styling. */
-  private buildInventoryLink(
-    x: number,
-    y: number,
-    originX: number,
-  ): Phaser.GameObjects.Text {
-    const link = this.add
-      .text(x, y, "Inventory", {
-        fontFamily: SERIF,
-        fontSize: "17px",
-        color: CSS.dim,
-        fontStyle: "italic",
-      })
-      .setOrigin(originX, 0.5)
-      .setInteractive({ useHandCursor: true });
-    link.on("pointerover", () => link.setColor(CSS.gold));
-    link.on("pointerout", () => link.setColor(CSS.dim));
-    link.on("pointerdown", () => {
-      audio.click();
-      this.scene.launch("Inventory", { returnTo: "Game" });
-    });
-    return link;
-  }
-
-  /** Opens Settings mid-run; Settings shows "Abandon Run" and returns here
-   *  instead of to the Menu when it knows it was opened from the game. */
-  private buildSettingsLink(
-    x: number,
-    y: number,
-    originX: number,
-  ): Phaser.GameObjects.Text {
-    const link = this.add
-      .text(x, y, "Settings", {
-        fontFamily: SERIF,
-        fontSize: "17px",
-        color: CSS.dim,
-        fontStyle: "italic",
-      })
-      .setOrigin(originX, 0.5)
-      .setInteractive({ useHandCursor: true });
-    link.on("pointerover", () => link.setColor(CSS.gold));
-    link.on("pointerout", () => link.setColor(CSS.dim));
-    link.on("pointerdown", () => {
-      audio.click();
-      this.scene.start("Settings", { returnTo: "Game" });
-    });
-    return link;
   }
 
   private makePlaque(
@@ -643,31 +582,32 @@ export class GameScene extends Phaser.Scene {
 
   private updateHud(): void {
     const s = this.state;
-    this.setHudValue(this.hudRound, String(s.round));
-    this.setHudValue(this.hudRoll, `${s.roll}/${roundRollTarget(s)}`);
-    this.setScoreDisplay(s.score);
     this.setHudValue(
-      this.hudTarget,
-      formatScore(survivalTarget(s.round, s.hardMode)),
+      this.hudRank,
+      `${rankOf(s.trial)}-${trialInRank(s.trial)}`,
     );
+    this.setHudValue(this.hudRoll, `${s.roll}/${trialRollTarget(s)}`);
+    this.setScoreDisplay(s.score);
+    this.setHudValue(this.hudTarget, formatScore(goalFor(s)));
+    this.setHudValue(this.hudGold, String(s.gold));
 
+    // The Silence cuts the scoring numbers back to 1s, so the footer has to read
+    // them through the same accessor the scorer does or it would lie about what
+    // scores this trial.
+    const numbers = scoringNumbersFor(s);
     const extras =
       s.extraPoints > 0 ? `  ·  +${s.extraPoints} bonus per scoring die` : "";
-    this.hudNumbers.setText(
-      `Sacred numbers: ${s.scoringNumbers.join(", ")}${extras}`,
-    );
+    this.hudNumbers.setText(`Sacred numbers: ${numbers.join(", ")}${extras}`);
 
     this.updateTension();
   }
 
   /**
    * Ease the displayed score toward its real value and punch the plaque on the
-   * way up. The score is the whole game — currency, survival, and progress in
-   * one number — so it's worth watching it climb rather than finding it
-   * already arrived. `fx.countUp` snaps when effects are off, and `shownScore`
-   * is reset
-   * to match on every HUD rebuild, so both of those paths land here as a
-   * plain `setText`.
+   * way up. The score is the trial in one number, so it's worth watching it
+   * climb rather than finding it already arrived. `fx.countUp` snaps when
+   * effects are off, and `shownScore` is reset to match on every HUD rebuild,
+   * so both of those paths land here as a plain `setText`.
    */
   private setScoreDisplay(score: bigint): void {
     if (score === this.shownScore) {
@@ -688,25 +628,20 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Colour the table by how the round is going: the felt and the grid backdrop
-   * warm toward gold as the score closes on the target, and go cold and bloody
-   * once the last roll arrives with the target still out of reach. The sigil
-   * behind the dice reads the same two numbers — see AmbientLayer.
+   * Colour the table by how the trial is going: the felt warms toward gold as
+   * the score closes on the goal, and goes cold and bloody once the last roll
+   * arrives with the goal still out of reach. The sigil reads the same two
+   * numbers — see AmbientLayer.
    */
   private updateTension(): void {
     if (!fx.on) return;
     const s = this.state;
-    const target = survivalTarget(s.round, s.hardMode);
-    const progress = target > 0n ? Number(s.score) / Number(target) : 0;
-    const danger = roundRollTarget(s) - s.roll <= 1 && s.score < target;
+    const goal = goalFor(s);
+    const progress = goal > 0n ? Number(s.score) / Number(goal) : 0;
+    const danger = trialRollTarget(s) - s.roll <= 1 && s.score < goal;
     const t = Phaser.Math.Clamp(progress, 0, 1);
 
     this.ambient?.setProgress(t, danger);
-    this.gridCamera?.setBackgroundColor(
-      danger
-        ? TENSION_BACKDROP.danger
-        : blendColor(TENSION_BACKDROP.idle, TENSION_BACKDROP.met, t),
-    );
     this.feltImage?.setTint(
       danger
         ? TENSION_FELT_TINT.danger
@@ -716,29 +651,14 @@ export class GameScene extends Phaser.Scene {
 
   // ---- dice grid -----------------------------------------------------------
 
-  /**
-   * Build the sigil-and-motes backdrop, when effects are on.
-   *
-   * It's parented to the grid container because the grid camera paints an
-   * opaque backdrop across the whole grid area — anything drawn behind that
-   * camera simply doesn't exist there. Living in grid space means it pans and
-   * zooms with the dice by default, which is *not* what we want, so `syncGrid`
-   * re-anchors it to the camera's world centre at the inverse of its zoom on
-   * every step; the net effect is a layer that holds still behind moving dice.
-   */
+  /** Build the full-room sigil and motes. It joins the felt in main-scene
+   * chrome, while the transparent grid camera composites dice over it. */
   private buildAmbient(): void {
     this.ambient?.destroy();
     this.ambient = undefined;
     if (!fx.on) return;
 
-    const layer = new AmbientLayer(this);
-    this.gridContainer.add(layer);
-    this.gridContainer.sendToBack(layer);
-    // Same opt-out as the die sprites: drawn only through the clipped grid
-    // camera, never by the main or overlay cameras.
-    this.cameras.main.ignore(layer);
-    this.overlayCamera?.ignore(layer);
-    this.ambient = layer;
+    this.ambient = new AmbientLayer(this, { ring: true });
   }
 
   /** Reconciles the live sprite pool against the current scroll/zoom window,
@@ -788,20 +708,6 @@ export class GameScene extends Phaser.Scene {
       view.scrollX + halfW * (1 / view.zoom - 1),
       view.scrollY + halfH * (1 / view.zoom - 1),
     );
-
-    // Pin the ambient backdrop to the middle of what the grid camera is
-    // showing, at the inverse of its zoom, so it stays put at a constant
-    // on-screen size while the dice pan and scale over it. Derived from
-    // `view` rather than `cam.worldView`, which Phaser only refreshes at
-    // pre-render and would still hold the previous frame's rect here.
-    if (this.ambient) {
-      this.ambient.setArea(layout.grid.width, layout.grid.height);
-      this.ambient.setPosition(
-        view.scrollX + halfW / view.zoom,
-        view.scrollY + halfH / view.zoom,
-      );
-      this.ambient.setScale(1 / view.zoom);
-    }
 
     if (this.gridDetail === "cards") {
       for (const sprite of this.sprites.values()) sprite.destroy();
@@ -896,19 +802,17 @@ export class GameScene extends Phaser.Scene {
   private ensureGridCamera(): Phaser.Cameras.Scene2D.Camera {
     if (this.gridCamera) return this.gridCamera;
     this.gridCamera = this.cameras.add(0, 0, 1, 1);
-    // A fully transparent background camera doesn't composite its draws
-    // correctly over content another camera already rendered — give it an
-    // opaque backdrop matching the felt so dice actually show up.
-    this.gridCamera.setBackgroundColor(COLORS.felt);
+    // The viewport clips and transforms dice only; the full-scene felt and
+    // sigil remain visible through it as one continuous room.
+    this.gridCamera.setBackgroundColor("rgba(0,0,0,0)");
     this.gridCamera.ignore(this.chrome);
     return this.gridCamera;
   }
 
   /** Lazily creates the transparent overlay camera the first time a popup is
-   *  shown while windowed. It's added *after* the grid camera so it composites
-   *  on top of the grid's opaque backdrop, and it renders only loose popup
-   *  children — chrome and the dice grid are ignored so it doesn't redraw them
-   *  (at the wrong scroll/zoom) over everything else. */
+   *  shown while windowed. It's added after the grid camera so loose popup
+   *  children render above the dice without redrawing chrome or the grid at
+   *  the wrong scroll/zoom. */
   private ensureOverlayCamera(): Phaser.Cameras.Scene2D.Camera {
     if (this.overlayCamera) return this.overlayCamera;
     const cam = this.cameras.add(0, 0, this.scale.width, this.scale.height);
@@ -918,12 +822,9 @@ export class GameScene extends Phaser.Scene {
     return cam;
   }
 
-  /** Popups (score float-ups, round banners) are loose scene children, not
-   *  part of chrome or the grid. Below the windowing threshold the main camera
-   *  draws them on top and there's nothing to do. Once windowed, though, the
-   *  grid camera's opaque backdrop is drawn over the main camera and would
-   *  paint over any popup in the grid area — so route them to a dedicated
-   *  overlay camera stacked above the grid, at their real screen position. */
+  /** Popups (score float-ups, trial banners) are loose scene children, not
+   *  part of chrome or the grid. Once windowed, route them through a dedicated
+   *  overlay camera so the grid camera's later dice pass cannot cover them. */
   private overlay<T extends Phaser.GameObjects.GameObject>(
     objOrList: T | T[],
   ): T | T[] {
@@ -1219,9 +1120,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     audio.roll(this.state.dice.length);
+    // A tutorial run is not allowed to end on a cold streak: once a trial has
+    // only as many rolls left as it still needs points, those rolls come up 1
+    // on every die (see tutorialForcesRoll).
     this.state.dice.roll(
-      Math.random,
-      this.state.scoringNumbers,
+      tutorialForcesRoll(this.registry, this.state) ? () => 0 : Math.random,
+      scoringNumbersFor(this.state),
       this.state.royalSealSizes,
     );
 
@@ -1349,13 +1253,13 @@ export class GameScene extends Phaser.Scene {
                   ? (s.dice.agg().valueCounts.get(die.value) ?? 0) >= 2
                   : id === "jackpot"
                     ? (s.dice.agg().valueCounts.get(die.value) ?? 0) >= 3
-                : id === "windfall"
-                  ? windfall
-                  : id === "royalSeal"
-                    ? royalSeal
-                    : id === "luckySeven"
-                      ? String(die.value).includes("7")
-                      : false;
+                    : id === "windfall"
+                      ? windfall
+                      : id === "royalSeal"
+                        ? royalSeal
+                        : id === "luckySeven"
+                          ? String(die.value).includes("7")
+                          : false;
           if (hit) hits.push(index);
         }
         return hits;
@@ -1515,9 +1419,9 @@ export class GameScene extends Phaser.Scene {
 
   /**
    * Shake and spark in proportion to what the roll was worth. Points are
-   * weighed against the round's own target rather than against an absolute
+   * weighed against the trial's own goal rather than against an absolute
    * number, because both grow by orders of magnitude across a run — a hundred
-   * points is the whole round in round 2 and a rounding error in round 10, and
+   * points is the whole trial at rank 1 and a rounding error at rank 5, and
    * only the fraction says which.
    *
    * Below `BIG_SCORE_FRACTION` the roll passes quietly: an impact on every
@@ -1525,8 +1429,8 @@ export class GameScene extends Phaser.Scene {
    */
   private celebrateRoll(points: bigint): void {
     if (!fx.on) return;
-    const target = survivalTarget(this.state.round, this.state.hardMode);
-    const share = target > 0n ? Number(points) / Number(target) : 0;
+    const goal = goalFor(this.state);
+    const share = goal > 0n ? Number(points) / Number(goal) : 0;
     if (share < BIG_SCORE_FRACTION) return;
 
     const strength = Math.min(1, share);
@@ -1549,18 +1453,12 @@ export class GameScene extends Phaser.Scene {
    *  anything newly earned. No-ops cheaply once everything is unlocked. */
   private checkUnlocks(): void {
     for (const id of evaluateAndUnlock(this.state)) {
-      const def = ITEMS.find((it) => it.id === id);
-      this.banners.push(`New item unlocked: ${def?.name ?? id}`, {
-        holdMs: 1500,
-        detail: def?.unlock
-          ? `${describeUnlockAction(def.unlock)} Available next run.`
-          : "Available next run.",
-      });
+      if (!this.trialUnlocks.includes(id)) this.trialUnlocks.push(id);
     }
   }
 
   /**
-   * The full-screen punctuation on a round ending. Each outcome gets its own
+   * The visual punctuation on a trial ending. Each outcome gets its own
    * colour and weight so the three read apart before the banner text has been
    * read: gold and open for a win, a warm sweep for surviving, a red lurch for
    * a run ending.
@@ -1571,14 +1469,12 @@ export class GameScene extends Phaser.Scene {
     const cy = this.scale.height / 2;
 
     if (outcome === "gameOver") {
-      fx.flash(this.cameras.main, COLORS.waxRed, 380);
       fx.shakeCamera(this.cameras.main, 460, 0.012);
       fx.shakeObject(this, this.gridContainer, 460, 16);
       return;
     }
 
     const gold = outcome === "victory" ? COLORS.goldLight : COLORS.gold;
-    fx.flash(this.cameras.main, gold, outcome === "victory" ? 420 : 240);
     const ring = fx.shockwave(
       this,
       cx,
@@ -1599,51 +1495,13 @@ export class GameScene extends Phaser.Scene {
     if (burst) this.overlay(burst);
   }
 
-  /** Record the finished run locally and, when it set a new personal best,
-   *  queue it for the global leaderboard. The GameOver/Victory scene picks up
-   *  the queued submission and prompts for initials. */
-  private endRun(s: RunState, won: boolean): void {
-    const { personalBest } = recordRunEnd(s, won);
-    if (personalBest && globalScoresEnabled()) {
-      queuePendingSubmission({
-        score: s.totalScore,
-        won,
-        hard: s.hardMode,
-        dicePoints: toNumberPointMap(s.dicePoints),
-        itemPoints: toNumberPointMap(s.itemPoints),
-      });
-    }
-  }
-
   private afterRoll(autoReroll: boolean): void {
     const s = this.state;
 
-    // Shop checkpoints take priority over the round end: when the roll that
-    // completes a round also lands on a checkpoint (a clear on roll 5/15, or
-    // roll 25 with bonus rolls), that one visit serves as both — the round then
-    // resolves when we return to GameScene — see the resume check in create().
-    if (shouldOpenShop(s)) {
-      this.banners.push("The shop beckons…", { holdMs: 900 });
-      this.time.delayedCall(800, () => this.scene.start("Shop"));
-      return;
-    }
-
-    if (roundComplete(s)) {
-      // Meeting the target ends the round on the spot. Clearing with rolls still
-      // in hand earns a bonus shop visit, taken at the round's full score before
-      // the round end carries over only a fraction of it; the round then
-      // resolves when we return to GameScene — see the resume check in create().
-      // Clearing the final round wins outright: the points are never reset and
-      // nothing bought could matter, so the victory isn't interrupted by a shop.
-      if (clearedEarly(s) && s.round < WIN_ROUND) {
-        this.banners.push("Target met — the Order rewards you", {
-          holdMs: 1100,
-          detail: "The round ends early. Spend your points before they reset.",
-        });
-        this.time.delayedCall(1000, () => this.scene.start("Shop"));
-        return;
-      }
-      this.resolveEndOfRound();
+    // The shop no longer interrupts a trial — it sits between them — so the only
+    // question left after a roll is whether the trial is over.
+    if (trialComplete(s)) {
+      this.resolveEndOfTrial();
       return;
     }
 
@@ -1654,74 +1512,85 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Resolve the end of a round (win/lose/advance) with the matching audio,
-   *  banners, and scene transition. Assumes `roundComplete(state)`. Called from
-   *  afterRoll when the completed round owes no shop visit, and from create()
-   *  when returning from one that did. */
-  private resolveEndOfRound(): void {
-    const s = this.state;
-    // The engine decides win/lose/advance and performs the score carryover and
-    // round-start passives on advance; the scene handles audio, banners, and
-    // scene transitions around it.
-    const outcome = resolveRoundEnd(s);
-    if (outcome.insuranceUsed) {
-      this.banners.push("Insurance Policy honored", {
-        holdMs: 1300,
-        detail: "The round clears at 75% of its target. The policy is destroyed.",
+  /** Announce the Boss Trial's modifier as the trial opens, so the player knows
+   *  what they are fighting before they spend a roll finding out. */
+  private announceBoss(): void {
+    const boss = activeBoss(this.state);
+    if (!boss) return;
+    const holdMs = 1600;
+    this.banners.push(`${boss.name} presides`, { holdMs, detail: boss.desc });
+    // The Boss tutorial step waits for the banner it would otherwise dim.
+    if (getTutorial(this.registry).active) {
+      this.time.delayedCall(holdMs + 500, () => {
+        this.bossCalloutHeld = false;
+        this.renderTutorial();
       });
     }
+  }
+
+  /** Resolve the end of a trial (win/lose/advance) with the matching audio,
+   *  result presentation, and scene transition. Assumes
+   *  `trialComplete(state)`. */
+  private resolveEndOfTrial(): void {
+    const s = this.state;
+    // The engine decides win/lose/advance, pays out the gold and runs the
+    // trial-start passives on advance; the scene handles audio, banners, and
+    // scene transitions around it.
+    const outcome = resolveTrialEnd(s);
     if (outcome.phase === "victory") {
       audio.victory();
       this.punctuate("victory");
-      // Capture before endRun records the winning entry: true only if this is
-      // the player's first-ever win, which is exactly when Hard Mode unlocks.
-      const hardUnlocked = !hasBeatenGame();
-      this.endRun(s, true);
       this.checkUnlocks();
-      this.banners.push(
-        `All ${WIN_ROUND} rounds survived — the Order is complete`,
-        { holdMs: 1300 },
+      this.time.delayedCall(700, () =>
+        slideSceneOut(
+          this,
+          () =>
+            this.scene.start("TrialResults", {
+              outcome,
+              unlocked: this.trialUnlocks,
+            }),
+          this.transitionBackdrop(),
+        ),
       );
-      if (hardUnlocked) {
-        this.banners.push("Hard Mode unlocked ☠", {
-          holdMs: 1500,
-          detail: "Enable it in Settings or on the next-run screen.",
-        });
-      }
-      this.time.delayedCall(1700, () => this.scene.start("Victory"));
       return;
     }
     if (outcome.phase === "gameOver") {
       audio.gameOver();
       this.punctuate("gameOver");
-      this.endRun(s, false);
-      this.banners.push("The Order is displeased. Your run ends.", {
-        holdMs: 1300,
-      });
-      this.time.delayedCall(1700, () => this.scene.start("GameOver"));
+      finalizeRun(s);
+      this.time.delayedCall(900, () =>
+        slideSceneOut(
+          this,
+          () => this.scene.start("GameOver", { unlocked: this.trialUnlocks }),
+          this.transitionBackdrop(),
+        ),
+      );
       return;
     }
-    // advanced — round was just incremented by the engine.
-    audio.roundUp();
+
+    audio.trialUp();
     this.punctuate("advanced");
-    this.banners.push(
-      `Round ${s.round - 1} survived — the Order is pleased`,
-      { holdMs: 1300 },
-    );
     this.checkUnlocks();
-    this.time.delayedCall(1700, () => {
+    this.time.delayedCall(700, () => {
       this.updateHud();
-      if (outcome.diceAdded > 0) {
-        this.syncGrid(this.layout);
-        this.cueCreatedDice(
-          outcome.diceAdded,
-          "foundry",
-          "FOUNDRY",
-          COLORS.rarityUncommon,
-          CSS.rarityUncommon,
-        );
-      }
-      this.rolling = false;
+      slideSceneOut(
+        this,
+        () =>
+          this.scene.start("TrialResults", {
+            outcome,
+            unlocked: this.trialUnlocks,
+          }),
+        this.transitionBackdrop(),
+      );
     });
+  }
+
+  private transitionBackdrop(): Phaser.GameObjects.GameObject[] {
+    const background: Phaser.GameObjects.GameObject[] = [
+      this.feltImage,
+      ...this.runFooterLinks,
+    ];
+    if (this.ambient) background.push(this.ambient);
+    return background;
   }
 }

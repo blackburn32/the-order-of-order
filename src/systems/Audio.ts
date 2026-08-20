@@ -1,4 +1,4 @@
-import pranceUrl from '../../audio/songs/prance.mp3?url';
+import pranceUrl from "../../audio/songs/prance.mp3?url";
 
 // SFX are synthesized with WebAudio; background music is a decoded, natively
 // looped buffer routed through the same bus.
@@ -15,7 +15,7 @@ const DUCK_ATTACK_SECONDS = 0.02;
  * value and pinning it before cancelling.
  */
 function cancelAndHold(param: AudioParam, time: number): void {
-  if (typeof param.cancelAndHoldAtTime === 'function') {
+  if (typeof param.cancelAndHoldAtTime === "function") {
     param.cancelAndHoldAtTime(time);
     return;
   }
@@ -39,7 +39,10 @@ class AudioBus {
   /** Create/resume the context. Must be called from a user-gesture handler. */
   ensure(): void {
     if (!this.ctx) {
-      const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const Ctor =
+        window.AudioContext ??
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
       if (!Ctor) return;
       this.ctx = new Ctor();
       this.musicGain = this.ctx.createGain();
@@ -50,7 +53,7 @@ class AudioBus {
       this.sfxGain.connect(this.ctx.destination);
       this.applyVolumes();
     }
-    if (this.ctx.state === 'suspended') void this.ctx.resume();
+    if (this.ctx.state === "suspended") void this.ctx.resume();
   }
 
   setVolumes(musicVol: number, sfxVol: number): void {
@@ -69,13 +72,15 @@ class AudioBus {
   /** Start the soundtrack once and let it persist across scene changes. */
   startMusic(): void {
     this.ensure();
-    if (!this.ctx || !this.musicGain || this.musicSource || this.musicLoad) return;
+    if (!this.ctx || !this.musicGain || this.musicSource || this.musicLoad)
+      return;
     const ctx = this.ctx;
     const destination = this.musicGain;
 
     this.musicLoad = (async () => {
       const response = await fetch(pranceUrl);
-      if (!response.ok) throw new Error(`Unable to load soundtrack (${response.status})`);
+      if (!response.ok)
+        throw new Error(`Unable to load soundtrack (${response.status})`);
       const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
       const source = ctx.createBufferSource();
       source.buffer = buffer;
@@ -87,7 +92,7 @@ class AudioBus {
       this.musicSource = source;
     })()
       .catch((error: unknown) => {
-        console.warn('Unable to start background music', error);
+        console.warn("Unable to start background music", error);
       })
       .finally(() => {
         this.musicLoad = null;
@@ -95,7 +100,11 @@ class AudioBus {
   }
 
   /** Briefly lower the music for a prominent cue, then restore it smoothly. */
-  private duckMusic(level: number, holdSeconds: number, releaseSeconds: number): void {
+  private duckMusic(
+    level: number,
+    holdSeconds: number,
+    releaseSeconds: number,
+  ): void {
     if (!this.ctx || !this.musicDuckGain) return;
     const now = this.ctx.currentTime;
     this.duckUntil = Math.max(this.duckUntil, now + holdSeconds);
@@ -109,7 +118,13 @@ class AudioBus {
 
   // ---- sfx -----------------------------------------------------------------
 
-  private tone(freq: number, dur: number, type: OscillatorType, delay = 0, peak = 0.25): void {
+  private tone(
+    freq: number,
+    dur: number,
+    type: OscillatorType,
+    delay = 0,
+    peak = 0.25,
+  ): void {
     if (!this.ctx || !this.sfxGain) return;
     const ctx = this.ctx;
     const t0 = ctx.currentTime + delay;
@@ -133,11 +148,12 @@ class AudioBus {
     const len = Math.max(1, Math.floor(ctx.sampleRate * dur));
     const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
     const data = buffer.getChannelData(0);
-    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    for (let i = 0; i < len; i++)
+      data[i] = (Math.random() * 2 - 1) * (1 - i / len);
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
+    filter.type = "lowpass";
     filter.frequency.value = cutoff;
     const g = ctx.createGain();
     g.gain.value = peak;
@@ -149,14 +165,19 @@ class AudioBus {
 
   click(): void {
     this.ensure();
-    this.tone(880, 0.06, 'triangle', 0, 0.12);
+    this.tone(880, 0.06, "triangle", 0, 0.12);
   }
 
   roll(diceCount: number): void {
     this.ensure();
     const bursts = Math.min(8, 2 + Math.ceil(diceCount / 4));
     for (let i = 0; i < bursts; i++) {
-      this.noiseBurst(0.05 + Math.random() * 0.04, i * 0.06 + Math.random() * 0.03, 0.22, 1800 + Math.random() * 1600);
+      this.noiseBurst(
+        0.05 + Math.random() * 0.04,
+        i * 0.06 + Math.random() * 0.03,
+        0.22,
+        1800 + Math.random() * 1600,
+      );
     }
   }
 
@@ -164,20 +185,21 @@ class AudioBus {
     this.ensure();
     const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
     const count = Math.min(4, 1 + Math.floor(points / 3));
-    for (let i = 0; i < count; i++) this.tone(notes[i], 0.22, 'triangle', i * 0.07, 0.2);
+    for (let i = 0; i < count; i++)
+      this.tone(notes[i], 0.22, "triangle", i * 0.07, 0.2);
   }
 
   jackpot(): void {
     this.ensure();
     this.duckMusic(0.3, 0.8, 0.4);
     const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5];
-    notes.forEach((f, i) => this.tone(f, 0.3, 'triangle', i * 0.08, 0.24));
-    this.tone(261.63, 0.6, 'sawtooth', 0, 0.08);
+    notes.forEach((f, i) => this.tone(f, 0.3, "triangle", i * 0.08, 0.24));
+    this.tone(261.63, 0.6, "sawtooth", 0, 0.08);
   }
 
   dud(): void {
     this.ensure();
-    this.tone(140, 0.15, 'sine', 0, 0.1);
+    this.tone(140, 0.15, "sine", 0, 0.1);
   }
 
   /** Whetstone filing a die down a step: a short metallic grind (filtered
@@ -185,34 +207,35 @@ class AudioBus {
   shrink(): void {
     this.ensure();
     this.noiseBurst(0.14, 0, 0.16, 1100);
-    this.tone(720, 0.13, 'triangle', 0, 0.13);
-    this.tone(520, 0.16, 'triangle', 0.07, 0.11);
+    this.tone(720, 0.13, "triangle", 0, 0.13);
+    this.tone(520, 0.16, "triangle", 0.07, 0.11);
   }
 
   buy(): void {
     this.ensure();
-    this.tone(659.25, 0.12, 'triangle', 0, 0.2);
-    this.tone(987.77, 0.18, 'triangle', 0.09, 0.2);
+    this.tone(659.25, 0.12, "triangle", 0, 0.2);
+    this.tone(987.77, 0.18, "triangle", 0.09, 0.2);
   }
 
   deny(): void {
     this.ensure();
-    this.tone(196, 0.2, 'square', 0, 0.08);
-    this.tone(185, 0.25, 'square', 0.1, 0.08);
+    this.tone(196, 0.2, "square", 0, 0.08);
+    this.tone(185, 0.25, "square", 0.1, 0.08);
   }
 
-  roundUp(): void {
+  /** The fanfare for surviving a trial and moving up the ladder. */
+  trialUp(): void {
     this.ensure();
     this.duckMusic(0.35, 0.7, 0.4);
     const notes = [392, 493.88, 587.33, 783.99];
-    notes.forEach((f, i) => this.tone(f, 0.3, 'triangle', i * 0.1, 0.22));
+    notes.forEach((f, i) => this.tone(f, 0.3, "triangle", i * 0.1, 0.22));
   }
 
   gameOver(): void {
     this.ensure();
     this.duckMusic(0.25, 1.3, 0.5);
     const notes = [440, 349.23, 293.66, 220];
-    notes.forEach((f, i) => this.tone(f, 0.5, 'sawtooth', i * 0.22, 0.12));
+    notes.forEach((f, i) => this.tone(f, 0.5, "sawtooth", i * 0.22, 0.12));
   }
 
   victory(): void {
@@ -221,9 +244,9 @@ class AudioBus {
     // Rising major arpeggio (C-E-G-C-E-G) resolving on a held high C,
     // over a sustained low root — grander and longer than jackpot().
     const arp = [523.25, 659.25, 783.99, 1046.5, 1318.5, 1567.98];
-    arp.forEach((f, i) => this.tone(f, 0.3, 'triangle', i * 0.12, 0.22));
-    this.tone(2093, 1.2, 'triangle', arp.length * 0.12, 0.24); // held high C7
-    this.tone(130.81, 1.6, 'sawtooth', 0, 0.09); // sustained low C3 root
+    arp.forEach((f, i) => this.tone(f, 0.3, "triangle", i * 0.12, 0.22));
+    this.tone(2093, 1.2, "triangle", arp.length * 0.12, 0.24); // held high C7
+    this.tone(130.81, 1.6, "sawtooth", 0, 0.09); // sustained low C3 root
   }
 }
 

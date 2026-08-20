@@ -1,31 +1,38 @@
 # The Order of Order
 
 The Order of Order is an incremental roguelike built around rolling dice. The player rolls a
-grid of dice trying to hit specific numbers, earning points when they do. Those points are also
-the shop's currency, so every purchase is a gamble. The player must meet a score threshold at
-the end of every round (20 rolls) to survive; falling short ends the run. Surviving a round
-clears the score back to 0, so banked points must be spent in the shop before the round ends or
-they're lost — unless the player owns a carryover item (Vault keeps 20%, Reserve keeps 50%).
-Clearing **all 10 rounds** wins the game.
+grid of dice trying to hit specific numbers, earning points when they do. Points are progress
+toward the current **trial's** goal and nothing else — they reset to zero the moment a trial
+ends. The shop runs on a separate currency, **gold**, earned by clearing trials.
+
+A run climbs a ladder of **trials** grouped into **ranks**. Each rank is three trials — the
+Lesser Trial (7 rolls), the Greater Trial (15 rolls), and the Boss Trial (20 rolls). A route
+screen previews all three, stamps completed trials, marks the next one, and reveals the rank's
+Boss modifier before play begins. Clearing a trial opens its results, then the shop, then the
+route back to the next trial. Clearing a rank's Boss Trial raises the rank and returns the player
+to a Lesser Trial with every goal raised. **Reaching rank 5 wins the game**; the victory screen
+then offers to press on into an endless ladder that no build can outrun forever.
 
 The game is built with Phaser 4 (TypeScript + Vite). Rolling a **1** scores; "Extra Number"
-upgrades add 2 and then 3 as scoring faces. Score and shop currency are one pool, so every
-purchase is weighed against the round threshold. The per-round survival targets are a
-hand-authored table (`ROUND_TARGETS` in `src/config.ts`), tuned with the balance simulation
-in `src/sim` so runs end across the whole game rather than being decided in the first few
-rounds; the legacy geometric formula (`ceil(5 × 1.85^(round−1))`) survives only as a fallback
-for rounds beyond the authored table.
+upgrades add 2 and then 3 as scoring faces. The per-trial goals are a hand-authored table
+(`TRIAL_GOALS` in `src/config.ts`), tuned with the balance simulation in `src/sim` so runs end
+across the whole ladder rather than being decided in the first few trials.
 
-The 10-round curve is designed to a deliberate attrition shape (measured on the pooled
-naive-bot field; a thinking player does better):
+The curve is designed to a deliberate attrition shape (measured on the pooled bot field; a
+thinking player does better) — the fraction of the field still alive after each rank:
 
-- **Rounds 1–3** — a gentle on-ramp; about **60%** of the field survives to round 4.
-- **Rounds 4–9** — a steady wall; roughly **5% of the whole field** is culled at each step.
-- **Round 10** — the final wall; culls about **8%** of the field, landing a ~22% bot win rate.
+| After rank | 1   | 2   | 3   | 4   | 5         |
+| ---------- | --- | --- | --- | --- | --------- |
+| Alive      | 97% | 88% | 70% | 47% | 25% (win) |
 
-Deaths land on every round, so no single spike decides the run. Redesign the curve with
-`src/sim/designTargets.ts` and re-test it against the real survival gate with
-`src/sim/validate.ts`.
+Early goals remain small integers, but the single starting die deliberately allows bad luck to
+end some runs in the first rank. Within later ranks, most of the cull lands on the Boss Trial,
+whose modifier is already doing work.
+
+The curve also **saw-tooths**, which is the shape of a rank rather than a mistake: rank 3's
+seven-roll Lesser Trial asks for less than rank 2's twenty-roll Boss Trial. What always rises is
+the same slot from one rank to the next. Design a curve with `src/sim/tuneCurve.ts` and confirm
+it against the real survival gate with `src/sim/validate.ts`.
 
 ## Development
 
@@ -93,13 +100,18 @@ at its default. The itch build enables the frame; the phone build hides the full
 ### Other scripts
 
 ```bash
-npm run sim      # headless balance simulation → sim-out/report.html (see src/sim)
+npm run sim            # headless balance simulation → sim-out/report.html (see src/sim)
+npm run items:check    # item mechanics, including every boss modifier
+npm run trials:check   # the trial loop: clears, advances, ranks, endings
+npm run gold:check     # payouts, interest, prices, rerolls, discounts
+npm run scoring:check  # the two scorers agree, per-die vs bucketed
 ```
 
 Nearly all art is drawn procedurally at runtime and most audio is synthesized with WebAudio; the
 only binary assets are the intro cutscene art in `images/` and the music track in `audio/songs/`.
-Tuning knobs (round targets, shop rolls, win round) live in
-`src/config.ts`. A Playwright smoke driver is included as a devDependency for headless
+Tuning knobs (trial goals, rolls per trial, the winning rank, endless growth, shop rarity
+weights) live in `src/config.ts`; the gold economy's knobs live in `src/systems/Gold.ts` and the
+Boss Trial modifiers in `src/systems/Boss.ts`. A Playwright smoke driver is included as a devDependency for headless
 playtesting; the game instance is exposed as `window.__game` for that purpose.
 
 The game is responsive and runs in both landscape and portrait, at any window size — the
@@ -147,14 +159,15 @@ need to target a different host or list length.
 
 ## Gameplay
 
-The main game screen features a centered grid of dice, starting with a single die, and a "Roll"
-button below it. The HUD (round / roll / score / target) lays out as a row across the top in
-landscape and shrinks into a stacked column in the top-left in portrait. It shows:
+The main game screen features a centered grid of dice, starting with one d6, and a "Roll"
+button below it. The HUD lays out as a row across the top in landscape and shrinks into a
+stacked column in the top-left in portrait. It shows:
 
-- The current score
-- The current roll count, out of the round's roll count (20 by default, raised by Overtime and Metronome)
-- The target score for the current round
-- The current round count
+- **ROLLS** — rolls used, out of this trial's budget
+- **RANK** — the ladder position as `rank-trial`, so `2-3` is the Boss Trial of rank 2
+- **GOAL** — the score this trial must reach
+- **SCORE** — progress toward it, reset to zero every trial
+- **GOLD** — the purse, which the shop is the only thing that spends
 
 An **Inventory** link opens an overlay of every item bought this run (as cards, with a copy-count
 badge on stacked items), and a **Settings** link opens the settings panel mid-run.
@@ -168,10 +181,56 @@ max face instead of appearing blank.
 The grid has no practical limit on dice count — as more dice are added, the whole grid scales
 itself down ("shrinks out") to keep every die visible on screen.
 
-A round is 20 rolls by default. Extra rolls granted by Overtime and Metronome are appended to
-the end of the round, so a round can run past 20; shop visits stay pinned to the 5th and 15th
-rolls regardless. Surviving a round clears the score back to 0 (unless the player owns Vault or
-Reserve, which carry a fraction over). Clearing round 10 ends the run in victory.
+### Ranks and trials
+
+| Trial in rank | Name          | Rolls | Notes                         |
+| ------------- | ------------- | ----- | ----------------------------- |
+| 1             | Lesser Trial  | 7     | A sprint against a small goal |
+| 2             | Greater Trial | 15    | Room to build                 |
+| 3             | Boss Trial    | 20    | Carries a hostile modifier    |
+
+Meeting the goal ends the trial on the spot — the remaining rolls are forfeit, but they are paid
+out as gold. Falling short ends the run, unless the player owns an Insurance Policy and finished
+at 75% of the goal, which clears the trial and destroys the policy.
+
+A run starts with one d6, and the first trial's goal is 2. Because only 1s score at the outset,
+some runs will lose in the first trial or two; that early risk is intentional. See
+`STARTING_DICE` and `TRIAL_GOALS` in `src/config.ts`.
+
+Extra rolls granted by Overtime and Metronome are appended to the end of a trial. Clearing rank
+5 wins the game, then the Victory screen asks the player to either end the run and submit its
+score or **Press On — Endless**. Continuing keeps the run open and unrecorded until it fails or
+is abandoned, and carries it past rank 5 with goals that grow faster and faster (see
+`ENDLESS_BASE` / `ENDLESS_ACCEL`). The growth rate itself accelerates, because builds compound
+geometrically and a fixed ratio could be outrun forever. In simulation the median winner reaches
+about rank 10 and the strongest build seen dies by rank 20.
+
+### Boss Trials
+
+Each rank rolls one of eight modifiers as the rank begins. It is previewed on the route screen
+throughout the rank, then activates on the third trial and is shown beside the GOAL pill. The same
+modifier never appears in consecutive ranks.
+
+| Name        | Effect                                                   |
+| ----------- | -------------------------------------------------------- |
+| The Famine  | Extra Point and Keen Edge grant nothing                  |
+| The Drought | No dice are added this trial                             |
+| The Eclipse | The roll multiplier is halved (never below ×1)           |
+| The Silence | Only 1s score — the numbers you unlocked are silenced    |
+| The Hunger  | Five fewer rolls                                         |
+| The Warden  | Snake Eyes, Jackpot and Lucky Seven grant nothing        |
+| The Toll    | A tenth of your dice score nothing                       |
+| The Hoard   | The goal is 40% higher, but clearing it pays double gold |
+
+Beating a Boss Trial pays a gold bonus and buys the next shop **boosted rarity odds**
+(`BOON_RARITY_WEIGHTS` in `src/config.ts`) — better cards, not just more of them. The modifiers
+live in `src/systems/Boss.ts`; each is a small guarded branch in code that already exists rather
+than a subsystem of its own.
+
+The Toll is applied to the roll's _aggregate counts_, never by removing individual dice, because
+past 2,000 dice the pool switches to bucket storage and individual dice stop existing. Scaling
+the counts is the only definition that means the same thing at every grid size — a hundred dice
+under The Toll score exactly what ninety dice score without it.
 
 ### Scoring
 
@@ -179,137 +238,128 @@ Each roll is scored as a stack of modifiers (`src/systems/Scoring.ts`), so new r
 by pushing another modifier rather than threading a new field through the scene:
 
 - **Scoring** — each die showing a scoring number (1, plus 2 and 3 from Extra Number) or a wild
-  face is worth 1 point, +1 per Extra Point owned, and +1 per Keen Edge owned when it's a d1.
-- **Snake Eyes** — any value shown by 2+ dice scores that value once (needs the item).
-- **Jackpot** — any value shown by 4+ dice scores value × count, per Jackpot owned (item).
+  face is worth 1 point, +1 per Extra Point owned, and +2 per Keen Edge owned when it's a d1.
+- **Snake Eyes** — any value shown by 2+ dice scores that value × the number showing it.
+- **Jackpot** — any value shown by 3+ dice scores value × count, per Jackpot owned.
 - **Windfall** — a Rollplayer/Centurion die's current highest face always scores and applies
   that card's ×2/×4 roll multiplier; shrinking the die makes the effect more likely.
-- **Momentum** — adds the current consecutive-scoring-roll streak as points, per Momentum owned.
+- **Momentum** — adds twice the consecutive-scoring-roll streak as points, per Momentum owned.
+- **Lucky Seven** — 7 points per written digit "7" across the rolled values (77 pays 14).
+- **Pocket Change** and **Dividend** pay flat amounts every roll.
 
 The subtotal is then multiplied by a single run multiplier: Amplifier ×2, Prism ×3 per copy,
-and Last Call ×3 per copy on the final roll of a round — all compounding.
+Last Call ×4 per copy on the final roll of a trial, plus the conditional Parade / Menagerie /
+Uniform / Hourglass factors and any Windfall — all compounding, then halved by The Eclipse.
 
-Two passives fire at the **start** of each round (`applyRoundStart`): Dividend grants points per
-5 dice owned, and Foundry adds copies of the smallest die.
+Foundry fires at the **start** of each trial (`applyTrialStart`), adding copies of the smallest
+die — unless The Drought is in force.
+
+Scoring lives in two implementations that must agree exactly: `ScoringHistogram.ts` is the live
+path (O(distinct faces), works when the pool is bucketed) and `Scoring.ts` is a per-die reference
+kept only for the parity harness. `npm run scoring:check` fails loudly if they drift, and it
+covers the boss modifiers too.
 
 ## The shop
 
-A shop is encountered every 10 rolls, on the 5th and 15th rolls, after the roll. The shop
-replaces the dice grid and the button, and offers 3 item cards for the player to choose from
-(5 once the player owns Ledger). The cards sit in a horizontally scrollable carousel —
-drag/swipe, mouse wheel, or the scrollbar — so they stay full size and readable instead of
-shrinking to cram into a narrow (portrait) screen; the carousel only appears once the cards
-don't already fit. The player can purchase a single item. If nothing is affordable, the free
-Two Bricks is guaranteed onto a card so the shop is never a dead screen.
+A shop opens after every cleared trial, after the Results screen and before the next route screen.
+Its upper row offers 3 loose item cards (5 once the player owns Ledger). The lower row holds two
+sealed booster packs and the reroll/continue controls. Responsive grids and scrollable card bands
+keep both rows readable in narrow portrait layouts.
 
-### Dynamic pricing
+The player may buy **as many loose cards and packs as they can afford**, then continues to the
+trial route. Rerolling refreshes only the loose cards; the two packs remain fixed for the visit.
+A reroll costs 1 gold plus 1 more for each reroll already taken; Dealer's Bell makes the first
+reroll of every shop free. If no loose card is affordable, the free Two Bricks is guaranteed onto
+the row so the shop is never a dead screen.
 
-Item prices scale with the current round instead of staying fixed while targets grow. Each item
-has a strength band, and the shop resolves its concrete price from the current survival target:
+### Booster packs
+
+Buying a booster opens it immediately and reveals 3 currently legal cards. The player chooses
+one without paying again and the rest disappear. Ledger increases both the loose-card row and
+each booster reveal to 5 cards. A chosen die-targeting card continues into the normal die picker.
+
+The pack catalog contains Common, Uncommon, and Rare packs plus build-focused Foundry,
+Ritual, Artificer's, Treasury, and Hourglass packs. The latter draw from the existing swarm,
+multiplier, precision, economy, and tempo item themes. A Boss clear improves the rarity table for
+the whole next shop visit, including rerolls and themed-pack contents. Shopping Cart discounts
+pack prices; Coupon Book continues to affect a loose card rather than a sealed pack.
+
+### Gold
+
+Gold is deliberately not the score. It is a small, slow-growing purse that persists across the
+whole run, and it is the only thing the shop takes. A run opens with 4 gold; clearing a trial
+pays:
+
+| Source        | Amount                                                                |
+| ------------- | --------------------------------------------------------------------- |
+| The trial     | 3 / 4 / 6 for the Lesser / Greater / Boss Trial                       |
+| Rolls in hand | 1 per unused roll, up to 5 (Reserve adds 1 more per roll, per copy)   |
+| Interest      | 1 per 5 gold banked, up to 5 (Vault raises the cap to 10)             |
+| Boss cleared  | +2, and +3 more with Reliquary                                        |
+| Gold items    | Counting House (+1 per copy), Prospector (+1 per 25 dice held, max 5) |
+
+Interest is what makes banking a real alternative to spending: gold left unspent compounds a
+little at every clear. Tithe Bowl and Lucky Coin also pay out mid-trial, during rolls.
+
+The knobs all live in `src/systems/Gold.ts`. Gold is a plain `number` while every score field is
+a `bigint` — if the purse ever needs bigint, the economy has already gone wrong.
+
+### Pricing
+
+Item prices are flat gold amounts by strength band, deliberately decoupled from the exponential
+goal curve so "8 gold" means the same thing on trial 1 and trial 15:
+
+| Strength band  | Price |
+| -------------- | ----: |
+| Free           |     0 |
+| Low            |     3 |
+| Standard       |     5 |
+| Strong         |     8 |
+| Build-defining |    12 |
 
 ```text
-price = round target × strength rate × shop timing × repeat multiplier × market variation
+price = band × repeat multiplier × market variation × Shopping Cart − Pawnbroker
 ```
 
-| Strength band  | Target rate | First-copy minimum |
-| -------------- | ----------: | -----------------: |
-| Low            |          3% |            1 point |
-| Standard       |          6% |            1 point |
-| Strong         |         10% |           2 points |
-| Build-defining |         15% |           3 points |
-
-Two Bricks is the sole free item and remains the guaranteed fallback. Prices at the second shop
-(after roll 15) are 25% lower because fewer rolls remain in the current round. Repeatable
-effects become more expensive for each copy already bought: ordinary linear stacks grow by
-1.35× per copy, while multipliers and explosive grid-growth effects grow by 1.8× per copy.
-Single-time items have no repeat multiplier. Every non-free card also rolls a market adjustment
-from −25% to +25%, in whole-percentage steps, each time it appears. This overlap makes price an
-imperfect signal of power: a stronger item can be discounted below a weaker offer, and the most
-expensive card is not automatically the best choice. Live shop cards show both the strength
-band beside rarity and the resolved price, so the player can recognize a discount or markup.
-
-Resolved prices round upward to readable values: whole points below 10, multiples of 5 below
-100, multiples of 25 below 1,000, and multiples of 100 thereafter. For example, a first-copy
-Strong item costs 2 points against round 2's target of 19, 45 points against round 6's target
-of 420, and 3,300 points against round 10's target of 33,000 at the first shop before that
-visit's market adjustment.
-
-The bands are informed by the simulator's per-item point attribution, with lifetime totals
-treated as supporting evidence rather than converted directly into prices. Raw totals are
-highly skewed by exponential winning builds and miss indirect value from items such as Ledger,
-Metronome, Shrink Die, and Vault. Balance passes should therefore read contribution rankings
-alongside purchase/win correlation and matched runs, then tune the four global rates before
-hand-editing individual bands.
+Repeatable effects become more expensive for each copy already bought: ordinary linear stacks
+grow by 1.35× per copy, while multipliers and explosive grid-growth effects grow by 1.8× per
+copy. Single-time items have no repeat multiplier. Every non-free card also rolls a market
+adjustment from −25% to +25% each time it appears, so price stays an imperfect signal of power.
+Shopping Cart takes 15% off everything and Pawnbroker a flat 2 gold; no paid card ever drops
+below 1 gold. Two Bricks is the sole free item and the guaranteed fallback.
 
 ### Rarity
 
 Every item belongs to one of three rarity tiers, shown by card colour:
 
-| Tier     | Colour | Draw weight |
-| -------- | ------ | ----------- |
-| Common   | Yellow | 60%         |
-| Uncommon | Blue   | 30%         |
-| Rare     | Purple | 10%         |
+| Tier     | Colour | Draw weight | After a Boss clear |
+| -------- | ------ | ----------- | ------------------ |
+| Common   | Yellow | 60%         | 25%                |
+| Uncommon | Blue   | 30%         | 45%                |
+| Rare     | Purple | 10%         | 30%                |
 
-Rarity controls how often an item is offered; price band controls how much score it risks.
-They are intentionally independent.
+Both weight tables live in `src/config.ts` (`RARITY_WEIGHTS`, `BOON_RARITY_WEIGHTS`). Rarity
+controls how often an item is offered; price band controls what it costs. They are intentionally
+independent.
 
 Draw rules:
 
-- Each card in a shop rolls its tier independently against the 60/30/10 weights, then picks an
-  item from that tier.
+- Each card in a shop rolls its tier independently against the weights, then picks an item from
+  that tier.
 - Cards are drawn without replacement, so one shop never offers duplicates.
 - An item is only eligible if it has a legal effect (see gating below). If a rolled tier has no
   eligible items left, fall back toward common first, then to whatever tier still has items.
 
-### Common (yellow)
+### The items
 
-| Item          | Price band     | Effect                                                                                             |
-| ------------- | -------------- | -------------------------------------------------------------------------------------------------- |
-| Two Bricks    | Free           | Adds two d6 to the grid                                                                            |
-| Pocket Change | Low            | Gain 2 points on every roll                                                                        |
-| Spikes        | Low            | Adds two d4 to the grid                                                                            |
-| Shrink Die    | Low            | Shrinks a die of the player's choice two steps: d1 < d2 < d4 < d6 < d8 < d10 < d20 < d100          |
-| Whetstone     | Low            | Each roll, a 10% chance to shrink a random die one step                                            |
-| Twins         | Strong         | Choose a die; duplicate every die of its size                                                      |
-| Overtime      | Low            | +2 rolls, appended to the end of this round only                                                   |
-| Dividend 🔒   | Build-defining | On every roll, gain 1 point for every 3 dice owned. **Unlockable**                                 |
-| Momentum 🔒   | Standard       | Each consecutive scoring roll adds +2 to points earned; a scoreless roll resets it. **Unlockable** |
-| Keen Edge 🔒  | Standard       | Each d1 scores +2 when it scores (a d1 is worth 3). **Unlockable**                                 |
+Every item — its name, rarity, price band, description, gating predicate, unlock criterion,
+build theme, and effects — is defined in one place: **`src/systems/Items.ts`**, as a single
+`ITEMS` array. That file is the source of truth for the shop pool, the Codex gallery, the dev
+panel's grant list, and the balance simulation's item tables.
 
-### Uncommon (blue)
-
-| Item              | Price band     | Effect                                                                                                                  |
-| ----------------- | -------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Chips             | Low            | Adds two d2 to the grid                                                                                                 |
-| Extra Dice        | Standard       | Adds d6 equal to a quarter of the grid (at least 5)                                                                     |
-| Rollplayer        | Standard       | Adds a d20; its highest face always scores and doubles all points that roll                                             |
-| Multiply Dice ×2  | Strong         | Doubles the number of dice                                                                                              |
-| Metronome         | Standard       | +1 roll every round, appended to the end, permanent                                                                     |
-| Grindstone        | Standard       | Choose a die; shrink every die of its size two steps                                                                    |
-| Loaded Die        | Standard       | Choose a die; every die of its size never rolls its two highest faces, now and later                                    |
-| Snake Eyes        | Strong         | When 2 or more dice show the same number, score that number × the dice showing it (per number, per roll)                |
-| Ledger            | Standard       | The shop offers 5 cards from now on                                                                                     |
-| Double the Fun 🔒 | Build-defining | Whenever any die rolls a 5 or 6, add another copy of that die to the grid. **Unlockable**                               |
-| Foundry 🔒        | Strong         | At the start of each round, add 5 copies of the smallest die. **Unlockable**                                            |
-| Jackpot 🔒        | Build-defining | When 3+ dice show the same face, score that face × the number of dice showing it (each face separately). **Unlockable** |
-| Last Call 🔒      | Build-defining | Points earned on the final roll of each round are quadrupled. **Unlockable**                                            |
-
-### Rare (purple)
-
-| Item             | Price band     | Effect                                                                                            |
-| ---------------- | -------------- | ------------------------------------------------------------------------------------------------- |
-| Extra Point      | Standard       | Adds +1 per scoring die                                                                           |
-| Multiply Dice ×3 | Build-defining | Triples the number of dice                                                                        |
-| Extra Number     | Strong         | Provides points on an additional number. Stacks 2, then 3, then 4, then can't show up anymore     |
-| Amplifier        | Build-defining | Doubles all points earned from rolls                                                              |
-| Refinement       | Standard       | Shrinks every die two steps                                                                       |
-| Wild Face        | Strong         | Choose a die; every die of its size scores on every face, now and later                           |
-| Centurion        | Strong         | Adds a d100; its highest face always scores and quadruples all points that roll                   |
-| Vault            | Standard       | Keep 33% of your points (rounded down) when a round clears                                        |
-| Genesis 🔒       | Build-defining | Whenever a die scores, add a copy of that die to the grid (max +20 dice per roll). **Unlockable** |
-| Reserve 🔒       | Strong         | Keep 75% of your points (rounded down) when a round clears. **Unlockable**                        |
-| Prism 🔒         | Build-defining | Triples all points earned from rolls (multiplies with Amplifier). **Unlockable**                  |
+It is deliberately not duplicated here. A table in this README would be a second copy of the
+roster that drifts from the code the first time an item is retuned, which is exactly what
+happened to the tables this section replaced.
 
 ### Gating
 
@@ -324,10 +374,8 @@ An item is only offered when it can actually do something:
   the guaranteed free fallback.
 
 Some items are **single-time**: a second copy would do nothing, so once bought they never
-appear again for the rest of the run. These are Snake Eyes, Ledger, Amplifier, Vault, and
-Double the Fun. Everything else can be bought repeatedly and stacks — the stacking passives
-(Pocket Change, Whetstone, Dividend, Momentum, Keen Edge, Foundry, Jackpot, Last Call, Genesis,
-Reserve, Prism) compound per copy owned.
+appear again for the rest of the run — every item carrying `unique: true` in `ITEMS`. Everything
+else can be bought repeatedly and stacks, compounding per copy owned.
 
 ## Unlocks and the Codex
 
@@ -336,27 +384,30 @@ never appear in the shop until the player has earned them. An unlock is permanen
 item is offered starting with the next run and can never be re-locked (short of resetting all
 progress).
 
-Unlock progress is meta-progression: it lives in `localStorage` (key `ooo_progress_v1`), separate
+Unlock progress is meta-progression: it lives in `localStorage` (key `ooo_progress_v2`), separate
 from the ephemeral per-run state, so it survives reloads and carries across runs.
 
 Currently unlockable:
 
 | Item           | Unlock criterion                                        |
 | -------------- | ------------------------------------------------------- |
-| Dividend       | Reach round 6                                           |
+| Dividend       | Reach rank 2                                            |
 | Momentum       | Score on 12 rolls in a row (in one run)                 |
 | Keen Edge      | Hold 10 or more d1 at once                              |
 | Foundry        | Hold more than 29 dice in your grid at once             |
 | Double the Fun | Hold more than 1000 dice in your grid at once           |
 | Jackpot        | Show the same number on 6 or more dice in a single roll |
-| Last Call      | Clear a round on its final roll                         |
-| Genesis        | Reach round 10                                          |
-| Reserve        | Reach 2× the current round's target score               |
-| Prism          | Win a run (clear all 10 rounds)                         |
+| Last Call      | Clear a trial on its final roll                         |
+| Genesis        | Reach rank 4                                            |
+| Reserve        | Reach 2× the current trial's goal                       |
+| Prospector     | Hold 25 gold at once                                    |
+| Reliquary      | Clear 3 Boss Trials in one run                          |
+| Pawnbroker     | Hold 40 gold at once                                    |
+| Prism          | Win a run (reach rank 5)                                |
 
-Criteria are checked live during a run, so a banner announces an unlock as soon as its threshold
-is crossed. Each run snapshots its eligible card pool when it begins, so newly unlocked cards
-first appear in the next run. The criteria engine is data-driven (`src/systems/Items.ts` —
+Criteria are checked and persisted live during a run, but newly earned cards are collected and
+revealed together on the Trial Results screen. Each run snapshots its eligible card pool when it
+begins, so newly unlocked cards first appear in the next run. The criteria engine is data-driven (`src/systems/Items.ts` —
 `UnlockCriterion` / `meetsCriterion`), so new unlock conditions can be added by tagging an item
 with an `unlock` field.
 
@@ -382,15 +433,31 @@ The game opens on a menu with:
 
 On a new run started from the menu, a short three-page **intro** sets the premise before the
 first roll (skippable, and toggled off permanently from its own checkbox or from Settings). On a
-player's first run, a **callout tutorial** walks through the score, roll, target, roll count,
-round, and shop in sequence; it self-disables after one run and can be re-enabled from Settings.
+player's first run, a **callout tutorial** follows the run's own loop rather than one screen: the
+route screen teaches the shape of a rank and the boss waiting at the end of it, the table teaches
+the score, the roll button, the grid viewport, the goal, the roll budget, the ladder and gold, the
+Results screen teaches what a clear pays, the shop teaches spending it, and the Boss Trial
+modifier is explained when the first one actually arrives. Its steps are deliberately one short
+line each. A tutorial run also cannot be lost: once a trial has only as many rolls left as it
+still needs points, those rolls are rigged to come up 1 — which on the seven-roll Lesser Trial is
+exactly its last roll. The tutorial self-disables after one run (however that run ends) and can be
+re-enabled from Settings.
 
 The Hall of High Scores shows the top runs, each with:
 
 - The date the run was started, short format
-- The round the player reached (and whether the run was a win)
+- The rank and trial the player reached (and whether the run was a win)
 - The total score accumulated across the run
 - The grid of dice they ended with
+
+Runs are ranked by **how far they got first, with total points only breaking ties** between runs
+that reached the same rank. The same ordering is used for the global leaderboard, which packs
+both keys into the one sortable integer LootLocker provides (rank in the high digits, a
+compressed points ordinal in the low ones — see `src/systems/LeaderboardWire.ts`).
+
+Scores recorded before the ranks/trials/gold restructure measured a different game and cannot be
+ranked against these, so they are filtered out rather than shown with invented values. The local
+storage keys moved to `_v2` for the same reason.
 
 Settings controls:
 
@@ -406,27 +473,28 @@ Settings controls:
 
 ## Visual effects
 
-Beyond the base feedback (die-border flashes, floating score labels, banners), the game layers
+Beyond the base feedback (die-border flashes and floating score labels), the game layers
 on a set of flourishes: the HUD score eases up to its new value and its plaque punches, the dice
 rock as they tumble and settle in a ripple, a sigil turns behind the grid and brightens as the
-round's target comes into reach, the felt and grid backdrop warm toward gold with it (and go red
+trial's goal comes into reach, the felt and grid backdrop warm toward gold with it (and go red
 on a final roll that arrives short), big rolls shake the screen and throw gold sparks, the roll
-seal breathes and rings when pressed, and shop cards are dealt onto the table with rare ones
-lit by a glow.
+seal breathes and rings when pressed, route cards deal into place, Results stages its seal/gold/
+unlock reveals, and shop cards are dealt onto the table with rare ones lit by a glow. Booster
+packs focus over the shop, shake open in a burst, and flip their choices into view.
 
-All of it answers to one **Visual Effects** setting, on by default. What that setting *enables*
+All of it answers to one **Visual Effects** setting, on by default. What that setting _enables_
 is then capped by two things the game reads from the device, in `src/renderQuality.ts`:
 
-| Input                  | Source                                   | What it gates                                        |
-| ---------------------- | ---------------------------------------- | ---------------------------------------------------- |
-| Effect tier            | Renderer type + `hardwareConcurrency`    | Filter passes (glow), particle bursts, animated background art |
-| Reduce-motion          | `prefers-reduced-motion` media query     | Camera/grid shake, screen flashes, dice wobble, ambient drift |
+| Input         | Source                                | What it gates                                                  |
+| ------------- | ------------------------------------- | -------------------------------------------------------------- |
+| Effect tier   | Renderer type + `hardwareConcurrency` | Filter passes (glow), particle bursts, animated background art |
+| Reduce-motion | `prefers-reduced-motion` media query  | Camera/grid shake, screen flashes, dice wobble, ambient drift  |
 
 The tier is `full` on WebGL with more than 4 cores, and `basic` on a Canvas fallback or a
 low-core device — Phaser 4's filters and particle renderer are WebGL-only, so on that path the
 budget genuinely isn't there. The two axes are deliberately independent: capable hardware still
 shouldn't shake the screen at a player who asked it not to, while a player on a weak device who
-*hasn't* asked for less motion still gets the cheap motion cues.
+_hasn't_ asked for less motion still gets the cheap motion cues.
 
 Everything resolves through the `fx` singleton in `src/systems/Effects.ts`, which mirrors the
 `audio` one — initialized once in `BootScene` from the live renderer, updated live by the
@@ -438,10 +506,43 @@ describes the cost, and let the helper decline.
 ## Balance simulation
 
 `src/sim` is a headless bot that plays full runs to gather balance statistics — win rates, where
-runs die, what gets bought, and how likely each gated item is to unlock — and writes a
-self-contained HTML report. It reuses the game's real economy end to end (scoring, shop,
-round-start passives) through a shared round-loop engine that `GameScene` also uses, so results
-reflect the live rules. Run it with `npm run sim`; see `src/sim/README.md` for flags and details.
+runs die, what gets bought, how gold is earned and spent, how often each Boss Trial modifier is
+beaten, and how likely each gated item is to unlock — and writes a self-contained HTML report. It
+reuses the game's real economy end to end (scoring, shop, trial-start passives) through a shared
+trial-loop engine that `GameScene` also uses, so results reflect the live rules.
+
+Nine series make up the field: **greedy** (most expensive card first) and **thrifty** (cheapest
+first) bracket how far a purse stretches and each run against both the base and the fully
+unlocked item pool; five themed shoppers — **swarm**, **multiplier**, **precision**, **economy**
+and **tempo** — each chase one build archetype with the full pool, so their spread shows whether
+every archetype is viable. Theme membership is declared beside the items in `ITEM_THEMES`.
+
+The balancing workflow:
+
+```bash
+npm run sim                       # the report → sim-out/report.html
+npx tsx src/sim/tuneCurve.ts      # design TRIAL_GOALS against real culling
+CURVE="TUNED (real culling)" npx tsx src/sim/validate.ts   # confirm it
+npx tsx src/sim/endlessCurve.ts   # confirm endless still terminates
+```
+
+`tuneCurve.ts` is the one that matters. It is a fixed-point iteration: simulate the whole field
+under the current curve with culling on, re-pick every goal as the quantile of the peak scores of
+the runs that _actually entered_ that trial, repeat. The older `designTargets.ts` designs from a
+single non-culling pass, which is systematically wrong here — with no clears, no trial pays for
+rolls left in hand and no Boss Trial pays its bonus, so the builds it measures are poorer than
+real ones and its curve lands far too easy (a 23% designed win rate measured 65% in practice).
+
+Assertion suites, all runnable and all part of the quality gate:
+
+```bash
+npm run items:check      # item mechanics, including every boss modifier
+npm run trials:check     # the trial loop: clears, advances, ranks, endings
+npm run gold:check       # payouts, interest, prices, rerolls, discounts
+npm run scoring:check    # the two scorers agree, per-die vs bucketed
+```
+
+See `src/sim/README.md` for flags and details.
 
 ## License
 

@@ -1,4 +1,15 @@
 import { COLORS } from "../art/palette";
+import {
+  applyBossMultiplier,
+  applyDeadDice,
+  applyDeadDiceCounts,
+  bossSuppresses,
+  extraPointsFor,
+  jackpotFor,
+  keenEdgeFor,
+  luckySevenFor,
+  snakeEyesFor,
+} from "./Boss";
 import { Die } from "./Dice";
 import { RunState } from "../state/RunState";
 import {
@@ -242,10 +253,30 @@ export function scoreRollHistogram(
   const modifiers: ScoreModifier[] = [];
   const noDice: number[] = [];
 
+  // The Silence is applied HERE, on the aggregate, and not only by the caller
+  // choosing which numbers to roll against: `extraNumberScoringCount` is exactly
+  // "dice that scored only because of an unlocked number", so subtracting it is
+  // the whole modifier. Doing it here means a caller that passes the unfiltered
+  // scoring numbers still gets the right answer, and doing it on a caller that
+  // already filtered them is a no-op (the count is already zero).
+  const silenced = bossSuppresses(state, "extraNumber");
+  const extraNumberScored = silenced ? 0 : agg.extraNumberScoringCount;
+
+  // The Toll makes a fraction of the grid inert. It is applied to the COUNTS
+  // rather than by removing dice: in bucket mode individual dice do not exist,
+  // so scaling the aggregate is the only definition that means the same thing at
+  // every grid size.
+  const scoringCount = applyDeadDice(
+    state,
+    agg.scoringCount - (silenced ? agg.extraNumberScoringCount : 0),
+  );
+  const scoringD1Count = applyDeadDice(state, agg.scoringD1Count);
+  const valueCounts = applyDeadDiceCounts(state, agg.valueCounts);
+
   // Raw counts (scoringCount, valueCounts) stay Number — exact to ~9e15 dice —
   // but every points value is BigInt, since value×count and the multiplier stack
   // blow past Number.MAX_SAFE_INTEGER well before dice counts do.
-  const basePoints = agg.scoringCount;
+  const basePoints = scoringCount;
   if (basePoints > 0) {
     modifiers.push({
       id: "scoring",
@@ -258,12 +289,13 @@ export function scoreRollHistogram(
     });
   }
 
-  if (agg.extraNumberScoringCount > 0) {
+  const extraNumberScoringCount = applyDeadDice(state, extraNumberScored);
+  if (extraNumberScoringCount > 0) {
     modifiers.push({
       id: "extraNumber",
       name: "Extra Number",
       points: 0n,
-      displayPoints: BigInt(agg.extraNumberScoringCount),
+      displayPoints: BigInt(extraNumberScoringCount),
       color: COLORS.goldLight,
       dice: noDice,
       bigPulse: false,
@@ -271,12 +303,13 @@ export function scoreRollHistogram(
     });
   }
 
-  if (agg.wildFaceScoringCount > 0) {
+  const wildFaceScoringCount = applyDeadDice(state, agg.wildFaceScoringCount);
+  if (wildFaceScoringCount > 0) {
     modifiers.push({
       id: "wildFace",
       name: "Wild Face",
       points: 0n,
-      displayPoints: BigInt(agg.wildFaceScoringCount),
+      displayPoints: BigInt(wildFaceScoringCount),
       color: COLORS.goldLight,
       dice: noDice,
       bigPulse: false,
@@ -284,12 +317,13 @@ export function scoreRollHistogram(
     });
   }
 
-  if (agg.royalSealScoringCount > 0) {
+  const royalSealScoringCount = applyDeadDice(state, agg.royalSealScoringCount);
+  if (royalSealScoringCount > 0) {
     modifiers.push({
       id: "royalSeal",
       name: "Royal Seal",
       points: 0n,
-      displayPoints: BigInt(agg.royalSealScoringCount),
+      displayPoints: BigInt(royalSealScoringCount),
       color: COLORS.goldLight,
       dice: noDice,
       bigPulse: false,
@@ -297,7 +331,7 @@ export function scoreRollHistogram(
     });
   }
 
-  const extraPointBonus = agg.scoringCount * state.extraPoints;
+  const extraPointBonus = scoringCount * extraPointsFor(state);
   if (extraPointBonus > 0) {
     modifiers.push({
       id: "extraPoint",
@@ -310,8 +344,8 @@ export function scoreRollHistogram(
     });
   }
 
-  const keenEdgeBonus =
-    state.keenEdge > 0 ? agg.scoringD1Count * state.keenEdge * 2 : 0;
+  const keenEdge = keenEdgeFor(state);
+  const keenEdgeBonus = keenEdge > 0 ? scoringD1Count * keenEdge * 2 : 0;
   if (keenEdgeBonus > 0) {
     modifiers.push({
       id: "keenEdge",
@@ -324,9 +358,9 @@ export function scoreRollHistogram(
     });
   }
 
-  if (state.hasSnakeEyes) {
+  if (snakeEyesFor(state)) {
     let bonus = 0n;
-    for (const [value, count] of agg.valueCounts)
+    for (const [value, count] of valueCounts)
       if (count >= 2) bonus += BigInt(value) * BigInt(count);
     if (bonus > 0n) {
       modifiers.push({
@@ -341,15 +375,16 @@ export function scoreRollHistogram(
     }
   }
 
-  if (state.jackpot > 0) {
+  const jackpot = jackpotFor(state);
+  if (jackpot > 0) {
     let bonus = 0n;
-    for (const [value, count] of agg.valueCounts)
+    for (const [value, count] of valueCounts)
       if (count >= 3) bonus += BigInt(value) * BigInt(count);
     if (bonus > 0n) {
       modifiers.push({
         id: "jackpot",
         name: "Jackpot",
-        points: bonus * BigInt(state.jackpot),
+        points: bonus * BigInt(jackpot),
         color: COLORS.goldLight,
         dice: noDice,
         bigPulse: true,
@@ -358,9 +393,9 @@ export function scoreRollHistogram(
     }
   }
 
-  if (state.hasLuckySeven) {
+  if (luckySevenFor(state)) {
     let bonus = 0n;
-    for (const [value, count] of agg.valueCounts)
+    for (const [value, count] of valueCounts)
       bonus += BigInt(countSevens(value) * 7) * BigInt(count);
     if (bonus > 0n) {
       modifiers.push({
@@ -433,23 +468,24 @@ export function scoreRollHistogram(
   const subtotal = modifiers.reduce((sum, m) => sum + m.points, 0n);
   const paradeActive =
     state.hasParade &&
-    agg.valueCounts.has(1) &&
-    agg.valueCounts.has(2) &&
-    agg.valueCounts.has(3);
-  const menagerieActive =
-    state.hasMenagerie && agg.scoringSizes.size >= 3;
+    valueCounts.has(1) &&
+    valueCounts.has(2) &&
+    valueCounts.has(3);
+  const menagerieActive = state.hasMenagerie && agg.scoringSizes.size >= 3;
   const uniformActive =
     state.hasUniform && agg.total > 0 && agg.allSizes.size === 1;
   const hourglassActive = state.hasHourglass && isHourglassRoll(state);
-  const multiplier =
+  const multiplier = applyBossMultiplier(
+    state,
     (state.hasAmplifier ? 2n : 1n) *
-    3n ** BigInt(state.prism) *
-    (opts.finalRoll ? 4n ** BigInt(state.lastCall) : 1n) *
-    (paradeActive ? 2n : 1n) *
-    (menagerieActive ? 2n : 1n) *
-    (uniformActive ? 3n : 1n) *
-    (hourglassActive ? 2n : 1n) *
-    agg.windfallMult;
+      3n ** BigInt(state.prism) *
+      (opts.finalRoll ? 4n ** BigInt(state.lastCall) : 1n) *
+      (paradeActive ? 2n : 1n) *
+      (menagerieActive ? 2n : 1n) *
+      (uniformActive ? 3n : 1n) *
+      (hourglassActive ? 2n : 1n) *
+      agg.windfallMult,
+  );
 
   if (state.hasAmplifier) {
     modifiers.push({

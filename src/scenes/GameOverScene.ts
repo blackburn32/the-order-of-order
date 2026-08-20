@@ -1,21 +1,36 @@
 import Phaser from "phaser";
-import { COLORS, CSS, SERIF } from "../art/palette";
+import { CSS, SERIF } from "../art/palette";
+import { rankOf, trialName } from "../config";
 import { getRun } from "../state/RunState";
 import { toNumberPointMap } from "../systems/ItemPoints";
-import { beginRun } from "../systems/Tutorial";
+import { beginRun, completeTutorial } from "../systems/Tutorial";
 import { formatScore } from "../ui/formatScore";
-import { addFelt, bannerButton, checkboxRow } from "../ui/widgets";
+import { addFelt, bannerButton } from "../ui/widgets";
 import { responsive } from "../ui/layout";
 import { takePendingSubmission } from "../systems/GlobalScores";
-import { hasBeatenGame, loadSettings, saveSettings } from "../systems/SaveData";
+import { ITEMS, type ShopItemId } from "../systems/Items";
+import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 
 export class GameOverScene extends Phaser.Scene {
+  private unlocked: ShopItemId[] = [];
+  private leaving = false;
+  private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+
   constructor() {
     super("GameOver");
   }
 
+  init(data?: { unlocked?: ShopItemId[] }): void {
+    this.unlocked = data?.unlocked ?? [];
+  }
+
   create(): void {
+    this.leaving = false;
+    // Every ended run lands here — a loss or an abandon. The tutorial plays for
+    // one run, so retire it whether or not the player reached its last step.
+    completeTutorial(this.registry);
     responsive(this, () => this.build());
+    slideSceneIn(this, this.slideBackdrop);
 
     // A new personal best queued by the run's end offers itself to the global
     // leaderboard via the arcade initials prompt (launched on top).
@@ -25,7 +40,9 @@ export class GameOverScene extends Phaser.Scene {
         score: pending.score,
         dicePoints: pending.dicePoints,
         itemPoints: pending.itemPoints,
-        hard: pending.hard,
+        rank: pending.rank,
+        trial: pending.trial,
+        endless: pending.endless,
         returnTo: "GameOver",
       });
   }
@@ -36,7 +53,7 @@ export class GameOverScene extends Phaser.Scene {
     const H = this.scale.height;
     const cx = W / 2;
 
-    addFelt(this);
+    this.slideBackdrop = [addFelt(this)];
 
     const top = H * 0.2;
     const step = Math.min(H * 0.09, 60);
@@ -61,7 +78,15 @@ export class GameOverScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.add
-      .text(cx, top + step * 2.3, `You fell in Round ${state.round}`, {
+      .text(cx, top + step * 2.15, `You fell at rank ${rankOf(state.trial)}`, {
+        fontFamily: SERIF,
+        fontSize: "32px",
+        color: CSS.parchment,
+      })
+      .setOrigin(0.5);
+
+    this.add
+      .text(cx, top + step * 2.75, `The ${trialName(state.trial)}`, {
         fontFamily: SERIF,
         fontSize: "32px",
         color: CSS.parchment,
@@ -71,7 +96,7 @@ export class GameOverScene extends Phaser.Scene {
     this.add
       .text(
         cx,
-        top + step * 3.2,
+        top + step * 3.5,
         `Total score: ${formatScore(state.totalScore)}`,
         {
           fontFamily: SERIF,
@@ -82,7 +107,7 @@ export class GameOverScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.add
-      .text(cx, top + step * 4.1, `Your grid: ${state.dice.summary()}`, {
+      .text(cx, top + step * 4.4, `Your grid: ${state.dice.summary()}`, {
         fontFamily: SERIF,
         fontSize: "18px",
         color: CSS.dim,
@@ -91,44 +116,57 @@ export class GameOverScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
+    if (this.unlocked.length > 0) {
+      const names = this.unlocked.map(
+        (id) => ITEMS.find((item) => item.id === id)?.name ?? id,
+      );
+      this.add
+        .text(
+          cx,
+          top + step * 5.3,
+          `New cards unlocked: ${names.join(", ")}\nAvailable next run.`,
+          {
+            fontFamily: SERIF,
+            fontSize: "18px",
+            color: CSS.goldLight,
+            fontStyle: "bold",
+            align: "center",
+            wordWrap: { width: Math.min(820, W - 60) },
+          },
+        )
+        .setOrigin(0.5);
+    }
+
     const gap = Math.min(82, H * 0.12);
     const hasPoints =
       Object.keys(state.dicePoints).length > 0 ||
       Object.keys(state.itemPoints).length > 0;
-    // Hard Mode is offered here (for the next run) only once it's unlocked.
-    const showHard = hasBeatenGame();
-    const rows = (hasPoints ? 3 : 2) + (showHard ? 1 : 0);
-    let btnY = Math.min(H - gap * rows - 20, top + step * 5.0) + gap;
+    const rows = hasPoints ? 3 : 2;
+    let btnY =
+      Math.min(
+        H - gap * rows - 20,
+        top + step * (this.unlocked.length > 0 ? 6.1 : 5.3),
+      ) + gap;
     if (hasPoints) {
       bannerButton(this, cx, btnY, "View Run Analysis", () =>
         this.openAnalysis(),
       );
       btnY += gap;
     }
-    if (showHard) {
-      checkboxRow(
-        this,
-        cx,
-        btnY,
-        "Hard Mode ☠",
-        loadSettings().hardMode,
-        (value) => {
-          const s = loadSettings();
-          s.hardMode = value;
-          saveSettings(s);
-        },
-        26,
-        // On the dark felt, use light text + a parchment border like the intro.
-        { textColor: CSS.ivory, boxStroke: COLORS.parchment },
-      );
-      btnY += gap;
-    }
     // No intro here (main-menu only); beginRun still re-arms the tutorial if the
     // player hasn't completed it yet, or clears it otherwise.
-    bannerButton(this, cx, btnY, "Begin a New Run", () => beginRun(this));
-    bannerButton(this, cx, btnY + gap, "Return to the Vestibule", () =>
-      this.scene.start("Menu"),
+    bannerButton(this, cx, btnY, "Begin a New Run", () =>
+      this.leave(() => beginRun(this)),
     );
+    bannerButton(this, cx, btnY + gap, "Return to the Vestibule", () =>
+      this.leave(() => this.scene.start("Menu")),
+    );
+  }
+
+  private leave(complete: () => void): void {
+    if (this.leaving) return;
+    this.leaving = true;
+    slideSceneOut(this, complete, this.slideBackdrop);
   }
 
   private openAnalysis(): void {

@@ -14,7 +14,7 @@ import { installStorage, seedGlobalRandom } from "./localStorageShim";
 import { RunRecord, simulateRun } from "./bot";
 import { aggregate } from "./stats";
 import { buildReport } from "./report";
-import { seriesSeed, SIM_SERIES } from "./series";
+import { seriesConfig, seriesSeed, SIM_SERIES } from "./series";
 
 function parseArgs(argv: string[]): { cfg: SimConfig; out: string } {
   const cfg: SimConfig = {
@@ -54,17 +54,20 @@ function main(): void {
         simulateRun(
           series.strategy,
           seriesSeed(cfg.seed, i, series.seedOffset),
-          cfg,
+          seriesConfig(cfg, series),
         ),
       );
     }
     byStrategy[series.id] = records;
     const wins = records.filter((r) => r.won).length;
-    const medRound = [...records]
-      .map((r) => r.roundReached)
+    const medRank = [...records]
+      .map((r) => r.rankReached)
       .sort((a, b) => a - b)[Math.floor(records.length / 2)];
+    const gold = Math.round(
+      records.reduce((a, r) => a + r.goldEarned, 0) / records.length,
+    );
     console.log(
-      `  ${series.id.padEnd(12)} → win ${((wins / records.length) * 100).toFixed(1)}%  median round ${medRound}`,
+      `  ${series.id.padEnd(20)} → win ${((wins / records.length) * 100).toFixed(1)}%  median rank ${medRank}  avg gold ${gold}`,
     );
   }
 
