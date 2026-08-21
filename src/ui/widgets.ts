@@ -1,20 +1,30 @@
-import Phaser from 'phaser';
-import { COLORS, CSS, SERIF } from '../art/palette';
-import { audio } from '../systems/Audio';
+import Phaser from "phaser";
+import { COLORS, CSS, SERIF } from "../art/palette";
+import { audio } from "../systems/Audio";
+import { fx } from "../systems/Effects";
 
 /** Felt tabletop background, stretched to cover the current viewport.
  *  `overscan` bleeds it past every edge — pass a few pixels in scenes that
  *  shake the camera, so the shake never drags a bare edge into view. */
-export function addFelt(scene: Phaser.Scene, overscan = 0): Phaser.GameObjects.Image {
+export function addFelt(
+  scene: Phaser.Scene,
+  overscan = 0,
+): Phaser.GameObjects.Image {
   const { width, height } = scene.scale;
   return scene.add
-    .image(width / 2, height / 2, 'felt')
+    .image(width / 2, height / 2, "felt")
     .setDisplaySize(width + overscan * 2, height + overscan * 2);
 }
 
 /** Parchment panel sized to an explicit display box (non-uniform scale is fine — procedural art). */
-export function addPanel(scene: Phaser.Scene, cx: number, cy: number, w: number, h: number): Phaser.GameObjects.Image {
-  return scene.add.image(cx, cy, 'panel').setDisplaySize(w, h);
+export function addPanel(
+  scene: Phaser.Scene,
+  cx: number,
+  cy: number,
+  w: number,
+  h: number,
+): Phaser.GameObjects.Image {
+  return scene.add.image(cx, cy, "panel").setDisplaySize(w, h);
 }
 
 /** Horizontal breathing room kept between a button's label and the parchment
@@ -27,12 +37,17 @@ const BUTTON_SCREEN_MARGIN = 32;
 /** Reduce a text object's actual font size until it fits `maxWidth`; a no-op
  *  when it already does. Baking at the final size avoids the fractional object
  *  scale that can make glyph edges look soft. */
-export function fitTextWidth(text: Phaser.GameObjects.Text, maxWidth: number): Phaser.GameObjects.Text {
+export function fitTextWidth(
+  text: Phaser.GameObjects.Text,
+  maxWidth: number,
+): Phaser.GameObjects.Text {
   if (text.width <= maxWidth) return text;
 
   const fontSize = Number.parseFloat(String(text.style.fontSize));
   if (Number.isFinite(fontSize) && fontSize > 0) {
-    text.setFontSize(Math.max(1, Math.floor(fontSize * (maxWidth / text.width))));
+    text.setFontSize(
+      Math.max(1, Math.floor(fontSize * (maxWidth / text.width))),
+    );
   } else {
     // Defensive fallback for an unusual non-pixel font style.
     text.setScale(maxWidth / text.width);
@@ -51,11 +66,11 @@ export function bannerButton(
   y: number,
   label: string,
   onClick: () => void,
-  maxWidth?: number
+  maxWidth?: number,
 ): Phaser.GameObjects.Container {
-  const img = scene.add.image(0, 0, 'btn');
+  const img = scene.add.image(0, 0, "btn");
   const text = scene.add
-    .text(0, 0, label, { fontFamily: SERIF, fontSize: '26px', color: CSS.ink })
+    .text(0, 0, label, { fontFamily: SERIF, fontSize: "26px", color: CSS.ink })
     .setOrigin(0.5);
   const container = scene.add.container(x, y, [img, text]);
   const contentW = Math.max(img.width, text.width + BUTTON_LABEL_PAD);
@@ -70,9 +85,9 @@ export function bannerButton(
   fitTextWidth(text, Math.max(1, displayW - labelPad));
   container.setSize(displayW, displayH);
   container.setInteractive({ useHandCursor: true });
-  container.on('pointerover', () => img.setTint(0xfff2c8));
-  container.on('pointerout', () => img.clearTint());
-  container.on('pointerdown', () => {
+  container.on("pointerover", () => img.setTint(0xfff2c8));
+  container.on("pointerout", () => img.clearTint());
+  container.on("pointerdown", () => {
     audio.click();
     onClick();
   });
@@ -107,20 +122,26 @@ export function checkboxRow(
   initial: boolean,
   onChange: (value: boolean) => void,
   boxSize = 26,
-  style: CheckboxRowStyle = {}
+  style: CheckboxRowStyle = {},
 ): CheckboxRow {
   let value = initial;
   const textColor = style.textColor ?? CSS.ink;
   const boxStroke = style.boxStroke ?? COLORS.ink;
 
-  const box = scene.add.rectangle(0, 0, boxSize, boxSize, COLORS.feltLight, 0.35).setOrigin(0, 0.5);
+  const box = scene.add
+    .rectangle(0, 0, boxSize, boxSize, COLORS.feltLight, 0.35)
+    .setOrigin(0, 0.5);
   box.setStrokeStyle(2, boxStroke, 0.9);
   const check = scene.add
     .rectangle(boxSize / 2, 0, boxSize * 0.5, boxSize * 0.5, COLORS.gold)
     .setOrigin(0.5)
     .setVisible(value);
   const text = scene.add
-    .text(boxSize + 14, 0, label, { fontFamily: SERIF, fontSize: '22px', color: textColor })
+    .text(boxSize + 14, 0, label, {
+      fontFamily: SERIF,
+      fontSize: "22px",
+      color: textColor,
+    })
     .setOrigin(0, 0.5);
 
   // Origin the container on the box's left edge, then shift so the whole row
@@ -131,12 +152,14 @@ export function checkboxRow(
   const hitH = Math.max(boxSize, text.height) + 20;
   const container = scene.add.container(x - rowW / 2, y, [box, check, text]);
   container.setSize(rowW, hitH);
+  // Measured from the container's top-left: Phaser adds the display origin to
+  // the point before testing it (see toggleRow).
   container.setInteractive(
-    new Phaser.Geom.Rectangle(0, -hitH / 2, rowW, hitH),
-    Phaser.Geom.Rectangle.Contains
+    new Phaser.Geom.Rectangle(0, 0, rowW, hitH),
+    Phaser.Geom.Rectangle.Contains,
   );
-  container.input!.cursor = 'pointer';
-  container.on('pointerdown', () => {
+  container.input!.cursor = "pointer";
+  container.on("pointerdown", () => {
     value = !value;
     check.setVisible(value);
     audio.click();
@@ -151,6 +174,138 @@ export function checkboxRow(
   return row;
 }
 
+/** The switch drawn at the right end of a `toggleRow`: pill track, round knob.
+ *  Sized so the knob clears the track's stroke by a pixel on every side. */
+const SWITCH_W = 52;
+const SWITCH_H = 28;
+const SWITCH_KNOB_R = 11;
+/** How far the knob sits from the switch's centre in each state. */
+const SWITCH_THROW = SWITCH_W / 2 - SWITCH_H / 2;
+
+export interface ToggleRow extends Phaser.GameObjects.Container {
+  setChecked(value: boolean): void;
+}
+
+/**
+ * A full-width settings row: label on the left, a pill switch on the right,
+ * with the whole band clickable. Where `checkboxRow` centres a box-and-label
+ * pair as one lump — which leaves a ragged column when several are stacked —
+ * this pins the labels to one left edge and the switches to one right edge, so
+ * a stack of rows reads as a form.
+ *
+ * Colours assume the dark felt rather than a parchment panel. The returned
+ * container carries `setChecked` so callers can reflect state changed
+ * elsewhere (fullscreen toggled with Esc/F11) without firing `onChange`.
+ */
+export function toggleRow(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  width: number,
+  label: string,
+  initial: boolean,
+  onChange: (value: boolean) => void,
+  height = 52,
+): ToggleRow {
+  let value = initial;
+  let hovered = false;
+
+  const labelText = scene.add
+    .text(-width / 2, 0, label, {
+      fontFamily: SERIF,
+      fontSize: "21px",
+      color: CSS.parchment,
+    })
+    .setOrigin(0, 0.5);
+
+  const switchX = width / 2 - SWITCH_W / 2;
+  const track = scene.add.graphics({ x: switchX, y: 0 });
+  const knob = scene.add.circle(
+    switchX + (value ? SWITCH_THROW : -SWITCH_THROW),
+    0,
+    SWITCH_KNOB_R,
+    COLORS.ivory,
+  );
+
+  const redraw = () => {
+    track.clear();
+    track.fillStyle(value ? COLORS.gold : COLORS.feltLight, value ? 0.9 : 0.85);
+    track.fillRoundedRect(
+      -SWITCH_W / 2,
+      -SWITCH_H / 2,
+      SWITCH_W,
+      SWITCH_H,
+      SWITCH_H / 2,
+    );
+    track.lineStyle(
+      1.5,
+      value ? COLORS.goldLight : COLORS.parchmentDark,
+      hovered ? 0.95 : 0.6,
+    );
+    track.strokeRoundedRect(
+      -SWITCH_W / 2,
+      -SWITCH_H / 2,
+      SWITCH_W,
+      SWITCH_H,
+      SWITCH_H / 2,
+    );
+    labelText.setColor(hovered ? CSS.ivory : CSS.parchment);
+    knob.setFillStyle(value ? COLORS.ivory : COLORS.parchmentDark);
+  };
+  redraw();
+
+  const container = scene.add.container(x, y, [labelText, track, knob]);
+  container.setSize(width, height);
+  // Phaser normalizes a hit test by adding the object's display origin before
+  // running the callback, and setSize puts a container's origin at its centre —
+  // so a hit area for a centred container is measured from its top-left corner,
+  // not from its middle.
+  container.setInteractive(
+    new Phaser.Geom.Rectangle(0, 0, width, height),
+    Phaser.Geom.Rectangle.Contains,
+  );
+  container.input!.cursor = "pointer";
+
+  const settle = () => {
+    const knobX = switchX + (value ? SWITCH_THROW : -SWITCH_THROW);
+    scene.tweens.killTweensOf(knob);
+    if (fx.motion) {
+      scene.tweens.add({
+        targets: knob,
+        x: knobX,
+        duration: 150,
+        ease: "Cubic.easeOut",
+      });
+    } else {
+      knob.x = knobX;
+    }
+    redraw();
+  };
+
+  container.on("pointerover", () => {
+    hovered = true;
+    redraw();
+  });
+  container.on("pointerout", () => {
+    hovered = false;
+    redraw();
+  });
+  container.on("pointerdown", () => {
+    value = !value;
+    settle();
+    audio.click();
+    onChange(value);
+  });
+
+  const row = container as ToggleRow;
+  row.setChecked = (v: boolean) => {
+    if (v === value) return;
+    value = v;
+    settle();
+  };
+  return row;
+}
+
 /** Floating score text that drifts up and fades. Returns the Text so callers
  *  that render through a secondary camera (e.g. a windowed dice grid) can
  *  exclude it from that camera and keep it above everything. */
@@ -160,16 +315,16 @@ export function floatText(
   y: number,
   message: string,
   color: string = CSS.goldLight,
-  size = 30
+  size = 30,
 ): Phaser.GameObjects.Text {
   const text = scene.add
     .text(x, y, message, {
       fontFamily: SERIF,
       fontSize: `${size}px`,
       color,
-      fontStyle: 'bold',
-      stroke: '#0d0a12',
-      strokeThickness: 4
+      fontStyle: "bold",
+      stroke: "#0d0a12",
+      strokeThickness: 4,
     })
     .setOrigin(0.5)
     .setDepth(50);
@@ -178,20 +333,28 @@ export function floatText(
     y: y - 70,
     alpha: 0,
     duration: 1100,
-    ease: 'Quad.easeOut',
-    onComplete: () => text.destroy()
+    ease: "Quad.easeOut",
+    onComplete: () => text.destroy(),
   });
   return text;
 }
 
 /** Centered announcement banner that slides in, holds, and fades. Returns
  *  its GameObjects — see `floatText` for why. */
-export function showBanner(scene: Phaser.Scene, message: string, holdMs = 1100): Phaser.GameObjects.GameObject[] {
+export function showBanner(
+  scene: Phaser.Scene,
+  message: string,
+  holdMs = 1100,
+): Phaser.GameObjects.GameObject[] {
   const cx = scene.scale.width / 2;
   const cy = scene.scale.height / 2;
-  const img = scene.add.image(cx, cy, 'banner').setDepth(90).setAlpha(0);
+  const img = scene.add.image(cx, cy, "banner").setDepth(90).setAlpha(0);
   const text = scene.add
-    .text(cx, cy, message, { fontFamily: SERIF, fontSize: '34px', color: CSS.goldLight })
+    .text(cx, cy, message, {
+      fontFamily: SERIF,
+      fontSize: "34px",
+      color: CSS.goldLight,
+    })
     .setOrigin(0.5)
     .setDepth(91)
     .setAlpha(0);
@@ -208,9 +371,9 @@ export function showBanner(scene: Phaser.Scene, message: string, holdMs = 1100):
         onComplete: () => {
           img.destroy();
           text.destroy();
-        }
+        },
       });
-    }
+    },
   });
   return [img, text];
 }
@@ -231,11 +394,16 @@ const BANNER_GAP = 14;
  * scenes that don't window their content can omit it.
  */
 export class BannerStack {
-  private entries: { container: Phaser.GameObjects.Container; slotH: number }[] = [];
+  private entries: {
+    container: Phaser.GameObjects.Container;
+    slotH: number;
+  }[] = [];
 
   constructor(
     private scene: Phaser.Scene,
-    private register: (objs: Phaser.GameObjects.GameObject[]) => void = () => {}
+    private register: (
+      objs: Phaser.GameObjects.GameObject[],
+    ) => void = () => {},
   ) {}
 
   /** Push a banner onto the stack. `detail`, when given, is rendered as a
@@ -245,15 +413,27 @@ export class BannerStack {
     const holdMs = opts.holdMs ?? 1100;
     const hasDetail = !!opts.detail;
 
-    const img = scene.add.image(0, 0, 'banner');
+    const img = scene.add.image(0, 0, "banner");
     const title = scene.add
-      .text(0, hasDetail ? -13 : 0, message, { fontFamily: SERIF, fontSize: '30px', color: CSS.goldLight })
+      .text(0, hasDetail ? -13 : 0, message, {
+        fontFamily: SERIF,
+        fontSize: "30px",
+        color: CSS.goldLight,
+      })
       .setOrigin(0.5);
-    const container = scene.add.container(scene.scale.width / 2, scene.scale.height / 2, [img, title]);
+    const container = scene.add.container(
+      scene.scale.width / 2,
+      scene.scale.height / 2,
+      [img, title],
+    );
     let detailW = 0;
     if (opts.detail) {
       const detail = scene.add
-        .text(0, 17, opts.detail, { fontFamily: SERIF, fontSize: '19px', color: CSS.parchment })
+        .text(0, 17, opts.detail, {
+          fontFamily: SERIF,
+          fontSize: "19px",
+          color: CSS.parchment,
+        })
         .setOrigin(0.5);
       container.add(detail);
       detailW = detail.width;
@@ -281,7 +461,7 @@ export class BannerStack {
           container.destroy();
           this.entries = this.entries.filter((e) => e !== entry);
           this.layout();
-        }
+        },
       });
     });
   }
@@ -293,7 +473,12 @@ export class BannerStack {
     let top = anchorY - totalH / 2;
     for (const e of this.entries) {
       const targetY = top + e.slotH / 2;
-      this.scene.tweens.add({ targets: e.container, y: targetY, duration: 200, ease: 'Cubic.out' });
+      this.scene.tweens.add({
+        targets: e.container,
+        y: targetY,
+        duration: 200,
+        ease: "Cubic.out",
+      });
       top += e.slotH;
     }
   }

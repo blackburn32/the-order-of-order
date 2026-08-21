@@ -1,25 +1,24 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { getRun } from "../state/RunState";
-import { DIE_LADDER } from "../systems/Dice";
+import { getRun, RunState } from "../state/RunState";
+import { DIE_LADDER, DieSides } from "../systems/Dice";
 import { ITEMS, ItemDef } from "../systems/Items";
-import { addPanel, bannerButton, fitTextWidth } from "../ui/widgets";
+import { audio } from "../systems/Audio";
+import { fx } from "../systems/Effects";
+import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildItemCard } from "../ui/itemCard";
+import { buildSceneHeader } from "../ui/sceneHeader";
+import { formatScore } from "../ui/formatScore";
 import { onResizeCoalesced } from "../ui/layout";
+import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
 
 export interface InventoryData {
   /** Scene key whose input to re-enable when the overlay closes. */
   returnTo: string;
 }
 
-// Native card box (260x340, origin center) plus a little vertical breathing room.
-// The inventory hides the card caption, so no extra caption room is needed.
-const CARD_W = 260;
-const CARD_H = 360;
-const COL_GAP = 24;
-const ROW_GAP = 24;
-
 type InventoryTab = "items" | "dice";
+
 type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
 type WheelHandler = (
   pointer: Phaser.Input.Pointer,
@@ -29,21 +28,108 @@ type WheelHandler = (
   dz: number,
 ) => void;
 
+// Containers carry AlphaSingle while images and text carry Alpha, so the
+// shared shape is spelt out rather than picking one of the two components.
+type SlideObject = Phaser.GameObjects.GameObject &
+  Phaser.GameObjects.Components.Transform & { alpha: number };
+
+interface ContentArea {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Fixed sigil brightness for the backdrop — the inventory is read between
+ *  rolls rather than during one, so the value is chosen purely for how it
+ *  looks (see MenuScene). */
+const INVENTORY_AMBIENCE = 0.5;
+
+// Native card box with the caption dropped (the inventory shows a copy-count
+// badge instead), used for grid spacing and for scaling a card to its cell.
+const CARD_W = 260;
+const CARD_H = 340;
+const COL_GAP = 12;
+const ROW_GAP = 22;
+/** Drop a column rather than shrink cards past the point they can be read. */
+const MIN_READABLE_CARD_SCALE = 0.5;
+
+/** Zebra banding for the dice rows, matching the Hall's table: faint enough to
+ *  read as ruling on the felt rather than as plates laid on it. */
+const BAND_ALPHA = 0.26;
+/** Room above the first dice row for its column heads and their hairline. */
+const HEAD_H = 34;
+
+/** Matches sceneSlide's entrance, so the overlay arrives at the same pace as a
+ *  scene change; the backdrop fades up underneath it. */
+const SLIDE_MS = 360;
+const BACKDROP_FADE_MS = 240;
+/** Each row/card trails the one before it as the list settles in. */
+const ENTRY_STAGGER_MS = 42;
+const ENTRY_STAGGER_CAP_MS = 420;
+const ENTRY_MS = 260;
+/** How far a row/card starts to the right of its resting place. */
+const ENTRY_OFFSET = 20;
+/** The outgoing half of a tab change. */
+const TAB_SWAP_MS = 140;
+
+/** Strip kept clear under a scrolling list for its "drag or scroll" line. */
+const HINT_H = 22;
+
+/** Rarity order for the item shelf — the rarest treasures first, so a
+ *  collection leads with what it is proudest of. The Codex, which is a
+ *  reference rather than a hoard, deliberately sorts the other way. */
+const RARITY_ORDER = { rare: 0, uncommon: 1, common: 2 } as const;
+
+/** One badge on a dice row: a die size's persistent auras and windfall
+ *  multipliers, in the colour that tells them apart at a glance. */
+interface ChipSpec {
+  label: string;
+  color: number;
+  css: string;
+}
+
+interface DiceRow {
+  sides: DieSides;
+  count: number;
+  chips: ChipSpec[];
+}
+
 /**
- * A mid-run inventory: every item bought this run rendered as a card, with a
- * badge showing the copy count on items bought more than once. Launched as an
- * overlay on top of the Game or Shop (via `scene.launch`) so the base scene
- * keeps rendering, dimmed, underneath; the base scene's input is disabled while
- * we're open and restored on close.
+ * A mid-run inventory: the items bought this run as a shelf of cards, and the
+ * grid's dice as a ranked list — one line per die size, with its picture, its
+ * count, and the auras riding on it.
  *
- * The card row can exceed the panel, so it lives in a `track` container clipped
- * to the grid area by a dedicated camera (native scissor clipping — the same
- * approach ItemsScene/ShopScene use) and scrolls vertically by drag/wheel.
+ * Launched as an overlay on top of the Game or Shop (via `scene.launch`) so the
+ * base scene keeps running underneath; its input is disabled while we are open
+ * and restored on close. The overlay lays its own felt and sigil rather than
+ * dimming what is beneath, so it reads as the same room the trial screens use
+ * — masthead, felt, turning sigil — with the contents set straight on the table
+ * instead of on a parchment panel.
+ *
+ * Either tab can exceed its band, so its content lives in a `track` container
+ * clipped to that band by a dedicated camera (native scissor clipping — the
+ * same approach the Codex and the Hall use) and scrolls by drag/wheel.
  */
 export class InventoryScene extends Phaser.Scene {
   private returnTo = "Game";
   private tab: InventoryTab = "items";
   private gridCamera?: Phaser.Cameras.Scene2D.Camera;
+  /** The felt and the sigil — the room the inventory is laid out in. Held
+   *  still (and faded, not slid) while the interface moves across it. */
+  private backdrop: SlideObject[] = [];
+  /** Everything the current tab built, torn down and replaced on a tab change
+   *  while the chrome around it stays put. */
+  private contentObjects: Phaser.GameObjects.GameObject[] = [];
+  private contentArea: ContentArea = { x: 0, y: 0, width: 0, height: 0 };
+  /** How much of the band the current tab's content actually covers. The item
+   *  shelf fills it; the dice list is a centred block, and its scrollbar wants
+   *  to sit beside the rows rather than out at the band's far margin. */
+  private contentSpan = 0;
+  private tabItems: { tab: InventoryTab; text: Phaser.GameObjects.Text }[] = [];
+  private tabUnderline?: Phaser.GameObjects.Rectangle;
+  private swapping = false;
+  private leaving = false;
   private input$?: {
     down: PointerHandler;
     move: PointerHandler;
@@ -66,313 +152,793 @@ export class InventoryScene extends Phaser.Scene {
     if (base) base.input.enabled = false;
 
     this.gridCamera = undefined;
+    this.swapping = false;
+    this.leaving = false;
     this.build();
+    this.enter();
 
-    const off = onResizeCoalesced(this, () => {
-      this.rebuild();
-    });
+    const off = onResizeCoalesced(this, () => this.rebuild());
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       off();
-      this.teardownInput();
+      this.teardownScroll();
       this.input.setDefaultCursor("default");
       const b = this.scene.get(this.returnTo);
       if (b) b.input.enabled = true;
     });
   }
 
-  private teardownInput(): void {
-    if (this.input$) {
-      this.input.off("pointerdown", this.input$.down);
-      this.input.off("pointermove", this.input$.move);
-      this.input.off("pointerup", this.input$.up);
-      this.input.off("pointerupoutside", this.input$.up);
-      this.input.off("wheel", this.input$.wheel);
-      this.input$ = undefined;
-    }
-  }
-
   private rebuild(): void {
-    this.teardownInput();
-    if (this.gridCamera) {
-      this.cameras.remove(this.gridCamera, true);
-      this.gridCamera = undefined;
-    }
+    // A tab swap in flight owns objects this is about to destroy, and its
+    // completion would build a second copy of the content into the rebuilt
+    // scene. Killing the tweens drops that callback with them.
+    this.tweens.killAll();
+    this.teardownScroll();
     this.children.removeAll(true);
+    this.contentObjects = [];
+    this.tabItems = [];
+    this.tabUnderline = undefined;
+    this.swapping = false;
     this.build();
   }
+
+  private teardownScroll(): void {
+    this.teardownScrollInput();
+    this.removeGridCamera();
+  }
+
+  private teardownScrollInput(): void {
+    if (!this.input$) return;
+    this.input.off("pointerdown", this.input$.down);
+    this.input.off("pointermove", this.input$.move);
+    this.input.off("pointerup", this.input$.up);
+    this.input.off("pointerupoutside", this.input$.up);
+    this.input.off("wheel", this.input$.wheel);
+    this.input$ = undefined;
+  }
+
+  private removeGridCamera(): void {
+    if (!this.gridCamera) return;
+    this.cameras.remove(this.gridCamera, true);
+    this.gridCamera = undefined;
+  }
+
+  // --- Chrome ---------------------------------------------------------------
 
   private build(): void {
     const W = this.scale.width;
     const H = this.scale.height;
     const cx = W / 2;
-    const panelW = Math.min(W - 40, 1000);
-    const panelH = Math.min(H - 40, 620);
-    const panelTop = H / 2 - panelH / 2;
-    const panelBottom = H / 2 + panelH / 2;
 
-    // Full-screen dim that swallows taps meant for the base scene.
-    const dim = this.add
-      .rectangle(cx, H / 2, W, H, COLORS.feltDark, 0.72)
-      .setInteractive()
-      .on("pointerdown", () => {});
-    const panel = addPanel(this, cx, H / 2, panelW, panelH);
+    const felt = addFelt(this);
+    const ambient = new AmbientLayer(this, { ring: true });
+    ambient.setPosition(cx, H / 2);
+    ambient.setArea(W, H);
+    ambient.setProgress(INVENTORY_AMBIENCE, false);
+    this.backdrop = [felt, ambient];
 
-    const title = this.add
-      .text(cx, panelTop + panelH * 0.09, "Your Inventory", {
-        fontFamily: SERIF,
-        fontSize: `${Math.round(Phaser.Math.Clamp(Math.min(panelW * 0.075, panelH * 0.07), 20, 40))}px`,
-        color: CSS.ink,
-        fontStyle: "bold",
-        align: "center",
-      })
-      .setOrigin(0.5);
+    const header = buildSceneHeader(this, {
+      title: "Your Inventory",
+      subtitle: "Everything you carry into the trials.",
+      y: Math.max(46, Math.min(H * 0.12, 88)),
+      width: Math.min(W, 760),
+    });
 
-    const tabs = this.buildTabs(cx, panelTop + panelH * 0.2, panelW);
     const run = getRun(this.registry);
-    const owned = run.purchases ?? {};
-    const entries = ITEMS.filter((def) => (owned[def.id] ?? 0) > 0);
+    const tableW = Math.min(W - 32, 1000);
+    const tabsY = header.bottom + 26;
+    this.buildTabs(
+      cx,
+      tabsY,
+      tableW,
+      this.ownedItems(run).length,
+      run.dice.length,
+    );
 
-    const subtitle = this.add
-      .text(
-        cx,
-        panelTop + panelH * 0.29,
-        this.tab === "items"
-          ? "Every treasure you've acquired this run."
-          : `${run.dice.length.toLocaleString()} ${run.dice.length === 1 ? "die" : "dice"} in your grid, counted by type.`,
-        {
-          fontFamily: SERIF,
-          fontSize: `${Math.round(Phaser.Math.Clamp(panelW * 0.022, 13, 18))}px`,
-          color: CSS.inkSoft,
-          fontStyle: "italic",
-          align: "center",
-        },
-      )
-      .setOrigin(0.5);
-
+    // The footer is created before the (camera-clipped) content so it is part
+    // of the "everything except the track" set the grid camera ignores.
     const buttonH = 70;
-    const closeY = panelBottom - 24 - buttonH / 2;
-    const footerGap = Math.max(10, Math.min(20, panelW * 0.02));
-    const footerButtonMaxW = (panelW * 0.92 - footerGap) / 2;
+    const buttonY = H - 20 - buttonH / 2;
+    const footerGap = Math.max(10, Math.min(20, tableW * 0.02));
+    const footerMaxW = (Math.min(tableW, 620) - footerGap) / 2;
     const codex = bannerButton(
       this,
       cx,
-      closeY,
+      buttonY,
       "Codex",
       () => this.scene.launch("Items", { returnTo: "Inventory" }),
-      footerButtonMaxW,
+      footerMaxW,
     );
     const close = bannerButton(
       this,
       cx,
-      closeY,
+      buttonY,
       "Close",
-      () => this.scene.stop(),
-      footerButtonMaxW,
+      () => this.close(),
+      footerMaxW,
     );
-    const footerButtonW = codex.width;
-    const footerDx = footerButtonW / 2 + footerGap / 2;
+    const footerDx = codex.width / 2 + footerGap / 2;
     codex.setX(cx - footerDx);
     close.setX(cx + footerDx);
 
-    const fixed: Phaser.GameObjects.GameObject[] = [
-      dim,
-      panel,
-      title,
-      ...tabs,
-      subtitle,
-      codex,
-      close,
-    ];
-
-    // Grid area sits between the subtitle and the close button, inset in the panel.
-    const gridTop = subtitle.y + subtitle.height / 2 + 20;
-    const gridBottom = closeY - buttonH / 2 - 16;
-    const grid = {
-      x: cx - panelW * 0.46,
-      y: gridTop,
-      width: panelW * 0.92,
-      height: Math.max(120, gridBottom - gridTop),
+    const contentTop = tabsY + 32;
+    this.contentArea = {
+      x: cx - tableW / 2,
+      y: contentTop,
+      width: tableW,
+      height: Math.max(120, buttonY - buttonH / 2 - 18 - contentTop),
     };
-
-    if (this.tab === "dice") {
-      this.buildDiceCounts(grid, run.dice.sizeCounts());
-      return;
-    }
-
-    if (entries.length === 0) {
-      this.add
-        .text(cx, grid.y + grid.height / 2, "No items purchased yet.", {
-          fontFamily: SERIF,
-          fontSize: "22px",
-          color: CSS.dim,
-          fontStyle: "italic",
-          align: "center",
-        })
-        .setOrigin(0.5);
-      return;
-    }
-
-    this.buildGrid(grid, entries, owned, fixed);
+    this.buildContent();
   }
 
+  /** Two text tabs sharing a baseline under a sliding gold rule, each carrying
+   *  the size of what it holds. Parchment buttons were doing this job before,
+   *  which put two more slabs of chrome between the masthead and the goods. */
   private buildTabs(
     cx: number,
     y: number,
-    panelW: number,
-  ): Phaser.GameObjects.Container[] {
-    const maxButtonW = Math.max(110, panelW * 0.36);
-    const items = bannerButton(
-      this,
-      cx,
-      y,
-      "Items",
-      () => this.switchTab("items"),
-      maxButtonW,
-    );
-    const dice = bannerButton(
-      this,
-      cx,
-      y,
-      "Dice",
-      () => this.switchTab("dice"),
-      maxButtonW,
-    );
-    const buttonW = items.width;
-    const dx = buttonW / 2 + Math.max(10, panelW * 0.015);
-    items.setX(cx - dx);
-    dice.setX(cx + dx);
+    tableW: number,
+    itemCount: number,
+    diceCount: number,
+  ): void {
+    const size = Math.round(Phaser.Math.Clamp(tableW * 0.026, 16, 21));
+    const gap = Math.max(30, tableW * 0.05);
+
+    const make = (label: string, tab: InventoryTab) => {
+      const active = this.tab === tab;
+      const text = this.add
+        .text(0, y, label, {
+          fontFamily: SERIF,
+          fontSize: `${size}px`,
+          color: active ? CSS.gold : CSS.dim,
+          fontStyle: active ? "bold" : "normal",
+          letterSpacing: 2,
+        })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
+      text.on("pointerover", () =>
+        text.setColor(this.tab === tab ? CSS.goldLight : CSS.parchment),
+      );
+      text.on("pointerout", () =>
+        text.setColor(this.tab === tab ? CSS.gold : CSS.dim),
+      );
+      text.on("pointerdown", () => this.switchTab(tab));
+      return text;
+    };
+
+    const items = make(`ITEMS · ${formatScore(itemCount)}`, "items");
+    const dice = make(`DICE · ${formatScore(diceCount)}`, "dice");
+    const totalW = items.width + gap + dice.width;
+    items.setX(cx - totalW / 2 + items.width / 2);
+    dice.setX(cx + totalW / 2 - dice.width / 2);
+    this.tabItems = [
+      { tab: "items", text: items },
+      { tab: "dice", text: dice },
+    ];
+
+    // One rule that travels between the tabs rather than a fresh line drawn on
+    // each switch, so the underline tracks the change instead of teleporting
+    // with the content.
     const active = this.tab === "items" ? items : dice;
-    (active.getAt(0) as Phaser.GameObjects.Image).setTint(0xf0d98a);
-    return [items, dice];
+    this.tabUnderline = this.add
+      .rectangle(active.x, y + size * 0.9, active.width + 12, 2, COLORS.gold)
+      .setOrigin(0.5)
+      .setAlpha(0.75);
   }
 
   private switchTab(tab: InventoryTab): void {
-    if (tab === this.tab) return;
+    if (tab === this.tab || this.swapping || this.leaving) return;
+    audio.click();
     this.tab = tab;
-    this.rebuild();
-  }
 
-  private buildDiceCounts(
-    grid: { x: number; y: number; width: number; height: number },
-    counts: Record<number, number>,
-  ): void {
-    const entries = DIE_LADDER.filter((sides) => (counts[sides] ?? 0) > 0).map(
-      (sides) => ({ sides, count: counts[sides] ?? 0 }),
-    );
-
-    if (entries.length === 0) {
-      this.add
-        .text(
-          grid.x + grid.width / 2,
-          grid.y + grid.height / 2,
-          "No dice in the grid.",
-          {
-            fontFamily: SERIF,
-            fontSize: "22px",
-            color: CSS.dim,
-            fontStyle: "italic",
-          },
-        )
-        .setOrigin(0.5);
-      return;
+    for (const entry of this.tabItems) {
+      const active = entry.tab === tab;
+      entry.text
+        .setColor(active ? CSS.gold : CSS.dim)
+        .setFontStyle(active ? "bold" : "normal");
+    }
+    const activeText = this.tabItems.find((e) => e.tab === tab)?.text;
+    const underline = this.tabUnderline;
+    if (activeText && underline) {
+      // The rule keeps its native width and rides scaleX across, so the two
+      // tabs' differing widths don't need a redraw.
+      const scaleX = (activeText.width + 12) / underline.width;
+      if (fx.motion) {
+        this.tweens.add({
+          targets: underline,
+          x: activeText.x,
+          scaleX,
+          duration: 200,
+          ease: "Cubic.easeOut",
+        });
+      } else {
+        underline.setX(activeText.x).setScale(scaleX, 1);
+      }
     }
 
-    const cols = entries.length === 1 ? 1 : 2;
-    const rows = Math.ceil(entries.length / cols);
-    const cellW = grid.width / cols;
-    const cellH = grid.height / rows;
-    const tileGap = Phaser.Math.Clamp(Math.min(cellW, cellH) * 0.12, 5, 14);
-    const tileW = cellW - tileGap;
-    const tileH = cellH - tileGap;
+    this.swapContent();
+  }
 
-    entries.forEach(({ sides, count }, i) => {
-      const row = Math.floor(i / cols);
-      const col = i % cols;
-      const rowEntries = Math.min(cols, entries.length - row * cols);
-      const rowOffset =
-        rowEntries < cols ? ((cols - rowEntries) * cellW) / 2 : 0;
-      const x = grid.x + rowOffset + col * cellW + cellW / 2;
-      const y = grid.y + row * cellH + cellH / 2;
+  /** Send the outgoing tab's content off to the left, then build the incoming
+   *  one — which brings itself in from the right, a row at a time. */
+  private swapContent(): void {
+    const outgoing = this.contentObjects;
+    this.contentObjects = [];
+    // Only the handlers go now. The clip camera is the one thing drawing an
+    // overflowing track, so pulling it here would make the outgoing content
+    // vanish instead of leaving.
+    this.teardownScrollInput();
 
-      this.add
-        .rectangle(x, y, tileW, tileH, COLORS.parchmentDark, 0.2)
-        .setStrokeStyle(2, COLORS.inkSoft, 0.35);
+    const finish = () => {
+      this.removeGridCamera();
+      outgoing.forEach((obj) => obj.destroy());
+      this.buildContent();
+      this.swapping = false;
+    };
 
-      const iconSize = Phaser.Math.Clamp(tileH * 0.72, 30, 62);
-      const iconX = x - tileW / 2 + tileGap + iconSize / 2;
-      this.add
-        .image(iconX, y, `die-${sides}`)
-        .setDisplaySize(iconSize, iconSize);
-
-      const labelX = iconX + iconSize / 2 + Phaser.Math.Clamp(tileGap, 7, 14);
-      const availableTextW = Math.max(30, x + tileW / 2 - tileGap - labelX);
-      const label = this.add
-        .text(labelX, y, `d${sides}  ×  ${count.toLocaleString()}`, {
-          fontFamily: SERIF,
-          fontSize: `${Math.round(Phaser.Math.Clamp(tileH * 0.34, 15, 27))}px`,
-          color: CSS.ink,
-          fontStyle: "bold",
-        })
-        .setOrigin(0, 0.5);
-      fitTextWidth(label, availableTextW);
+    const targets = outgoing.filter(
+      (obj): obj is SlideObject => "x" in obj && "alpha" in obj,
+    );
+    if (!fx.motion || targets.length === 0) {
+      finish();
+      return;
+    }
+    this.swapping = true;
+    this.tweens.add({
+      targets,
+      alpha: 0,
+      x: `-=${ENTRY_OFFSET * 2}`,
+      duration: TAB_SWAP_MS,
+      ease: "Quad.easeIn",
+      onComplete: finish,
     });
   }
 
-  private buildGrid(
-    grid: { x: number; y: number; width: number; height: number },
-    entries: ItemDef[],
-    owned: Partial<Record<string, number>>,
-    ignoredByGridCamera: Phaser.GameObjects.GameObject[],
-  ): void {
-    const n = entries.length;
+  /** The interface leaves to the right and the room fades out behind it,
+   *  handing the screen back to the scene that was running underneath. */
+  private close(): void {
+    if (this.leaving) return;
+    this.leaving = true;
+    if (!fx.motion) {
+      this.scene.stop();
+      return;
+    }
+    this.input.enabled = false;
+    const distance = this.scale.width;
+    const targets = this.interfaceTargets();
+    if (targets.length > 0) {
+      this.tweens.add({
+        targets,
+        x: `+=${distance}`,
+        duration: SLIDE_MS,
+        ease: "Cubic.easeIn",
+      });
+    }
+    this.tweens.add({
+      targets: this.backdrop,
+      alpha: 0,
+      duration: BACKDROP_FADE_MS,
+      delay: SLIDE_MS - BACKDROP_FADE_MS,
+      ease: "Quad.easeIn",
+      onComplete: () => this.scene.stop(),
+    });
+  }
 
-    // Pick the column count that yields the largest (still readable) cards, then
-    // scale each card to its cell. Vertical overflow becomes scroll.
-    const cols = Math.max(2, Math.min(5, Math.floor(grid.width / 210)));
-    const rows = Math.ceil(n / cols);
-    const cellW = grid.width / cols;
+  /** The interface comes in from the left the way a scene change does, while
+   *  the felt and the sigil fade up beneath it — the room arriving around the
+   *  contents rather than sliding in with them. */
+  private enter(): void {
+    if (!fx.motion) return;
+
+    for (const object of this.backdrop) object.alpha = 0;
+    this.tweens.add({
+      targets: this.backdrop,
+      alpha: 1,
+      duration: BACKDROP_FADE_MS,
+      ease: "Quad.easeOut",
+    });
+
+    const targets = this.interfaceTargets();
+    if (targets.length === 0) return;
+    const distance = this.scale.width;
+    for (const target of targets) target.x -= distance;
+    this.input.enabled = false;
+    this.tweens.add({
+      targets,
+      x: `+=${distance}`,
+      duration: SLIDE_MS,
+      ease: "Cubic.easeOut",
+      onComplete: () => {
+        if (!this.leaving) this.input.enabled = true;
+      },
+    });
+  }
+
+  /** Every top-level object that isn't part of the room: the interface the
+   *  entrance and the exit carry across the screen. */
+  private interfaceTargets(): SlideObject[] {
+    const backdrop = new Set<Phaser.GameObjects.GameObject>(this.backdrop);
+    return this.children.list.filter(
+      (obj): obj is SlideObject => !backdrop.has(obj) && "x" in obj,
+    );
+  }
+
+  // --- Content --------------------------------------------------------------
+
+  private buildContent(): void {
+    const area = this.contentArea;
+    const run = getRun(this.registry);
+    const track = this.add.container(area.x, area.y);
+    this.contentObjects.push(track);
+    this.contentSpan = area.width;
+
+    const contentH =
+      this.tab === "dice"
+        ? this.buildDiceList(track, area, run)
+        : this.buildItemShelf(track, area, run);
+
+    if (contentH <= area.height) {
+      // Nothing to scroll: centre a short list in the band it was given rather
+      // than leaving it hanging off the tabs with all the slack below it.
+      track.y = area.y + (area.height - contentH) / 2;
+      return;
+    }
+    this.enableScroll(track, area, contentH);
+  }
+
+  /** Fade a freshly built row or card in from the right, trailing the ones
+   *  before it. Returns the object so builders can go on placing it. */
+  private stagger<T extends SlideObject>(object: T, index: number): T {
+    if (!fx.motion) return object;
+    const restX = object.x;
+    object.alpha = 0;
+    object.x = restX + ENTRY_OFFSET;
+    this.tweens.add({
+      targets: object,
+      x: restX,
+      alpha: 1,
+      duration: ENTRY_MS,
+      delay: Math.min(index * ENTRY_STAGGER_MS, ENTRY_STAGGER_CAP_MS),
+      ease: "Cubic.easeOut",
+    });
+    return object;
+  }
+
+  private emptyMessage(
+    track: Phaser.GameObjects.Container,
+    area: ContentArea,
+    message: string,
+  ): number {
+    const text = this.add
+      .text(area.width / 2, Math.min(area.height * 0.38, 130), message, {
+        fontFamily: SERIF,
+        fontSize: "20px",
+        color: CSS.dim,
+        fontStyle: "italic",
+        align: "center",
+        wordWrap: { width: area.width - 40 },
+      })
+      .setOrigin(0.5);
+    track.add(this.stagger(text, 0));
+    return area.height;
+  }
+
+  // --- Items ----------------------------------------------------------------
+
+  private ownedItems(run: RunState): ItemDef[] {
+    const owned = run.purchases ?? {};
+    return ITEMS.filter((def) => (owned[def.id] ?? 0) > 0).sort(
+      (a, b) =>
+        RARITY_ORDER[a.rarity] - RARITY_ORDER[b.rarity] ||
+        a.name.localeCompare(b.name),
+    );
+  }
+
+  private buildItemShelf(
+    track: Phaser.GameObjects.Container,
+    area: ContentArea,
+    run: RunState,
+  ): number {
+    const entries = this.ownedItems(run);
+    if (entries.length === 0) {
+      return this.emptyMessage(
+        track,
+        area,
+        "Nothing acquired yet.\nThe shop between trials is where a collection starts.",
+      );
+    }
+
+    const owned = run.purchases ?? {};
+    const minCellW = CARD_W * MIN_READABLE_CARD_SCALE + COL_GAP;
+    const cols = Math.max(
+      1,
+      Math.min(5, entries.length, Math.floor(area.width / minCellW)),
+    );
+    const rows = Math.ceil(entries.length / cols);
+    const cellW = area.width / cols;
     const cardScale = Math.min((cellW - COL_GAP) / CARD_W, 1);
     const cellH = CARD_H * cardScale + ROW_GAP;
-    const contentH = rows * cellH;
 
-    const track = this.add.container(grid.x, grid.y);
     entries.forEach((def, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const x = col * cellW + cellW / 2;
-      const y = row * cellH + cellH / 2;
+      // Rendering at the final size, rather than scaling a full-size card down,
+      // keeps the type crisp — see the Codex's gallery.
       const card = buildItemCard(this, def, {
         locked: false,
         showCaption: false,
+        displayScale: cardScale,
       });
       const count = owned[def.id] ?? 0;
-      if (count > 1) this.attachBadge(card, count);
-      card.setScale(cardScale);
-      card.setPosition(x, y);
-      track.add(card);
+      if (count > 1) this.attachBadge(card, count, cardScale);
+      const row = Math.floor(i / cols);
+      const inRow = Math.min(cols, entries.length - row * cols);
+      // A short last row centres itself under the ones above rather than
+      // hanging off the left edge.
+      const rowOffset = ((cols - inRow) * cellW) / 2;
+      card.setPosition(
+        rowOffset + (i % cols) * cellW + cellW / 2,
+        row * cellH + cellH / 2,
+      );
+      track.add(this.stagger(card, i));
     });
 
-    // Clip the (possibly overflowing) track to the grid area via a dedicated
-    // camera — zoom 1, scroll = the grid's own screen position (passthrough).
-    const cam = this.ensureGridCamera();
-    cam.setViewport(grid.x, grid.y, grid.width, grid.height);
-    cam.setScroll(grid.x, grid.y);
-    cam.ignore(ignoredByGridCamera);
-    this.cameras.main.ignore(track);
+    return rows * cellH;
+  }
 
-    const overflow = Math.max(0, contentH - grid.height);
-    if (overflow <= 0) return;
+  /** A gold count badge pinned to the card's top-right corner, added as a child
+   *  of the card container so it travels with the card. */
+  private attachBadge(
+    card: Phaser.GameObjects.Container,
+    count: number,
+    scale: number,
+  ): void {
+    // The 'card' box is 260x340 at origin centre, so its corner sits at
+    // (130, -170) before scaling; the badge tucks just inside that.
+    const bx = 112 * scale;
+    const by = -150 * scale;
+    const circle = this.add
+      .circle(bx, by, Math.max(11, 26 * scale), COLORS.gold)
+      .setStrokeStyle(Math.max(1.5, 3 * scale), COLORS.ink, 0.9);
+    const label = this.add
+      .text(bx, by, `${count}`, {
+        fontFamily: SERIF,
+        fontSize: `${Math.max(12, Math.round(28 * scale))}px`,
+        color: CSS.ink,
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+    card.add([circle, label]);
+  }
+
+  // --- Dice -----------------------------------------------------------------
+
+  /** One line per die size, largest first, with the auras riding on that size
+   *  collected into badges. Sizes are read through `groups()`, which is O(dice
+   *  buckets) — a grid of millions still resolves to a handful of lines. */
+  private diceRows(run: RunState): DiceRow[] {
+    interface Tally {
+      count: number;
+      loaded: number;
+      wild: number;
+      /** Windfall multiplier -> how many dice of this size carry it. */
+      maxFace: Map<number, number>;
+    }
+    const bySides = new Map<number, Tally>();
+    for (const group of run.dice.groups()) {
+      let tally = bySides.get(group.die.sides);
+      if (!tally) {
+        tally = { count: 0, loaded: 0, wild: 0, maxFace: new Map() };
+        bySides.set(group.die.sides, tally);
+      }
+      tally.count += group.count;
+      if (group.die.loaded) tally.loaded += group.count;
+      if (group.die.wildFace) tally.wild += group.count;
+      if (group.die.maxFaceBonus > 0) {
+        const factor = group.die.maxFaceBonus;
+        tally.maxFace.set(
+          factor,
+          (tally.maxFace.get(factor) ?? 0) + group.count,
+        );
+      }
+    }
+
+    return [...DIE_LADDER]
+      .sort((a, b) => b - a)
+      .filter((sides) => bySides.has(sides))
+      .map((sides) => {
+        const tally = bySides.get(sides)!;
+        // An aura bought as a size aura covers every die of that size, while a
+        // windfall die arrives one at a time. Naming the share only when it is
+        // a share keeps the common "all of them" case uncluttered.
+        const share = (n: number) =>
+          n < tally.count ? ` (${formatScore(n)})` : "";
+        const chips: ChipSpec[] = [];
+        for (const factor of [...tally.maxFace.keys()].sort((a, b) => b - a)) {
+          chips.push({
+            label: `×${factor} ON MAX${share(tally.maxFace.get(factor)!)}`,
+            color: COLORS.goldLight,
+            css: CSS.goldLight,
+          });
+        }
+        if (tally.wild > 0) {
+          chips.push({
+            label: `WILD FACE${share(tally.wild)}`,
+            color: COLORS.rarityRare,
+            css: CSS.rarityRare,
+          });
+        }
+        if (run.royalSealSizes.includes(sides)) {
+          chips.push({
+            label: "ROYAL SEAL",
+            color: COLORS.rarityUncommon,
+            css: CSS.rarityUncommon,
+          });
+        }
+        if (tally.loaded > 0) {
+          chips.push({
+            label: `LOADED${share(tally.loaded)}`,
+            color: COLORS.glowSteel,
+            css: CSS.steel,
+          });
+        }
+        return { sides, count: tally.count, chips };
+      });
+  }
+
+  private buildDiceList(
+    track: Phaser.GameObjects.Container,
+    area: ContentArea,
+    run: RunState,
+  ): number {
+    const rows = this.diceRows(run);
+    if (rows.length === 0) {
+      return this.emptyMessage(track, area, "No dice in the grid.");
+    }
+
+    const rowH = Phaser.Math.Clamp(
+      (area.height - HEAD_H) / rows.length,
+      40,
+      64,
+    );
+    const iconSize = Math.min(rowH * 0.78, 46);
+    const nameSize = Math.round(Phaser.Math.Clamp(rowH * 0.34, 15, 23));
+    const chipSize = Math.round(Phaser.Math.Clamp(rowH * 0.21, 10, 13));
+    const headSize = Math.round(Phaser.Math.Clamp(area.width * 0.024, 10, 14));
+    const pad = Math.max(8, area.width * 0.015);
+    const gap = Math.max(14, area.width * 0.028);
+
+    // Both text columns are built at x = 0 and placed only once all of them
+    // have been measured, so the size, the count, and the badges cannot collide
+    // whatever the font size or the digit count.
+    const names = rows.map((row) =>
+      this.add
+        .text(0, 0, `d${row.sides}`, {
+          fontFamily: SERIF,
+          fontSize: `${nameSize}px`,
+          color: CSS.gold,
+          fontStyle: "bold",
+        })
+        .setOrigin(0, 0.5),
+    );
+    const counts = rows.map((row) =>
+      this.add
+        .text(0, 0, `×${formatScore(row.count)}`, {
+          fontFamily: SERIF,
+          fontSize: `${nameSize}px`,
+          color: CSS.parchment,
+        })
+        .setOrigin(1, 0.5),
+    );
+    const nameW = Math.max(...names.map((t) => t.width));
+    const countW = Math.max(...counts.map((t) => t.width));
+
+    const badges = rows.map((row) => this.buildChips(row.chips, chipSize));
+
+    // The list is laid out at the width it actually occupies and then centred,
+    // rather than stretched across the whole band: a handful of short lines
+    // ruled edge to edge reads as a table with its right half missing.
+    const leftW = iconSize + 14 + nameW + gap + countW;
+    const badgeW = Math.max(...badges.map((b) => b.width));
+    const roomForBadges = Math.max(48, area.width - pad * 2 - leftW - gap);
+    const chipsColW = Math.min(badgeW, roomForBadges);
+    const blockW = Math.min(area.width, pad * 2 + leftW + gap + chipsColW);
+    const blockLeft = (area.width - blockW) / 2;
+
+    const iconX = blockLeft + pad + iconSize / 2;
+    const nameX = blockLeft + pad + iconSize + 14;
+    const countRight = nameX + nameW + gap + countW;
+    const chipsX = countRight + gap;
+    // Banding and the head's rule run a little past the ink on either side, the
+    // way ruling on a page does.
+    const bandW = Math.min(area.width, blockW + 28);
+    this.contentSpan = bandW;
+
+    const head = (x: number, label: string, originX: number) =>
+      this.add
+        .text(x, HEAD_H / 2 - 6, label, {
+          fontFamily: SERIF,
+          fontSize: `${headSize}px`,
+          color: CSS.dim,
+          letterSpacing: 2,
+        })
+        .setOrigin(originX, 0.5);
+    const heads = [
+      head(nameX, "DIE", 0),
+      head(countRight, "COUNT", 1),
+      head(chipsX, "MODIFIERS", 0),
+    ];
+    fitTextWidth(heads[2], chipsColW);
+    // A hairline under the column heads — the one piece of ruling the list
+    // needs to separate its head from its body.
+    const rule = this.add.graphics();
+    rule.lineStyle(1, COLORS.gold, 0.35);
+    rule.lineBetween(
+      area.width / 2 - bandW / 2,
+      HEAD_H - 10,
+      area.width / 2 + bandW / 2,
+      HEAD_H - 10,
+    );
+    track.add([...heads, rule]);
+
+    rows.forEach((row, i) => {
+      const container = this.add.container(0, HEAD_H + i * rowH + rowH / 2);
+      if (i % 2 === 1) {
+        container.add(
+          this.add.rectangle(
+            area.width / 2,
+            0,
+            bandW,
+            rowH,
+            COLORS.feltLight,
+            BAND_ALPHA,
+          ),
+        );
+      }
+
+      // The die body alone, with neither a face nor its baked type label: a row
+      // is a size held in the grid rather than a die mid-roll, and at this size
+      // the baked label is illegible beside the one the row already carries.
+      container.add(
+        this.add.image(iconX, 0, `die-${row.sides}`).setScale(iconSize / 96),
+      );
+
+      container.add(names[i].setPosition(nameX, 0));
+      container.add(counts[i].setPosition(countRight, 0));
+      const badge = badges[i];
+      badge.container.setX(chipsX);
+      if (badge.width > chipsColW) {
+        badge.container.setScale(chipsColW / badge.width);
+      }
+      container.add(badge.container);
+
+      track.add(this.stagger(container, i));
+    });
+
+    return HEAD_H + rows.length * rowH;
+  }
+
+  /** The badges at the right of a dice row, laid left to right from x = 0 and
+   *  reported with the width they came to — the caller places the column and
+   *  shrinks the row as a unit when its own width ran out. */
+  private buildChips(
+    chips: ChipSpec[],
+    fontSize: number,
+  ): { container: Phaser.GameObjects.Container; width: number } {
+    const row = this.add.container(0, 0);
+    if (chips.length === 0) {
+      const dash = this.add
+        .text(0, 0, "—", {
+          fontFamily: SERIF,
+          fontSize: `${fontSize + 2}px`,
+          color: CSS.dim,
+        })
+        .setOrigin(0, 0.5);
+      row.add(dash);
+      return { container: row, width: dash.width };
+    }
+
+    const padX = Math.max(6, fontSize * 0.7);
+    const height = fontSize + 12;
+    const gap = 7;
+    let cursor = 0;
+    for (const chip of chips) {
+      const label = this.add
+        .text(0, 0, chip.label, {
+          fontFamily: SERIF,
+          fontSize: `${fontSize}px`,
+          color: chip.css,
+          fontStyle: "bold",
+          letterSpacing: 1,
+        })
+        .setOrigin(0.5);
+      const width = label.width + padX * 2;
+      const plate = this.add.graphics();
+      plate.fillStyle(chip.color, 0.12);
+      plate.fillRoundedRect(cursor, -height / 2, width, height, height / 2);
+      plate.lineStyle(1, chip.color, 0.55);
+      plate.strokeRoundedRect(cursor, -height / 2, width, height, height / 2);
+      label.setPosition(cursor + width / 2, 0);
+      row.add([plate, label]);
+      cursor += width + gap;
+    }
+
+    return { container: row, width: Math.max(1, cursor - gap) };
+  }
+
+  // --- Scrolling ------------------------------------------------------------
+
+  /** Clip `track` to the content band with a dedicated camera and wire vertical
+   *  drag / wheel, plus a display-only scrollbar. */
+  private enableScroll(
+    track: Phaser.GameObjects.Container,
+    area: ContentArea,
+    contentH: number,
+  ): void {
+    const height = area.height - HINT_H;
+    const overflow = Math.max(1, contentH - height);
+
+    // The clip is only needed vertically — nothing reaches past the band's own
+    // width — so the camera spans the full screen. That lets the entrance and
+    // the tab swap carry the content clear off the edge rather than having it
+    // wink out at the band's margin partway across.
+    const cam = this.cameras.add(0, area.y, this.scale.width, height);
+    cam.setScroll(0, area.y);
+    this.gridCamera = cam;
+    cam.ignore(this.children.list.filter((obj) => obj !== track));
+    this.cameras.main.ignore(track);
 
     // Scroll by moving track.y between the top-aligned rest position and the
     // fully-scrolled-down position.
-    const maxY = grid.y;
-    const minY = grid.y - overflow;
+    const maxY = area.y;
+    const minY = area.y - overflow;
+
+    const barX = Math.min(
+      area.x + (area.width + this.contentSpan) / 2 + 14,
+      this.scale.width - 8,
+    );
+    const barTrack = this.add.rectangle(
+      barX,
+      area.y + height / 2,
+      4,
+      height,
+      COLORS.parchment,
+      0.14,
+    );
+    const thumbH = Math.max(30, (height * height) / contentH);
+    const thumb = this.add.rectangle(
+      barX,
+      area.y + thumbH / 2,
+      4,
+      thumbH,
+      COLORS.gold,
+      0.8,
+    );
+    const updateThumb = () => {
+      const progress = (maxY - track.y) / (maxY - minY);
+      thumb.y = area.y + thumbH / 2 + progress * (height - thumbH);
+    };
+
+    const hint = this.add
+      .text(
+        area.x + area.width / 2,
+        area.y + height + 4,
+        "drag or scroll for more",
+        {
+          fontFamily: SERIF,
+          fontSize: "13px",
+          color: CSS.dim,
+          fontStyle: "italic",
+        },
+      )
+      .setOrigin(0.5, 0);
+    // The bar and the hint frame the band rather than living inside it, so the
+    // clip camera leaves them to the main one.
+    cam.ignore([barTrack, thumb, hint]);
+    this.contentObjects.push(barTrack, thumb, hint);
 
     const inBounds = (p: Phaser.Input.Pointer) =>
-      p.x >= grid.x &&
-      p.x <= grid.x + grid.width &&
-      p.y >= grid.y &&
-      p.y <= grid.y + grid.height;
+      p.x >= area.x &&
+      p.x <= area.x + area.width &&
+      p.y >= area.y &&
+      p.y <= area.y + height;
 
     let dragging = false;
     let startPointerY = 0;
@@ -389,8 +955,12 @@ export class InventoryScene extends Phaser.Scene {
         this.input.setDefaultCursor(inBounds(p) ? "grab" : "default");
         return;
       }
-      const dy = p.y - startPointerY;
-      track.y = Phaser.Math.Clamp(startTrackY + dy, minY, maxY);
+      track.y = Phaser.Math.Clamp(
+        startTrackY + (p.y - startPointerY),
+        minY,
+        maxY,
+      );
+      updateThumb();
     };
     const onUp: PointerHandler = () => {
       dragging = false;
@@ -398,6 +968,7 @@ export class InventoryScene extends Phaser.Scene {
     const onWheel: WheelHandler = (p, _over, _dx, dy) => {
       if (!inBounds(p)) return;
       track.y = Phaser.Math.Clamp(track.y - dy, minY, maxY);
+      updateThumb();
     };
 
     this.input.on("pointerdown", onDown);
@@ -406,47 +977,5 @@ export class InventoryScene extends Phaser.Scene {
     this.input.on("pointerupoutside", onUp);
     this.input.on("wheel", onWheel);
     this.input$ = { down: onDown, move: onMove, up: onUp, wheel: onWheel };
-
-    const hint = this.add
-      .text(
-        grid.x + grid.width / 2,
-        grid.y + grid.height + 3,
-        "drag or scroll for more",
-        {
-          fontFamily: SERIF,
-          fontSize: "13px",
-          color: CSS.dim,
-          fontStyle: "italic",
-        },
-      )
-      .setOrigin(0.5, 0);
-    this.gridCamera?.ignore(hint);
-  }
-
-  /** A gold count badge pinned to the card's top-right corner. Added as a child
-   *  of the card container so it scales and scrolls with the card. */
-  private attachBadge(card: Phaser.GameObjects.Container, count: number): void {
-    const bx = 112; // near the card's right edge (half-width 130, origin center)
-    const by = -150; // near the card's top edge (half-height 170)
-    const circle = this.add
-      .circle(bx, by, 26, COLORS.gold)
-      .setStrokeStyle(3, COLORS.ink, 0.9);
-    const label = this.add
-      .text(bx, by, `${count}`, {
-        fontFamily: SERIF,
-        fontSize: "28px",
-        color: CSS.ink,
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
-    card.add([circle, label]);
-  }
-
-  private ensureGridCamera(): Phaser.Cameras.Scene2D.Camera {
-    if (this.gridCamera) this.cameras.remove(this.gridCamera, true);
-    const cam = this.cameras.add(0, 0, 1, 1);
-    cam.setBackgroundColor(COLORS.parchment);
-    this.gridCamera = cam;
-    return cam;
   }
 }

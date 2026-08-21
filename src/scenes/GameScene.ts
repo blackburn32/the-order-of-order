@@ -83,6 +83,20 @@ const SEAL_HALO_HOVER = 0.32;
 /** How far apart the top and bottom rows of dice land, in ms. */
 const SETTLE_RIPPLE_MS = 140;
 
+/** Keep roll feedback bounded even when a modifier hits the whole grid. */
+const MAX_PULSED_DICE = 64;
+const MAX_INDIVIDUAL_SETTLE_DICE = 100;
+
+/** Select evenly across an index-ordered list instead of clustering feedback
+ *  at the start of the grid. Returns the original list when it fits the cap. */
+function evenlySample<T>(items: T[], limit: number): T[] {
+  if (items.length <= limit) return items;
+  const sampled: T[] = [];
+  const stride = items.length / limit;
+  for (let i = 0; i < limit; i++) sampled.push(items[Math.floor(i * stride)]);
+  return sampled;
+}
+
 /** Blend two packed RGB colours. */
 function blendColor(from: number, to: number, t: number): number {
   const mix = Phaser.Display.Color.Interpolate.ColorWithColor(
@@ -872,7 +886,7 @@ export class GameScene extends Phaser.Scene {
     const created = [...this.sprites]
       .filter(([index]) => this.state.dice.dieAt(index)?.source === source)
       .slice(-count);
-    for (const [, sprite] of created) {
+    for (const [, sprite] of evenlySample(created, MAX_PULSED_DICE)) {
       sprite.pulseEffects([borderColor]);
       if (!showText) continue;
       const pos = this.dieScreenPosition(sprite);
@@ -1156,15 +1170,17 @@ export class GameScene extends Phaser.Scene {
   private settleRoll(holdMs: number, autoReroll: boolean): void {
     this.tumbling = false;
     const s = this.state;
-    const showPerDieCallouts = this.gridDetail === "full";
+    const showPerDieCallouts = fx.on && this.gridDetail === "full";
     const showPerDieEffects =
-      this.gridDetail === "full" || this.gridDetail === "noCallouts";
+      fx.on && (this.gridDetail === "full" || this.gridDetail === "noCallouts");
+    const settleIndividually =
+      fx.motion && this.sprites.size <= MAX_INDIVIDUAL_SETTLE_DICE;
     // Dice land as a ripple down the grid rather than snapping flat together,
     // so the roll reads as coming to rest. Measured over the visible sprites
     // only — the windowed grid never holds more than a viewport's worth.
     let topY = Infinity;
     let bottomY = -Infinity;
-    if (fx.motion) {
+    if (settleIndividually) {
       for (const sprite of this.sprites.values()) {
         topY = Math.min(topY, sprite.y);
         bottomY = Math.max(bottomY, sprite.y);
@@ -1178,9 +1194,16 @@ export class GameScene extends Phaser.Scene {
       sprite.die = die;
       sprite.refreshType();
       sprite.showFace(die.value);
-      if (fx.motion) {
+      if (settleIndividually) {
         sprite.settle(((sprite.y - topY) / rippleSpan) * SETTLE_RIPPLE_MS);
+      } else {
+        sprite.snapSettled();
       }
+    }
+    if (fx.motion && !settleIndividually && this.sprites.size > 0) {
+      // Hundreds of independent landing tweens are visually indistinguishable
+      // at this scale. One restrained grid impact keeps the cue at constant cost.
+      fx.shakeObject(this, this.gridContainer, 180, 2);
     }
     for (const [key, card] of this.cards) {
       const region = this.cardRegions.get(key);
@@ -1223,10 +1246,14 @@ export class GameScene extends Phaser.Scene {
     if (showPerDieEffects) {
       const dieColors = new Map<number, number[]>();
       const bigDice = new Set<number>();
-      const addColor = (i: number, color: number) => {
+      const addColor = (i: number, color: number): boolean => {
+        // List-mode modifiers can contain every die in the pool. Only retain
+        // live sprites so an off-screen hit cannot consume the pulse budget.
+        if (!this.sprites.has(i)) return false;
         const list = dieColors.get(i) ?? [];
         list.push(color);
         dieColors.set(i, list);
+        return true;
       };
       const visibleHits = (id: string): number[] => {
         const hits: number[] = [];
@@ -1272,17 +1299,22 @@ export class GameScene extends Phaser.Scene {
       );
       for (const mod of result.modifiers) {
         for (const i of hitsByModifier.get(mod) ?? []) {
-          addColor(i, mod.color);
-          if (mod.bigPulse) bigDice.add(i);
+          if (addColor(i, mod.color) && mod.bigPulse) bigDice.add(i);
         }
       }
       for (const i of doubleTheFunHits) {
-        addColor(i, COLORS.rarityUncommon);
-        bigDice.add(i);
+        if (addColor(i, COLORS.rarityUncommon)) bigDice.add(i);
       }
       for (const i of shrunk) addColor(i, COLORS.glowSteel);
-      for (const [i, colors] of dieColors)
+      // Sample by grid index rather than taking the first hits, spreading the
+      // feedback across the viewport while keeping Graphics/tween cost fixed.
+      const pulseCandidates = [...dieColors].sort(([a], [b]) => a - b);
+      for (const [i, colors] of evenlySample(
+        pulseCandidates,
+        MAX_PULSED_DICE,
+      )) {
         this.sprites.get(i)?.pulseEffects(colors, bigDice.has(i));
+      }
 
       const floatRows = new Map<number, number>();
       const dieFloat = (

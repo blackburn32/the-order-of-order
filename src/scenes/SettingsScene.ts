@@ -11,14 +11,11 @@ import {
   Settings,
 } from "../systems/SaveData";
 import { finalizeRun } from "../systems/RunEnd";
-import {
-  addFelt,
-  addPanel,
-  bannerButton,
-  checkboxRow,
-  showBanner,
-} from "../ui/widgets";
+import { addFelt, bannerButton, showBanner, toggleRow } from "../ui/widgets";
+import { AmbientLayer } from "../ui/AmbientLayer";
+import { buildSceneHeader } from "../ui/sceneHeader";
 import { onResizeCoalesced } from "../ui/layout";
+import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 
 interface SettingsData {
   returnTo?: string;
@@ -34,14 +31,38 @@ type WheelHandler = (
   dz: number,
 ) => void;
 
+/** Fixed sigil brightness for the backdrop — there's no trial to report here,
+ *  so the value is chosen purely for how it looks (see MenuScene). */
+const SETTINGS_AMBIENCE = 0.6;
+
+/** Row metrics. A slider row carries two lines (label and readout, then the
+ *  track); a toggle row is a single band. Both share the form's left and right
+ *  edges, so the stack reads as a form rather than as centred lumps. */
+const SLIDER_ROW_H = 76;
+const TOGGLE_ROW_H = 54;
+/** Clear space between the last setting and the buttons that follow. */
+const ACTIONS_GAP = 26;
+/** Vertical pitch of the stacked buttons at the foot of the form. */
+const BUTTON_STEP = 68;
+/** Strip kept clear under a scrolling form for its "drag or scroll" line, so
+ *  the hint never sits on top of the last row. */
+const HINT_H = 22;
+
 export class SettingsScene extends Phaser.Scene {
   private settings!: Settings;
   private returnTo = "Menu";
   private overlay = false;
   // The settings rows live in a container the player can scroll when they don't
-  // all fit the panel. It's clipped by a dedicated camera (Phaser 4 WebGL masks
-  // are unreliable for nested content — same rationale as the shop carousel).
+  // all fit the screen. It's clipped by a dedicated camera (Phaser 4 WebGL
+  // masks are unreliable for nested content — same rationale as the shop
+  // carousel).
   private scrollCamera?: Phaser.Cameras.Scene2D.Camera;
+  // The felt, the sigil and the masthead's halo — the room the form stands in.
+  // Held still while the form itself slides on and off. Only used when Settings
+  // is a scene of its own; as a mid-run overlay it has a live scene beneath it
+  // and no room of its own to keep.
+  private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+  private leaving = false;
   private scrollInput?: {
     down: PointerHandler;
     move: PointerHandler;
@@ -66,7 +87,9 @@ export class SettingsScene extends Phaser.Scene {
     // Not using responsive() — its children.removeAll doesn't clear the extra
     // camera / input listeners a scroll view needs, so drive rebuilds manually.
     this.scrollCamera = undefined;
+    this.leaving = false;
     this.build();
+    if (!this.overlay) slideSceneIn(this, this.slideBackdrop);
 
     const off = onResizeCoalesced(this, () => {
       this.teardown();
@@ -102,46 +125,51 @@ export class SettingsScene extends Phaser.Scene {
     const W = this.scale.width;
     const H = this.scale.height;
     const cx = W / 2;
-    const panelW = Math.min(W - 40, 1100);
-    const panelH = Math.min(H - 40, 620);
-    const panelTop = H / 2 - panelH / 2;
 
     const felt = addFelt(this);
-    const panel = addPanel(this, cx, H / 2, panelW, panelH);
-    const title = this.add
-      .text(cx, panelTop + panelH * 0.1, "Settings", {
-        fontFamily: SERIF,
-        fontSize: `${Math.round(Phaser.Math.Clamp(panelH * 0.068, 22, 40))}px`,
-        color: CSS.ink,
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
+    const ambient = new AmbientLayer(this, { ring: true });
+    ambient.setPosition(cx, H / 2);
+    ambient.setArea(W, H);
+    ambient.setProgress(SETTINGS_AMBIENCE, false);
 
-    // The scrollable band, inside the panel, below the fixed title.
-    const viewportTop = panelTop + panelH * 0.2;
-    const viewportH = panelTop + panelH * 0.94 - viewportTop;
-    const viewportW = panelW * 0.84;
+    const header = buildSceneHeader(this, {
+      title: "Settings",
+      y: Math.max(52, Math.min(H * 0.14, 104)),
+      width: Math.min(W, 720),
+    });
+    this.slideBackdrop = [felt, ambient, header.glow];
+
+    // The form's own column, and the band it scrolls within. The viewport is
+    // wider than the form so the scrollbar has somewhere to sit that isn't on
+    // top of a switch.
+    const formW = Math.min(W - 64, 520);
+    const viewportTop = header.bottom + 22;
+    const viewportW = Math.min(W - 28, formW + 44);
     const viewportX = cx - viewportW / 2;
-    // Keep the whole form on one screen: cap the banner buttons well below the
-    // 340px parchment so they render ~80% size, and still shrink further to fit
-    // the panel band on narrow screens.
-    const btnMaxW = Math.min(viewportW, 272);
+    const viewportH = Math.max(140, H - 20 - viewportTop);
+    const btnMaxW = Math.min(formW, 300);
 
-    // ---- lay out the rows at absolute world coords in a content container ----
+    // ---- lay the rows out at absolute world coords in a content container ---
     const content = this.add.container(0, 0);
-    const trackW = Math.min(viewportW * 0.72, 420);
-    const trackX0 = cx - trackW / 2;
-    const trackX1 = cx + trackW / 2;
-    // Start low enough that the first slider's label (centered at y-26) clears
-    // the clip camera's top edge instead of being sheared off.
-    let y = viewportTop + 42;
+    const x0 = cx - formW / 2;
+    const x1 = cx + formW / 2;
+    let y = viewportTop + 6;
+
+    // A hairline between rows in place of the parchment panel that used to
+    // enclose them: enough structure to group the settings, not enough to read
+    // as a second surface laid over the table.
+    const divider = () => {
+      const line = this.add.graphics();
+      line.lineStyle(1, COLORS.parchment, 0.14);
+      line.lineBetween(x0, y, x1, y);
+      content.add(line);
+    };
 
     this.makeSlider(
       content,
-      cx,
+      x0,
+      x1,
       y,
-      trackX0,
-      trackX1,
       "Music Volume",
       this.settings.musicVol,
       (v) => {
@@ -149,13 +177,14 @@ export class SettingsScene extends Phaser.Scene {
         this.apply();
       },
     );
-    y += 72;
+    y += SLIDER_ROW_H;
+    divider();
+
     this.makeSlider(
       content,
-      cx,
+      x0,
+      x1,
       y,
-      trackX0,
-      trackX1,
       "Sound Effects",
       this.settings.sfxVol,
       (v) => {
@@ -163,66 +192,68 @@ export class SettingsScene extends Phaser.Scene {
         this.apply();
       },
     );
-    y += 62;
+    y += SLIDER_ROW_H;
+    divider();
 
-    content.add(
-      checkboxRow(
+    const toggle = (
+      label: string,
+      initial: boolean,
+      onChange: (value: boolean) => void,
+    ) => {
+      const row = toggleRow(
         this,
         cx,
-        y,
-        "Show Intro",
-        this.settings.showIntro,
-        (value) => {
-          this.settings.showIntro = value;
-          this.apply();
-        },
-      ),
-    );
-    y += 48;
-    content.add(
-      checkboxRow(
-        this,
-        cx,
-        y,
-        "Show Tutorial",
-        this.settings.showTutorial,
-        (value) => {
-          this.settings.showTutorial = value;
-          this.apply();
-        },
-      ),
-    );
-    y += 48;
+        y + TOGGLE_ROW_H / 2,
+        formW,
+        label,
+        initial,
+        onChange,
+        TOGGLE_ROW_H,
+      );
+      content.add(row);
+      y += TOGGLE_ROW_H;
+      divider();
+      return row;
+    };
 
-    content.add(
-      checkboxRow(
-        this,
-        cx,
-        y,
-        "Visual Effects",
-        this.settings.visualEffects,
-        (value) => {
-          this.settings.visualEffects = value;
-          this.apply();
-        },
-      ),
-    );
-    y += 48;
+    toggle("Show Intro", this.settings.showIntro, (value) => {
+      this.settings.showIntro = value;
+      this.apply();
+    });
+    toggle("Show Tutorial", this.settings.showTutorial, (value) => {
+      this.settings.showTutorial = value;
+      this.apply();
+    });
+    toggle("Visual Effects", this.settings.visualEffects, (value) => {
+      this.settings.visualEffects = value;
+      this.apply();
+    });
 
     if (!PHONE_BUILD) {
-      content.add(this.buildFullscreenToggle(cx, y));
-      y += 58;
+      const row = toggle("Fullscreen", this.scale.isFullscreen, (value) => {
+        if (value) this.scale.startFullscreen();
+        else this.scale.stopFullscreen();
+      });
+      // Keep the switch in sync when fullscreen is left/entered outside the UI
+      // (Esc, F11); setChecked doesn't re-fire onChange, so there's no loop.
+      this.scale.on(Phaser.Scale.Events.ENTER_FULLSCREEN, () =>
+        row.setChecked(true),
+      );
+      this.scale.on(Phaser.Scale.Events.LEAVE_FULLSCREEN, () =>
+        row.setChecked(false),
+      );
     }
+
+    y += ACTIONS_GAP;
 
     if (this.returnTo !== "Menu") {
       content.add(
         bannerButton(
           this,
           cx,
-          y,
+          y + BUTTON_STEP / 2,
           "Abandon Run",
           () => {
-            audio.click();
             finalizeRun(getRun(this.registry));
             if (this.overlay) this.scene.stop(this.returnTo);
             this.scene.start("GameOver");
@@ -231,9 +262,9 @@ export class SettingsScene extends Phaser.Scene {
         ),
       );
     } else {
-      content.add(this.buildResetButton(cx, y, btnMaxW));
+      content.add(this.buildResetButton(cx, y + BUTTON_STEP / 2, btnMaxW));
     }
-    y += 64;
+    y += BUTTON_STEP;
 
     const backLabel =
       this.returnTo === "Menu" ? "Return to the Vestibule" : "Return";
@@ -241,31 +272,48 @@ export class SettingsScene extends Phaser.Scene {
       bannerButton(
         this,
         cx,
-        y,
+        y + BUTTON_STEP / 2,
         backLabel,
-        () => {
-          if (this.overlay) this.scene.stop();
-          else this.scene.start(this.returnTo);
-        },
+        () => this.close(),
         btnMaxW,
       ),
     );
+    y += BUTTON_STEP;
 
-    const contentBottom = y + 34;
-    const contentH = contentBottom - viewportTop;
-
-    if (contentH > viewportH) {
+    const contentH = y - viewportTop;
+    if (contentH > viewportH - HINT_H) {
       this.enableScroll(
         content,
-        [felt, panel, title],
+        this.children.list.filter((obj) => obj !== content),
         viewportX,
         viewportTop,
         viewportW,
-        viewportH,
+        viewportH - HINT_H,
         contentH,
         cx,
       );
+    } else {
+      // Nothing to scroll: centre the form in the band it was given rather than
+      // leaving it hanging off the masthead with all the slack below it.
+      content.y = (viewportH - contentH) / 2;
     }
+  }
+
+  /** An overlay just lifts off the scene still running underneath it. Settings
+   *  opened from the Vestibule instead slides its form off to the right and
+   *  hands the still room over to the menu, which brings its own interface in. */
+  private close(): void {
+    if (this.overlay) {
+      this.scene.stop();
+      return;
+    }
+    if (this.leaving) return;
+    this.leaving = true;
+    slideSceneOut(
+      this,
+      () => this.scene.start(this.returnTo),
+      this.slideBackdrop,
+    );
   }
 
   /** Clip `content` to the viewport with a dedicated camera and wire vertical
@@ -284,31 +332,37 @@ export class SettingsScene extends Phaser.Scene {
     const maxY = 0; // top
 
     // A clip camera renders only `content`; the main camera renders everything
-    // else. Scroll matches the viewport's screen position (passthrough at zoom 1).
-    const cam = this.cameras.add(viewportX, viewportTop, viewportW, viewportH);
-    cam.setScroll(viewportX, viewportTop);
+    // else. Scroll matches the viewport's screen position (passthrough at zoom
+    // 1). The camera is left transparent, so the felt and the turning sigil the
+    // main camera drew stay visible behind the rows.
+    // The clip is only needed vertically — the form is narrower than the band
+    // it scrolls in — so the camera spans the full width. That lets the scene
+    // slide carry the rows clear off the screen rather than having them wink
+    // out at the band's edge partway across.
+    const cam = this.cameras.add(0, viewportTop, this.scale.width, viewportH);
+    cam.setScroll(0, viewportTop);
     this.scrollCamera = cam;
     this.cameras.main.ignore(content);
     cam.ignore(fixed);
 
     // Vertical scrollbar (display-only; driven by drag/wheel).
-    const barX = viewportX + viewportW + 6;
+    const barX = viewportX + viewportW - 3;
     const barTrack = this.add.rectangle(
       barX,
       viewportTop + viewportH / 2,
-      5,
+      4,
       viewportH,
-      COLORS.inkSoft,
-      0.4,
+      COLORS.parchment,
+      0.14,
     );
     const thumbH = Math.max(30, (viewportH * viewportH) / contentH);
     const thumb = this.add.rectangle(
       barX,
       viewportTop + thumbH / 2,
-      5,
+      4,
       thumbH,
       COLORS.gold,
-      0.9,
+      0.8,
     );
     cam.ignore([barTrack, thumb]);
     const updateThumb = () => {
@@ -328,8 +382,8 @@ export class SettingsScene extends Phaser.Scene {
 
     const onDown: PointerHandler = (p) => {
       if (!inBounds(p)) return;
-      // Don't hijack presses that land on a knob/checkbox/button — let those
-      // interact; scroll-drag only starts on empty space in the viewport.
+      // Don't hijack presses that land on a slider band, a switch, or a button
+      // — let those interact; scroll-drag only starts on empty space.
       if (this.input.hitTestPointer(p).length > 0) return;
       dragging = true;
       startPointerY = p.y;
@@ -364,7 +418,7 @@ export class SettingsScene extends Phaser.Scene {
     this.scrollInput = { down: onDown, move: onMove, up: onUp, wheel: onWheel };
 
     const hint = this.add
-      .text(cx, viewportTop + viewportH + 3, "drag or scroll for more", {
+      .text(cx, viewportTop + viewportH + 4, "drag or scroll for more", {
         fontFamily: SERIF,
         fontSize: "13px",
         color: CSS.dim,
@@ -372,32 +426,6 @@ export class SettingsScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
     cam.ignore(hint);
-  }
-
-  private buildFullscreenToggle(
-    cx: number,
-    y: number,
-  ): Phaser.GameObjects.Container {
-    const row = checkboxRow(
-      this,
-      cx,
-      y,
-      "Fullscreen",
-      this.scale.isFullscreen,
-      (value) => {
-        if (value) this.scale.startFullscreen();
-        else this.scale.stopFullscreen();
-      },
-    );
-    // Keep the checkbox in sync when fullscreen is exited/entered outside the UI
-    // (Esc, F11); setChecked doesn't re-fire onChange, so there's no loop.
-    this.scale.on(Phaser.Scale.Events.ENTER_FULLSCREEN, () =>
-      row.setChecked(true),
-    );
-    this.scale.on(Phaser.Scale.Events.LEAVE_FULLSCREEN, () =>
-      row.setChecked(false),
-    );
-    return row;
   }
 
   /** "Reset All Progress" with a lightweight two-tap confirm (there's no modal
@@ -446,53 +474,84 @@ export class SettingsScene extends Phaser.Scene {
     saveSettings(this.settings);
   }
 
+  /**
+   * One slider row: the label and its percentage readout on the top line,
+   * sharing the form's left and right edges with every other row, and the track
+   * itself beneath them. The whole track is grabbable rather than just the
+   * knob, which is what makes it usable with a thumb.
+   */
   private makeSlider(
     content: Phaser.GameObjects.Container,
-    labelX: number,
-    y: number,
-    trackX0: number,
-    trackX1: number,
+    x0: number,
+    x1: number,
+    top: number,
     label: string,
     initial: number,
     onChange: (v: number) => void,
   ): void {
-    const labelText = this.add
-      .text(labelX, y - 26, label, {
-        fontFamily: SERIF,
-        fontSize: "22px",
-        color: CSS.ink,
-      })
-      .setOrigin(0.5);
+    const trackW = x1 - x0;
+    const trackY = top + 52;
 
-    const trackY = y + 6;
-    const track = this.add.rectangle(
-      (trackX0 + trackX1) / 2,
-      trackY,
-      trackX1 - trackX0,
-      6,
-      COLORS.inkSoft,
-      0.6,
-    );
+    const labelText = this.add
+      .text(x0, top + 20, label, {
+        fontFamily: SERIF,
+        fontSize: "21px",
+        color: CSS.parchment,
+      })
+      .setOrigin(0, 0.5);
+    const readout = this.add
+      .text(x1, top + 20, `${Math.round(initial * 100)}%`, {
+        fontFamily: SERIF,
+        fontSize: "18px",
+        color: CSS.gold,
+        fontStyle: "bold",
+      })
+      .setOrigin(1, 0.5);
+
+    const bar = this.add.graphics();
+    const drawBar = (t: number) => {
+      bar.clear();
+      bar.fillStyle(COLORS.parchment, 0.16);
+      bar.fillRoundedRect(x0, trackY - 3, trackW, 6, 3);
+      bar.fillStyle(COLORS.gold, 0.9);
+      // A rounded rect narrower than its own corner diameter renders as a
+      // pinched sliver, so the filled part never goes below one knuckle.
+      bar.fillRoundedRect(x0, trackY - 3, Math.max(6, trackW * t), 6, 3);
+    };
+    drawBar(initial);
 
     const knob = this.add.circle(
-      trackX0 + initial * (trackX1 - trackX0),
+      x0 + initial * trackW,
       trackY,
-      15,
-      COLORS.gold,
+      12,
+      COLORS.goldLight,
     );
-    knob.setStrokeStyle(2, COLORS.ink, 0.8);
-    knob.setInteractive({ useHandCursor: true });
-    this.input.setDraggable(knob);
+    knob.setStrokeStyle(2, COLORS.feltDark, 0.9);
+
+    // One interactive band covers the knob and the whole track, so a press
+    // anywhere along the row's lower line seizes the value and keeps dragging
+    // it. It also keeps the scroll-drag from claiming the gesture (see onDown).
+    const zone = this.add
+      .rectangle(x0 + trackW / 2, trackY, trackW + 24, 36, COLORS.gold, 0.001)
+      .setInteractive({ useHandCursor: true });
+    this.input.setDraggable(zone);
 
     // dragX arrives in the content container's local space (Phaser accounts for
-    // the parent transform), and the track x-range is expressed in the same
+    // the parent transform), and the track's x-range is expressed in that same
     // space, so clamp directly.
-    knob.on("drag", (_pointer: Phaser.Input.Pointer, dragX: number) => {
-      knob.x = Phaser.Math.Clamp(dragX, trackX0, trackX1);
-      onChange((knob.x - trackX0) / (trackX1 - trackX0));
-    });
-    knob.on("dragend", () => audio.click());
+    const setFromX = (x: number) => {
+      const value = Phaser.Math.Clamp((x - x0) / trackW, 0, 1);
+      knob.x = x0 + value * trackW;
+      readout.setText(`${Math.round(value * 100)}%`);
+      drawBar(value);
+      onChange(value);
+    };
+    zone.on("pointerdown", (p: Phaser.Input.Pointer) => setFromX(p.worldX));
+    zone.on("drag", (_p: Phaser.Input.Pointer, dragX: number) =>
+      setFromX(dragX),
+    );
+    zone.on("dragend", () => audio.click());
 
-    content.add([labelText, track, knob]);
+    content.add([labelText, readout, bar, knob, zone]);
   }
 }

@@ -201,6 +201,13 @@ export class DieSprite extends Phaser.GameObjects.Container {
     });
   }
 
+  /** End the tumble without allocating a tween. Large grids use one shared
+   *  landing cue instead of animating every die independently. */
+  snapSettled(): void {
+    this.wobbleAmplitude = 0;
+    this.setRotation(0);
+  }
+
   /** Stop an in-flight pulse tween without waiting for it to finish — the
    *  tween's own scale writes would otherwise fight a relayout's setScale().
    *  Also squares up a die caught mid-settle, since killing that tween would
@@ -210,7 +217,6 @@ export class DieSprite extends Phaser.GameObjects.Container {
     this.scene.tweens.killTweensOf(this.effectBorder);
     this.effectBorder.clear();
     this.effectBorder.setAlpha(0);
-    this.wobbleAmplitude = 0;
-    this.setRotation(0);
+    this.snapSettled();
   }
 }

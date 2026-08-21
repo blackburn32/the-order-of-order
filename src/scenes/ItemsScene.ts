@@ -1,10 +1,13 @@
-import Phaser from 'phaser';
-import { COLORS, CSS, SERIF } from '../art/palette';
-import { getSelectionCount, loadProgress } from '../systems/SaveData';
-import { ITEMS } from '../systems/Items';
-import { addFelt, addPanel, bannerButton, fitTextWidth } from '../ui/widgets';
-import { buildItemCard } from '../ui/itemCard';
-import { onResizeCoalesced } from '../ui/layout';
+import Phaser from "phaser";
+import { CSS, SERIF } from "../art/palette";
+import { loadProgress } from "../systems/SaveData";
+import { ITEMS } from "../systems/Items";
+import { addFelt, bannerButton } from "../ui/widgets";
+import { AmbientLayer } from "../ui/AmbientLayer";
+import { buildSceneHeader } from "../ui/sceneHeader";
+import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
+import { buildItemCard } from "../ui/itemCard";
+import { onResizeCoalesced } from "../ui/layout";
 
 export interface ItemsData {
   /** Active scene to reveal when an in-game Codex overlay closes. */
@@ -21,8 +24,50 @@ const ROW_GAP = 24;
 const MIN_READABLE_CARD_SCALE = 0.5;
 const RARITY_ORDER = { common: 0, uncommon: 1, rare: 2 } as const;
 
+/** Fixed sigil brightness for the backdrop — no trial to report here, so the
+ *  value is chosen purely for how it looks (see MenuScene). */
+const CODEX_AMBIENCE = 0.55;
+
+/** Rows of cards built beyond each edge of the scroll window, so a flick
+ *  doesn't outrun the build and expose an empty cell. The gallery's first pass
+ *  skips the buffer: nothing can scroll until the entrance slide gives input
+ *  back, and the top-up is running by then. */
+const CARD_BUFFER_ROWS = 1;
+/** Cards the background top-up builds per frame. Each is five game objects,
+ *  four of them Text — a millisecond or so together, which disappears into a
+ *  frame's budget while still finishing the whole Codex within a second of the
+ *  entrance. */
+const TOPUP_PER_FRAME = 1;
+
+/** Everything the gallery needs to place and build a card on demand. It is held
+ *  on the scene because the cards outlive the call that laid the grid out: the
+ *  scroll handlers and the per-frame top-up both materialise more of them. */
+interface Gallery {
+  track: Phaser.GameObjects.Container;
+  items: (typeof ITEMS)[number][];
+  unlocked: Set<string>;
+  /** Lifetime selection tallies, read once with the rest of the save rather
+   *  than per card — `getSelectionCount` parses the whole progress blob out of
+   *  localStorage on every call. */
+  counts: Record<string, number | undefined>;
+  built: Set<number>;
+  cols: number;
+  cellW: number;
+  cellH: number;
+  cardScale: number;
+  /** Screen y of the scroll window's top edge, and its height. */
+  top: number;
+  height: number;
+}
+
 type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
-type WheelHandler = (pointer: Phaser.Input.Pointer, over: unknown, dx: number, dy: number, dz: number) => void;
+type WheelHandler = (
+  pointer: Phaser.Input.Pointer,
+  over: unknown,
+  dx: number,
+  dy: number,
+  dz: number,
+) => void;
 
 /**
  * The Codex: a gallery of every shop item as a card, with a lifetime
@@ -32,18 +77,31 @@ type WheelHandler = (pointer: Phaser.Input.Pointer, over: unknown, dx: number, d
  * approach ShopScene uses) and scrolls vertically by drag/wheel.
  */
 export class ItemsScene extends Phaser.Scene {
-  private returnTo = 'Menu';
+  private returnTo = "Menu";
   private openedAsOverlay = false;
   private returnInputWasEnabled = true;
   private gridCamera?: Phaser.Cameras.Scene2D.Camera;
-  private input$?: { down: PointerHandler; move: PointerHandler; up: PointerHandler; wheel: WheelHandler };
+  private gallery?: Gallery;
+  private toppingUp = false;
+  // The felt, the sigil and the masthead's halo — the room the gallery is hung
+  // in. Held still while the gallery itself slides on and off. Only used when
+  // the Codex is a scene of its own; as an overlay it has a live scene beneath
+  // it and no room of its own to keep.
+  private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+  private leaving = false;
+  private input$?: {
+    down: PointerHandler;
+    move: PointerHandler;
+    up: PointerHandler;
+    wheel: WheelHandler;
+  };
 
   constructor() {
-    super('Items');
+    super("Items");
   }
 
   init(data: ItemsData): void {
-    this.returnTo = data?.returnTo ?? 'Menu';
+    this.returnTo = data?.returnTo ?? "Menu";
   }
 
   create(): void {
@@ -58,7 +116,17 @@ export class ItemsScene extends Phaser.Scene {
     }
 
     this.gridCamera = undefined;
+    this.gallery = undefined;
+    // Scene instances are reused across visits, so the top-up has to be re-armed
+    // rather than left on from the last one — otherwise it would run during the
+    // entrance it exists to keep clear.
+    this.toppingUp = false;
+    this.leaving = false;
     this.build();
+    // The cards the window can't reach wait for the entrance to finish; an
+    // overlay has no entrance to wait for.
+    if (this.openedAsOverlay) this.toppingUp = true;
+    else slideSceneIn(this, this.slideBackdrop, () => (this.toppingUp = true));
 
     const off = onResizeCoalesced(this, () => {
       this.teardownInput();
@@ -68,7 +136,7 @@ export class ItemsScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       off();
       this.teardownInput();
-      this.input.setDefaultCursor('default');
+      this.input.setDefaultCursor("default");
       if (this.openedAsOverlay) {
         const base = this.scene.get(this.returnTo);
         base.input.enabled = this.returnInputWasEnabled;
@@ -78,11 +146,11 @@ export class ItemsScene extends Phaser.Scene {
 
   private teardownInput(): void {
     if (this.input$) {
-      this.input.off('pointerdown', this.input$.down);
-      this.input.off('pointermove', this.input$.move);
-      this.input.off('pointerup', this.input$.up);
-      this.input.off('pointerupoutside', this.input$.up);
-      this.input.off('wheel', this.input$.wheel);
+      this.input.off("pointerdown", this.input$.down);
+      this.input.off("pointermove", this.input$.move);
+      this.input.off("pointerup", this.input$.up);
+      this.input.off("pointerupoutside", this.input$.up);
+      this.input.off("wheel", this.input$.wheel);
       this.input$ = undefined;
     }
   }
@@ -91,75 +159,77 @@ export class ItemsScene extends Phaser.Scene {
     const W = this.scale.width;
     const H = this.scale.height;
     const cx = W / 2;
-    const panelW = Math.min(W - 40, 1100);
-    const panelH = Math.min(H - 40, 620);
-    const panelTop = H / 2 - panelH / 2;
-    const panelBottom = H / 2 + panelH / 2;
 
     const felt = addFelt(this);
-    const panel = addPanel(this, cx, H / 2, panelW, panelH);
+    const ambient = new AmbientLayer(this, { ring: true });
+    ambient.setPosition(cx, H / 2);
+    ambient.setArea(W, H);
+    ambient.setProgress(CODEX_AMBIENCE, false);
 
-    // Both header lines have a font-size floor, so on a narrow viewport the
-    // clamp bottoms out before they fit — shrink/wrap them to the panel instead.
-    const textMaxW = panelW * 0.86;
-    const title = this.add
-      .text(cx, panelTop + panelH * 0.09, 'The Codex of Items', {
-        fontFamily: SERIF,
-        fontSize: `${Math.round(Phaser.Math.Clamp(Math.min(panelW * 0.075, panelH * 0.07), 20, 40))}px`,
-        color: CSS.ink,
-        fontStyle: 'bold',
-        align: 'center'
-      })
-      .setOrigin(0.5);
-    fitTextWidth(title, textMaxW);
+    const header = buildSceneHeader(this, {
+      title: "The Codex of Items",
+      subtitle:
+        "Browse the Order's accumulated knowledge of the realm's treasures.",
+      y: Math.max(48, Math.min(H * 0.12, 92)),
+      width: Math.min(W, 760),
+    });
+    this.slideBackdrop = [felt, ambient, header.glow];
 
-    const unlocked = new Set(loadProgress().unlocked);
-    const subtitle = this.add
-      .text(cx, title.y + title.height / 2 + 18, 'Browse the Order\'s accumulated knowledge of the realm\'s treasures.', {
-        fontFamily: SERIF,
-        fontSize: `${Math.round(Phaser.Math.Clamp(panelW * 0.022, 13, 18))}px`,
-        color: CSS.inkSoft,
-        fontStyle: 'italic',
-        align: 'center',
-        wordWrap: { width: textMaxW }
-      })
-      .setOrigin(0.5);
+    const progress = loadProgress();
+    const unlocked = new Set(progress.unlocked);
 
+    // The back button is created before the (camera-clipped) gallery so it is
+    // part of the "everything except the card track" set the grid camera
+    // ignores.
     const buttonH = 70;
-    const backY = panelBottom - 24 - buttonH / 2;
-    const back = bannerButton(
+    const backY = H - 24 - buttonH / 2;
+    bannerButton(
       this,
       cx,
       backY,
-      this.openedAsOverlay ? 'Close Codex' : 'Return to the Vestibule',
+      this.openedAsOverlay ? "Close Codex" : "Return to the Vestibule",
       () => this.close(),
-      panelW * 0.9
+      Math.min(W - 40, 340),
     );
 
-    // Grid area sits between the subtitle and the back button, inset in the panel.
-    const gridTop = subtitle.y + subtitle.height / 2 + 20;
-    const gridBottom = backY - buttonH / 2 - 16;
+    // The gallery fills the band between the masthead and the back button.
+    const gridTop = header.bottom + 20;
+    const gridBottom = backY - buttonH / 2 - 24;
+    const gridW = Math.min(W - 32, 1100);
     const grid = {
-      x: cx - panelW * 0.46,
+      x: cx - gridW / 2,
       y: gridTop,
-      width: panelW * 0.92,
-      height: Math.max(120, gridBottom - gridTop)
+      width: gridW,
+      height: Math.max(120, gridBottom - gridTop),
     };
 
-    this.buildGallery(grid, unlocked, [felt, panel, title, subtitle, back]);
+    this.buildGallery(grid, unlocked, progress.selectionCounts);
   }
 
   private close(): void {
-    if (this.openedAsOverlay) this.scene.stop();
-    else this.scene.start(this.returnTo);
+    // An overlay just lifts off the scene still running underneath it. A Codex
+    // opened from the Vestibule instead slides its gallery off to the right and
+    // hands the still room over to the menu, which brings its own interface in.
+    if (this.openedAsOverlay) {
+      this.scene.stop();
+      return;
+    }
+    if (this.leaving) return;
+    this.leaving = true;
+    slideSceneOut(
+      this,
+      () => this.scene.start(this.returnTo),
+      this.slideBackdrop,
+    );
   }
 
   private buildGallery(
     grid: { x: number; y: number; width: number; height: number },
     unlocked: Set<string>,
-    ignoredByGridCamera: Phaser.GameObjects.GameObject[]
+    counts: Record<string, number | undefined>,
   ): void {
-    const isLocked = (def: (typeof ITEMS)[number]) => !!def.unlock && !unlocked.has(def.id);
+    const isLocked = (def: (typeof ITEMS)[number]) =>
+      !!def.unlock && !unlocked.has(def.id);
     const codexItems = [...ITEMS].sort((a, b) => {
       const aOrder = isLocked(a) ? 3 : RARITY_ORDER[a.rarity];
       const bOrder = isLocked(b) ? 3 : RARITY_ORDER[b.rarity];
@@ -178,27 +248,36 @@ export class ItemsScene extends Phaser.Scene {
     const cellH = CARD_H * cardScale + ROW_GAP;
     const contentH = rows * cellH;
 
+    // Only the cards the window can reach are built now. All fifty-odd of them
+    // is north of two hundred Text objects, and rasterising that many in the
+    // frame the Codex opens costs a quarter of a second — landing squarely on
+    // the entrance slide. `update` fills the rest in once the slide is done.
     const track = this.add.container(grid.x, grid.y);
-    codexItems.forEach((def, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-      const x = col * cellW + cellW / 2;
-      const y = row * cellH + cellH / 2;
-      const card = buildItemCard(this, def, {
-        locked: isLocked(def),
-        count: getSelectionCount(def.id),
-        displayScale: cardScale
-      });
-      card.setPosition(x, y);
-      track.add(card);
-    });
+    this.gallery = {
+      track,
+      items: codexItems,
+      unlocked,
+      counts,
+      built: new Set(),
+      cols,
+      cellW,
+      cellH,
+      cardScale,
+      top: grid.y,
+      height: grid.height,
+    };
+    this.syncCards(0);
 
-    // Clip the (possibly overflowing) track to the grid area via a dedicated
-    // camera — zoom 1, scroll = the grid's own screen position (passthrough).
+    // Clip the (possibly overflowing) track to the gallery's band via a
+    // dedicated camera — zoom 1, scroll = the viewport's own screen position
+    // (passthrough). The clip is only needed vertically, since no card reaches
+    // past the grid's own width, so the viewport spans the full screen: that
+    // lets the scene slide carry the cards clear off the edge rather than
+    // having them wink out at the grid's left margin partway across.
     const cam = this.ensureGridCamera();
-    cam.setViewport(grid.x, grid.y, grid.width, grid.height);
-    cam.setScroll(grid.x, grid.y);
-    cam.ignore(ignoredByGridCamera);
+    cam.setViewport(0, grid.y, this.scale.width, grid.height);
+    cam.setScroll(0, grid.y);
+    cam.ignore(this.children.list.filter((obj) => obj !== track));
     this.cameras.main.ignore(track);
 
     const overflow = Math.max(0, contentH - grid.height);
@@ -210,7 +289,10 @@ export class ItemsScene extends Phaser.Scene {
     const minY = grid.y - overflow;
 
     const inBounds = (p: Phaser.Input.Pointer) =>
-      p.x >= grid.x && p.x <= grid.x + grid.width && p.y >= grid.y && p.y <= grid.y + grid.height;
+      p.x >= grid.x &&
+      p.x <= grid.x + grid.width &&
+      p.y >= grid.y &&
+      p.y <= grid.y + grid.height;
 
     let dragging = false;
     let startPointerY = 0;
@@ -224,11 +306,12 @@ export class ItemsScene extends Phaser.Scene {
     };
     const onMove: PointerHandler = (p) => {
       if (!dragging) {
-        this.input.setDefaultCursor(inBounds(p) ? 'grab' : 'default');
+        this.input.setDefaultCursor(inBounds(p) ? "grab" : "default");
         return;
       }
       const dy = p.y - startPointerY;
       track.y = Phaser.Math.Clamp(startTrackY + dy, minY, maxY);
+      this.syncCards();
     };
     const onUp: PointerHandler = () => {
       dragging = false;
@@ -236,30 +319,87 @@ export class ItemsScene extends Phaser.Scene {
     const onWheel: WheelHandler = (p, _over, _dx, dy) => {
       if (!inBounds(p)) return;
       track.y = Phaser.Math.Clamp(track.y - dy, minY, maxY);
+      this.syncCards();
     };
 
-    this.input.on('pointerdown', onDown);
-    this.input.on('pointermove', onMove);
-    this.input.on('pointerup', onUp);
-    this.input.on('pointerupoutside', onUp);
-    this.input.on('wheel', onWheel);
+    this.input.on("pointerdown", onDown);
+    this.input.on("pointermove", onMove);
+    this.input.on("pointerup", onUp);
+    this.input.on("pointerupoutside", onUp);
+    this.input.on("wheel", onWheel);
     this.input$ = { down: onDown, move: onMove, up: onUp, wheel: onWheel };
 
     const hint = this.add
-      .text(grid.x + grid.width / 2, grid.y + grid.height + 3, 'drag or scroll for more', {
-        fontFamily: SERIF,
-        fontSize: '13px',
-        color: CSS.dim,
-        fontStyle: 'italic'
-      })
-      .setOrigin(0.5, 0);
+      .text(
+        grid.x + grid.width / 2,
+        grid.y + grid.height + 12,
+        "drag or scroll for more",
+        {
+          fontFamily: SERIF,
+          fontSize: "13px",
+          color: CSS.dim,
+          fontStyle: "italic",
+        },
+      )
+      .setOrigin(0.5, 0.5);
     this.gridCamera?.ignore(hint);
+  }
+
+  /** Build every card the scroll window can currently reach. Cards are never
+   *  torn down again: fifty-odd of them is an affordable display list once the
+   *  cost has been spread out, and rebuilding on each change of scroll
+   *  direction would put that cost straight back into the moving frame. */
+  private syncCards(buffer = CARD_BUFFER_ROWS): void {
+    const g = this.gallery;
+    if (!g) return;
+    // How far the track has been scrolled up out of the window.
+    const scrolled = g.top - g.track.y;
+    const firstRow = Math.floor(scrolled / g.cellH) - buffer;
+    const lastRow = Math.floor((scrolled + g.height) / g.cellH) + buffer;
+    const from = Math.max(0, firstRow * g.cols);
+    const to = Math.min(g.items.length - 1, (lastRow + 1) * g.cols - 1);
+    for (let i = from; i <= to; i++) this.buildCard(i);
+  }
+
+  /** Build card `index` if it isn't there yet; true when one was made. */
+  private buildCard(index: number): boolean {
+    const g = this.gallery;
+    if (!g || g.built.has(index)) return false;
+    const def = g.items[index];
+    const card = buildItemCard(this, def, {
+      locked: !!def.unlock && !g.unlocked.has(def.id),
+      count: g.counts[def.id] ?? 0,
+      displayScale: g.cardScale,
+    });
+    card.setPosition(
+      (index % g.cols) * g.cellW + g.cellW / 2,
+      Math.floor(index / g.cols) * g.cellH + g.cellH / 2,
+    );
+    g.track.add(card);
+    // `Camera.ignore` walks a container's children as they stand at the time of
+    // the call, so the main camera's filter over the track doesn't cover a card
+    // that arrives later. Without this one it would be drawn a second time,
+    // unclipped, straight over the rest of the scene.
+    this.cameras.main.ignore(card);
+    g.built.add(index);
+    return true;
+  }
+
+  /** Fill in the cards the window hasn't asked for, a few per frame, so a
+   *  scroll that outruns `syncCards` still finds them already built. */
+  override update(): void {
+    const g = this.gallery;
+    if (!g || !this.toppingUp || g.built.size >= g.items.length) return;
+    let budget = TOPUP_PER_FRAME;
+    for (let i = 0; i < g.items.length && budget > 0; i++) {
+      if (this.buildCard(i)) budget -= 1;
+    }
   }
 
   private ensureGridCamera(): Phaser.Cameras.Scene2D.Camera {
     if (this.gridCamera) this.cameras.remove(this.gridCamera, true);
     const cam = this.cameras.add(0, 0, 1, 1);
-    cam.setBackgroundColor(COLORS.parchment);
+    cam.setBackgroundColor();
     this.gridCamera = cam;
     return cam;
   }

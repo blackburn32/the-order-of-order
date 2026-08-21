@@ -44,12 +44,20 @@ function slideTargets(
 
 /** Bring only a scene's interface in from the left. Felt, sigils, motes, and
  * lighting passed in `stationary` remain fixed, making successive scenes feel
- * like different arrangements in the same room. */
+ * like different arrangements in the same room.
+ *
+ * `arrived` runs once the interface has come to rest — and immediately when
+ * there is no slide to wait for — so a scene can hold deferred work (see the
+ * Codex's card top-up) until the frames the entrance needs are its own. */
 export function slideSceneIn(
   scene: Phaser.Scene,
   stationary: Phaser.GameObjects.GameObject[] = [],
+  arrived?: () => void,
 ): void {
-  if (!fx.motion) return;
+  if (!fx.motion) {
+    arrived?.();
+    return;
+  }
   const targets = slideTargets(scene, stationary);
   const distance = scene.scale.width;
   const inputWasEnabled = scene.input.enabled;
@@ -58,6 +66,7 @@ export function slideSceneIn(
   let remaining = targets.length;
   if (remaining === 0) {
     scene.input.enabled = inputWasEnabled;
+    arrived?.();
     return;
   }
   for (const target of targets) {
@@ -70,7 +79,10 @@ export function slideSceneIn(
       ease: "Cubic.easeOut",
       onComplete: () => {
         remaining -= 1;
-        if (remaining === 0) scene.input.enabled = inputWasEnabled;
+        if (remaining === 0) {
+          scene.input.enabled = inputWasEnabled;
+          arrived?.();
+        }
       },
     });
   }

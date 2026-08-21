@@ -94,7 +94,9 @@ export function buildItemCard(
         .text(0, CAPTION_Y * scale, captionText, {
           fontFamily: SERIF,
           fontSize: fontSize(18, 11),
-          color: opts.locked ? CSS.inkSoft : CSS.ink,
+          // The caption hangs below the parchment, on the felt — hence
+          // light type where every field inside the card is ink.
+          color: opts.locked ? CSS.dim : CSS.parchment,
           fontStyle: opts.locked ? "italic" : "bold",
           align: "center",
           wordWrap: { width: 240 * scale },

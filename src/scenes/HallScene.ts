@@ -1,8 +1,11 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { HallEntry, loadHall } from "../systems/SaveData";
-import { addFelt, addPanel, bannerButton } from "../ui/widgets";
+import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
+import { AmbientLayer } from "../ui/AmbientLayer";
+import { buildSceneHeader } from "../ui/sceneHeader";
 import { onResizeCoalesced } from "../ui/layout";
+import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import {
   fetchTopScores,
   globalScoresEnabled,
@@ -23,19 +26,34 @@ type WheelHandler = (
 type Tab = "local" | "global";
 type GlobalStatus = "idle" | "loading" | "error" | "disabled" | "ready";
 
+/** Fixed sigil brightness for the backdrop — no trial to report here, so the
+ *  value is chosen purely for how it looks (see MenuScene). */
+const HALL_AMBIENCE = 0.65;
+
+/** Zebra banding for the score rows. Faint enough that it reads as ruling on
+ *  the table rather than as a row of plates laid on it. */
+const BAND_ALPHA = 0.3;
+
 /**
- * The Hall of High Scores. Two tabs: the player's local runs (unchanged, drawn
- * from localStorage) and the worldwide top-100 fetched from LootLocker. The
- * selected tab and the fetched global rows live in instance fields so they
- * survive the wipe-and-rebuild that runs on every resize / tab switch. The
- * global list can overflow the panel, so — like the Codex — its rows live in a
- * `track` container clipped by a dedicated camera and scrolled by drag/wheel.
+ * The Hall of High Scores. Two tabs: the player's local runs (drawn from
+ * localStorage) and the worldwide top-100 fetched from LootLocker. The selected
+ * tab and the fetched global rows live in instance fields so they survive the
+ * wipe-and-rebuild that runs on every resize / tab switch. The global list can
+ * overflow the screen, so — like the Codex — its rows live in a `track`
+ * container clipped by a dedicated camera and scrolled by drag/wheel.
+ *
+ * The scores are set straight on the felt, under the same masthead and turning
+ * sigil the menu and the trial screens use, rather than on a parchment panel.
  */
 export class HallScene extends Phaser.Scene {
   private tab: Tab = "local";
   private globalRows: GlobalScoreRow[] | null = null;
   private globalStatus: GlobalStatus = "idle";
   private gridCamera?: Phaser.Cameras.Scene2D.Camera;
+  // The felt, the sigil and the masthead's halo — the room the scores are laid
+  // out in. Held still while the scores themselves slide on and off.
+  private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+  private leaving = false;
   private input$?: {
     down: PointerHandler;
     move: PointerHandler;
@@ -52,7 +70,9 @@ export class HallScene extends Phaser.Scene {
     this.globalRows = null;
     this.globalStatus = "idle";
     this.gridCamera = undefined;
+    this.leaving = false;
     this.build();
+    slideSceneIn(this, this.slideBackdrop);
 
     const off = onResizeCoalesced(this, () => this.rebuild());
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -64,6 +84,10 @@ export class HallScene extends Phaser.Scene {
 
   private rebuild(): void {
     this.teardownInput();
+    if (this.gridCamera) {
+      this.cameras.remove(this.gridCamera, true);
+      this.gridCamera = undefined;
+    }
     this.children.removeAll(true);
     this.build();
   }
@@ -83,81 +107,94 @@ export class HallScene extends Phaser.Scene {
     const W = this.scale.width;
     const H = this.scale.height;
     const cx = W / 2;
-    const panelW = Math.min(W - 40, 1100);
-    const panelH = Math.min(H - 40, 620);
-    const panelTop = H / 2 - panelH / 2;
-    const panelLeft = cx - panelW / 2;
 
-    addFelt(this);
-    addPanel(this, cx, H / 2, panelW, panelH);
+    const felt = addFelt(this);
+    const ambient = new AmbientLayer(this, { ring: true });
+    ambient.setPosition(cx, H / 2);
+    ambient.setArea(W, H);
+    ambient.setProgress(HALL_AMBIENCE, false);
 
-    this.add
-      .text(cx, panelTop + panelH * 0.09, "Hall of High Scores", {
-        fontFamily: SERIF,
-        fontSize: `${Math.round(Phaser.Math.Clamp(Math.min(panelW * 0.075, panelH * 0.068), 20, 40))}px`,
-        color: CSS.ink,
-        fontStyle: "bold",
-        align: "center",
-        wordWrap: { width: panelW * 0.92 },
-      })
-      .setOrigin(0.5);
+    const header = buildSceneHeader(this, {
+      title: "Hall of High Scores",
+      y: Math.max(50, Math.min(H * 0.13, 96)),
+      width: Math.min(W, 760),
+    });
+    this.slideBackdrop = [felt, ambient, header.glow];
 
-    this.buildTabs(cx, panelTop + panelH * 0.19, panelW);
+    const tableW = Math.min(W - 36, 900);
 
-    // Back button is created before the (possibly camera-clipped) content so it
-    // is part of the "everything except the scroll track" set the grid camera
+    const tabsY = header.bottom + 28;
+    this.buildTabs(cx, tabsY, tableW);
+
+    // The Return button is created before the (camera-clipped) content so it is
+    // part of the "everything except the scroll track" set the grid camera
     // ignores.
+    const buttonY = H - 46;
     bannerButton(
       this,
       cx,
-      panelTop + panelH * 0.92,
+      buttonY,
       "Return to the Vestibule",
-      () => this.scene.start("Menu"),
-      panelW * 0.9,
+      () => this.leave(() => this.scene.start("Menu")),
+      Math.min(tableW, 340),
     );
 
-    const contentTop = panelTop + panelH * 0.31;
-    const contentBottom = panelTop + panelH * 0.86;
+    const contentTop = tabsY + 40;
+    const contentBottom = buttonY - 52;
 
     if (this.tab === "local") {
-      this.buildLocal(cx, panelLeft, panelW, panelH, contentTop);
+      this.buildLocal(cx, tableW, contentTop, contentBottom);
     } else {
-      this.buildGlobal(cx, panelLeft, panelW, contentTop, contentBottom);
+      this.buildGlobal(cx, tableW, contentTop, contentBottom);
     }
   }
 
-  private buildTabs(cx: number, y: number, panelW: number): void {
-    // Two tabs plus a gap between them must fit within the panel, so cap each
-    // button at half the available room.
-    const gap = Math.max(16, panelW * 0.03);
-    const maxBtnW = (panelW * 0.94 - gap) / 2;
-    const local = bannerButton(
-      this,
-      cx,
-      y,
-      "My Runs",
-      () => this.switchTab("local"),
-      maxBtnW,
-    );
-    const global = bannerButton(
-      this,
-      cx,
-      y,
-      "Global",
-      () => this.switchTab("global"),
-      maxBtnW,
-    );
-    // Space the two tabs by half their resized display width plus the
-    // gap so they sit side by side, always inside the panel.
-    const btnW = local.width;
-    const dx = btnW / 2 + gap / 2;
-    local.setX(cx - dx);
-    global.setX(cx + dx);
+  /** Two text tabs sharing one baseline, the selected one gold over a short
+   *  gold rule. Parchment buttons were doing this job before, which put two
+   *  more slabs of chrome between the masthead and the scores. */
+  private buildTabs(cx: number, y: number, tableW: number): void {
+    const size = Math.round(Phaser.Math.Clamp(tableW * 0.028, 17, 22));
+    const gap = Math.max(28, tableW * 0.06);
+
+    const make = (label: string, tab: Tab): Phaser.GameObjects.Text => {
+      const active = this.tab === tab;
+      const text = this.add
+        .text(0, y, label, {
+          fontFamily: SERIF,
+          fontSize: `${size}px`,
+          color: active ? CSS.gold : CSS.dim,
+          fontStyle: active ? "bold" : "normal",
+          letterSpacing: 2,
+        })
+        .setOrigin(0.5)
+        .setInteractive({ useHandCursor: true });
+      text.on("pointerover", () =>
+        text.setColor(active ? CSS.goldLight : CSS.parchment),
+      );
+      text.on("pointerout", () => text.setColor(active ? CSS.gold : CSS.dim));
+      text.on("pointerdown", () => this.switchTab(tab));
+      return text;
+    };
+
+    const local = make("MY RUNS", "local");
+    const global = make("GLOBAL", "global");
+    const totalW = local.width + gap + global.width;
+    local.setX(cx - totalW / 2 + local.width / 2);
+    global.setX(cx + totalW / 2 - global.width / 2);
+
     const active = this.tab === "local" ? local : global;
-    (active.getAt(0) as Phaser.GameObjects.Image).setTint(0xf0d98a);
+    const underline = this.add.graphics();
+    underline.lineStyle(2, COLORS.gold, 0.75);
+    underline.lineBetween(
+      active.x - active.width / 2 - 6,
+      y + size * 0.85,
+      active.x + active.width / 2 + 6,
+      y + size * 0.85,
+    );
   }
 
   private switchTab(tab: Tab): void {
+    if (tab === this.tab) return;
     // Retry the fetch when (re)entering Global if we've never loaded or errored.
     if (
       tab === "global" &&
@@ -187,39 +224,56 @@ export class HallScene extends Phaser.Scene {
     });
   }
 
-  // --- Local tab (existing behaviour) ---------------------------------------
+  // --- Local tab ------------------------------------------------------------
 
   private buildLocal(
     cx: number,
-    panelLeft: number,
-    panelW: number,
-    panelH: number,
+    tableW: number,
     contentTop: number,
+    contentBottom: number,
   ): void {
     const entries = loadHall();
+    const band = Math.max(1, contentBottom - contentTop);
 
     if (entries.length === 0) {
       this.centerMessage(
         cx,
-        contentTop + panelH * 0.2,
+        contentTop + band * 0.32,
         "No initiates have been recorded.\nBegin a run and earn your place.",
-        panelW,
+        tableW,
       );
       return;
     }
 
-    // Column positions are derived from each column's actual measured text
-    // width (not a guessed font metric), so DATE/RANK/SCORE can never collide
-    // regardless of font size, locale date format, or digit count — the grid
-    // column just absorbs whatever room is left over.
-    const headerSize = Math.round(Phaser.Math.Clamp(panelW * 0.032, 11, 16));
-    const cellSize = Math.round(Phaser.Math.Clamp(panelW * 0.045, 13, 20));
-    const colGap = Math.max(10, panelW * 0.02);
+    const headerSize = Math.round(Phaser.Math.Clamp(tableW * 0.032, 11, 16));
+    const cellSize = Math.round(Phaser.Math.Clamp(tableW * 0.045, 13, 20));
+    const colGap = Math.max(10, tableW * 0.02);
+    const anyPoints = entries.some((e) => e.itemPoints || e.dicePoints);
+    const hintH = anyPoints ? 26 : 0;
+    /** Room between the column heads and the first row. */
+    const HEAD_H = 34;
 
-    const headerY = contentTop;
-    const rowStart = contentTop + panelH * 0.05;
-    const rowStep = Math.min(36, (panelH * 0.55) / Math.max(1, entries.length));
+    // The table is centred in the band rather than hung off the tabs: with the
+    // panel gone there is no frame holding it, and a short list left at the top
+    // of a tall screen reads as a page that stopped halfway.
+    const rowStep = Phaser.Math.Clamp(
+      (band - HEAD_H - hintH) / entries.length,
+      20,
+      36,
+    );
+    const blockH = HEAD_H + entries.length * rowStep + hintH;
+    const headerY = contentTop + Math.max(0, (band - blockH) / 2);
+    const rowStart = headerY + HEAD_H;
 
+    // Claimed now, filled once the columns have been measured: a container
+    // keeps the display-list slot it was created in, so banding drawn into it
+    // later still ends up beneath every glyph and die icon.
+    const bands = this.add.container(0, 0);
+
+    // Every column is built at x = 0 and positioned only once all of them have
+    // been measured. DATE/RANK/SCORE then can't collide whatever the font size,
+    // locale date format, or digit count — and the block can be centred on the
+    // width it actually occupies rather than on a guess.
     const dateTexts = [this.header(headerY, "DATE", headerSize)];
     const rankTexts = [this.header(headerY, "RANK", headerSize)];
     const scoreTexts = [this.header(headerY, "SCORE", headerSize)];
@@ -237,7 +291,11 @@ export class HallScene extends Phaser.Scene {
       // shorthand the in-game HUD uses.
       rankTexts.push(this.cell(y, `${entry.rank}-${entry.trial}`, cellSize));
       scoreTexts.push(this.cell(y, formatScore(entry.score), cellSize));
-      return { y, entry };
+      return {
+        y,
+        entry,
+        dice: this.buildGridList(entry, y, rowStep, cellSize),
+      };
     });
 
     const widest = (texts: Phaser.GameObjects.Text[]) =>
@@ -245,74 +303,95 @@ export class HallScene extends Phaser.Scene {
     const dateW = widest(dateTexts);
     const rankW = widest(rankTexts);
     const scoreW = widest(scoreTexts);
+    // The crown and the endless mark get columns of their own rather than being
+    // tucked into a margin, so neither can crowd the date or the score.
+    const crownW = entries.some((e) => e.won) ? cellSize + 4 : 0;
+    const markW = entries.some((e) => e.endless) ? cellSize : 0;
+    const listW = Math.max(gridHeader.width, ...rows.map((r) => r.dice.width));
 
-    const col1 = panelLeft + panelW * 0.06 + dateW / 2;
-    const col2 = col1 + dateW / 2 + colGap + rankW / 2;
-    const col3 = col2 + rankW / 2 + colGap + scoreW / 2;
-    const col4 = col3 + scoreW / 2 + colGap * 1.4;
-    const gridColW = panelLeft + panelW * 0.95 - col4;
+    // Walk the columns left to right in block-local coordinates, then centre
+    // the finished block on the table.
+    let cursor = 0;
+    const crownX = cursor + crownW / 2;
+    if (crownW) cursor += crownW + colGap * 0.5;
+    const dateX = cursor + dateW / 2;
+    cursor += dateW + colGap;
+    const rankX = cursor + rankW / 2;
+    cursor += rankW + colGap;
+    const markRight = cursor + markW;
+    if (markW) cursor += markW + 4;
+    const scoreX = cursor + scoreW / 2;
+    cursor += scoreW + colGap * 1.4;
+    const gridX = cursor;
+    // Whatever room is left over belongs to the grid column; a dice list longer
+    // than that is scaled down to fit it.
+    const gridColW = Math.max(60, Math.min(listW, tableW * 0.94 - gridX));
+    const blockW = gridX + gridColW;
+    const blockLeft = cx - blockW / 2;
+    // Banding and hover zones run a little past the ink on either side, the way
+    // ruling on a page does.
+    const bandW = Math.min(tableW * 0.98, blockW + 28);
 
-    dateTexts.forEach((t) => t.setX(col1));
-    rankTexts.forEach((t) => t.setX(col2));
-    scoreTexts.forEach((t) => t.setX(col3));
-    gridHeader.setX(col4);
+    dateTexts.forEach((t) => t.setX(blockLeft + dateX));
+    rankTexts.forEach((t) => t.setX(blockLeft + rankX));
+    scoreTexts.forEach((t) => t.setX(blockLeft + scoreX));
+    gridHeader.setX(blockLeft + gridX);
+    // The head is measured into `listW`, but only the dice rows are scaled to
+    // the column — shrink the head itself when the room ran out.
+    fitTextWidth(gridHeader, gridColW);
 
-    rows.forEach(({ y, entry }) => {
+    entries.forEach((_, i) => {
+      if (i % 2 === 1) {
+        bands.add(
+          this.add.rectangle(
+            cx,
+            rowStart + i * rowStep,
+            bandW,
+            rowStep,
+            COLORS.feltLight,
+            BAND_ALPHA,
+          ),
+        );
+      }
+    });
+
+    // A hairline under the column heads — the one piece of ruling the table
+    // needs to separate its head from its body.
+    const rule = this.add.graphics();
+    rule.lineStyle(1, COLORS.gold, 0.35);
+    rule.lineBetween(
+      cx - bandW / 2,
+      headerY + headerSize,
+      cx + bandW / 2,
+      headerY + headerSize,
+    );
+
+    rows.forEach(({ y, entry, dice }) => {
       // Victorious runs get a gold crown in the left gutter (old entries predate
       // `won`, so `undefined` reads as a loss — no marker).
       if (entry.won) {
         this.add
-          .text(panelLeft + panelW * 0.03, y, "♛", {
+          .text(blockLeft + crownX, y, "♛", {
             fontFamily: SERIF,
             fontSize: `${cellSize}px`,
             color: CSS.goldLight,
           })
           .setOrigin(0.5);
       }
-      // Runs that pressed on past the final rank get an infinity mark just
-      // left of the score column.
+      // Runs that pressed on past the final rank get an infinity mark just left
+      // of the score column.
       if (entry.endless) {
         this.add
-          .text(col3 - scoreW / 2 - 6, y, "∞", {
+          .text(blockLeft + markRight, y, "∞", {
             fontFamily: SERIF,
             fontSize: `${cellSize}px`,
-            color: CSS.parchment,
+            color: CSS.gold,
           })
           .setOrigin(1, 0.5);
       }
-      // A saved grid can contain several stacks of the same die size because
-      // source and special flags are persisted separately. Collapse those
-      // stacks so the row shows every size once, followed by its total count.
-      const counts = new Map<number, number>();
-      for (const stack of entry.dice) {
-        counts.set(stack.sides, (counts.get(stack.sides) ?? 0) + stack.count);
-      }
-      const diceTypes = [...counts.entries()].sort(
-        ([sidesA], [sidesB]) => sidesB - sidesA,
-      );
-      const iconSize = Phaser.Math.Clamp(rowStep * 0.72, 10, 26);
-      const countSize = Math.floor(Phaser.Math.Clamp(cellSize * 0.72, 7, 14));
-      const itemPadding = Math.max(8, iconSize * 0.4);
-      const list = this.add.container(col4, y);
-      let listX = 0;
 
-      diceTypes.forEach(([sides, count]) => {
-        const countLabel = `×${formatScore(count)}`;
-        const icon = this.add
-          .image(listX + iconSize / 2, 0, `die-${sides}`)
-          .setScale(iconSize / 96);
-        const label = this.add
-          .text(listX + iconSize + 3, 0, countLabel, {
-            fontFamily: SERIF,
-            fontSize: `${countSize}px`,
-            color: CSS.inkSoft,
-          })
-          .setOrigin(0, 0.5);
-        list.add([icon, label]);
-        listX += iconSize + 3 + label.width + itemPadding;
-      });
-      const listWidth = Math.max(0, listX - itemPadding);
-      if (listWidth > gridColW) list.setScale(gridColW / listWidth);
+      dice.container.setX(blockLeft + gridX);
+      if (dice.width > gridColW) dice.container.setScale(gridColW / dice.width);
 
       // Runs recorded with a points breakdown are tappable to open their
       // analysis. A near-transparent zone highlights on hover; older entries
@@ -322,9 +401,9 @@ export class HallScene extends Phaser.Scene {
         !!(entry.dicePoints && Object.keys(entry.dicePoints).length);
       if (hasPoints) {
         const zone = this.add
-          .rectangle(cx, y, panelW * 0.9, rowStep, COLORS.goldLight, 0.0001)
+          .rectangle(cx, y, bandW, rowStep, COLORS.goldLight, 0.0001)
           .setInteractive({ useHandCursor: true });
-        zone.on("pointerover", () => zone.setFillStyle(COLORS.goldLight, 0.12));
+        zone.on("pointerover", () => zone.setFillStyle(COLORS.goldLight, 0.14));
         zone.on("pointerout", () =>
           zone.setFillStyle(COLORS.goldLight, 0.0001),
         );
@@ -332,11 +411,11 @@ export class HallScene extends Phaser.Scene {
       }
     });
 
-    if (entries.some((e) => e.itemPoints || e.dicePoints)) {
+    if (anyPoints) {
       this.add
         .text(
           cx,
-          rowStart + entries.length * rowStep + panelH * 0.02,
+          rowStart + entries.length * rowStep + 6,
           "tap a run for its points breakdown",
           {
             fontFamily: SERIF,
@@ -347,6 +426,51 @@ export class HallScene extends Phaser.Scene {
         )
         .setOrigin(0.5, 0);
     }
+  }
+
+  /**
+   * One run's final grid: every die size it ended with, once, followed by how
+   * many of that size it held. Built left-anchored at x = 0 so the caller can
+   * measure the row before deciding where the grid column starts.
+   */
+  private buildGridList(
+    entry: HallEntry,
+    y: number,
+    rowStep: number,
+    cellSize: number,
+  ): { container: Phaser.GameObjects.Container; width: number } {
+    // A saved grid can contain several stacks of the same die size because
+    // source and special flags are persisted separately. Collapse those stacks
+    // so the row shows every size once, with its total count.
+    const counts = new Map<number, number>();
+    for (const stack of entry.dice) {
+      counts.set(stack.sides, (counts.get(stack.sides) ?? 0) + stack.count);
+    }
+    const diceTypes = [...counts.entries()].sort(
+      ([sidesA], [sidesB]) => sidesB - sidesA,
+    );
+    const iconSize = Phaser.Math.Clamp(rowStep * 0.72, 10, 26);
+    const countSize = Math.floor(Phaser.Math.Clamp(cellSize * 0.72, 7, 14));
+    const itemPadding = Math.max(8, iconSize * 0.4);
+    const container = this.add.container(0, y);
+    let listX = 0;
+
+    diceTypes.forEach(([sides, count]) => {
+      const icon = this.add
+        .image(listX + iconSize / 2, 0, `die-${sides}`)
+        .setScale(iconSize / 96);
+      const label = this.add
+        .text(listX + iconSize + 3, 0, `×${formatScore(count)}`, {
+          fontFamily: SERIF,
+          fontSize: `${countSize}px`,
+          color: CSS.parchmentDark,
+        })
+        .setOrigin(0, 0.5);
+      container.add([icon, label]);
+      listX += iconSize + 3 + label.width + itemPadding;
+    });
+
+    return { container, width: Math.max(1, listX - itemPadding) };
   }
 
   private openAnalysisLocal(entry: HallEntry): void {
@@ -373,8 +497,7 @@ export class HallScene extends Phaser.Scene {
 
   private buildGlobal(
     cx: number,
-    panelLeft: number,
-    panelW: number,
+    tableW: number,
     contentTop: number,
     contentBottom: number,
   ): void {
@@ -387,7 +510,7 @@ export class HallScene extends Phaser.Scene {
             : this.globalStatus === "error"
               ? "The global hall could not be reached.\nTap Global to try again."
               : "Consulting the global hall…";
-      this.centerMessage(cx, (contentTop + contentBottom) / 2, msg, panelW);
+      this.centerMessage(cx, (contentTop + contentBottom) / 2, msg, tableW);
       return;
     }
 
@@ -397,20 +520,22 @@ export class HallScene extends Phaser.Scene {
         cx,
         (contentTop + contentBottom) / 2,
         "No scores have been recorded yet.\nBe the first to earn a place.",
-        panelW,
+        tableW,
       );
       return;
     }
 
-    const headerSize = Math.round(Phaser.Math.Clamp(panelW * 0.032, 11, 16));
-    const cellSize = Math.round(Phaser.Math.Clamp(panelW * 0.04, 13, 20));
+    const headerSize = Math.round(Phaser.Math.Clamp(tableW * 0.032, 11, 16));
+    const cellSize = Math.round(Phaser.Math.Clamp(tableW * 0.04, 13, 20));
 
     // Leave a fixed header band at contentTop; the scrolling list starts below.
-    const band = Math.max(1, contentBottom - contentTop);
+    // Three short columns don't need the whole table's width — stretched across
+    // it, RANK and INITIALS end up marooned from each other.
+    const gridW = Math.min(tableW * 0.88, 620);
     const grid = {
-      x: panelLeft + panelW * 0.09,
-      y: contentTop + band * 0.09,
-      width: panelW * 0.82,
+      x: cx - gridW / 2,
+      y: contentTop + 34,
+      width: gridW,
       height: 0,
     };
     // Header row sits just above the scrolling list, fixed.
@@ -420,9 +545,17 @@ export class HallScene extends Phaser.Scene {
     this.header2(contentTop, rankX, "RANK", headerSize, 0.5);
     this.header2(contentTop, nameX, "INITIALS", headerSize, 0.5);
     this.header2(contentTop, scoreX, "SCORE", headerSize, 1);
+    const rule = this.add.graphics();
+    rule.lineStyle(1, COLORS.gold, 0.35);
+    rule.lineBetween(
+      grid.x,
+      contentTop + headerSize,
+      grid.x + grid.width,
+      contentTop + headerSize,
+    );
 
     // Reserve a strip below the list for the hint line, so it never collides
-    // with the Return button (whose top edge sits right at contentBottom).
+    // with the Return button.
     const hintReserve = 24;
     grid.height = Math.max(80, contentBottom - grid.y - hintReserve);
 
@@ -463,8 +596,21 @@ export class HallScene extends Phaser.Scene {
             })
             .setOrigin(0, 0.5),
         );
+      } else if (i % 2 === 1) {
+        track.add(
+          this.add
+            .rectangle(
+              grid.width / 2,
+              y,
+              grid.width,
+              rowStep,
+              COLORS.feltLight,
+              BAND_ALPHA,
+            )
+            .setOrigin(0.5),
+        );
       }
-      const color = row.isYou ? CSS.gold : CSS.ink;
+      const color = row.isYou ? CSS.goldLight : CSS.parchment;
       const style = {
         fontFamily: SERIF,
         fontSize: `${cellSize}px`,
@@ -485,17 +631,22 @@ export class HallScene extends Phaser.Scene {
             .text(lScore - scoreText.width - 6, y, "∞", {
               fontFamily: SERIF,
               fontSize: `${cellSize}px`,
-              color: CSS.parchment,
+              color: CSS.gold,
             })
             .setOrigin(1, 0.5),
         );
       }
     });
 
-    // Clip the track to the list area via a dedicated parchment-backed camera.
+    // Clip the track to the list's band with a dedicated camera. It stays
+    // transparent, so the felt and the turning sigil the main camera drew show
+    // through behind the rows. The clip is only ever needed vertically — the
+    // rows are no wider than the table — so the viewport spans the full width,
+    // which lets the scene slide carry the list clear off the screen instead of
+    // having it wink out at the table's left edge partway across.
     const cam = this.ensureGridCamera();
-    cam.setViewport(grid.x, grid.y, grid.width, grid.height);
-    cam.setScroll(grid.x, grid.y);
+    cam.setViewport(0, grid.y, this.scale.width, grid.height);
+    cam.setScroll(0, grid.y);
     cam.ignore(this.children.list.filter((o) => o !== track));
     this.cameras.main.ignore(track);
 
@@ -592,10 +743,18 @@ export class HallScene extends Phaser.Scene {
     }
   }
 
+  /** Send the scores off to the right, then hand over to the menu, which
+   *  brings its own interface in over the same still room. */
+  private leave(complete: () => void): void {
+    if (this.leaving) return;
+    this.leaving = true;
+    slideSceneOut(this, complete, this.slideBackdrop);
+  }
+
   private ensureGridCamera(): Phaser.Cameras.Scene2D.Camera {
     if (this.gridCamera) this.cameras.remove(this.gridCamera, true);
     const cam = this.cameras.add(0, 0, 1, 1);
-    cam.setBackgroundColor(COLORS.parchment);
+    cam.setBackgroundColor();
     this.gridCamera = cam;
     return cam;
   }
@@ -604,15 +763,16 @@ export class HallScene extends Phaser.Scene {
     cx: number,
     y: number,
     text: string,
-    panelW: number,
+    tableW: number,
   ): void {
     this.add
       .text(cx, y, text, {
         fontFamily: SERIF,
-        fontSize: `${Math.round(Phaser.Math.Clamp(panelW * 0.022, 16, 24))}px`,
-        color: CSS.inkSoft,
+        fontSize: `${Math.round(Phaser.Math.Clamp(tableW * 0.026, 16, 24))}px`,
+        color: CSS.parchmentDark,
         fontStyle: "italic",
         align: "center",
+        lineSpacing: 6,
       })
       .setOrigin(0.5);
   }
@@ -627,7 +787,7 @@ export class HallScene extends Phaser.Scene {
       .text(0, y, label, {
         fontFamily: SERIF,
         fontSize: `${size}px`,
-        color: CSS.inkSoft,
+        color: CSS.gold,
         letterSpacing: 2,
         fontStyle: "bold",
       })
@@ -645,7 +805,7 @@ export class HallScene extends Phaser.Scene {
       .text(x, y, label, {
         fontFamily: SERIF,
         fontSize: `${size}px`,
-        color: CSS.inkSoft,
+        color: CSS.gold,
         letterSpacing: 2,
         fontStyle: "bold",
       })
@@ -661,7 +821,7 @@ export class HallScene extends Phaser.Scene {
       .text(0, y, value, {
         fontFamily: SERIF,
         fontSize: `${size}px`,
-        color: CSS.ink,
+        color: CSS.parchment,
       })
       .setOrigin(0.5);
   }

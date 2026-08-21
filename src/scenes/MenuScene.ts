@@ -8,6 +8,7 @@ import { addFelt, bannerButton, fitTextWidth, showBanner } from '../ui/widgets';
 import { AmbientLayer } from '../ui/AmbientLayer';
 import { RuleDice } from '../ui/RuleDice';
 import { responsive } from '../ui/layout';
+import { slideSceneIn, slideSceneOut } from '../ui/sceneSlide';
 
 /**
  * Fixed "trial progress" handed to the menu's AmbientLayer. There's no trial
@@ -29,6 +30,11 @@ const CURSOR_GLOW_EASING = 0.16;
 export class MenuScene extends Phaser.Scene {
   private cursorGlow?: Phaser.GameObjects.Image;
   private cursorGlowActivated = false;
+  // The felt, the sigil, the title halo and the carried light: the room the
+  // menu is arranged in. Held still while the menu itself slides on and off,
+  // so the Vestibule and the rooms reached from it read as one place.
+  private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+  private leaving = false;
 
   constructor() {
     super('Menu');
@@ -36,7 +42,9 @@ export class MenuScene extends Phaser.Scene {
 
   create(): void {
     this.cursorGlowActivated = false;
+    this.leaving = false;
     responsive(this, () => this.build());
+    slideSceneIn(this, this.slideBackdrop);
 
     // Phaser initializes the active pointer at a default position before the
     // player has interacted. Keep its light hidden until a real mouse/touch
@@ -61,7 +69,7 @@ export class MenuScene extends Phaser.Scene {
     const H = this.scale.height;
     const cx = W / 2;
 
-    addFelt(this);
+    const felt = addFelt(this);
 
     // The same living backdrop that sits behind the dice grid, centered on the
     // whole viewport so the sigil frames the menu rather than any one element.
@@ -171,12 +179,14 @@ export class MenuScene extends Phaser.Scene {
       if (loadSettings().showIntro) this.scene.start('Intro');
       else beginRun(this);
     });
-    bannerButton(this, cx, startY + btnGap, 'Hall of High Scores', () => this.scene.start('Hall'));
+    bannerButton(this, cx, startY + btnGap, 'Hall of High Scores', () =>
+      this.leave(() => this.scene.start('Hall'))
+    );
 
     // The Codex of items stays locked until the player has finished one run.
     const itemsUnlocked = loadProgress().gamesCompleted > 0;
     const itemsBtn = bannerButton(this, cx, startY + btnGap * 2, 'Codex', () => {
-      if (itemsUnlocked) this.scene.start('Items', { returnTo: 'Menu' });
+      if (itemsUnlocked) this.leave(() => this.scene.start('Items', { returnTo: 'Menu' }));
       else showBanner(this, 'Complete a run to unlock the Codex', 1200);
     });
     if (!itemsUnlocked) {
@@ -194,7 +204,9 @@ export class MenuScene extends Phaser.Scene {
     // none is supplied, so without this Settings would inherit a stale
     // `{ returnTo: 'Game' }` from a mid-run visit and wrongly offer "Return to
     // Game" / "Abandon Run" from the Vestibule.
-    bannerButton(this, cx, startY + btnGap * 3, 'Settings', () => this.scene.start('Settings', { returnTo: 'Menu' }));
+    bannerButton(this, cx, startY + btnGap * 3, 'Settings', () =>
+      this.leave(() => this.scene.start('Settings', { returnTo: 'Menu' }))
+    );
 
     const tagline = this.add
       .text(cx, H - Math.min(28, H * 0.05), 'Roll ones. Appease the Order. Survive the thresholds.', {
@@ -222,6 +234,20 @@ export class MenuScene extends Phaser.Scene {
         .setDisplaySize(CURSOR_GLOW_SIZE, CURSOR_GLOW_SIZE)
         .setAlpha(this.cursorGlowActivated ? CURSOR_GLOW_ALPHA : 0);
     }
+
+    // Assembled last so the carried light — created at the very end of the
+    // build — is part of it. Reassigned on every rebuild, since `responsive`
+    // destroyed the previous set along with the rest of the display list.
+    this.slideBackdrop = [felt, ambient, glow];
+    if (this.cursorGlow) this.slideBackdrop.push(this.cursorGlow);
+  }
+
+  /** Send the menu off to the right, then hand over to the next scene, which
+   *  brings its own interface in from the left over the same still room. */
+  private leave(complete: () => void): void {
+    if (this.leaving) return;
+    this.leaving = true;
+    slideSceneOut(this, complete, this.slideBackdrop);
   }
 
   /**

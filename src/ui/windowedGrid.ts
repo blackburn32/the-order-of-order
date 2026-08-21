@@ -13,8 +13,8 @@ const CARD_TARGET_SCREEN_SIZE = 112;
 const LOD_HYSTERESIS = 0.9;
 
 export const GRID_LOD_THRESHOLDS = {
-  callouts: 500,
-  effects: 2_000,
+  callouts: 150,
+  effects: 300,
   cards: 10_000,
 } as const;
 
