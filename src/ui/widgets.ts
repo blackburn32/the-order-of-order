@@ -94,6 +94,46 @@ export function bannerButton(
   return container;
 }
 
+/** One entry in a column of banner buttons. */
+export interface BannerAction {
+  label: string;
+  onClick: () => void;
+}
+
+/**
+ * Stack banner buttons down a column, each sized to the column's width and the
+ * set spaced to sit centred in `band` without ever overlapping. The
+ * compact-landscape screens all put their actions in one column, and a fixed
+ * vertical pitch is exactly what breaks on a short viewport — so the pitch is
+ * derived from the buttons' own measured heights and whatever room is left.
+ */
+export function stackBannerButtons(
+  scene: Phaser.Scene,
+  column: { cx: number; width: number },
+  band: { top: number; height: number },
+  actions: BannerAction[],
+): Phaser.GameObjects.Container[] {
+  const buttons = actions.map((action) =>
+    bannerButton(
+      scene,
+      column.cx,
+      0,
+      action.label,
+      action.onClick,
+      column.width,
+    ),
+  );
+  const stackH = buttons.reduce((sum, button) => sum + button.height, 0);
+  const gaps = Math.max(1, buttons.length - 1);
+  const gap = Phaser.Math.Clamp((band.height - stackH) / gaps, 6, 22);
+  let y = band.top + Math.max(0, (band.height - stackH - gap * gaps) / 2);
+  for (const button of buttons) {
+    button.setY(y + button.height / 2);
+    y += button.height + gap;
+  }
+  return buttons;
+}
+
 /**
  * A labelled checkbox row centered on (x, y): a gold check in an ink-bordered
  * box to the left, the label to its right. Tapping anywhere on the row toggles

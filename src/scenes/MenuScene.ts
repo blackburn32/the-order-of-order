@@ -4,10 +4,17 @@ import { audio } from '../systems/Audio';
 import { fx } from '../systems/Effects';
 import { loadProgress, loadSettings } from '../systems/SaveData';
 import { beginRun } from '../systems/Tutorial';
-import { addFelt, bannerButton, fitTextWidth, showBanner } from '../ui/widgets';
+import {
+  addFelt,
+  bannerButton,
+  BannerAction,
+  fitTextWidth,
+  showBanner,
+  stackBannerButtons
+} from '../ui/widgets';
 import { AmbientLayer } from '../ui/AmbientLayer';
 import { RuleDice } from '../ui/RuleDice';
-import { responsive } from '../ui/layout';
+import { compactColumns, isCompactLandscape, responsive } from '../ui/layout';
 import { slideSceneIn, slideSceneOut } from '../ui/sceneSlide';
 
 /**
@@ -81,17 +88,23 @@ export class MenuScene extends Phaser.Scene {
     ambient.setArea(W, H);
     ambient.setProgress(MENU_AMBIENCE, false);
 
-    const titleY = H * 0.22;
+    // A handset in landscape has no height to stack a masthead over four
+    // buttons: the masthead takes one column and the buttons the other. See
+    // `compactColumns`.
+    const compact = isCompactLandscape(W, H);
+    const columns = compactColumns(this, { leftFraction: 0.5 });
+    const mast = compact ? columns.left : { cx, width: W, x: 0, right: W };
+    const titleY = compact ? columns.top + columns.height * 0.42 : H * 0.22;
 
     // A gradient halo rather than a filled shape. With the sigil turning
     // behind it, any hard edge here reads as a second object laid over the
     // rings instead of as light falling on them — and `spark` is drawn
     // precisely to hold up as a light source when blown far past its own size.
     const glow = this.add
-      .image(cx, titleY, 'spark')
+      .image(mast.cx, titleY, 'spark')
       .setTint(COLORS.glow)
       .setBlendMode(Phaser.BlendModes.ADD)
-      .setDisplaySize(Math.min(720, W * 0.8), 300);
+      .setDisplaySize(compact ? mast.width * 1.06 : Math.min(720, W * 0.8), compact ? 190 : 300);
     if (fx.motion) {
       // setDisplaySize bakes the stretch into scaleX, so the breathe has to
       // swing around that baked value instead of around 1.
@@ -113,11 +126,11 @@ export class MenuScene extends Phaser.Scene {
     // 330px-wide viewport the clamp stops shrinking them and the lines would run
     // off the edges — fitTextWidth takes over from there. Same margin as the
     // tagline below, so all three lines share one left/right edge.
-    const textMaxW = W - 24;
+    const textMaxW = mast.width - 24;
 
     const titleSize = Math.round(Phaser.Math.Clamp(W * 0.053, 30, 68));
     const title = this.add
-      .text(cx, titleY, 'The Order of Order', {
+      .text(mast.cx, titleY, 'The Order of Order', {
         fontFamily: SERIF,
         fontSize: `${titleSize}px`,
         color: CSS.gold,
@@ -137,8 +150,12 @@ export class MenuScene extends Phaser.Scene {
       .setShadow(0, 4, '#000000', 10, true, true);
     fitTextWidth(title, textMaxW);
 
+    // The stacked layout spaces the two lines off the viewport height; a
+    // compact column has to space them off the type instead, or the subtitle
+    // lands inside the title's own line box.
+    const subtitleGap = compact ? titleSize * 0.62 + 20 : H * 0.09;
     const subtitle = this.add
-      .text(cx, titleY + H * 0.09, 'An incremental rite of dice', {
+      .text(mast.cx, titleY + subtitleGap, 'An incremental rite of dice', {
         fontFamily: SERIF,
         fontSize: `${Math.round(Phaser.Math.Clamp(W * 0.019, 16, 24))}px`,
         color: CSS.dim,
@@ -155,67 +172,101 @@ export class MenuScene extends Phaser.Scene {
     // viewport — the two font sizes hit their legibility floors at different
     // widths, so that gap isn't a fixed proportion of anything.
     const ruleY = (title.getBounds().bottom + subtitle.getBounds().top) / 2;
-    const ruleHalf = Math.min(title.width / 2 + 30, W / 2 - 24);
+    const ruleHalf = Math.min(title.width / 2 + 30, mast.width / 2 - 12);
 
     // Sized off the title rather than the measured gap between the two lines:
     // the gap between their *bounds* is only a dozen pixels (Phaser's line
     // height pads each box well past the ink), while the clear air between the
     // glyphs themselves is several times that. Scaling with the title keeps
     // the row proportionate to the masthead at every viewport.
-    const dice = new RuleDice(this, cx, ruleY, Phaser.Math.Clamp(titleSize * 0.26, 10, 18));
+    const dice = new RuleDice(this, mast.cx, ruleY, Phaser.Math.Clamp(titleSize * 0.26, 10, 18));
     const ruleGap = dice.width / 2 + 12;
 
     const rule = this.add.graphics();
     rule.lineStyle(1.5, COLORS.gold, 0.6);
-    rule.lineBetween(cx - ruleHalf, ruleY, cx - ruleGap, ruleY);
-    rule.lineBetween(cx + ruleGap, ruleY, cx + ruleHalf, ruleY);
-
-    const btnGap = Math.min(84, H * 0.12);
-    const startY = H * 0.48;
-    bannerButton(this, cx, startY, 'Start New Run', () => {
-      // Intro plays on every main-menu run until the player skips it; Victory /
-      // Game Over "Begin a New Run" skip straight to the game (they call
-      // setRun + start('Game') directly, so the intro is main-menu only).
-      if (loadSettings().showIntro) this.scene.start('Intro');
-      else beginRun(this);
-    });
-    bannerButton(this, cx, startY + btnGap, 'Hall of High Scores', () =>
-      this.leave(() => this.scene.start('Hall'))
-    );
+    rule.lineBetween(mast.cx - ruleHalf, ruleY, mast.cx - ruleGap, ruleY);
+    rule.lineBetween(mast.cx + ruleGap, ruleY, mast.cx + ruleHalf, ruleY);
 
     // The Codex of items stays locked until the player has finished one run.
     const itemsUnlocked = loadProgress().gamesCompleted > 0;
-    const itemsBtn = bannerButton(this, cx, startY + btnGap * 2, 'Codex', () => {
-      if (itemsUnlocked) this.leave(() => this.scene.start('Items', { returnTo: 'Menu' }));
-      else showBanner(this, 'Complete a run to unlock the Codex', 1200);
-    });
+    const actions: BannerAction[] = [
+      {
+        label: 'Start New Run',
+        onClick: () => {
+          // Intro plays on every main-menu run until the player skips it; Victory /
+          // Game Over "Begin a New Run" skip straight to the game (they call
+          // setRun + start('Game') directly, so the intro is main-menu only).
+          if (loadSettings().showIntro) this.scene.start('Intro');
+          else beginRun(this);
+        }
+      },
+      {
+        label: 'Hall of High Scores',
+        onClick: () => this.leave(() => this.scene.start('Hall'))
+      },
+      {
+        label: 'Codex',
+        onClick: () => {
+          if (itemsUnlocked) this.leave(() => this.scene.start('Items', { returnTo: 'Menu' }));
+          else showBanner(this, 'Complete a run to unlock the Codex', 1200);
+        }
+      },
+      {
+        // Pass returnTo explicitly: Phaser keeps a scene's previous start-data
+        // when none is supplied, so without this Settings would inherit a stale
+        // `{ returnTo: 'Game' }` from a mid-run visit and wrongly offer "Return
+        // to Game" / "Abandon Run" from the Vestibule.
+        label: 'Settings',
+        onClick: () => this.leave(() => this.scene.start('Settings', { returnTo: 'Menu' }))
+      }
+    ];
+
+    // Folded, the buttons fill their own column and take their pitch from their
+    // own measured heights; stacked, they keep the viewport-proportional pitch
+    // the taller composition is built around.
+    const btnGap = Math.min(84, H * 0.12);
+    const startY = H * 0.48;
+    const buttons = compact
+      ? stackBannerButtons(this, columns.right, columns, actions)
+      : actions.map((action, i) =>
+          bannerButton(this, cx, startY + btnGap * i, action.label, action.onClick)
+        );
+
     if (!itemsUnlocked) {
+      const itemsBtn = buttons[2];
       itemsBtn.setAlpha(0.55);
       // A padlock pinned to the left of the button, vertically centered, so it
       // doesn't shove the centered label off-center.
       const img = itemsBtn.getAt(0) as Phaser.GameObjects.Image;
       const lock = this.add
-        .text(-img.width / 2 + 24, 0, '🔒', { fontFamily: SERIF, fontSize: '24px', color: CSS.ink })
+        .text(-img.displayWidth / 2 + 24, 0, '\u{1F512}', {
+          fontFamily: SERIF,
+          fontSize: '24px',
+          color: CSS.ink
+        })
         .setOrigin(0, 0.5);
       itemsBtn.add(lock);
     }
 
-    // Pass returnTo explicitly: Phaser keeps a scene's previous start-data when
-    // none is supplied, so without this Settings would inherit a stale
-    // `{ returnTo: 'Game' }` from a mid-run visit and wrongly offer "Return to
-    // Game" / "Abandon Run" from the Vestibule.
-    bannerButton(this, cx, startY + btnGap * 3, 'Settings', () =>
-      this.leave(() => this.scene.start('Settings', { returnTo: 'Menu' }))
-    );
-
+    // Folded, the tagline closes off the masthead column rather than running
+    // the full width under both of them — and wraps rather than shrinking,
+    // since a column has the height for a second line and not the width for
+    // one long one.
     const tagline = this.add
-      .text(cx, H - Math.min(28, H * 0.05), 'Roll ones. Appease the Order. Survive the thresholds.', {
-        fontFamily: SERIF,
-        fontSize: '16px',
-        color: CSS.dim,
-        fontStyle: 'italic'
-      })
-      .setOrigin(0.5);
+      .text(
+        mast.cx,
+        compact ? columns.bottom - 4 : H - Math.min(28, H * 0.05),
+        'Roll ones. Appease the Order. Survive the thresholds.',
+        {
+          fontFamily: SERIF,
+          fontSize: '16px',
+          color: CSS.dim,
+          fontStyle: 'italic',
+          align: 'center',
+          ...(compact ? { wordWrap: { width: textMaxW } } : {})
+        }
+      )
+      .setOrigin(0.5, compact ? 1 : 0.5);
     fitTextWidth(tagline, textMaxW);
 
     // A light the pointer carries across the table. Created last so it lies

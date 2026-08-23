@@ -11,10 +11,22 @@ import {
   Settings,
 } from "../systems/SaveData";
 import { finalizeRun } from "../systems/RunEnd";
-import { addFelt, bannerButton, showBanner, toggleRow } from "../ui/widgets";
+import {
+  addFelt,
+  bannerButton,
+  BannerAction,
+  showBanner,
+  stackBannerButtons,
+  toggleRow,
+} from "../ui/widgets";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildSceneHeader } from "../ui/sceneHeader";
-import { onResizeCoalesced } from "../ui/layout";
+import {
+  compactColumns,
+  destroyAllChildren,
+  isCompactLandscape,
+  onResizeCoalesced,
+} from "../ui/layout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 
 interface SettingsData {
@@ -93,7 +105,7 @@ export class SettingsScene extends Phaser.Scene {
 
     const off = onResizeCoalesced(this, () => {
       this.teardown();
-      this.children.removeAll(true);
+      destroyAllChildren(this);
       this.build();
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -132,27 +144,40 @@ export class SettingsScene extends Phaser.Scene {
     ambient.setArea(W, H);
     ambient.setProgress(SETTINGS_AMBIENCE, false);
 
+    // A short landscape viewport can show about two of the six rows under a
+    // full-width masthead. Folded, the masthead and the run/back actions take
+    // one column and the form gets the other — the whole of it, at full
+    // height, so it barely needs to scroll at all.
+    const compact = isCompactLandscape(W, H);
+    const columns = compactColumns(this, { leftFraction: 0.38 });
+
     const header = buildSceneHeader(this, {
       title: "Settings",
-      y: Math.max(52, Math.min(H * 0.14, 104)),
-      width: Math.min(W, 720),
+      y: compact ? columns.top + 26 : Math.max(52, Math.min(H * 0.14, 104)),
+      width: compact ? columns.left.width : Math.min(W, 720),
+      ...(compact ? { x: columns.left.cx } : {}),
     });
     this.slideBackdrop = [felt, ambient, header.glow];
 
     // The form's own column, and the band it scrolls within. The viewport is
     // wider than the form so the scrollbar has somewhere to sit that isn't on
     // top of a switch.
-    const formW = Math.min(W - 64, 520);
-    const viewportTop = header.bottom + 22;
-    const viewportW = Math.min(W - 28, formW + 44);
-    const viewportX = cx - viewportW / 2;
-    const viewportH = Math.max(140, H - 20 - viewportTop);
-    const btnMaxW = Math.min(formW, 300);
+    const formCx = compact ? columns.right.cx : cx;
+    const formW = compact ? columns.right.width - 22 : Math.min(W - 64, 520);
+    const viewportTop = compact ? columns.top : header.bottom + 22;
+    const viewportW = compact
+      ? columns.right.width
+      : Math.min(W - 28, formW + 44);
+    const viewportX = formCx - viewportW / 2;
+    const viewportH = compact
+      ? columns.height
+      : Math.max(140, H - 20 - viewportTop);
+    const btnMaxW = compact ? columns.left.width : Math.min(formW, 300);
 
     // ---- lay the rows out at absolute world coords in a content container ---
     const content = this.add.container(0, 0);
-    const x0 = cx - formW / 2;
-    const x1 = cx + formW / 2;
+    const x0 = formCx - formW / 2;
+    const x1 = formCx + formW / 2;
     let y = viewportTop + 6;
 
     // A hairline between rows in place of the parchment panel that used to
@@ -202,7 +227,7 @@ export class SettingsScene extends Phaser.Scene {
     ) => {
       const row = toggleRow(
         this,
-        cx,
+        formCx,
         y + TOGGLE_ROW_H / 2,
         formW,
         label,
@@ -244,43 +269,85 @@ export class SettingsScene extends Phaser.Scene {
       );
     }
 
-    y += ACTIONS_GAP;
+    const rowsBottom = y;
+    const backLabel =
+      this.returnTo === "Menu" ? "Return to the Vestibule" : "Return";
+    const abandon: BannerAction = {
+      label: "Abandon Run",
+      onClick: () => {
+        finalizeRun(getRun(this.registry));
+        if (this.overlay) this.scene.stop(this.returnTo);
+        this.scene.start("GameOver");
+      },
+    };
 
-    if (this.returnTo !== "Menu") {
+    if (compact) {
+      // Both actions live under the masthead, in the other column and outside
+      // `content` — a screen this short would otherwise scroll them off, and
+      // "Return" is the one control that must never be out of reach.
+      const bandTop = header.bottom + 18;
+      const band = { top: bandTop, height: columns.bottom - bandTop };
+      if (this.returnTo !== "Menu") {
+        stackBannerButtons(this, columns.left, band, [
+          abandon,
+          { label: backLabel, onClick: () => this.close() },
+        ]);
+      } else {
+        // The reset button carries its own confirm state, so it can't go
+        // through the plain-label stack; place the pair by hand instead.
+        const back = bannerButton(
+          this,
+          columns.left.cx,
+          0,
+          backLabel,
+          () => this.close(),
+          btnMaxW,
+        );
+        const reset = this.buildResetButton(columns.left.cx, 0, btnMaxW);
+        const gap = Phaser.Math.Clamp(
+          (band.height - reset.height - back.height) / 1,
+          6,
+          22,
+        );
+        const stackTop =
+          band.top +
+          Math.max(0, (band.height - reset.height - back.height - gap) / 2);
+        reset.setY(stackTop + reset.height / 2);
+        back.setY(stackTop + reset.height + gap + back.height / 2);
+      }
+    } else {
+      y += ACTIONS_GAP;
+
+      if (this.returnTo !== "Menu") {
+        content.add(
+          bannerButton(
+            this,
+            cx,
+            y + BUTTON_STEP / 2,
+            abandon.label,
+            abandon.onClick,
+            btnMaxW,
+          ),
+        );
+      } else {
+        content.add(this.buildResetButton(cx, y + BUTTON_STEP / 2, btnMaxW));
+      }
+      y += BUTTON_STEP;
+
       content.add(
         bannerButton(
           this,
           cx,
           y + BUTTON_STEP / 2,
-          "Abandon Run",
-          () => {
-            finalizeRun(getRun(this.registry));
-            if (this.overlay) this.scene.stop(this.returnTo);
-            this.scene.start("GameOver");
-          },
+          backLabel,
+          () => this.close(),
           btnMaxW,
         ),
       );
-    } else {
-      content.add(this.buildResetButton(cx, y + BUTTON_STEP / 2, btnMaxW));
+      y += BUTTON_STEP;
     }
-    y += BUTTON_STEP;
 
-    const backLabel =
-      this.returnTo === "Menu" ? "Return to the Vestibule" : "Return";
-    content.add(
-      bannerButton(
-        this,
-        cx,
-        y + BUTTON_STEP / 2,
-        backLabel,
-        () => this.close(),
-        btnMaxW,
-      ),
-    );
-    y += BUTTON_STEP;
-
-    const contentH = y - viewportTop;
+    const contentH = (compact ? rowsBottom : y) - viewportTop;
     if (contentH > viewportH - HINT_H) {
       this.enableScroll(
         content,
@@ -290,7 +357,7 @@ export class SettingsScene extends Phaser.Scene {
         viewportW,
         viewportH - HINT_H,
         contentH,
-        cx,
+        formCx,
       );
     } else {
       // Nothing to scroll: centre the form in the band it was given rather than

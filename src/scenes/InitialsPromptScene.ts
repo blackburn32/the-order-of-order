@@ -1,8 +1,15 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { addPanel, bannerButton } from "../ui/widgets";
+import { addFelt, BannerAction, stackBannerButtons } from "../ui/widgets";
 import { formatScore } from "../ui/formatScore";
-import { responsive } from "../ui/layout";
+import {
+  compactColumns,
+  COMPACT_LANDSCAPE_MAX_H,
+  isCompactLandscape,
+  responsive,
+} from "../ui/layout";
+import { AmbientLayer } from "../ui/AmbientLayer";
+import { buildSceneHeader } from "../ui/sceneHeader";
 import {
   getInitials,
   normalizeInitials,
@@ -42,6 +49,8 @@ export class InitialsPromptScene extends Phaser.Scene {
   private returnTo = "Menu";
   private slots: string[] = ["A", "A", "A"];
   private sel = 0;
+  private slotTexts: Phaser.GameObjects.Text[] = [];
+  private slotRules: Phaser.GameObjects.Rectangle[] = [];
 
   constructor() {
     super("InitialsPrompt");
@@ -77,57 +86,109 @@ export class InitialsPromptScene extends Phaser.Scene {
     });
   }
 
-  private redraw(): void {
-    this.children.removeAll(true);
-    this.build();
-  }
-
   private build(): void {
     const W = this.scale.width;
     const H = this.scale.height;
     const cx = W / 2;
     const cy = H / 2;
 
-    // Dim, interactive backdrop that swallows taps meant for the base scene.
-    this.add
-      .rectangle(cx, cy, W, H, COLORS.feltDark, 0.72)
+    // Give the prompt a complete room of its own. It is launched over the end
+    // screen, but an opaque felt layer keeps the two interfaces from tangling,
+    // and also swallows taps that would otherwise reach the scene underneath.
+    addFelt(this)
       .setInteractive()
       .on("pointerdown", () => {});
+    const ambient = new AmbientLayer(this, { ring: true });
+    ambient.setPosition(cx, cy);
+    ambient.setArea(W, H);
+    ambient.setProgress(0.72, false);
 
-    const panelW = Math.min(W - 40, 560);
-    const panelH = Math.min(H - 40, 460);
-    const panelTop = cy - panelH / 2;
-    addPanel(this, cx, cy, panelW, panelH);
+    this.slotTexts = [];
+    this.slotRules = [];
 
-    this.add
-      .text(cx, panelTop + panelH * 0.12, "NEW HIGH SCORE", {
-        fontFamily: SERIF,
-        fontSize: `${Math.round(Phaser.Math.Clamp(panelW * 0.075, 22, 40))}px`,
-        color: CSS.goldLight,
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
+    const actions: BannerAction[] = [
+      { label: "Confirm", onClick: () => this.confirm() },
+      { label: "Skip", onClick: () => this.close() },
+    ];
 
-    this.add
-      .text(
-        cx,
-        panelTop + panelH * 0.24,
-        `Score ${formatScore(this.score)} — enter your initials`,
-        {
-          fontFamily: SERIF,
-          fontSize: `${Math.round(Phaser.Math.Clamp(panelW * 0.035, 14, 20))}px`,
-          color: CSS.ink,
-          fontStyle: "italic",
-        },
-      )
-      .setOrigin(0.5);
+    // The shared threshold rules out columns below 500px because the denser
+    // game screens need more width. This prompt has only three letters and two
+    // short actions, so it can keep folding on even narrower landscape views.
+    const compact =
+      isCompactLandscape(W, H) || (W > H && H < COMPACT_LANDSCAPE_MAX_H);
+    if (compact) {
+      this.buildCompact(actions);
+    } else {
+      this.buildStacked(actions);
+    }
+  }
 
-    // Three letter slots with tap arrows above/below each.
-    const slotGap = Math.min(panelW * 0.22, 130);
-    const slotY = cy - panelH * 0.02;
-    const letterSize = Math.round(Phaser.Math.Clamp(panelW * 0.12, 40, 68));
-    const arrowSize = Math.round(letterSize * 0.6);
-    const arrowDy = letterSize * 0.9;
+  /** The normal portrait/roomy layout: masthead, initials, then the actions. */
+  private buildStacked(actions: BannerAction[]): void {
+    const W = this.scale.width;
+    const H = this.scale.height;
+    const cx = W / 2;
+
+    const header = buildSceneHeader(this, {
+      title: "New High Score",
+      subtitle: `Score ${formatScore(this.score)} — enter your initials`,
+      y: Math.max(46, Math.min(H * 0.13, 88)),
+      width: Math.min(W, 720),
+    });
+
+    // Two full-size banners are 140px tall together; reserve enough room for
+    // their gap and the 16px outer margin instead of letting the lower one hug
+    // or cross the viewport edge.
+    const actionTop = Math.max(header.bottom + 150, H - 168);
+    const slotTop = header.bottom + 8;
+    const slotBottom = Math.max(slotTop + 120, actionTop - 8);
+    const slotY = (slotTop + slotBottom) / 2;
+    const letterSize = Math.round(Phaser.Math.Clamp(W * 0.12, 38, 68));
+    this.buildSlots(cx, Math.min(W - 32, 470), slotY, letterSize);
+
+    stackBannerButtons(
+      this,
+      { cx, width: Math.min(W - 32, 340) },
+      {
+        top: actionTop,
+        height: Math.max(0, H - 16 - actionTop),
+      },
+      actions,
+    );
+  }
+
+  /** A handset in landscape has width but almost no height. Put the initials
+   *  and score in one column and the two decisions in the other. */
+  private buildCompact(actions: BannerAction[]): void {
+    const columns = compactColumns(this, { leftFraction: 0.56 });
+    const { left, right } = columns;
+
+    const header = buildSceneHeader(this, {
+      title: "New High Score",
+      subtitle: `Score ${formatScore(this.score)} — enter your initials`,
+      x: left.cx,
+      y: columns.top + 30,
+      width: left.width,
+    });
+
+    const slotTop = header.bottom + 5;
+    const slotY = slotTop + Math.max(54, (columns.bottom - slotTop) * 0.52);
+    const letterSize = Math.round(Phaser.Math.Clamp(left.width * 0.14, 34, 50));
+    this.buildSlots(left.cx, left.width, slotY, letterSize);
+    stackBannerButtons(this, right, columns, actions);
+  }
+
+  /** Three letter slots with generous touch targets and tap arrows above and
+   *  below. The visible controls sit directly on the sigil-backed felt. */
+  private buildSlots(
+    cx: number,
+    width: number,
+    slotY: number,
+    letterSize: number,
+  ): void {
+    const slotGap = Math.min(width * 0.3, 130);
+    const arrowSize = Math.round(letterSize * 0.56);
+    const arrowDy = Math.max(42, letterSize * 0.92);
 
     this.slots.forEach((letter, i) => {
       const x = cx + (i - 1) * slotGap;
@@ -140,39 +201,37 @@ export class InitialsPromptScene extends Phaser.Scene {
         this.cycle(i, -1),
       );
 
-      // Selected slot gets an underline + gold letter; tap a slot to select it.
+      // Keep the tap target comfortably larger than a narrow letter glyph.
+      this.add
+        .rectangle(x, slotY, Math.max(44, letterSize), letterSize * 1.2, 0, 0)
+        .setInteractive({ useHandCursor: true })
+        .on("pointerdown", () => {
+          this.sel = i;
+          this.refreshSlots();
+        });
+
       const t = this.add
         .text(x, slotY, letter, {
           fontFamily: SERIF,
           fontSize: `${letterSize}px`,
-          color: selected ? CSS.goldLight : CSS.ink,
+          color: selected ? CSS.goldLight : CSS.parchment,
           fontStyle: "bold",
         })
-        .setOrigin(0.5)
-        .setInteractive({ useHandCursor: true })
-        .on("pointerdown", () => {
-          this.sel = i;
-          this.redraw();
-        });
+        .setOrigin(0.5);
 
-      this.add
+      const rule = this.add
         .rectangle(
           x,
           slotY + letterSize * 0.62,
           letterSize * 0.8,
           3,
-          selected ? COLORS.goldLight : COLORS.inkSoft,
+          selected ? COLORS.goldLight : COLORS.parchmentDark,
+          selected ? 1 : 0.58,
         )
         .setOrigin(0.5);
-      void t;
+      this.slotTexts.push(t);
+      this.slotRules.push(rule);
     });
-
-    // Stack the buttons vertically: the banner texture is ~340px wide, so two
-    // side by side always overlap on the panel. A column keeps them clear.
-    const btnGap = Math.min(84, panelH * 0.17);
-    const btnY = panelTop + panelH * 0.72;
-    bannerButton(this, cx, btnY, "Confirm", () => this.confirm());
-    bannerButton(this, cx, btnY + btnGap, "Skip", () => this.close());
   }
 
   private makeArrow(
@@ -182,21 +241,40 @@ export class InitialsPromptScene extends Phaser.Scene {
     size: number,
     onTap: () => void,
   ): void {
-    this.add
+    const text = this.add
       .text(x, y, glyph, {
         fontFamily: SERIF,
         fontSize: `${size}px`,
-        color: CSS.inkSoft,
+        color: CSS.parchmentDark,
       })
-      .setOrigin(0.5)
+      .setOrigin(0.5);
+    this.add
+      .rectangle(
+        x,
+        y,
+        Math.max(44, size * 1.5),
+        Math.max(40, size * 1.25),
+        0,
+        0,
+      )
       .setInteractive({ useHandCursor: true })
-      .on("pointerover", function (this: Phaser.GameObjects.Text) {
-        this.setColor(CSS.gold);
-      })
-      .on("pointerout", function (this: Phaser.GameObjects.Text) {
-        this.setColor(CSS.inkSoft);
-      })
+      .on("pointerover", () => text.setColor(CSS.goldLight))
+      .on("pointerout", () => text.setColor(CSS.parchmentDark))
       .on("pointerdown", onTap);
+  }
+
+  /** Update the three mutable glyphs in place. Rebuilding the entire scene for
+   *  each keypress would restart and randomly replace the animated sigil. */
+  private refreshSlots(): void {
+    this.slotTexts.forEach((text, i) => {
+      const selected = i === this.sel;
+      text.setText(this.slots[i]);
+      text.setColor(selected ? CSS.goldLight : CSS.parchment);
+      this.slotRules[i]?.setFillStyle(
+        selected ? COLORS.goldLight : COLORS.parchmentDark,
+        selected ? 1 : 0.58,
+      );
+    });
   }
 
   /** Advance a slot's letter by dir (+1/-1), wrapping A–Z. */
@@ -204,7 +282,7 @@ export class InitialsPromptScene extends Phaser.Scene {
     const code = this.slots[i].charCodeAt(0) - 65;
     const next = (((code + dir) % 26) + 26) % 26;
     this.slots[i] = String.fromCharCode(65 + next);
-    this.redraw();
+    this.refreshSlots();
   }
 
   private onKey(ev: KeyboardEvent): void {
@@ -212,13 +290,13 @@ export class InitialsPromptScene extends Phaser.Scene {
     if (/^[a-zA-Z]$/.test(key)) {
       this.slots[this.sel] = key.toUpperCase();
       this.sel = Math.min(this.sel + 1, 2);
-      this.redraw();
+      this.refreshSlots();
     } else if (key === "ArrowLeft") {
       this.sel = Math.max(0, this.sel - 1);
-      this.redraw();
+      this.refreshSlots();
     } else if (key === "ArrowRight") {
       this.sel = Math.min(2, this.sel + 1);
-      this.redraw();
+      this.refreshSlots();
     } else if (key === "ArrowUp") {
       this.cycle(this.sel, +1);
     } else if (key === "ArrowDown") {
@@ -226,7 +304,7 @@ export class InitialsPromptScene extends Phaser.Scene {
     } else if (key === "Backspace") {
       this.slots[this.sel] = "A";
       this.sel = Math.max(0, this.sel - 1);
-      this.redraw();
+      this.refreshSlots();
     } else if (key === "Enter") {
       this.confirm();
     } else if (key === "Escape") {

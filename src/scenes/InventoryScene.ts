@@ -9,7 +9,7 @@ import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildItemCard } from "../ui/itemCard";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import { formatScore } from "../ui/formatScore";
-import { onResizeCoalesced } from "../ui/layout";
+import { destroyAllChildren, onResizeCoalesced } from "../ui/layout";
 import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
 
 export interface InventoryData {
@@ -173,7 +173,7 @@ export class InventoryScene extends Phaser.Scene {
     // scene. Killing the tweens drops that callback with them.
     this.tweens.killAll();
     this.teardownScroll();
-    this.children.removeAll(true);
+    destroyAllChildren(this);
     this.contentObjects = [];
     this.tabItems = [];
     this.tabUnderline = undefined;

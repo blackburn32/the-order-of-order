@@ -6,11 +6,23 @@ import { toNumberPointMap } from "../systems/ItemPoints";
 import { beginRun } from "../systems/Tutorial";
 import { continueEndless } from "../sim/engine";
 import { formatScore } from "../ui/formatScore";
-import { addFelt, bannerButton } from "../ui/widgets";
-import { responsive } from "../ui/layout";
+import { addFelt, bannerButton, BannerAction } from "../ui/widgets";
+import {
+  destroyAllChildren,
+  isCompactLandscape,
+  responsive,
+} from "../ui/layout";
+import { buildCompactEndScreen } from "../ui/endScreen";
 import { takePendingSubmission } from "../systems/GlobalScores";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { finalizeRun } from "../systems/RunEnd";
+import { AmbientLayer } from "../ui/AmbientLayer";
+
+/** Fixed sigil brightness for the backdrop. The other rooms sit at fixed mid
+ *  values because they have no trial to report; this screen does, and the
+ *  answer is that the Order's work is finished — so it gets the top of the
+ *  range, the brightest and fastest sigil the layer draws. */
+const VICTORY_AMBIENCE = 1;
 
 interface VictoryData {
   runEnded?: boolean;
@@ -43,7 +55,68 @@ export class VictoryScene extends Phaser.Scene {
     const H = this.scale.height;
     const cx = W / 2;
 
-    this.slideBackdrop = [addFelt(this)];
+    const felt = addFelt(this);
+    const ambient = new AmbientLayer(this, { ring: true });
+    ambient.setPosition(cx, H / 2);
+    ambient.setArea(W, H);
+    ambient.setProgress(VICTORY_AMBIENCE, false);
+    this.slideBackdrop = [felt, ambient];
+
+    const rankLine = `You attained rank ${WIN_RANK}`;
+    const scoreLine = `Total score: ${formatScore(state.totalScore)}`;
+    const gridLine = `Your grid: ${state.dice.summary()}`;
+
+    const hasPoints =
+      Object.keys(state.dicePoints).length > 0 ||
+      Object.keys(state.itemPoints).length > 0;
+    const actions: BannerAction[] = [];
+    if (hasPoints) {
+      actions.push({
+        label: "View Run Analysis",
+        onClick: () => this.openAnalysis(),
+      });
+    }
+    if (!this.runEnded) {
+      actions.push(
+        { label: "End Run & Submit Score", onClick: () => this.endRun() },
+        { label: "Press On \u2014 Endless", onClick: () => this.continueRun() },
+      );
+    } else {
+      actions.push(
+        // No intro here (main-menu only); beginRun still re-arms the tutorial
+        // if the player hasn't completed it yet, or clears it otherwise.
+        {
+          label: "Begin a New Run",
+          onClick: () => this.leave(() => beginRun(this)),
+        },
+        {
+          label: "Return to the Vestibule",
+          onClick: () => this.leave(() => this.scene.start("Menu")),
+        },
+      );
+    }
+
+    // Six lines of type over three buttons need height this viewport doesn't
+    // have: the verdict takes one column and the ways on the other.
+    if (isCompactLandscape(W, H)) {
+      buildCompactEndScreen(this, {
+        title: "The Order Is Complete",
+        titleColor: CSS.goldLight,
+        lines: [
+          {
+            text: "You have brought order to the dice.",
+            size: 15,
+            color: CSS.dim,
+            italic: true,
+          },
+          { text: rankLine, size: 24, color: CSS.parchment, gapBefore: 14 },
+          { text: scoreLine, size: 19, color: CSS.goldLight },
+          { text: gridLine, size: 15, color: CSS.dim, gapBefore: 10 },
+        ],
+        actions,
+      });
+      return;
+    }
 
     const top = H * 0.2;
     const step = Math.min(H * 0.09, 60);
@@ -68,7 +141,7 @@ export class VictoryScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.add
-      .text(cx, top + step * 2.3, `You attained rank ${WIN_RANK}`, {
+      .text(cx, top + step * 2.3, rankLine, {
         fontFamily: SERIF,
         fontSize: "32px",
         color: CSS.parchment,
@@ -76,20 +149,15 @@ export class VictoryScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     this.add
-      .text(
-        cx,
-        top + step * 3.2,
-        `Total score: ${formatScore(state.totalScore)}`,
-        {
-          fontFamily: SERIF,
-          fontSize: "24px",
-          color: CSS.goldLight,
-        },
-      )
+      .text(cx, top + step * 3.2, scoreLine, {
+        fontFamily: SERIF,
+        fontSize: "24px",
+        color: CSS.goldLight,
+      })
       .setOrigin(0.5);
 
     this.add
-      .text(cx, top + step * 4.1, `Your grid: ${state.dice.summary()}`, {
+      .text(cx, top + step * 4.1, gridLine, {
         fontFamily: SERIF,
         fontSize: "18px",
         color: CSS.dim,
@@ -99,33 +167,10 @@ export class VictoryScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     const gap = Math.min(82, H * 0.12);
-    const hasPoints =
-      Object.keys(state.dicePoints).length > 0 ||
-      Object.keys(state.itemPoints).length > 0;
-    const rows = hasPoints ? 3 : 2;
-    let btnY = Math.min(H - gap * rows - 20, top + step * 5.0) + gap;
-    if (hasPoints) {
-      bannerButton(this, cx, btnY, "View Run Analysis", () =>
-        this.openAnalysis(),
-      );
+    let btnY = Math.min(H - gap * actions.length - 20, top + step * 5.0) + gap;
+    for (const action of actions) {
+      bannerButton(this, cx, btnY, action.label, action.onClick);
       btnY += gap;
-    }
-    if (!this.runEnded) {
-      bannerButton(this, cx, btnY, "End Run & Submit Score", () =>
-        this.endRun(),
-      );
-      bannerButton(this, cx, btnY + gap, "Press On — Endless", () =>
-        this.continueRun(),
-      );
-    } else {
-      // No intro here (main-menu only); beginRun still re-arms the tutorial if
-      // the player hasn't completed it yet, or clears it otherwise.
-      bannerButton(this, cx, btnY, "Begin a New Run", () =>
-        this.leave(() => beginRun(this)),
-      );
-      bannerButton(this, cx, btnY + gap, "Return to the Vestibule", () =>
-        this.leave(() => this.scene.start("Menu")),
-      );
     }
   }
 
@@ -135,7 +180,7 @@ export class VictoryScene extends Phaser.Scene {
     if (this.runEnded || this.leaving) return;
     this.runEnded = true;
     finalizeRun(getRun(this.registry), true);
-    this.children.removeAll(true);
+    destroyAllChildren(this);
     this.build();
     this.offerPendingSubmission();
   }

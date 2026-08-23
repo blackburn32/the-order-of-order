@@ -34,7 +34,11 @@ import { AmbientLayer } from "../ui/AmbientLayer";
 import { addFelt, bannerButton } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
 import { computeGridPositions, GridArea } from "../ui/gridLayout";
-import { onResizeCoalesced } from "../ui/layout";
+import {
+  destroyAllChildren,
+  isCompactLandscape,
+  onResizeCoalesced,
+} from "../ui/layout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
@@ -44,6 +48,11 @@ const CARD_H = 340;
 const CARD_GAP = 26;
 const MIN_READABLE_CARD_SCALE = 0.5;
 const DRAG_THRESHOLD = 8; // px of pointer movement before a press counts as a scroll, not a tap
+// Focus pose deltas for the compact fan. Kept small so hovering a card does
+// not push the fan down into the booster packs below it; the separation comes
+// mostly from the horizontal duck and the focused card's scale.
+const FOCUS_LIFT = 8; // px the focused card rises
+const FOCUS_SCALE = 1.05;
 
 type PointerHandler = (
   pointer: Phaser.Input.Pointer,
@@ -102,6 +111,7 @@ export class ShopScene extends Phaser.Scene {
   // render past the panel's border.
   private track?: Phaser.GameObjects.Container;
   private carouselCamera?: Phaser.Cameras.Scene2D.Camera;
+  private calloutCamera?: Phaser.Cameras.Scene2D.Camera;
   private carouselCards: CarouselCardEntry[] = [];
   private carouselLayout?: CarouselLayout;
   private offerCards = new Map<ShopOffer, Phaser.GameObjects.Container>();
@@ -164,8 +174,9 @@ export class ShopScene extends Phaser.Scene {
     this.openingPack = undefined;
     this.state.boonNextShop = false;
     // The scene instance is reused across restarts, but Phaser destroys all
-    // non-main cameras on shutdown — this field would otherwise dangle.
+    // non-main cameras on shutdown — these fields would otherwise dangle.
     this.carouselCamera = undefined;
+    this.calloutCamera = undefined;
 
     this.build();
     slideSceneIn(this, this.slideBackdrop);
@@ -173,7 +184,7 @@ export class ShopScene extends Phaser.Scene {
     const off = onResizeCoalesced(this, () => {
       this.pickGroup = undefined; // drop the shrink-picker sub-screen; back to the offer cards
       this.teardownCarouselInput();
-      this.children.removeAll(true);
+      destroyAllChildren(this);
       this.build();
       if (this.packChoices && this.openingPack) this.showBoosterChoices(false);
     });
@@ -238,14 +249,60 @@ export class ShopScene extends Phaser.Scene {
     if (!t.active || t.stage !== TutorialStage.Shop || !this.cardBand) return;
     const bands = [this.cardBand];
     if (this.packBand) bands.push(this.packBand);
+    this.ensureCalloutCamera();
     this.tutorialCallout = showCallout(this, {
       anchor: bands,
       text: TUTORIAL_TEXT[TutorialStage.Shop],
       onContinue: () => this.endShopTutorial(),
       interactiveAnchor: true,
     });
-    // The carousel camera renders only `track`; keep the callout off it.
+    // Exactly one camera may draw the callout: a second pass would lay another
+    // dim over the first and darken the whole screen.
+    this.cameras.main.ignore(this.tutorialCallout.objects);
     this.carouselCamera?.ignore(this.tutorialCallout.objects);
+  }
+
+  /** A camera that draws the tutorial callout and nothing else, above every
+   *  other pass. The carousel has its own camera, added after the main one, so
+   *  the cards paint over anything the main camera drew however deep it was —
+   *  including the callout. A camera created *after* the carousel's, ignoring
+   *  everything already on the display list, gets the callout (built right
+   *  after this returns) to itself and lands on top of both.
+   *
+   *  The flip side of that snapshot is that anything added to the scene later
+   *  would also be drawn by this camera, so the callout has to be torn down —
+   *  via endShopTutorial or rebuildShop — before any new sub-screen opens. */
+  private ensureCalloutCamera(): Phaser.Cameras.Scene2D.Camera {
+    this.removeCalloutCamera();
+    const cam = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+    cam.setBackgroundColor();
+    this.ignoreDeep(cam, this.children.list);
+    this.calloutCamera = cam;
+    return cam;
+  }
+
+  /** `Camera.ignore` recurses *into* a container and filters its children,
+   *  leaving the container itself unfiltered. That renders correctly, but
+   *  input hit-testing runs against the container — `setInteractive` was
+   *  called on the offer card, not on the parchment inside it — so an
+   *  unfiltered card would still be tested against this camera, which has
+   *  neither the carousel camera's viewport nor its scroll and so reports
+   *  hits nowhere near where the card is drawn. Filter the containers too. */
+  private ignoreDeep(
+    cam: Phaser.Cameras.Scene2D.Camera,
+    objects: readonly Phaser.GameObjects.GameObject[],
+  ): void {
+    for (const obj of objects) {
+      obj.cameraFilter |= cam.id;
+      const children = (obj as Phaser.GameObjects.Container).list;
+      if (Array.isArray(children)) this.ignoreDeep(cam, children);
+    }
+  }
+
+  private removeCalloutCamera(): void {
+    if (!this.calloutCamera) return;
+    this.cameras.remove(this.calloutCamera, true);
+    this.calloutCamera = undefined;
   }
 
   private teardownCarouselInput(): void {
@@ -290,6 +347,15 @@ export class ShopScene extends Phaser.Scene {
     const panelBottom = H / 2 + panelH / 2;
 
     const items: Phaser.GameObjects.GameObject[] = [];
+    const narrow = panelW < 650;
+
+    if (isCompactLandscape(W, H)) {
+      items.push(
+        ...this.buildCompactLandscape(W, H, panelW, panelTop, panelBottom),
+      );
+      this.finishCardGroup(items);
+      return;
+    }
 
     const titleSize = Math.round(
       Phaser.Math.Clamp(Math.min(panelW * 0.066, panelH * 0.06), 20, 40),
@@ -377,7 +443,6 @@ export class ShopScene extends Phaser.Scene {
     cursorY += section.height + 12;
 
     const availW = panelW * (1072 / 1100) - 28;
-    const narrow = panelW < 650;
     const secondH = narrow
       ? Phaser.Math.Clamp(panelH * 0.36, 190, 270)
       : Phaser.Math.Clamp(panelH * 0.28, 145, 215);
@@ -395,10 +460,16 @@ export class ShopScene extends Phaser.Scene {
       availH,
     );
 
-    const grid = this.buildCardGrid(W, areaTop, availW, availH, narrow);
+    const grid = this.buildCardGrid(W / 2, areaTop, availW, availH, narrow);
     items.push(...grid.decor);
     items.push(...this.buildSecondRow(W, secondTop, availW, secondH, narrow));
 
+    this.finishCardGroup(items);
+  }
+
+  /** Wrap a finished shop layout in `cardGroup`, dealing it in on the build
+   *  that opens the visit (resizes and sub-screens rebuild in place). */
+  private finishCardGroup(items: Phaser.GameObjects.GameObject[]): void {
     this.cardGroup = this.add.container(0, 0, items);
     if (fx.motion && !this.dealt) {
       this.cardGroup.setAlpha(0).setY(18);
@@ -410,6 +481,151 @@ export class ShopScene extends Phaser.Scene {
         ease: "Cubic.easeOut",
       });
     }
+  }
+
+  /** Two-column shop for short landscape viewports: a single header line
+   *  across the top, the offer cards taking the full remaining height on the
+   *  left, and the boosters plus the run controls stacked in a sidebar on the
+   *  right. Nothing here runs on viewports tall enough for the stacked
+   *  layout. */
+  private buildCompactLandscape(
+    W: number,
+    H: number,
+    panelW: number,
+    panelTop: number,
+    panelBottom: number,
+  ): Phaser.GameObjects.GameObject[] {
+    const items: Phaser.GameObjects.GameObject[] = [];
+    const panelH = panelBottom - panelTop;
+    const left = W / 2 - panelW / 2;
+    const right = W / 2 + panelW / 2;
+
+    // Title and the gold/Codex meta share one line, pushed to opposite edges,
+    // instead of the three centred header rows the stacked layout uses.
+    const titleSize = Math.round(
+      Phaser.Math.Clamp(Math.min(panelW * 0.048, panelH * 0.092), 19, 30),
+    );
+    const metaSize = Math.round(Phaser.Math.Clamp(titleSize * 0.6, 12, 17));
+    const headerTop = panelTop + Math.max(6, panelH * 0.02);
+    const title = this.add
+      .text(left, headerTop, "The Shop of the Order", {
+        fontFamily: SERIF,
+        fontSize: `${titleSize}px`,
+        color: CSS.gold,
+        fontStyle: "bold",
+        stroke: "#0d0a12",
+        strokeThickness: Math.max(3, Math.round(titleSize * 0.09)),
+      })
+      .setOrigin(0, 0)
+      .setShadow(0, 3, "#000000", 8, true, true);
+    const metaY = headerTop + title.height / 2;
+    const codexLink = this.add
+      .text(right, metaY, "Codex", {
+        fontFamily: SERIF,
+        fontSize: `${metaSize}px`,
+        color: CSS.gold,
+        fontStyle: "bold",
+      })
+      .setOrigin(1, 0.5)
+      .setInteractive({ useHandCursor: true });
+    codexLink.on("pointerover", () => codexLink.setColor(CSS.goldLight));
+    codexLink.on("pointerout", () => codexLink.setColor(CSS.gold));
+    codexLink.on("pointerdown", () => {
+      audio.click();
+      this.scene.launch("Items", { returnTo: "Shop" });
+    });
+    const metaGap = Phaser.Math.Clamp(panelW * 0.022, 14, 26);
+    const gold = this.add
+      .text(
+        codexLink.x - codexLink.width - metaGap,
+        metaY,
+        `${this.state.gold} gold`,
+        {
+          fontFamily: SERIF,
+          fontSize: `${metaSize}px`,
+          color: CSS.goldLight,
+          fontStyle: "bold",
+        },
+      )
+      .setOrigin(1, 0.5);
+    const rule = this.add.graphics();
+    const ruleY = Math.round(headerTop + title.height + 6);
+    rule.lineStyle(1, COLORS.gold, 0.32);
+    rule.lineBetween(left, ruleY, right, ruleY);
+    items.push(title, gold, codexLink, rule);
+
+    const colGap = Phaser.Math.Clamp(panelW * 0.026, 14, 28);
+    const sidebarW = Phaser.Math.Clamp(panelW * 0.29, 186, 250);
+    const cardsW = panelW - sidebarW - colGap;
+    const contentTop = ruleY + 10;
+    const contentBottom = panelBottom - 6;
+    const cardsH = Math.max(0, contentBottom - contentTop);
+
+    // Screen rect of the card column, for the tutorial callout's open "hole".
+    this.cardBand = new Phaser.Geom.Rectangle(left, contentTop, cardsW, cardsH);
+    const grid = this.buildCardGrid(
+      left + cardsW / 2,
+      contentTop,
+      cardsW,
+      cardsH,
+      false,
+      "horizontal",
+    );
+    items.push(...grid.decor);
+
+    // Inventory/Settings are pinned to the bottom-right corner, which is where
+    // the sidebar's last button would otherwise land.
+    const sidebarBottom = Math.min(contentBottom, H - 56);
+    items.push(
+      ...this.buildCompactSidebar(
+        right - sidebarW / 2,
+        contentTop,
+        sidebarW,
+        Math.max(0, sidebarBottom - contentTop),
+      ),
+    );
+    return items;
+  }
+
+  /** Boosters and run controls stacked in the compact-landscape sidebar. The
+   *  packs turn into wide banners rather than card-shaped tiles: two upright
+   *  packs sharing a column this narrow would be too small to read. */
+  private buildCompactSidebar(
+    cx: number,
+    top: number,
+    w: number,
+    h: number,
+  ): Phaser.GameObjects.GameObject[] {
+    const objects: Phaser.GameObjects.GameObject[] = [];
+    const count = this.packs.length;
+    const gap = Phaser.Math.Clamp(h * 0.03, 6, 14);
+    const free = Math.max(0, h - gap * (count + 1));
+    const buttonH = Phaser.Math.Clamp(free * 0.2, 32, 54);
+    const controlsH = buttonH * 2 + gap;
+    const packH =
+      count > 0 ? Math.min((free - buttonH * 2) / count, w * 0.52) : 0;
+    const totalH = packH * count + controlsH + gap * count;
+    let y = top + Math.max(0, (h - totalH) / 2);
+
+    const packTop = y;
+    for (const pack of this.packs) {
+      objects.push(this.buildPackTile(pack, cx, y + packH / 2, w, packH, true));
+      y += packH + gap;
+    }
+    // A visit with no packs on offer leaves no band to light, and must clear
+    // the one the previous build left behind.
+    this.packBand =
+      count > 0
+        ? new Phaser.Geom.Rectangle(
+            cx - w / 2,
+            packTop,
+            w,
+            packH * count + gap * (count - 1),
+          )
+        : undefined;
+
+    objects.push(this.buildControlTile(cx, y + controlsH / 2, w, controlsH));
+    return objects;
   }
 
   private buildSecondRow(
@@ -494,18 +710,50 @@ export class ShopScene extends Phaser.Scene {
     y: number,
     w: number,
     h: number,
+    banner = false,
   ): Phaser.GameObjects.Container {
     const price = boosterPrice(this.state, pack);
     const affordable = this.state.gold >= price && !pack.sold;
     const bg = this.add
       .rectangle(0, 0, w, h, pack.color, pack.sold ? 0.22 : 0.94)
       .setStrokeStyle(3, pack.sold ? COLORS.inkSoft : COLORS.gold, 0.9);
-    const ribs = this.buildPackRibs(w, h);
+    const ribs = this.buildPackRibs(w, h, banner);
     const flourish = this.add
       .image(0, 0, "sigil")
       .setDisplaySize(Math.min(w, h) * 0.75, Math.min(w, h) * 0.75)
       .setTint(COLORS.goldLight)
       .setAlpha(0.13);
+    const content = banner
+      ? this.buildPackBannerText(pack, price, affordable, w, h)
+      : this.buildPackCardText(pack, price, affordable, w, h);
+    const tile = this.add.container(x, y, [bg, ...ribs, flourish, ...content]);
+    tile.setSize(w, h);
+    if (affordable) {
+      tile.setInteractive({ useHandCursor: true });
+      tile.on("pointerover", () => tile.setScale(1.025));
+      tile.on("pointerout", () => tile.setScale(1));
+      tile.on("pointerdown", () => {
+        const center = tile.getWorldTransformMatrix().transformPoint(0, 0);
+        this.openPack(pack, {
+          x: center.x,
+          y: center.y,
+          width: w,
+          height: h,
+          source: tile,
+        });
+      });
+    } else if (!pack.sold) tile.setAlpha(0.58);
+    return tile;
+  }
+
+  /** Upright wrapper: name, promise and price centred down the pack face. */
+  private buildPackCardText(
+    pack: BoosterOffer,
+    price: number,
+    affordable: boolean,
+    w: number,
+    h: number,
+  ): Phaser.GameObjects.GameObject[] {
     const name = this.add
       .text(0, -h * 0.22, pack.sold ? "OPENED" : pack.name, {
         fontFamily: SERIF,
@@ -533,60 +781,121 @@ export class ShopScene extends Phaser.Scene {
         fontStyle: "bold",
       })
       .setOrigin(0.5);
-    const tile = this.add.container(x, y, [
-      bg,
-      ...ribs,
-      flourish,
-      name,
-      desc,
-      cost,
-    ]);
-    tile.setSize(w, h);
-    if (affordable) {
-      tile.setInteractive({ useHandCursor: true });
-      tile.on("pointerover", () => tile.setScale(1.025));
-      tile.on("pointerout", () => tile.setScale(1));
-      tile.on("pointerdown", () => {
-        const center = tile.getWorldTransformMatrix().transformPoint(0, 0);
-        this.openPack(pack, {
-          x: center.x,
-          y: center.y,
-          width: w,
-          height: h,
-          source: tile,
-        });
-      });
-    } else if (!pack.sold) tile.setAlpha(0.58);
-    return tile;
+    return [name, desc, cost];
+  }
+
+  /** Landscape wrapper for the compact sidebar: name over promise on the left,
+   *  price held against the right crimp. Laid out from measured text heights
+   *  rather than fractions of `h`, because a banner only has room for two
+   *  lines and a wrapped promise would collide with the name. */
+  private buildPackBannerText(
+    pack: BoosterOffer,
+    price: number,
+    affordable: boolean,
+    w: number,
+    h: number,
+  ): Phaser.GameObjects.GameObject[] {
+    const padX = Phaser.Math.Clamp(w * 0.07, 10, 22) + w * 0.06;
+    const textLeft = -w / 2 + padX;
+    const cost = this.add
+      .text(w / 2 - padX, 0, pack.sold ? "SOLD" : `${price} gold`, {
+        fontFamily: SERIF,
+        fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.09, h * 0.26), 11, 16)}px`,
+        color: affordable ? CSS.goldLight : CSS.red,
+        fontStyle: "bold",
+      })
+      .setOrigin(1, 0.5);
+    let nameSize = Phaser.Math.Clamp(Math.min(w * 0.105, h * 0.32), 12, 19);
+    let descSize = Phaser.Math.Clamp(Math.min(w * 0.058, h * 0.19), 9, 12);
+    const name = this.add
+      .text(textLeft, 0, pack.sold ? "OPENED" : pack.name, {
+        fontFamily: SERIF,
+        fontSize: `${nameSize}px`,
+        color: CSS.ivory,
+        fontStyle: "bold",
+        wordWrap: { width: w - padX * 2 },
+      })
+      .setOrigin(0, 0.5);
+    const desc = this.add
+      .text(textLeft, 0, pack.sold ? "One card claimed" : pack.desc, {
+        fontFamily: SERIF,
+        fontSize: `${descSize}px`,
+        color: CSS.parchment,
+        wordWrap: { width: Math.max(40, w - padX * 2 - cost.width - 10) },
+      })
+      .setOrigin(0, 0.5);
+    const lineGap = 4;
+
+    // A sidebar this short (a handset in landscape) leaves a banner barely
+    // taller than one wrapped name, and the overflow would spill across the
+    // pack below. Step the type down until the block fits: each step also
+    // pulls a wrapped line back up, so one or two are usually enough.
+    const maxBlock = h - 8;
+    for (
+      let step = 0;
+      step < 5 && name.height + lineGap + desc.height > maxBlock;
+      step++
+    ) {
+      nameSize = Math.max(10, nameSize * 0.86);
+      descSize = Math.max(8, descSize * 0.9);
+      name.setFontSize(nameSize);
+      desc.setFontSize(descSize);
+    }
+    // Nothing legible fits both lines — the name and price alone still tell
+    // the player what the pack is and what it costs.
+    if (name.height + lineGap + desc.height > maxBlock) {
+      desc.destroy();
+      name.setY(0);
+      cost.setY(0);
+      return [name, cost];
+    }
+
+    const top = -(name.height + lineGap + desc.height) / 2;
+    name.setY(top + name.height / 2);
+    desc.setY(top + name.height + lineGap + desc.height / 2);
+    cost.setY(desc.y);
+    return [name, desc, cost];
   }
 
   /** Crimped foil at both ends gives a booster its sealed-pack silhouette.
    * The ribs are separate from the coloured wrapper so every pack category
    * shares the same manufacturing detail. */
-  private buildPackRibs(w: number, h: number): Phaser.GameObjects.GameObject[] {
-    const bandH = Phaser.Math.Clamp(h * 0.12, 10, 22);
-    const topY = -h / 2 + bandH / 2;
-    const bottomY = h / 2 - bandH / 2;
-    const topBand = this.add.rectangle(0, topY, w, bandH, COLORS.feltDark, 0.3);
-    const bottomBand = this.add.rectangle(
-      0,
-      bottomY,
-      w,
-      bandH,
-      COLORS.feltDark,
-      0.3,
-    );
+  private buildPackRibs(
+    w: number,
+    h: number,
+    banner = false,
+  ): Phaser.GameObjects.GameObject[] {
+    // The crimp always runs across the pack's short axis, so a banner is
+    // sealed at its left and right ends rather than top and bottom.
+    const across = banner ? w : h;
+    const along = banner ? h : w;
+    const bandT = Phaser.Math.Clamp(across * 0.12, 10, 22);
+    const offset = across / 2 - bandT / 2;
+    const band = (sign: number) =>
+      banner
+        ? this.add.rectangle(sign * offset, 0, bandT, h, COLORS.feltDark, 0.3)
+        : this.add.rectangle(0, sign * offset, w, bandT, COLORS.feltDark, 0.3);
     const grooves = this.add.graphics();
     grooves.lineStyle(1, COLORS.goldLight, 0.38);
-    const spacing = Phaser.Math.Clamp(w / 34, 6, 11);
-    for (let ribX = -w / 2 + spacing; ribX < w / 2; ribX += spacing) {
-      grooves.lineBetween(ribX, -h / 2 + 2, ribX, -h / 2 + bandH - 2);
-      grooves.lineBetween(ribX, h / 2 - bandH + 2, ribX, h / 2 - 2);
+    const spacing = Phaser.Math.Clamp(along / 34, 6, 11);
+    for (let at = -along / 2 + spacing; at < along / 2; at += spacing) {
+      if (banner) {
+        grooves.lineBetween(-w / 2 + 2, at, -w / 2 + bandT - 2, at);
+        grooves.lineBetween(w / 2 - bandT + 2, at, w / 2 - 2, at);
+      } else {
+        grooves.lineBetween(at, -h / 2 + 2, at, -h / 2 + bandT - 2);
+        grooves.lineBetween(at, h / 2 - bandT + 2, at, h / 2 - 2);
+      }
     }
     grooves.lineStyle(1.5, COLORS.gold, 0.6);
-    grooves.lineBetween(-w / 2, -h / 2 + bandH, w / 2, -h / 2 + bandH);
-    grooves.lineBetween(-w / 2, h / 2 - bandH, w / 2, h / 2 - bandH);
-    return [topBand, bottomBand, grooves];
+    if (banner) {
+      grooves.lineBetween(-w / 2 + bandT, -h / 2, -w / 2 + bandT, h / 2);
+      grooves.lineBetween(w / 2 - bandT, -h / 2, w / 2 - bandT, h / 2);
+    } else {
+      grooves.lineBetween(-w / 2, -h / 2 + bandT, w / 2, -h / 2 + bandT);
+      grooves.lineBetween(-w / 2, h / 2 - bandT, w / 2, h / 2 - bandT);
+    }
+    return [band(-1), band(1), grooves];
   }
 
   private buildOpeningPack(
@@ -672,15 +981,18 @@ export class ShopScene extends Phaser.Scene {
 
   /**
    * Lay the offer cards out in the available area. Narrow screens always use a
-   * single horizontal carousel. Wider screens use the largest fitting grid;
-   * only unusually short wide layouts fall back to vertical scrolling.
+   * single horizontal carousel. Wider screens use the largest fitting grid,
+   * and fall back to scrolling when even that would be unreadable: down the
+   * page by default, or sideways through the fan carousel when `overflow` is
+   * "horizontal" — a short, wide card column has room to scroll one way only.
    */
   private buildCardGrid(
-    W: number,
+    centerX: number,
     areaTop: number,
     availW: number,
     availH: number,
     narrow: boolean,
+    overflow: "vertical" | "horizontal" = "vertical",
   ): { decor: Phaser.GameObjects.GameObject[] } {
     const n = this.offers.length;
     if (n === 0) {
@@ -693,7 +1005,7 @@ export class ShopScene extends Phaser.Scene {
         decor: [
           this.add
             .text(
-              W / 2,
+              centerX,
               areaTop + availH / 2,
               "The loose offerings are exhausted.",
               {
@@ -710,7 +1022,7 @@ export class ShopScene extends Phaser.Scene {
 
     if (narrow) {
       return {
-        decor: this.buildHorizontalCarousel(W, areaTop, availW, availH),
+        decor: this.buildHorizontalCarousel(centerX, areaTop, availW, availH),
       };
     }
 
@@ -726,6 +1038,12 @@ export class ShopScene extends Phaser.Scene {
     );
     let scale = scaleFor(cols);
     const needsScroll = scale < MIN_READABLE_CARD_SCALE;
+
+    if (needsScroll && overflow === "horizontal") {
+      return {
+        decor: this.buildHorizontalCarousel(centerX, areaTop, availW, availH),
+      };
+    }
 
     if (needsScroll) {
       // Use as many columns as fit at a readable width, ignoring height because
@@ -746,7 +1064,7 @@ export class ShopScene extends Phaser.Scene {
     const ch = CARD_H * scale;
     const gap = CARD_GAP * scale;
     const gridH = rows * ch + (rows - 1) * gap;
-    const cx = W / 2;
+    const cx = centerX;
 
     // Card centre for index `idx`, with content-top at y=0 and the last,
     // possibly-partial row centered.
@@ -764,7 +1082,7 @@ export class ShopScene extends Phaser.Scene {
     if (needsScroll) {
       return {
         decor: this.buildScrollingGrid(
-          W,
+          centerX,
           areaTop,
           availW,
           availH,
@@ -796,14 +1114,14 @@ export class ShopScene extends Phaser.Scene {
    * up to three visible positions, then overflow horizontally through the
    * clipped card camera. */
   private buildHorizontalCarousel(
-    W: number,
+    centerX: number,
     areaTop: number,
     availW: number,
     availH: number,
   ): Phaser.GameObjects.GameObject[] {
     const paddingX = Phaser.Math.Clamp(availW * 0.045, 12, 24);
     const paddingY = 8;
-    const viewportX = W / 2 - availW / 2;
+    const viewportX = centerX - availW / 2;
     const viewportW = availW;
     const contentX = viewportX + paddingX;
     const contentW = viewportW - paddingX * 2;
@@ -842,9 +1160,14 @@ export class ShopScene extends Phaser.Scene {
       );
       const arcY = Math.abs(distanceFromCenter) * arcStep;
       const depth = this.offers.length - Math.abs(distanceFromCenter);
+      // The resting pose, recorded up front: on the shop's first build
+      // `buildCard` hands back a card already displaced by its deal-in
+      // animation, so `card.y` is not where the card comes to rest.
+      const restX = cw / 2 + idx * step;
+      const restY = centerY + arcY;
       const card = this.buildCard(
-        cw / 2 + idx * step,
-        centerY + arcY,
+        restX,
+        restY,
         offer,
         scale,
         idx,
@@ -857,8 +1180,8 @@ export class ShopScene extends Phaser.Scene {
       this.carouselCards.push({
         offer,
         card,
-        baseX: card.x,
-        baseY: card.y,
+        baseX: restX,
+        baseY: restY,
         baseRotation: angle,
         baseDepth: depth,
         baseAlpha: 1,
@@ -882,7 +1205,7 @@ export class ShopScene extends Phaser.Scene {
     if (overflow > 0) {
       const barY = viewportTop + viewportH - 3;
       const barTrack = this.add.rectangle(
-        W / 2,
+        centerX,
         barY,
         contentW,
         5,
@@ -926,23 +1249,24 @@ export class ShopScene extends Phaser.Scene {
       p.y <= viewportTop + viewportH;
 
     let dragging = false;
+    let pressedBuy = false;
     let startPointerX = 0;
     let startPan = 0;
 
     const onDown: PointerHandler = (p, currentlyOver = []) => {
+      pressedBuy = this.overCarouselBuy(p);
       const selectedEntry =
         this.selectedCarouselIndex === undefined
           ? undefined
           : this.carouselCards[this.selectedCarouselIndex];
       const clickedSelection =
         !!selectedEntry &&
-        (currentlyOver.includes(selectedEntry.card) ||
-          (!!this.carouselBuyPlate &&
-            currentlyOver.includes(this.carouselBuyPlate)));
+        (pressedBuy || currentlyOver.includes(selectedEntry.card));
       if (selectedEntry && !clickedSelection) {
         this.deselectCarouselCard(true);
       }
-      if (!inBounds(p)) return;
+      // A press on the buy button is a press, never the start of a swipe.
+      if (pressedBuy || !inBounds(p)) return;
       dragging = true;
       this.carouselDragging = true;
       startPointerX = p.x;
@@ -963,9 +1287,11 @@ export class ShopScene extends Phaser.Scene {
       pan = startPan - dx;
       apply();
     };
-    const onUp: PointerHandler = () => {
+    const onUp: PointerHandler = (p) => {
       dragging = false;
       this.carouselDragging = false;
+      if (pressedBuy && this.overCarouselBuy(p)) this.confirmCarouselPurchase();
+      pressedBuy = false;
     };
     const onWheel: WheelHandler = (p, _over, dx, dy) => {
       if (!inBounds(p)) return;
@@ -1023,11 +1349,37 @@ export class ShopScene extends Phaser.Scene {
       }
     });
     plate.on("pointerout", () => plate.setFillStyle(COLORS.feltLight, 0.98));
-    plate.on("pointerup", () => this.confirmCarouselPurchase());
+    // The press itself is handled by the carousel's own pointer handlers, not
+    // by this plate — see overCarouselBuy. The plate stays interactive for the
+    // hand cursor and the hover fill.
     this.carouselBuyButton = button;
     this.carouselBuyLabel = label;
     this.carouselBuyPlate = plate;
     return button;
+  }
+
+  /** Screen-space hit test for the fan's buy button, run from the carousel's
+   *  own pointer handlers instead of through Phaser's input system. The button
+   *  hangs just below the focused card, which on a short viewport puts it
+   *  inside the carousel camera's viewport — and that camera sits above the
+   *  main one, so a press there resolves against whichever fanned card happens
+   *  to lie under the button (the outer cards are rotated, so a corner often
+   *  does) and never reaches the plate. The press then read as a click outside
+   *  the selection and dismissed it. */
+  private overCarouselBuy(p: Phaser.Input.Pointer): boolean {
+    const button = this.carouselBuyButton;
+    if (
+      !button ||
+      !button.visible ||
+      this.selectedCarouselIndex === undefined ||
+      this.purchaseAnimating
+    ) {
+      return false;
+    }
+    return (
+      Math.abs(p.x - button.x) <= button.width / 2 &&
+      Math.abs(p.y - button.y) <= button.height / 2
+    );
   }
 
   private carouselBuyButtonPosition(index: number): { x: number; y: number } {
@@ -1038,9 +1390,12 @@ export class ShopScene extends Phaser.Scene {
       ? this.carouselCamera.scrollX - layout.viewportX
       : 0;
     const cardH = layout.cardW * (CARD_H / CARD_W);
+    // Hang the button off the focused card's actual pose: it rises by
+    // FOCUS_LIFT and grows by FOCUS_SCALE, so its bottom edge sits here.
+    const focusedBottom = entry.baseY - FOCUS_LIFT + (cardH * FOCUS_SCALE) / 2;
     return {
       x: layout.trackX + entry.baseX - pan,
-      y: entry.baseY - 12 + cardH * 0.53 + 18,
+      y: focusedBottom + 12,
     };
   }
 
@@ -1142,7 +1497,7 @@ export class ShopScene extends Phaser.Scene {
     }
     this.focusedCarouselIndex = index;
     const duckX = Phaser.Math.Clamp(this.carouselLayout.cardW * 0.3, 30, 55);
-    const duckY = Phaser.Math.Clamp(this.carouselLayout.cardW * 0.1, 10, 20);
+    const duckY = Phaser.Math.Clamp(this.carouselLayout.cardW * 0.03, 3, 6);
 
     this.carouselCards.forEach((entry, cardIndex) => {
       const distance = cardIndex - index;
@@ -1155,13 +1510,17 @@ export class ShopScene extends Phaser.Scene {
         x: entry.baseX + direction * (magnitude === 1 ? duckX : duckX * 0.4),
         y:
           entry.baseY +
-          (distance === 0 ? -12 : magnitude === 1 ? duckY : duckY * 0.45),
+          (distance === 0
+            ? -FOCUS_LIFT
+            : magnitude === 1
+              ? duckY
+              : duckY * 0.45),
         rotation:
           distance === 0
             ? 0
             : entry.baseRotation + Phaser.Math.DegToRad(direction * 3),
-        scaleX: distance === 0 ? 1.06 : 1,
-        scaleY: distance === 0 ? 1.06 : 1,
+        scaleX: distance === 0 ? FOCUS_SCALE : 1,
+        scaleY: distance === 0 ? FOCUS_SCALE : 1,
         alpha: entry.baseAlpha,
         duration: 150,
         ease: "Cubic.easeOut",
@@ -1301,7 +1660,7 @@ export class ShopScene extends Phaser.Scene {
   /** A vertically scrollable grid of offer cards (drag/swipe, mouse wheel, and a
    *  scrollbar), used only when the cards can't shrink enough to fit the area. */
   private buildScrollingGrid(
-    W: number,
+    centerX: number,
     areaTop: number,
     availW: number,
     availH: number,
@@ -1309,7 +1668,7 @@ export class ShopScene extends Phaser.Scene {
     gridH: number,
     posFor: (idx: number) => { x: number; y: number },
   ): Phaser.GameObjects.GameObject[] {
-    const viewportX = W / 2 - availW / 2;
+    const viewportX = centerX - availW / 2;
     const overflow = Math.max(0, gridH - availH);
 
     // Cards live in a track container placed at the top of the card area; the
@@ -1590,6 +1949,10 @@ export class ShopScene extends Phaser.Scene {
       audio.deny();
       return;
     }
+    // Buying a pack is spending gold, which is all the shop step asks for.
+    // It also has to clear the callout before the pack overlay is built —
+    // see ensureCalloutCamera.
+    this.endShopTutorial();
     const choices = openBooster(
       this.state,
       pack,
@@ -1779,6 +2142,7 @@ export class ShopScene extends Phaser.Scene {
     advanceTutorial(this.registry);
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
+    this.removeCalloutCamera();
   }
 
   private choose(offer: ShopOffer): void {
@@ -2094,11 +2458,12 @@ export class ShopScene extends Phaser.Scene {
   private rebuildShop(): void {
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
+    this.removeCalloutCamera();
     this.pickGroup = undefined;
     this.packGroup = undefined;
     this.track = undefined;
     this.teardownCarouselInput();
-    this.children.removeAll(true);
+    destroyAllChildren(this);
     this.build();
   }
 

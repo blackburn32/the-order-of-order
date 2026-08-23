@@ -150,6 +150,25 @@ export function tutorialForcesRoll(
 }
 
 /**
+ * Whether this roll must come up empty. The Lesser Trial's goal is a single
+ * point, so a scoring first roll would clear the trial the moment the tutorial
+ * has finished pointing at the seal — skipping the viewport, goal, rolls and
+ * rank steps entirely. The run's opening roll is therefore re-rolled until
+ * nothing on it scores, so the lesson always runs in its written order.
+ *
+ * Only the very first roll of the run is held back; from the second onwards the
+ * dice are honest again (and `tutorialForcesRoll` guarantees the trial still
+ * ends in a clear).
+ */
+export function tutorialBlocksScore(
+  registry: Phaser.Data.DataManager,
+  state: RunState,
+): boolean {
+  if (!getTutorial(registry).active) return false;
+  return state.trial === 1 && state.roll === 0;
+}
+
+/**
  * Shared entry point for starting a run from the menu / intro: seeds a fresh
  * RunState, arms the tutorial if enabled, and enters the Game scene. Keeps the
  * intro and no-intro paths identical.

@@ -25,11 +25,16 @@ import { showCallout, CalloutHandle } from "../ui/Callout";
 import {
   advanceTutorial,
   getTutorial,
+  tutorialBlocksScore,
   tutorialForcesRoll,
   TutorialStage,
   TUTORIAL_TEXT,
 } from "../systems/Tutorial";
-import { isPortrait, onResizeCoalesced } from "../ui/layout";
+import {
+  isCompactLandscape,
+  isPortrait,
+  onResizeCoalesced,
+} from "../ui/layout";
 import { GridArea } from "../ui/gridLayout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
@@ -119,7 +124,9 @@ interface Layout {
   hud: Record<HudStatKey, HudCell>;
   footer: { numbersY: number; settingsY: number };
   grid: GridArea;
-  button: { x: number; y: number };
+  /** Seal centre, plus the scale the seal art is drawn at — the compact
+   *  landscape rail is narrower than the 170px texture. */
+  button: { x: number; y: number; scale: number };
 }
 
 export class GameScene extends Phaser.Scene {
@@ -183,6 +190,11 @@ export class GameScene extends Phaser.Scene {
   // is optional-chained rather than guarded again at the call site.
   private ambient?: AmbientLayer;
   private sealImage!: Phaser.GameObjects.Image;
+  // Base scale of the seal art for the current layout. Every press/hover/idle
+  // scale is a multiple of this, so the compact-landscape rail's smaller seal
+  // still animates by the same proportions. buildChrome runs before the new
+  // layout is committed to `this.layout`, so it lives in its own field.
+  private sealScale = 1;
   private sealHalo?: Phaser.GameObjects.Image;
   private sealBreathe?: Phaser.Tweens.Tween;
   // The live tutorial callout, if any — re-anchored to fresh HUD objects on
@@ -327,15 +339,17 @@ export class GameScene extends Phaser.Scene {
         anchor = plaqueRect("score");
         onContinue = advance;
         break;
-      case TutorialStage.Roll:
+      case TutorialStage.Roll: {
+        const r = SEAL_RADIUS * this.layout.button.scale;
         anchor = new Phaser.Geom.Rectangle(
-          this.layout.button.x - SEAL_RADIUS,
-          this.layout.button.y - SEAL_RADIUS,
-          SEAL_RADIUS * 2,
-          SEAL_RADIUS * 2,
+          this.layout.button.x - r,
+          this.layout.button.y - r,
+          r * 2,
+          r * 2,
         );
         interactiveAnchor = true; // the roll press itself advances the tutorial
         break;
+      }
       case TutorialStage.Viewport:
         anchor = new Phaser.Geom.Rectangle(
           this.layout.grid.x,
@@ -393,8 +407,10 @@ export class GameScene extends Phaser.Scene {
     const H = this.scale.height;
     const margin = 16;
     const portrait = isPortrait(this);
+    // Too short to stack the grid above the seal: the two sit side by side
+    // instead, seal on the right. See the compact branch below.
+    const compact = isCompactLandscape(W, H);
     const footerH = portrait ? 64 : 40;
-    const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14 };
 
     // One compact strip at every width. The score gets the broadest plaque,
     // then the goal; the ladder position needs the least room. Capping
@@ -403,7 +419,9 @@ export class GameScene extends Phaser.Scene {
     const hudMargin = Phaser.Math.Clamp(W * 0.015, 4, 12);
     const hudWidth = Math.min(600, W - hudMargin * 2);
     const gapX = Phaser.Math.Clamp(W * 0.012, 4, 10);
-    const cellH = Phaser.Math.Clamp(W * 0.19, 66, 76);
+    // Height is only ever the binding constraint on a short landscape
+    // viewport; everywhere else this is the same W-driven strip as before.
+    const cellH = Phaser.Math.Clamp(Math.min(W * 0.19, H * 0.2), 54, 76);
     const cellsWidth = hudWidth - gapX * (HUD_STATS.length - 1);
     const totalWeight = HUD_STATS.reduce((sum, stat) => sum + stat.weight, 0);
     const hudY = hudMargin + cellH / 2;
@@ -417,18 +435,51 @@ export class GameScene extends Phaser.Scene {
     }
     const hudBottom = hudMargin + cellH;
 
-    const gridTop = hudBottom + 16;
+    // Sacred numbers stay bottom-left, Inventory/Settings bottom-right, in
+    // every orientation — portrait just reserves a taller footer so the
+    // (potentially wrapping) sacred-numbers text clears the two links.
+    const footer = {
+      numbersY: portrait ? H - 27 : H - footerH + 10,
+      settingsY: portrait ? H - 16 : H - footerH + 10,
+    };
+
+    const gridTop = hudBottom + (compact ? 10 : 16);
+
+    if (compact) {
+      // Seal in a rail down the right edge, dice filling everything left of
+      // it. Stacking them would leave the grid a band a couple of dice tall.
+      const railW = Phaser.Math.Clamp(W * 0.2, 132, 200);
+      const railLeft = W - railW;
+      const gridBottom = H - footerH - 4;
+      // The rail also has to clear the Inventory/Settings links, which sit
+      // above the footer baseline in the same corner.
+      const railBottom = H - footerH - 28;
+      const sealSize = Math.min(railW - 12, railBottom - gridTop - 12);
+      const scale = Phaser.Math.Clamp(sealSize / (SEAL_RADIUS * 2), 0.5, 1);
+
+      return {
+        hud,
+        footer,
+        grid: {
+          x: margin,
+          y: gridTop,
+          width: Math.max(80, railLeft - 12 - margin),
+          height: Math.max(60, gridBottom - gridTop),
+        },
+        button: {
+          x: railLeft + railW / 2,
+          y: (gridTop + railBottom) / 2,
+          scale,
+        },
+      };
+    }
+
+    const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14, scale: 1 };
     const gridBottom = button.y - SEAL_RADIUS - 16;
 
     return {
       hud,
-      // Sacred numbers stay bottom-left, Inventory/Settings bottom-right, in
-      // both orientations — portrait just reserves a taller footer so the
-      // (potentially wrapping) sacred-numbers text clears the two links.
-      footer: {
-        numbersY: portrait ? H - 27 : H - footerH + 10,
-        settingsY: portrait ? H - 16 : H - footerH + 10,
-      },
+      footer,
       grid: {
         x: portrait ? margin : W * 0.06,
         y: gridTop,
@@ -894,10 +945,29 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Drag-to-pan + wheel-to-zoom over the grid area. */
+  /** Drag-to-pan, wheel-to-zoom, and two-finger pinch-to-zoom over the grid. */
   private wireGridInput(): () => void {
+    // Phaser starts a single touch pointer, which can never describe a pinch.
+    // `pointersTotal` counts only touch pointers (the mouse has its own), and
+    // the list lives on the game-wide manager, surviving scene restarts — so
+    // top it up to two only while it is still short.
+    const touchPointers = this.input.manager.pointersTotal;
+    if (touchPointers < 2) this.input.addPointer(2 - touchPointers);
+
     let dragging = false;
     let start = { x: 0, y: 0, scrollX: 0, scrollY: 0 };
+    // Live touches that began inside the grid, keyed by pointer id. A second
+    // one promotes the drag into a pinch, and lifting one demotes it back.
+    const touches = new Map<number, { x: number; y: number }>();
+    // Set for the duration of a pinch: the starting finger separation and
+    // zoom, plus the grid-world point under the starting midpoint, which the
+    // gesture keeps pinned under the fingers as they move and spread.
+    let pinch: {
+      distance: number;
+      zoom: number;
+      worldX: number;
+      worldY: number;
+    } | null = null;
 
     const inBounds = (p: Phaser.Input.Pointer) => {
       const a = this.layout.grid;
@@ -909,17 +979,93 @@ export class GameScene extends Phaser.Scene {
       );
     };
 
-    const onDown = (p: Phaser.Input.Pointer) => {
-      if (!inBounds(p)) return;
+    /** The grid-world point currently drawn under a screen position. */
+    const worldAt = (x: number, y: number) => {
+      const area = this.layout.grid;
+      return {
+        x: this.viewport.scrollX + (x - area.x) / this.viewport.zoom,
+        y: this.viewport.scrollY + (y - area.y) / this.viewport.zoom,
+      };
+    };
+
+    /** Re-zoom while keeping `world` under the screen position `anchor`. */
+    const zoomAround = (
+      zoom: number,
+      anchor: { x: number; y: number },
+      world: { x: number; y: number },
+    ) => {
+      const area = this.layout.grid;
+      this.viewport.zoom = clampZoom(zoom, area);
+      // Re-enable auto-fit only when the player has returned to the current
+      // fully zoomed-out position. Any zoomed-in position is user-owned and
+      // must survive later dice additions/removals.
+      this.followsFitZoom =
+        Math.abs(this.viewport.zoom - this.lastFitZoom) < 0.0001;
+      this.viewport.scrollX =
+        world.x - (anchor.x - area.x) / this.viewport.zoom;
+      this.viewport.scrollY =
+        world.y - (anchor.y - area.y) / this.viewport.zoom;
+      this.syncGrid(this.layout);
+    };
+
+    const pinchSpan = () => {
+      const [a, b] = [...touches.values()];
+      return {
+        x: (a.x + b.x) / 2,
+        y: (a.y + b.y) / 2,
+        // A hard floor keeps the ratio finite when two fingers land on nearly
+        // the same pixel, which would otherwise divide the zoom by ~zero.
+        distance: Math.max(Math.hypot(a.x - b.x, a.y - b.y), 1),
+      };
+    };
+
+    const beginDrag = (x: number, y: number) => {
       dragging = true;
       start = {
-        x: p.x,
-        y: p.y,
+        x,
+        y,
         scrollX: this.viewport.scrollX,
         scrollY: this.viewport.scrollY,
       };
     };
+
+    const onDown = (p: Phaser.Input.Pointer) => {
+      if (!inBounds(p)) return;
+      // Extra fingers beyond the two driving the pinch are ignored rather than
+      // allowed to redefine the gesture mid-flight.
+      if (p.wasTouch && touches.size < 2) {
+        touches.set(p.id, { x: p.x, y: p.y });
+        if (touches.size === 2) {
+          const span = pinchSpan();
+          const world = worldAt(span.x, span.y);
+          dragging = false;
+          pinch = {
+            distance: span.distance,
+            zoom: this.viewport.zoom,
+            worldX: world.x,
+            worldY: world.y,
+          };
+          return;
+        }
+      }
+      beginDrag(p.x, p.y);
+    };
     const onMove = (p: Phaser.Input.Pointer) => {
+      const touch = touches.get(p.id);
+      if (touch) {
+        touch.x = p.x;
+        touch.y = p.y;
+      }
+      if (pinch && touches.size === 2) {
+        const span = pinchSpan();
+        // The midpoint doubles as the pan anchor, so a pinch that also slides
+        // across the screen drags the grid with it.
+        zoomAround((pinch.zoom * span.distance) / pinch.distance, span, {
+          x: pinch.worldX,
+          y: pinch.worldY,
+        });
+        return;
+      }
       if (!dragging) {
         this.input.setDefaultCursor(inBounds(p) ? "grab" : "default");
         return;
@@ -931,8 +1077,15 @@ export class GameScene extends Phaser.Scene {
         start.scrollY - (p.y - start.y) / this.viewport.zoom;
       this.syncGrid(this.layout);
     };
-    const onUp = () => {
+    const onUp = (p: Phaser.Input.Pointer) => {
+      touches.delete(p.id);
       dragging = false;
+      if (!pinch) return;
+      pinch = null;
+      // One finger still down: hand the gesture back to it as a fresh drag, so
+      // lifting the other finger doesn't jump the grid to a stale origin.
+      const [remaining] = [...touches.values()];
+      if (remaining) beginDrag(remaining.x, remaining.y);
     };
     const onWheel = (
       p: Phaser.Input.Pointer,
@@ -944,28 +1097,17 @@ export class GameScene extends Phaser.Scene {
       const area = this.layout.grid;
 
       // Keep the same point of the grid centered through the zoom change.
-      const oldViewW = area.width / this.viewport.zoom;
-      const oldViewH = area.height / this.viewport.zoom;
-      const centerX = this.viewport.scrollX + oldViewW / 2;
-      const centerY = this.viewport.scrollY + oldViewH / 2;
-
+      const center = {
+        x: area.x + area.width / 2,
+        y: area.y + area.height / 2,
+      };
       // Multiplicative wheel steps remain useful at the tiny zoom values needed
       // to fit grids containing hundreds of thousands of dice.
-      this.viewport.zoom = clampZoom(
+      zoomAround(
         this.viewport.zoom * Math.exp(-dy * 0.0015),
-        area,
+        center,
+        worldAt(center.x, center.y),
       );
-      // Re-enable auto-fit only when the player has returned to the current
-      // fully zoomed-out position. Any zoomed-in position is user-owned and
-      // must survive later dice additions/removals.
-      this.followsFitZoom =
-        Math.abs(this.viewport.zoom - this.lastFitZoom) < 0.0001;
-
-      const newViewW = area.width / this.viewport.zoom;
-      const newViewH = area.height / this.viewport.zoom;
-      this.viewport.scrollX = centerX - newViewW / 2;
-      this.viewport.scrollY = centerY - newViewH / 2;
-      this.syncGrid(this.layout);
     };
 
     this.input.on("pointerdown", onDown);
@@ -987,7 +1129,8 @@ export class GameScene extends Phaser.Scene {
   // ---- roll button ---------------------------------------------------------
 
   private buildRollButton(layout: Layout): Phaser.GameObjects.GameObject[] {
-    const { x, y } = layout.button;
+    const { x, y, scale } = layout.button;
+    this.sealScale = scale;
     const items: Phaser.GameObjects.GameObject[] = [];
 
     // Warm halo under the wax. The seal is the one thing the player has to
@@ -996,18 +1139,18 @@ export class GameScene extends Phaser.Scene {
     if (fx.on) {
       this.sealHalo = this.add
         .image(x, y, "spark")
-        .setDisplaySize(SEAL_RADIUS * 5, SEAL_RADIUS * 5)
+        .setDisplaySize(SEAL_RADIUS * 5 * scale, SEAL_RADIUS * 5 * scale)
         .setTint(COLORS.glow)
         .setAlpha(SEAL_HALO_IDLE)
         .setBlendMode(Phaser.BlendModes.ADD);
       items.push(this.sealHalo);
     }
 
-    this.sealImage = this.add.image(x, y, "seal");
+    this.sealImage = this.add.image(x, y, "seal").setScale(scale);
     const label = this.add
-      .text(x, y - 3, "ROLL", {
+      .text(x, y - 3 * scale, "ROLL", {
         fontFamily: SERIF,
-        fontSize: "34px",
+        fontSize: `${Math.round(34 * scale)}px`,
         color: CSS.parchment,
         fontStyle: "bold",
         letterSpacing: 3,
@@ -1021,11 +1164,11 @@ export class GameScene extends Phaser.Scene {
       // Hover owns the seal's scale for as long as it lasts, so the idle pulse
       // has to let go of it rather than fight for the same property.
       this.stopSealBreathe();
-      this.sealImage.setScale(1.06);
+      this.sealImage.setScale(this.sealScale * 1.06);
       this.setHaloAlpha(SEAL_HALO_HOVER);
     });
     this.sealImage.on("pointerout", () => {
-      this.sealImage.setScale(1);
+      this.sealImage.setScale(this.sealScale);
       this.setHaloAlpha(SEAL_HALO_IDLE);
       this.startSealBreathe();
     });
@@ -1042,11 +1185,11 @@ export class GameScene extends Phaser.Scene {
   private startSealBreathe(): void {
     if (!fx.motion) return;
     this.sealBreathe?.remove();
-    this.sealImage.setScale(1);
+    this.sealImage.setScale(this.sealScale);
     this.sealBreathe = this.tweens.add({
       targets: this.sealImage,
-      scaleX: 1.035,
-      scaleY: 1.035,
+      scaleX: this.sealScale * 1.035,
+      scaleY: this.sealScale * 1.035,
       duration: 1400,
       yoyo: true,
       repeat: -1,
@@ -1069,16 +1212,16 @@ export class GameScene extends Phaser.Scene {
 
   private onRoll(): void {
     this.stopSealBreathe();
-    this.sealImage.setScale(0.96);
+    this.sealImage.setScale(this.sealScale * 0.96);
     this.time.delayedCall(120, () => {
-      this.sealImage.setScale(1);
+      this.sealImage.setScale(this.sealScale);
       this.startSealBreathe();
     });
     const press = fx.shockwave(
       this,
       this.layout.button.x,
       this.layout.button.y,
-      SEAL_RADIUS,
+      SEAL_RADIUS * this.sealScale,
       COLORS.glow,
       460,
     );
@@ -1137,11 +1280,26 @@ export class GameScene extends Phaser.Scene {
     // A tutorial run is not allowed to end on a cold streak: once a trial has
     // only as many rolls left as it still needs points, those rolls come up 1
     // on every die (see tutorialForcesRoll).
-    this.state.dice.roll(
-      tutorialForcesRoll(this.registry, this.state) ? () => 0 : Math.random,
-      scoringNumbersFor(this.state),
-      this.state.royalSealSizes,
-    );
+    const forced = tutorialForcesRoll(this.registry, this.state);
+    const rollDice = () =>
+      this.state.dice.roll(
+        forced ? () => 0 : Math.random,
+        scoringNumbersFor(this.state),
+        this.state.royalSealSizes,
+      );
+    rollDice();
+    // ...and its opening roll is not allowed to be a hot one either: clearing
+    // the Lesser Trial immediately would skip the steps that come after the
+    // seal (see tutorialBlocksScore). Re-roll until nothing scores, bounded so
+    // a grid where every face scores can never hang the turn.
+    if (!forced && tutorialBlocksScore(this.registry, this.state)) {
+      for (
+        let attempt = 0;
+        attempt < 32 && this.state.dice.agg().scoringCount > 0;
+        attempt++
+      )
+        rollDice();
+    }
 
     // Tumble animation: flicker visible dice or one representative die per
     // summary row, then settle on the real rolled values.

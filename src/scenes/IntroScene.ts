@@ -3,7 +3,8 @@ import { COLORS, CSS, SERIF } from '../art/palette';
 import { loadSettings, saveSettings } from '../systems/SaveData';
 import { beginRun } from '../systems/Tutorial';
 import { addFelt, bannerButton, checkboxRow } from '../ui/widgets';
-import { responsive } from '../ui/layout';
+import { destroyAllChildren, responsive } from '../ui/layout';
+import { AmbientLayer } from '../ui/AmbientLayer';
 
 interface Page {
   title: string;
@@ -42,6 +43,12 @@ const PAGES: Page[] = [
   }
 ];
 
+/** Fixed sigil brightness for the backdrop. Set below the other rooms' values:
+ *  the page art already owns the middle of the screen here, so the sigil is
+ *  only ever read at the margins around it, where the menu's brightness would
+ *  compete with the art instead of framing it. */
+const INTRO_AMBIENCE = 0.35;
+
 export class IntroScene extends Phaser.Scene {
   private page = 0;
   private skip = false;
@@ -64,6 +71,15 @@ export class IntroScene extends Phaser.Scene {
     const p = PAGES[this.page];
 
     addFelt(this);
+
+    // The same living backdrop the menu and the trial screens carry, so the
+    // premise is told in the room the game is played in. Rebuilt with the rest
+    // of the display list on each page turn, which re-draws the glyph — at this
+    // brightness that reads as the room shifting between chapters.
+    const ambient = new AmbientLayer(this, { ring: true });
+    ambient.setPosition(cx, H / 2);
+    ambient.setArea(W, H);
+    ambient.setProgress(INTRO_AMBIENCE, false);
 
     this.add
       .text(cx, H * 0.09, p.title, {
@@ -133,7 +149,7 @@ export class IntroScene extends Phaser.Scene {
         // Advance in place (not scene.restart, which would reset `page`); the
         // responsive() resize handler still points at build() and reads `page`.
         this.page += 1;
-        this.children.removeAll(true);
+        destroyAllChildren(this);
         this.build();
       }
     });

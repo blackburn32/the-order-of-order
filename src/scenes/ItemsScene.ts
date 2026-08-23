@@ -7,7 +7,12 @@ import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildItemCard } from "../ui/itemCard";
-import { onResizeCoalesced } from "../ui/layout";
+import {
+  compactColumns,
+  destroyAllChildren,
+  isCompactLandscape,
+  onResizeCoalesced,
+} from "../ui/layout";
 
 export interface ItemsData {
   /** Active scene to reveal when an in-game Codex overlay closes. */
@@ -33,11 +38,23 @@ const CODEX_AMBIENCE = 0.55;
  *  skips the buffer: nothing can scroll until the entrance slide gives input
  *  back, and the top-up is running by then. */
 const CARD_BUFFER_ROWS = 1;
+/** Strip kept clear under the gallery for its "drag or scroll for more" line,
+ *  where no back button already leaves room for it. */
+const GALLERY_HINT_H = 20;
 /** Cards the background top-up builds per frame. Each is five game objects,
  *  four of them Text — a millisecond or so together, which disappears into a
  *  frame's budget while still finishing the whole Codex within a second of the
  *  entrance. */
 const TOPUP_PER_FRAME = 1;
+
+/** Touch-scroll momentum is measured in track pixels per millisecond. An
+ * exponential decay keeps a flick feeling the same at every frame rate, while
+ * the cutoff prevents an imperceptibly slow tail from running indefinitely. */
+const MOMENTUM_DECAY_PER_MS = 0.0035;
+const MOMENTUM_MIN_SPEED = 0.015;
+const MOMENTUM_MAX_SPEED = 2.5;
+const MOMENTUM_SAMPLE_BLEND = 0.35;
+const MOMENTUM_MAX_SAMPLE_AGE_MS = 80;
 
 /** Everything the gallery needs to place and build a card on demand. It is held
  *  on the scene because the cards outlive the call that laid the grid out: the
@@ -83,6 +100,7 @@ export class ItemsScene extends Phaser.Scene {
   private gridCamera?: Phaser.Cameras.Scene2D.Camera;
   private gallery?: Gallery;
   private toppingUp = false;
+  private scrollTick?: (delta: number) => void;
   // The felt, the sigil and the masthead's halo — the room the gallery is hung
   // in. Held still while the gallery itself slides on and off. Only used when
   // the Codex is a scene of its own; as an overlay it has a live scene beneath
@@ -130,7 +148,7 @@ export class ItemsScene extends Phaser.Scene {
 
     const off = onResizeCoalesced(this, () => {
       this.teardownInput();
-      this.children.removeAll(true);
+      destroyAllChildren(this);
       this.build();
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -145,6 +163,7 @@ export class ItemsScene extends Phaser.Scene {
   }
 
   private teardownInput(): void {
+    this.scrollTick = undefined;
     if (this.input$) {
       this.input.off("pointerdown", this.input$.down);
       this.input.off("pointermove", this.input$.move);
@@ -166,12 +185,20 @@ export class ItemsScene extends Phaser.Scene {
     ambient.setArea(W, H);
     ambient.setProgress(CODEX_AMBIENCE, false);
 
+    // Stacked, the masthead, the gallery and the back button share the height
+    // three ways — on a short landscape viewport that leaves the cards a band
+    // barely a quarter of a card tall. Folded, the masthead and the button take
+    // a column of their own and the gallery gets the full height beside them.
+    const compact = isCompactLandscape(W, H);
+    const columns = compactColumns(this, { leftFraction: 0.36 });
+
     const header = buildSceneHeader(this, {
       title: "The Codex of Items",
       subtitle:
         "Browse the Order's accumulated knowledge of the realm's treasures.",
-      y: Math.max(48, Math.min(H * 0.12, 92)),
-      width: Math.min(W, 760),
+      y: compact ? columns.top + 24 : Math.max(48, Math.min(H * 0.12, 92)),
+      width: compact ? columns.left.width : Math.min(W, 760),
+      ...(compact ? { x: columns.left.cx } : {}),
     });
     this.slideBackdrop = [felt, ambient, header.glow];
 
@@ -181,27 +208,49 @@ export class ItemsScene extends Phaser.Scene {
     // The back button is created before the (camera-clipped) gallery so it is
     // part of the "everything except the card track" set the grid camera
     // ignores.
-    const buttonH = 70;
-    const backY = H - 24 - buttonH / 2;
-    bannerButton(
-      this,
-      cx,
-      backY,
-      this.openedAsOverlay ? "Close Codex" : "Return to the Vestibule",
-      () => this.close(),
-      Math.min(W - 40, 340),
-    );
+    const backLabel = this.openedAsOverlay
+      ? "Close Codex"
+      : "Return to the Vestibule";
+    const back = compact
+      ? bannerButton(
+          this,
+          columns.left.cx,
+          0,
+          backLabel,
+          () => this.close(),
+          columns.left.width,
+        )
+      : bannerButton(
+          this,
+          cx,
+          H - 24 - 70 / 2,
+          backLabel,
+          () => this.close(),
+          Math.min(W - 40, 340),
+        );
+    if (compact) back.setY(columns.bottom - back.height / 2);
 
-    // The gallery fills the band between the masthead and the back button.
-    const gridTop = header.bottom + 20;
-    const gridBottom = backY - buttonH / 2 - 24;
-    const gridW = Math.min(W - 32, 1100);
-    const grid = {
-      x: cx - gridW / 2,
-      y: gridTop,
-      width: gridW,
-      height: Math.max(120, gridBottom - gridTop),
-    };
+    // The gallery fills the band between the masthead and the back button —
+    // or, folded, the whole of the column beside them, less a strip for the
+    // "drag or scroll" line the stacked layout fits above the button.
+    const grid = compact
+      ? {
+          x: columns.right.x,
+          y: columns.top,
+          width: columns.right.width,
+          height: Math.max(120, columns.height - GALLERY_HINT_H),
+        }
+      : (() => {
+          const gridTop = header.bottom + 20;
+          const gridBottom = back.y - back.height / 2 - 24;
+          const gridW = Math.min(W - 32, 1100);
+          return {
+            x: cx - gridW / 2,
+            y: gridTop,
+            width: gridW,
+            height: Math.max(120, gridBottom - gridTop),
+          };
+        })();
 
     this.buildGallery(grid, unlocked, progress.selectionCounts);
   }
@@ -295,14 +344,22 @@ export class ItemsScene extends Phaser.Scene {
       p.y <= grid.y + grid.height;
 
     let dragging = false;
+    let touchDrag = false;
     let startPointerY = 0;
     let startTrackY = 0;
+    let lastTrackY = track.y;
+    let lastMoveAt = 0;
+    let momentumY = 0;
 
     const onDown: PointerHandler = (p) => {
       if (!inBounds(p)) return;
       dragging = true;
+      touchDrag = p.wasTouch;
       startPointerY = p.y;
       startTrackY = track.y;
+      lastTrackY = track.y;
+      lastMoveAt = performance.now();
+      momentumY = 0;
     };
     const onMove: PointerHandler = (p) => {
       if (!dragging) {
@@ -311,14 +368,57 @@ export class ItemsScene extends Phaser.Scene {
       }
       const dy = p.y - startPointerY;
       track.y = Phaser.Math.Clamp(startTrackY + dy, minY, maxY);
+      const now = performance.now();
+      const elapsed = now - lastMoveAt;
+      if (touchDrag && elapsed > 0) {
+        const sample = Phaser.Math.Clamp(
+          (track.y - lastTrackY) / elapsed,
+          -MOMENTUM_MAX_SPEED,
+          MOMENTUM_MAX_SPEED,
+        );
+        momentumY = Phaser.Math.Linear(
+          momentumY,
+          sample,
+          MOMENTUM_SAMPLE_BLEND,
+        );
+      }
+      lastTrackY = track.y;
+      lastMoveAt = now;
       this.syncCards();
     };
     const onUp: PointerHandler = () => {
+      if (
+        !touchDrag ||
+        performance.now() - lastMoveAt > MOMENTUM_MAX_SAMPLE_AGE_MS
+      ) {
+        momentumY = 0;
+      }
       dragging = false;
+      touchDrag = false;
     };
     const onWheel: WheelHandler = (p, _over, _dx, dy) => {
       if (!inBounds(p)) return;
+      momentumY = 0;
       track.y = Phaser.Math.Clamp(track.y - dy, minY, maxY);
+      this.syncCards();
+    };
+
+    this.scrollTick = (delta) => {
+      if (dragging || Math.abs(momentumY) < MOMENTUM_MIN_SPEED) {
+        if (!dragging) momentumY = 0;
+        return;
+      }
+
+      // Integrate the exponential exactly so a 30 fps flick travels the same
+      // distance as a 120 fps one. Cap a single step after tab suspension so
+      // returning to the game cannot jump across the gallery.
+      const elapsed = Math.min(delta, 50);
+      const decay = Math.exp(-MOMENTUM_DECAY_PER_MS * elapsed);
+      const distance = (momentumY * (1 - decay)) / MOMENTUM_DECAY_PER_MS;
+      const nextY = Phaser.Math.Clamp(track.y + distance, minY, maxY);
+      const hitBoundary = nextY !== track.y + distance;
+      track.y = nextY;
+      momentumY = hitBoundary ? 0 : momentumY * decay;
       this.syncCards();
     };
 
@@ -387,7 +487,8 @@ export class ItemsScene extends Phaser.Scene {
 
   /** Fill in the cards the window hasn't asked for, a few per frame, so a
    *  scroll that outruns `syncCards` still finds them already built. */
-  override update(): void {
+  override update(_time: number, delta: number): void {
+    this.scrollTick?.(delta);
     const g = this.gallery;
     if (!g || !this.toppingUp || g.built.size >= g.items.length) return;
     let budget = TOPUP_PER_FRAME;

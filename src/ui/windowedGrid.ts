@@ -5,7 +5,13 @@ import { GridArea } from "./gridLayout";
 export const WINDOW_THRESHOLD = 1500;
 
 const WINDOWED_CELL = 60;
-const MAX_ZOOM = 1.5;
+// How far in the player may zoom. Deliberately well above FIT_MAX_ZOOM: a
+// handful of dice already fits the area at the fit cap, so without extra
+// headroom a small grid would open fully zoomed in with nowhere to go.
+const MAX_ZOOM = 4;
+// Cap on the *automatic* fit-to-grid zoom, so a one-die grid opens at a sane
+// die size rather than filling the whole area with a single face.
+const FIT_MAX_ZOOM = 1.5;
 // Summary cards keep render cost bounded below this zoom. This is a numerical
 // guard rather than a rendering limit: realistic grids can still fit in full.
 const MIN_ZOOM = 0.0001;
@@ -37,6 +43,12 @@ const DETAIL_THRESHOLDS = [
 // breathing room beyond the dice rather than pinning them flush against the
 // pan limits with nowhere left to go.
 const EDGE_MARGIN = WINDOWED_CELL / 2;
+// Slack added to the pannable area beyond whatever is already reachable,
+// expressed as a fraction of the visible span. Because the visible span scales
+// with 1/zoom, this is a constant *screen* fraction: the grid can always be
+// dragged this much of the viewport in any direction, even when it fits
+// entirely in view and there would otherwise be nothing to pan.
+const PAN_SLACK_FRACTION = 0.4;
 
 export interface Viewport {
   scrollX: number;
@@ -127,7 +139,7 @@ export function fitGridZoom(n: number, area: GridArea): number {
   const width = cols * WINDOWED_CELL + EDGE_MARGIN * 2;
   const height = rows * WINDOWED_CELL + EDGE_MARGIN * 2;
   return clampZoom(
-    Math.min(area.width / width, area.height / height, MAX_ZOOM),
+    Math.min(area.width / width, area.height / height, FIT_MAX_ZOOM),
     area,
   );
 }
@@ -165,8 +177,12 @@ export function computeWindowedView(
   // How much virtual space is visible through the camera at this zoom.
   const viewW = area.width / zoom;
   const viewH = area.height / zoom;
-  const virtualW = Math.max(contentW + EDGE_MARGIN * 2, viewW);
-  const virtualH = Math.max(contentH + EDGE_MARGIN * 2, viewH);
+  // The slack is added symmetrically, so the content stays centred while
+  // gaining room to be dragged off-centre in either direction.
+  const virtualW =
+    Math.max(contentW + EDGE_MARGIN * 2, viewW) + viewW * PAN_SLACK_FRACTION;
+  const virtualH =
+    Math.max(contentH + EDGE_MARGIN * 2, viewH) + viewH * PAN_SLACK_FRACTION;
   const originX = (virtualW - contentW) / 2;
   const originY = (virtualH - contentH) / 2;
 

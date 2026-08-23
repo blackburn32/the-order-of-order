@@ -22,6 +22,14 @@ export interface SceneHeaderOptions {
   y: number;
   /** Room the header has to lay itself out in; defaults to the viewport. */
   width?: number;
+  /**
+   * Horizontal centre. Defaults to the viewport's, which is also the signal
+   * that the header has the whole screen: passing an `x` puts it in *column*
+   * mode, where the halo, the type and the rule are all confined to `width` so
+   * none of them spills into the column alongside. Compact-landscape screens
+   * pass their text column's centre.
+   */
+  x?: number;
 }
 
 export interface SceneHeader {
@@ -43,16 +51,20 @@ export function buildSceneHeader(
   opts: SceneHeaderOptions,
 ): SceneHeader {
   const W = scene.scale.width;
-  const cx = W / 2;
   const width = opts.width ?? W;
+  const columnar = opts.x !== undefined;
+  const cx = opts.x ?? W / 2;
   const y = opts.y;
-  const textMaxW = W - 32;
+  const textMaxW = columnar ? width : W - 32;
+  // The halo is light falling on the table, so it may bleed a little past the
+  // type — but in a column it must not reach the neighbouring one.
+  const glowW = columnar ? width * 1.06 : Math.min(700, W * 0.78);
 
   const glow = scene.add
     .image(cx, y, "spark")
     .setTint(COLORS.glow)
     .setBlendMode(Phaser.BlendModes.ADD)
-    .setDisplaySize(Math.min(700, W * 0.78), 240)
+    .setDisplaySize(glowW, columnar ? 170 : 240)
     .setAlpha(0.18);
   if (fx.motion) {
     // setDisplaySize bakes the stretch into scaleX, so the breathe swings
@@ -115,7 +127,10 @@ export function buildSceneHeader(
     Phaser.Math.Clamp(titleSize * 0.26, 10, 16),
   );
   const ruleGap = dice.width / 2 + 12;
-  const ruleHalf = Math.min(title.width / 2 + 40, W / 2 - 24);
+  const ruleHalf = Math.min(
+    title.width / 2 + 40,
+    columnar ? width / 2 : W / 2 - 24,
+  );
   const rule = scene.add.graphics();
   rule.lineStyle(1.5, COLORS.gold, 0.58);
   rule.lineBetween(cx - ruleHalf, ruleY, cx - ruleGap, ruleY);

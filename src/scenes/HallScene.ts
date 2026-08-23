@@ -4,7 +4,7 @@ import { HallEntry, loadHall } from "../systems/SaveData";
 import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildSceneHeader } from "../ui/sceneHeader";
-import { onResizeCoalesced } from "../ui/layout";
+import { destroyAllChildren, onResizeCoalesced } from "../ui/layout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import {
   fetchTopScores,
@@ -88,7 +88,7 @@ export class HallScene extends Phaser.Scene {
       this.cameras.remove(this.gridCamera, true);
       this.gridCamera = undefined;
     }
-    this.children.removeAll(true);
+    destroyAllChildren(this);
     this.build();
   }
 
