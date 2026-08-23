@@ -1,6 +1,12 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { addFelt, BannerAction, stackBannerButtons } from "../ui/widgets";
+import { fx } from "../systems/Effects";
+import {
+  addFelt,
+  BannerAction,
+  fitTextWidth,
+  stackBannerButtons,
+} from "../ui/widgets";
 import { formatScore } from "../ui/formatScore";
 import {
   compactColumns,
@@ -10,6 +16,7 @@ import {
 } from "../ui/layout";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildSceneHeader } from "../ui/sceneHeader";
+import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import {
   getInitials,
   normalizeInitials,
@@ -51,12 +58,15 @@ export class InitialsPromptScene extends Phaser.Scene {
   private sel = 0;
   private slotTexts: Phaser.GameObjects.Text[] = [];
   private slotRules: Phaser.GameObjects.Rectangle[] = [];
+  private transitionFelt?: Phaser.GameObjects.Image;
+  private leaving = false;
 
   constructor() {
     super("InitialsPrompt");
   }
 
   init(data: InitialsPromptData): void {
+    this.leaving = false;
     this.score = data.score;
     this.dicePoints = data.dicePoints ?? {};
     this.itemPoints = data.itemPoints ?? {};
@@ -77,6 +87,7 @@ export class InitialsPromptScene extends Phaser.Scene {
     if (base) base.input.enabled = false;
 
     responsive(this, () => this.build());
+    this.playEntrance();
 
     this.input.keyboard?.on("keydown", this.onKey, this);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
@@ -95,9 +106,10 @@ export class InitialsPromptScene extends Phaser.Scene {
     // Give the prompt a complete room of its own. It is launched over the end
     // screen, but an opaque felt layer keeps the two interfaces from tangling,
     // and also swallows taps that would otherwise reach the scene underneath.
-    addFelt(this)
+    const felt = addFelt(this)
       .setInteractive()
       .on("pointerdown", () => {});
+    this.transitionFelt = felt;
     const ambient = new AmbientLayer(this, { ring: true });
     ambient.setPosition(cx, cy);
     ambient.setArea(W, H);
@@ -121,6 +133,23 @@ export class InitialsPromptScene extends Phaser.Scene {
     } else {
       this.buildStacked(actions);
     }
+  }
+
+  /** Crossfade the overlay over the completed run while its sigil and controls
+   *  take the same left-to-right entrance used by the game's full scenes. */
+  private playEntrance(): void {
+    const camera = this.cameras.main;
+    camera.setAlpha(1);
+    if (!fx.motion) return;
+
+    camera.setAlpha(0);
+    this.tweens.add({
+      targets: camera,
+      alpha: 1,
+      duration: 360,
+      ease: "Cubic.easeOut",
+    });
+    slideSceneIn(this, this.transitionFelt ? [this.transitionFelt] : []);
   }
 
   /** The normal portrait/roomy layout: masthead, initials, then the actions. */
@@ -163,19 +192,71 @@ export class InitialsPromptScene extends Phaser.Scene {
     const columns = compactColumns(this, { leftFraction: 0.56 });
     const { left, right } = columns;
 
-    const header = buildSceneHeader(this, {
-      title: "New High Score",
-      subtitle: `Score ${formatScore(this.score)} — enter your initials`,
-      x: left.cx,
-      y: columns.top + 30,
-      width: left.width,
-    });
+    // The shared masthead deliberately has generous air around its rule and
+    // subtitle. Below this height that air costs the arrow controls, so use a
+    // single compact title/score block and give the remaining band to input.
+    const short = columns.height < 240;
+    const headerBottom = short
+      ? this.buildShortCompactHeader(left.cx, left.width, columns.top)
+      : buildSceneHeader(this, {
+          title: "New High Score",
+          subtitle: `Score ${formatScore(this.score)} — enter your initials`,
+          x: left.cx,
+          y: columns.top + 30,
+          width: left.width,
+        }).bottom;
 
-    const slotTop = header.bottom + 5;
-    const slotY = slotTop + Math.max(54, (columns.bottom - slotTop) * 0.52);
-    const letterSize = Math.round(Phaser.Math.Clamp(left.width * 0.14, 34, 50));
-    this.buildSlots(left.cx, left.width, slotY, letterSize);
+    const slotTop = headerBottom + (short ? 3 : 5);
+    const slotBottom = columns.bottom;
+    const slotHeight = Math.max(0, slotBottom - slotTop);
+    const slotY = slotTop + slotHeight / 2;
+    const letterSize = Math.round(
+      Phaser.Math.Clamp(Math.min(left.width * 0.14, slotHeight * 0.3), 24, 50),
+    );
+    this.buildSlots(left.cx, left.width, slotY, letterSize, {
+      top: slotTop,
+      bottom: slotBottom,
+    });
     stackBannerButtons(this, right, columns, actions);
+  }
+
+  /** A low-profile masthead for landscape viewports with less than 240px of
+   *  usable height. Keeping the score to one line preserves room for all six
+   *  arrow controls while retaining the screen's visual hierarchy. */
+  private buildShortCompactHeader(
+    cx: number,
+    width: number,
+    top: number,
+  ): number {
+    const titleSize = 22;
+    const title = this.add
+      .text(cx, top, "New High Score", {
+        fontFamily: SERIF,
+        fontSize: `${titleSize}px`,
+        color: CSS.gold,
+        fontStyle: "bold",
+        stroke: "#0d0a12",
+        strokeThickness: Math.max(2, Math.round(titleSize * 0.08)),
+      })
+      .setOrigin(0.5, 0)
+      .setShadow(0, 3, "#000000", 8, true, true);
+    fitTextWidth(title, width);
+
+    const ruleY = title.getBounds().bottom + 2;
+    const rule = this.add.graphics();
+    rule.lineStyle(1, COLORS.gold, 0.52);
+    rule.lineBetween(cx - width / 2, ruleY, cx + width / 2, ruleY);
+
+    const score = this.add
+      .text(cx, ruleY + 3, `Score ${formatScore(this.score)}`, {
+        fontFamily: SERIF,
+        fontSize: "13px",
+        color: CSS.dim,
+        fontStyle: "italic",
+      })
+      .setOrigin(0.5, 0);
+    fitTextWidth(score, width);
+    return score.getBounds().bottom;
   }
 
   /** Three letter slots with generous touch targets and tap arrows above and
@@ -185,10 +266,20 @@ export class InitialsPromptScene extends Phaser.Scene {
     width: number,
     slotY: number,
     letterSize: number,
+    verticalBounds?: { top: number; bottom: number },
   ): void {
     const slotGap = Math.min(width * 0.3, 130);
     const arrowSize = Math.round(letterSize * 0.56);
-    const arrowDy = Math.max(42, letterSize * 0.92);
+    const preferredArrowDy = Math.max(42, letterSize * 0.92);
+    const arrowHitH = Math.max(40, arrowSize * 1.25);
+    const boundedArrowDy = verticalBounds
+      ? Math.max(
+          0,
+          Math.min(slotY - verticalBounds.top, verticalBounds.bottom - slotY) -
+            arrowHitH / 2,
+        )
+      : preferredArrowDy;
+    const arrowDy = Math.min(preferredArrowDy, boundedArrowDy);
 
     this.slots.forEach((letter, i) => {
       const x = cx + (i - 1) * slotGap;
@@ -313,6 +404,7 @@ export class InitialsPromptScene extends Phaser.Scene {
   }
 
   private confirm(): void {
+    if (this.leaving) return;
     const initials = this.slots.join("");
     setInitials(initials);
     // Fire-and-forget: don't block closing on the network round-trip.
@@ -327,6 +419,26 @@ export class InitialsPromptScene extends Phaser.Scene {
   }
 
   private close(): void {
-    this.scene.stop();
+    if (this.leaving) return;
+    this.leaving = true;
+
+    if (!fx.motion) {
+      this.scene.stop();
+      return;
+    }
+
+    const camera = this.cameras.main;
+    this.tweens.killTweensOf(camera);
+    this.tweens.add({
+      targets: camera,
+      alpha: 0,
+      duration: 360,
+      ease: "Cubic.easeIn",
+    });
+    slideSceneOut(
+      this,
+      () => this.scene.stop(),
+      this.transitionFelt ? [this.transitionFelt] : [],
+    );
   }
 }

@@ -16,6 +16,7 @@ import {
 } from "../ui/layout";
 import { RuleDice } from "../ui/RuleDice";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
+import { buildTrialCardRow, TRIAL_ORDINALS } from "../ui/trialCard";
 import { CalloutHandle, showCallout } from "../ui/Callout";
 import {
   advanceTutorial,
@@ -29,6 +30,17 @@ import { buildRunFooterLinks } from "../ui/runFooterLinks";
 
 /** The line under the rank, in both mastheads. */
 const RANK_SUBTITLE = "Three trials stand between you and ascension";
+
+/** The Boss Trial's card, relative to its two neighbours, when the route is
+ *  stacked into a column. It shows everything they do plus the rank's curse. */
+const BOSS_CARD_WEIGHT = 1.5;
+
+/** Room the stacked masthead takes below the rank, and the air left between the
+ *  route and the start button. Both are deliberately close: a small handset in
+ *  portrait divides what is left three ways, and a card there is within a dozen
+ *  pixels of the height at which it has to drop the line explaining its goal. */
+const STACKED_HEADER_HEIGHT = 88;
+const CARDS_BUTTON_GAP = 40;
 
 /** What the two masthead variants hand back: the halo — held still by the
  *  scene slide, like the felt and the sigil behind it — and the y the route
@@ -134,32 +146,61 @@ export class TrialOverviewScene extends Phaser.Scene {
     const innerW = compact ? W - COMPACT_MARGIN * 2 : panelW * 0.9;
     const cardsTop = header.contentTop;
     const cardsH =
-      (compact ? buttonY - start.height / 2 - 12 : buttonY - 54) - cardsTop;
+      (compact ? buttonY - start.height / 2 - 12 : buttonY - CARDS_BUTTON_GAP) -
+      cardsTop;
     const cardGap = portrait ? 12 : Math.min(26, innerW * 0.025);
     const cardW = portrait ? innerW : (innerW - cardGap * 2) / 3;
-    const cardH = portrait
-      ? Math.max(88, (cardsH - cardGap * 2) / 3)
-      : Math.max(72, Math.min(cardsH, 370));
+    // Side by side, the three cards share a row and so share its height. Stacked,
+    // they don't have to: the Boss Trial's card carries the rank's curse on top
+    // of the same numbers the other two show, so it takes a larger slice of the
+    // column rather than squeezing all three down to what its own content needs.
+    const portraitUnit =
+      (cardsH - cardGap * 2) / (TRIALS_PER_RANK - 1 + BOSS_CARD_WEIGHT);
+    const cardHeightFor = (boss: boolean) =>
+      portrait
+        ? Math.max(88, portraitUnit * (boss ? BOSS_CARD_WEIGHT : 1))
+        : Math.max(72, Math.min(cardsH, 370));
     const rankStart = this.state.trial - (trialInRank(this.state.trial) - 1);
 
+    const cards = [];
+    // Only meaningful while stacking, where the cards no longer share a height.
+    let stackCursor = cardsTop;
     for (let slot = 0; slot < TRIALS_PER_RANK; slot++) {
       const trial = rankStart + slot;
-      const complete = trial < this.state.trial;
-      const current = trial === this.state.trial;
       const boss = slot === TRIALS_PER_RANK - 1;
+      const cardH = cardHeightFor(boss);
       const x = portrait
         ? W / 2
         : W / 2 - innerW / 2 + cardW / 2 + slot * (cardW + cardGap);
-      const y = portrait
-        ? cardsTop + cardH / 2 + slot * (cardH + cardGap)
-        : cardsTop + cardH / 2;
-      this.buildTrialCard(x, y, cardW, cardH, trial, {
-        complete,
-        current,
-        boss,
-        index: slot,
+      const y = portrait ? stackCursor + cardH / 2 : cardsTop + cardH / 2;
+      stackCursor += cardH + cardGap;
+      this.cardRects.push(
+        new Phaser.Geom.Rectangle(x - cardW / 2, y - cardH / 2, cardW, cardH),
+      );
+      cards.push({
+        x,
+        y,
+        w: cardW,
+        h: cardH,
+        trial,
+        data: {
+          ordinal: TRIAL_ORDINALS[slot] ?? String(slot + 1),
+          title: trialName(trial),
+          goal: formatScore(goalForTrial(trial, this.state.bossModifier)),
+          rolls: String(trialRollTargetFor(this.state, trial)),
+          curse: boss ? (rankBoss(this.state) ?? undefined) : undefined,
+        },
+        status: {
+          complete: trial < this.state.trial,
+          current: trial === this.state.trial,
+          boss,
+          index: slot,
+        },
       });
     }
+    // Built as a set rather than one at a time, so the three agree on one
+    // composition however much room the boss's curse leaves them.
+    buildTrialCardRow(this, cards);
 
     if (fx.motion) {
       start.setAlpha(0).setY(buttonY + 24);
@@ -225,7 +266,7 @@ export class TrialOverviewScene extends Phaser.Scene {
     rule.lineBetween(W / 2 - ruleHalf, ruleY, W / 2 - ruleGap, ruleY);
     rule.lineBetween(W / 2 + ruleGap, ruleY, W / 2 + ruleHalf, ruleY);
 
-    return { glow, contentTop: titleY + 94 };
+    return { glow, contentTop: titleY + STACKED_HEADER_HEIGHT };
   }
 
   /** The folded masthead: the rank at the left of one line, what a rank means
@@ -355,176 +396,6 @@ export class TrialOverviewScene extends Phaser.Scene {
       onContinue,
       interactiveAnchor,
     });
-  }
-
-  private buildTrialCard(
-    x: number,
-    y: number,
-    w: number,
-    h: number,
-    trial: number,
-    status: {
-      complete: boolean;
-      current: boolean;
-      boss: boolean;
-      index: number;
-    },
-  ): void {
-    const upcoming = !status.complete && !status.current;
-    const muted = status.complete && !status.boss;
-    // The current card drops to the table's own felt color so it reads as a
-    // window onto the board rather than another parchment slip; boss cards were
-    // already dark. Both then need ivory type instead of ink.
-    const onDark = status.boss || status.current;
-    const fill = status.boss
-      ? 0x2a1622
-      : status.current
-        ? COLORS.felt
-        : muted
-          ? 0x605e64
-          : COLORS.parchment;
-    const ink = onDark ? CSS.ivory : muted ? "#d0cbc2" : CSS.ink;
-    const soft = onDark ? CSS.parchmentDark : muted ? "#aaa6ad" : CSS.inkSoft;
-    // Boss cards retain their wax-and-gold hierarchy. Ordinary cleared cards
-    // lose their gold edge so they read as history rather than another choice.
-    const border = status.boss
-      ? status.complete
-        ? COLORS.gold
-        : status.current
-          ? COLORS.goldLight
-          : COLORS.waxRed
-      : status.complete
-        ? 0x918e96
-        : status.current
-          ? COLORS.goldLight
-          : COLORS.inkSoft;
-    const cardAlpha = status.boss
-      ? status.complete
-        ? 0.78
-        : 0.96
-      : status.complete
-        ? 0.84
-        : upcoming
-          ? 0.42
-          : 0.9;
-    const contentAlpha = status.boss ? 1 : muted ? 0.7 : upcoming ? 0.5 : 1;
-    const card = this.add
-      .rectangle(x, y, w, h, fill, cardAlpha)
-      .setStrokeStyle(status.current ? 4 : 2, border, status.current ? 1 : 0.72)
-      .setDepth(3);
-    this.cardRects.push(new Phaser.Geom.Rectangle(x - w / 2, y - h / 2, w, h));
-
-    const compact = h < 150;
-    const rows: Phaser.GameObjects.Text[] = [];
-    rows.push(
-      this.add
-        .text(x, y - h * (compact ? 0.27 : 0.34), trialName(trial), {
-          fontFamily: SERIF,
-          fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.1, h * 0.14), 15, 27)}px`,
-          color: ink,
-          fontStyle: "bold",
-          align: "center",
-        })
-        .setOrigin(0.5)
-        .setDepth(4)
-        .setAlpha(contentAlpha),
-    );
-
-    const meta = `Goal: ${formatScore(goalForTrial(trial, this.state.bossModifier))}\nRolls: ${trialRollTargetFor(this.state, trial)}`;
-    const metaSize = Phaser.Math.Clamp(Math.min(w * 0.064, h * 0.085), 12, 18);
-    rows.push(
-      this.add
-        .text(x, y - (compact ? 1 : h * 0.08), meta, {
-          fontFamily: SERIF,
-          fontSize: `${metaSize}px`,
-          color: soft,
-          align: "center",
-          lineSpacing: Math.round(metaSize * 0.22),
-          wordWrap: { width: w * 0.9 },
-        })
-        .setOrigin(0.5)
-        .setDepth(4)
-        .setAlpha(contentAlpha),
-    );
-
-    // Only cleared trials and the waiting boss earn a footer line. "Next" and
-    // "upcoming" are already carried by the card's own styling, so naming them
-    // adds nothing.
-    let foot = status.complete ? "CLEARED" : "";
-    if (status.boss) {
-      const boss = rankBoss(this.state);
-      if (boss) foot = `${boss.name}\n${boss.desc}`;
-    }
-    if (foot) {
-      rows.push(
-        this.add
-          .text(x, y + h * (compact ? 0.25 : 0.28), foot, {
-            fontFamily: SERIF,
-            fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.055, h * 0.07), 11, 16)}px`,
-            color: status.boss && !upcoming ? CSS.gold : soft,
-            fontStyle: "bold",
-            align: "center",
-            wordWrap: { width: w * 0.88 },
-          })
-          .setOrigin(0.5)
-          .setDepth(4)
-          .setAlpha(contentAlpha),
-      );
-    }
-    this.flowCardRows(rows, y, h);
-
-    if (status.complete) {
-      const seal = this.add
-        .image(x + w * 0.34, y - h * 0.32, "seal")
-        .setDisplaySize(Math.min(62, h * 0.32), Math.min(62, h * 0.32))
-        .setTint(status.boss ? COLORS.gold : 0xb0adb3)
-        .setAlpha(status.boss ? 0.86 : 0.62)
-        .setDepth(5)
-        .setRotation(-0.16);
-      if (fx.motion) seal.setScale(seal.scaleX * 1.02);
-    }
-
-    if (fx.motion) {
-      card.setAlpha(0).setScale(0.94);
-      this.tweens.add({
-        targets: card,
-        alpha: cardAlpha,
-        scaleX: 1,
-        scaleY: 1,
-        duration: 340,
-        delay: 70 * status.index,
-        ease: "Back.easeOut",
-      });
-    }
-  }
-
-  /**
-   * Space a card's name, goal and footer out from the airy positions above
-   * without letting them collide. A card with room to breathe — the desktop
-   * and portrait layouts — already clears itself, and nothing moves. A short
-   * landscape card is where a boss's three-line footer runs into the goal
-   * above it, so each block is pushed below the one before it, and the group
-   * slid back up if that ran it past the card's lower edge.
-   */
-  private flowCardRows(
-    rows: Phaser.GameObjects.Text[],
-    cy: number,
-    h: number,
-  ): void {
-    const pad = Math.min(10, h * 0.06);
-    const gap = Phaser.Math.Clamp(h * 0.04, 4, 12);
-    let cursor = cy - h / 2 + pad;
-    for (const row of rows) {
-      const top = Math.max(row.y - row.height / 2, cursor);
-      row.setY(top + row.height / 2);
-      cursor = top + row.height + gap;
-    }
-    const overflow = cursor - gap - (cy + h / 2 - pad);
-    if (overflow <= 0) return;
-    const first = rows[0];
-    const headroom = first.y - first.height / 2 - (cy - h / 2 + pad);
-    const shift = Math.min(overflow, Math.max(0, headroom));
-    for (const row of rows) row.setY(row.y - shift);
   }
 
   private startTrial(): void {

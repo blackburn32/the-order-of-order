@@ -5,6 +5,7 @@ import { beginRun } from '../systems/Tutorial';
 import { addFelt, bannerButton, checkboxRow } from '../ui/widgets';
 import { destroyAllChildren, responsive } from '../ui/layout';
 import { AmbientLayer } from '../ui/AmbientLayer';
+import { slideSceneIn, slideSceneOut } from '../ui/sceneSlide';
 
 interface Page {
   title: string;
@@ -52,6 +53,8 @@ const INTRO_AMBIENCE = 0.35;
 export class IntroScene extends Phaser.Scene {
   private page = 0;
   private skip = false;
+  private transitioning = false;
+  private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super('Intro');
@@ -60,7 +63,9 @@ export class IntroScene extends Phaser.Scene {
   create(): void {
     this.page = 0;
     this.skip = false;
+    this.transitioning = false;
     responsive(this, () => this.build());
+    slideSceneIn(this, this.slideBackdrop);
   }
 
   private build(): void {
@@ -70,7 +75,7 @@ export class IntroScene extends Phaser.Scene {
     const last = this.page === PAGES.length - 1;
     const p = PAGES[this.page];
 
-    addFelt(this);
+    const felt = addFelt(this);
 
     // The same living backdrop the menu and the trial screens carry, so the
     // premise is told in the room the game is played in. Rebuilt with the rest
@@ -80,6 +85,7 @@ export class IntroScene extends Phaser.Scene {
     ambient.setPosition(cx, H / 2);
     ambient.setArea(W, H);
     ambient.setProgress(INTRO_AMBIENCE, false);
+    this.slideBackdrop = [felt, ambient];
 
     this.add
       .text(cx, H * 0.09, p.title, {
@@ -143,15 +149,8 @@ export class IntroScene extends Phaser.Scene {
 
     const label = last ? 'Begin' : 'Continue';
     const button = bannerButton(this, cx, 0, label, () => {
-      if (last) {
-        beginRun(this);
-      } else {
-        // Advance in place (not scene.restart, which would reset `page`); the
-        // responsive() resize handler still points at build() and reads `page`.
-        this.page += 1;
-        destroyAllChildren(this);
-        this.build();
-      }
+      if (last) this.leave(() => beginRun(this));
+      else this.nextPage();
     });
     button.y = blockTop + button.height / 2;
     let cursorY = button.y + button.height / 2 + 24;
@@ -186,5 +185,30 @@ export class IntroScene extends Phaser.Scene {
       const dot = this.add.circle(cx + (i - (PAGES.length - 1) / 2) * dotGap, cursorY, 5, COLORS.gold);
       dot.setAlpha(i === this.page ? 1 : 0.35);
     });
+  }
+
+  /** Send the current chapter to the right, rebuild the next one, then bring
+   *  it in from the left. The ambient layer hands its sigil into the rebuild,
+   *  so the room morphs rather than blinking between random glyphs. */
+  private nextPage(): void {
+    if (this.transitioning) return;
+    this.transitioning = true;
+    slideSceneOut(this, () => {
+      this.page += 1;
+      destroyAllChildren(this);
+      this.build();
+      // slideSceneOut disables input before invoking its completion. Re-arm it
+      // so slideSceneIn can own the incoming panel's input lock and restore it.
+      this.input.enabled = true;
+      slideSceneIn(this, this.slideBackdrop, () => {
+        this.transitioning = false;
+      });
+    }, this.slideBackdrop);
+  }
+
+  private leave(complete: () => void): void {
+    if (this.transitioning) return;
+    this.transitioning = true;
+    slideSceneOut(this, complete, this.slideBackdrop);
   }
 }

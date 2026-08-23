@@ -3,6 +3,7 @@ import { fx } from "../systems/Effects";
 import { AmbientLayer } from "./AmbientLayer";
 
 const SLIDE_MS = 360;
+const OVERLAY_FADE_MS = 240;
 
 type SlideObject = Phaser.GameObjects.GameObject &
   Phaser.GameObjects.Components.Transform;
@@ -128,4 +129,50 @@ export function slideSceneOut(
       },
     });
   }
+}
+
+/** Bring an overlay's room over the live scene beneath it. The felt crossfades
+ *  while the sigil and interface take the standard scene entrance, so clipped
+ *  content rendered by secondary cameras participates without needing to
+ *  animate camera alpha independently. */
+export function slideOverlayIn(
+  scene: Phaser.Scene,
+  felt: Phaser.GameObjects.Image,
+  arrived?: () => void,
+): void {
+  if (!fx.motion) {
+    arrived?.();
+    return;
+  }
+
+  felt.setAlpha(0);
+  scene.tweens.add({
+    targets: felt,
+    alpha: 1,
+    duration: OVERLAY_FADE_MS,
+    ease: "Quad.easeOut",
+  });
+  slideSceneIn(scene, [felt], arrived);
+}
+
+/** Reverse `slideOverlayIn`: expose the still-running scene underneath as the
+ *  overlay's sigil and interface leave to the right. */
+export function slideOverlayOut(
+  scene: Phaser.Scene,
+  felt: Phaser.GameObjects.Image,
+  complete: () => void,
+): void {
+  if (!fx.motion) {
+    complete();
+    return;
+  }
+
+  scene.tweens.add({
+    targets: felt,
+    alpha: 0,
+    duration: OVERLAY_FADE_MS,
+    delay: SLIDE_MS - OVERLAY_FADE_MS,
+    ease: "Quad.easeIn",
+  });
+  slideSceneOut(scene, complete, [felt]);
 }

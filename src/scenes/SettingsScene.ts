@@ -27,7 +27,12 @@ import {
   isCompactLandscape,
   onResizeCoalesced,
 } from "../ui/layout";
-import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
+import {
+  slideOverlayIn,
+  slideOverlayOut,
+  slideSceneIn,
+  slideSceneOut,
+} from "../ui/sceneSlide";
 
 interface SettingsData {
   returnTo?: string;
@@ -74,6 +79,7 @@ export class SettingsScene extends Phaser.Scene {
   // is a scene of its own; as a mid-run overlay it has a live scene beneath it
   // and no room of its own to keep.
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+  private overlayFelt?: Phaser.GameObjects.Image;
   private leaving = false;
   private scrollInput?: {
     down: PointerHandler;
@@ -101,7 +107,11 @@ export class SettingsScene extends Phaser.Scene {
     this.scrollCamera = undefined;
     this.leaving = false;
     this.build();
-    if (!this.overlay) slideSceneIn(this, this.slideBackdrop);
+    if (this.overlay && this.overlayFelt) {
+      slideOverlayIn(this, this.overlayFelt);
+    } else {
+      slideSceneIn(this, this.slideBackdrop);
+    }
 
     const off = onResizeCoalesced(this, () => {
       this.teardown();
@@ -139,6 +149,7 @@ export class SettingsScene extends Phaser.Scene {
     const cx = W / 2;
 
     const felt = addFelt(this);
+    this.overlayFelt = felt;
     const ambient = new AmbientLayer(this, { ring: true });
     ambient.setPosition(cx, H / 2);
     ambient.setArea(W, H);
@@ -274,11 +285,12 @@ export class SettingsScene extends Phaser.Scene {
       this.returnTo === "Menu" ? "Return to the Vestibule" : "Return";
     const abandon: BannerAction = {
       label: "Abandon Run",
-      onClick: () => {
-        finalizeRun(getRun(this.registry));
-        if (this.overlay) this.scene.stop(this.returnTo);
-        this.scene.start("GameOver");
-      },
+      onClick: () =>
+        this.leave(() => {
+          finalizeRun(getRun(this.registry));
+          if (this.overlay) this.scene.stop(this.returnTo);
+          this.scene.start("GameOver");
+        }),
     };
 
     if (compact) {
@@ -366,21 +378,23 @@ export class SettingsScene extends Phaser.Scene {
     }
   }
 
-  /** An overlay just lifts off the scene still running underneath it. Settings
-   *  opened from the Vestibule instead slides its form off to the right and
-   *  hands the still room over to the menu, which brings its own interface in. */
+  /** Overlay Settings crossfades back to the live run beneath it; Settings
+   *  opened from the Vestibule hands its still room back to the menu instead. */
   private close(): void {
-    if (this.overlay) {
-      this.scene.stop();
-      return;
-    }
+    this.leave(() => {
+      if (this.overlay) this.scene.stop();
+      else this.scene.start(this.returnTo);
+    });
+  }
+
+  private leave(complete: () => void): void {
     if (this.leaving) return;
     this.leaving = true;
-    slideSceneOut(
-      this,
-      () => this.scene.start(this.returnTo),
-      this.slideBackdrop,
-    );
+    if (this.overlay && this.overlayFelt) {
+      slideOverlayOut(this, this.overlayFelt, complete);
+    } else {
+      slideSceneOut(this, complete, this.slideBackdrop);
+    }
   }
 
   /** Clip `content` to the viewport with a dedicated camera and wire vertical

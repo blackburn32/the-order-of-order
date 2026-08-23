@@ -43,6 +43,7 @@ import {
   computeVisibleDiceCards,
   computeWindowedView,
   fitGridZoom,
+  GridFocus,
   gridDetailLevel,
   GridDetailLevel,
   VisibleDiceCard,
@@ -158,6 +159,10 @@ export class GameScene extends Phaser.Scene {
   // Once the player zooms in, count changes preserve their chosen zoom.
   private followsFitZoom = true;
   private lastFitZoom = 1;
+  // Set for one syncGrid() when the room has moved under the dice: the block
+  // is re-centred on the sigil instead of keeping a scroll measured against
+  // the old layout. A zoomed-in player owns their scroll, so it stays unset.
+  private recenterOnSigil = false;
   private layout!: Layout;
   // Everything that ISN'T a die sprite (felt, HUD, roll button): cheap to
   // destroy and rebuild wholesale on resize, unlike the (potentially huge)
@@ -229,6 +234,7 @@ export class GameScene extends Phaser.Scene {
     this.gridCount = -1;
     this.followsFitZoom = true;
     this.lastFitZoom = 1;
+    this.recenterOnSigil = false;
     // The scene instance is reused across restarts, but Phaser destroys all
     // non-main cameras on shutdown — these fields would otherwise dangle.
     this.gridCamera = undefined;
@@ -298,6 +304,10 @@ export class GameScene extends Phaser.Scene {
 
     const layout = this.computeLayout();
     this.buildChrome(layout);
+    // A resize moves the sigil as well as the grid viewport, so a fit-zoomed
+    // block has to be re-centred on it — clamping the old scroll into the new
+    // bounds would leave the dice sitting off the sigil until the next win.
+    this.recenterOnSigil = this.followsFitZoom;
     this.syncGrid(layout);
     // Extra cameras don't track the Scale Manager — keep the full-screen
     // overlay camera matched to the new size so popups stay centered.
@@ -716,6 +726,17 @@ export class GameScene extends Phaser.Scene {
 
   // ---- dice grid -----------------------------------------------------------
 
+  /** Where the dice block centres itself: the middle of the sigil, which
+   *  belongs to the room rather than to the grid viewport (whose own centre
+   *  sits higher, between the HUD and the roll button). A lone die therefore
+   *  lands dead centre in the turning sigil, and the square block grows out
+   *  from that same point as dice are won. Without a sigil to line up with,
+   *  the middle of the room is still the point the room is composed around. */
+  private gridFocus(): GridFocus {
+    if (this.ambient) return { x: this.ambient.x, y: this.ambient.y };
+    return { x: this.scale.width / 2, y: this.scale.height / 2 };
+  }
+
   /** Build the full-room sigil and motes. It joins the felt in main-scene
    * chrome, while the transparent grid camera composites dice over it. */
   private buildAmbient(): void {
@@ -735,17 +756,21 @@ export class GameScene extends Phaser.Scene {
     const n = this.state.dice.length;
     const firstLayout = this.gridCount < 0;
     const countChanged = n !== this.gridCount;
-    const fitZoom = fitGridZoom(n, layout.grid);
+    const focus = this.gridFocus();
+    const fitZoom = fitGridZoom(n, layout.grid, focus);
     if (firstLayout || this.followsFitZoom) this.viewport.zoom = fitZoom;
     this.lastFitZoom = fitZoom;
 
-    let view = computeWindowedView(n, layout.grid, this.viewport);
-    if (firstLayout || (countChanged && this.followsFitZoom)) {
-      this.viewport.scrollX =
-        (view.virtualW - layout.grid.width / view.zoom) / 2;
-      this.viewport.scrollY =
-        (view.virtualH - layout.grid.height / view.zoom) / 2;
-      view = computeWindowedView(n, layout.grid, this.viewport);
+    let view = computeWindowedView(n, layout.grid, this.viewport, focus);
+    const recenter =
+      firstLayout ||
+      this.recenterOnSigil ||
+      (countChanged && this.followsFitZoom);
+    this.recenterOnSigil = false;
+    if (recenter) {
+      this.viewport.scrollX = view.homeScrollX;
+      this.viewport.scrollY = view.homeScrollY;
+      view = computeWindowedView(n, layout.grid, this.viewport, focus);
     }
     if (countChanged) this.gridCount = n;
     this.viewport.scrollX = view.scrollX;

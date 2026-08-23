@@ -192,13 +192,13 @@ export class MenuScene extends Phaser.Scene {
     const actions: BannerAction[] = [
       {
         label: 'Start New Run',
-        onClick: () => {
+        onClick: () => this.leave(() => {
           // Intro plays on every main-menu run until the player skips it; Victory /
           // Game Over "Begin a New Run" skip straight to the game (they call
           // setRun + start('Game') directly, so the intro is main-menu only).
           if (loadSettings().showIntro) this.scene.start('Intro');
           else beginRun(this);
-        }
+        })
       },
       {
         label: 'Hall of High Scores',

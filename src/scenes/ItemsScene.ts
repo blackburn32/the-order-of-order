@@ -5,7 +5,12 @@ import { ITEMS } from "../systems/Items";
 import { addFelt, bannerButton } from "../ui/widgets";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildSceneHeader } from "../ui/sceneHeader";
-import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
+import {
+  slideOverlayIn,
+  slideOverlayOut,
+  slideSceneIn,
+  slideSceneOut,
+} from "../ui/sceneSlide";
 import { buildItemCard } from "../ui/itemCard";
 import {
   compactColumns,
@@ -106,6 +111,7 @@ export class ItemsScene extends Phaser.Scene {
   // the Codex is a scene of its own; as an overlay it has a live scene beneath
   // it and no room of its own to keep.
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+  private overlayFelt?: Phaser.GameObjects.Image;
   private leaving = false;
   private input$?: {
     down: PointerHandler;
@@ -141,10 +147,14 @@ export class ItemsScene extends Phaser.Scene {
     this.toppingUp = false;
     this.leaving = false;
     this.build();
-    // The cards the window can't reach wait for the entrance to finish; an
-    // overlay has no entrance to wait for.
-    if (this.openedAsOverlay) this.toppingUp = true;
-    else slideSceneIn(this, this.slideBackdrop, () => (this.toppingUp = true));
+    // The cards the window can't reach wait for whichever entrance is running
+    // to finish, keeping the transition's frames clear on both paths.
+    const arrived = () => (this.toppingUp = true);
+    if (this.openedAsOverlay && this.overlayFelt) {
+      slideOverlayIn(this, this.overlayFelt, arrived);
+    } else {
+      slideSceneIn(this, this.slideBackdrop, arrived);
+    }
 
     const off = onResizeCoalesced(this, () => {
       this.teardownInput();
@@ -180,6 +190,7 @@ export class ItemsScene extends Phaser.Scene {
     const cx = W / 2;
 
     const felt = addFelt(this);
+    this.overlayFelt = felt;
     const ambient = new AmbientLayer(this, { ring: true });
     ambient.setPosition(cx, H / 2);
     ambient.setArea(W, H);
@@ -256,20 +267,17 @@ export class ItemsScene extends Phaser.Scene {
   }
 
   private close(): void {
-    // An overlay just lifts off the scene still running underneath it. A Codex
-    // opened from the Vestibule instead slides its gallery off to the right and
-    // hands the still room over to the menu, which brings its own interface in.
-    if (this.openedAsOverlay) {
-      this.scene.stop();
-      return;
-    }
     if (this.leaving) return;
     this.leaving = true;
-    slideSceneOut(
-      this,
-      () => this.scene.start(this.returnTo),
-      this.slideBackdrop,
-    );
+    if (this.openedAsOverlay && this.overlayFelt) {
+      slideOverlayOut(this, this.overlayFelt, () => this.scene.stop());
+    } else {
+      slideSceneOut(
+        this,
+        () => this.scene.start(this.returnTo),
+        this.slideBackdrop,
+      );
+    }
   }
 
   private buildGallery(
