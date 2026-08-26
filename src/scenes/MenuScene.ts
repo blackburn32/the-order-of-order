@@ -34,6 +34,10 @@ const CURSOR_GLOW_SIZE = 260;
 const CURSOR_GLOW_ALPHA = 0.22;
 const CURSOR_GLOW_EASING = 0.16;
 
+/** Felt left showing between the stacked menu buttons once the viewport is
+ *  short enough that the pitch, not the parchment, is what confines them. */
+const STACKED_BUTTON_GAP = 8;
+
 export class MenuScene extends Phaser.Scene {
   private cursorGlow?: Phaser.GameObjects.Image;
   private cursorGlowActivated = false;
@@ -223,25 +227,41 @@ export class MenuScene extends Phaser.Scene {
 
     // Folded, the buttons fill their own column and take their pitch from their
     // own measured heights; stacked, they keep the viewport-proportional pitch
-    // the taller composition is built around.
+    // the taller composition is built around. That pitch shrinks with the
+    // viewport while the parchment's own height doesn't, so on a short screen
+    // it drops below one button's height — hence the cap, which keeps a sliver
+    // of felt showing between them by shrinking the buttons (label included)
+    // rather than letting each one lap the next.
     const btnGap = Math.min(84, H * 0.12);
     const startY = H * 0.48;
     const buttons = compact
       ? stackBannerButtons(this, columns.right, columns, actions)
       : actions.map((action, i) =>
-          bannerButton(this, cx, startY + btnGap * i, action.label, action.onClick)
+          bannerButton(
+            this,
+            cx,
+            startY + btnGap * i,
+            action.label,
+            action.onClick,
+            undefined,
+            btnGap - STACKED_BUTTON_GAP
+          )
         );
 
     if (!itemsUnlocked) {
       const itemsBtn = buttons[2];
       itemsBtn.setAlpha(0.55);
       // A padlock pinned to the left of the button, vertically centered, so it
-      // doesn't shove the centered label off-center.
+      // doesn't shove the centered label off-center. Both the glyph and its
+      // inset ride the button's own scale — the button shrinks to fit a short
+      // viewport, and a fixed 24px lock would end up taller than the parchment
+      // it sits on and far enough in to collide with the label.
       const img = itemsBtn.getAt(0) as Phaser.GameObjects.Image;
+      const lockSize = Math.max(12, Math.round(24 * img.scaleY));
       const lock = this.add
-        .text(-img.displayWidth / 2 + 24, 0, '\u{1F512}', {
+        .text(-img.displayWidth / 2 + lockSize, 0, '\u{1F512}', {
           fontFamily: SERIF,
-          fontSize: '24px',
+          fontSize: `${lockSize}px`,
           color: CSS.ink
         })
         .setOrigin(0, 0.5);

@@ -4,7 +4,7 @@ import { rankOf, trialName } from "../config";
 import type { TrialEndOutcome } from "../sim/engine";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
-import { ITEMS, type ShopItemId } from "../systems/Items";
+import { describeUnlockAction, ITEMS, type ShopItemId } from "../systems/Items";
 import { formatScore } from "../ui/formatScore";
 import {
   COMPACT_MARGIN,
@@ -30,6 +30,35 @@ import {
 /** Native size of the 'card' texture buildItemCard draws on. */
 const CARD_W = 260;
 const CARD_H = 340;
+
+/** The display scale a card's copy is written for. Below it the type stops
+ *  following the art down and starts spilling over the parchment, so this is
+ *  the point at which a row of cards closes into a fan rather than shrink any
+ *  further — the same trade the shop's compact carousel makes. */
+const READABLE_CARD_SCALE = 0.62;
+/** How little of a fanned card its neighbour may leave showing. Half a card is
+ *  enough to read its title and see its face; past that the fan stops tightening
+ *  and the cards give up size again. */
+const MIN_FAN_STEP = 0.5;
+/** Air, in card units, kept either side of a fan for the corners its outermost
+ *  cards throw out as they tilt. */
+const FAN_BULGE = 36;
+/** Tilt of the outermost cards in a fan, and the drop of their lower corners. */
+const FAN_MAX_TILT_DEG = 6;
+const FAN_ARC_MAX = 4;
+/** The smallest a card is ever drawn. A band this tight has already sent the
+ *  cards terse, so what has to survive at the floor is a rarity and a title —
+ *  not a description — and the floor is low enough to keep the announcement and
+ *  its footnote off the way on below them. */
+const MIN_CARD_SCALE = 0.26;
+/** The pose a fanned card takes when it is brought to the front to be read. */
+const FAN_FOCUS_LIFT = 10;
+const FAN_FOCUS_SCALE = 1.06;
+/** How long a terse card takes to grow into the column, and the rest of the
+ *  column takes to stand aside for it. */
+const EXPAND_MS = 260;
+/** Air left above an opened card that has had to grow past its band. */
+const EXPAND_HEADROOM = 10;
 
 export interface TrialResultsData {
   outcome: TrialEndOutcome;
@@ -98,6 +127,17 @@ export class TrialResultsScene extends Phaser.Scene {
   // once the reveal has finished.
   private receiptRect?: Phaser.Geom.Rectangle;
   private tutorialCallout?: CalloutHandle;
+  // Which fanned card is currently pulled to the front, so the same card is
+  // not re-focused on every pointer move across it.
+  private fanFocus?: number;
+  // The terse card currently opened over its column, if any, and the cards a
+  // press may land on without closing it.
+  private expansion?: {
+    index: number;
+    card: Phaser.GameObjects.Container;
+    close: () => void;
+  };
+  private expandables: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super("TrialResults");
@@ -112,7 +152,23 @@ export class TrialResultsScene extends Phaser.Scene {
     this.leaving = false;
     this.build(true);
     slideSceneIn(this, this.slideBackdrop);
-    const skip = () => this.revealAll();
+    // A press anywhere finishes the reveal; a press anywhere that is not a card
+    // also puts an opened card away. Which cards those are is read off the
+    // pointer's own hit list, so this does not depend on whether the scene hears
+    // about the press before or after the card does.
+    const skip = (
+      _pointer: Phaser.Input.Pointer,
+      over: Phaser.GameObjects.GameObject[],
+    ) => {
+      this.revealAll();
+      const expansion = this.expansion;
+      if (!expansion) return;
+      const onCard = over?.some(
+        (object) =>
+          object === expansion.card || this.expandables.includes(object),
+      );
+      if (!onCard) expansion.close();
+    };
     this.input.on("pointerdown", skip);
     const off = onResizeCoalesced(this, () => {
       this.clearTimers();
@@ -136,6 +192,9 @@ export class TrialResultsScene extends Phaser.Scene {
 
   private build(animate: boolean): void {
     this.revealObjects = [];
+    this.fanFocus = undefined;
+    this.expansion = undefined;
+    this.expandables = [];
     const W = this.scale.width;
     const H = this.scale.height;
     const cx = W / 2;
@@ -535,8 +594,17 @@ export class TrialResultsScene extends Phaser.Scene {
 
   /** Heading, full item cards, and footnote for whatever this trial unlocked.
    * A trial that unlocked nothing returns no objects at all — an empty
-   * announcement is not worth the row it would occupy. Cards are scaled to fit
-   * the band between the gold receipt and the continue button. */
+   * announcement is not worth the row it would occupy. Each card carries the
+   * deed that earned it, printed where a shop card prints its price.
+   *
+   * Cards stand apart while the band has room for them at a size their copy can
+   * be written at; below that they close into a fan, sliding under one another
+   * only as far as they must. A phone that unlocks four cards at once would
+   * otherwise shrink them to a third of their size — small enough that every
+   * type floor on the card is reached at once and the copy runs off the
+   * parchment. A fanned card is covered by its neighbour, so touching or
+   * hovering one pulls it clear; nothing on the screen depends on that, it is
+   * only how a card in the middle of the hand gets read. */
   private buildUnlockSection(
     cx: number,
     regionTop: number,
@@ -547,26 +615,52 @@ export class TrialResultsScene extends Phaser.Scene {
     if (defs.length === 0)
       return { objects: [], burstX: cx, burstY: regionTop };
 
+    const n = defs.length;
     const headingSize = Phaser.Math.Clamp(panelW * 0.026, 16, 24);
     const footSize = Phaser.Math.Clamp(panelW * 0.019, 12, 17);
     const gap = 14;
-    const cardsMaxW = Math.min(panelW * 0.92, 900);
+    const rowMaxW = Math.min(panelW * 0.92, 900);
+    // A fan may run a little wider than a row: it has no gaps to spend, and the
+    // margin it does need is for the corners its outermost cards throw out.
+    const fanMaxW = Math.min(panelW * 0.96, 940);
     const chromeH = headingSize + 16 + 10 + footSize;
+
+    // A plain row first. Only when that would drive the cards below the size
+    // their copy is written for is the width bought back by overlapping them,
+    // and then only as much as it takes to climb back to that size — a fan
+    // that would not have to overlap is just a row, so it stays one.
+    const rowScale = (rowMaxW - (n - 1) * gap) / (n * CARD_W);
+    const stepFraction =
+      n > 1
+        ? Phaser.Math.Clamp(
+            (fanMaxW / (READABLE_CARD_SCALE * CARD_W) - 1) / (n - 1),
+            MIN_FAN_STEP,
+            1,
+          )
+        : 1;
+    const fanned = n > 1 && rowScale < READABLE_CARD_SCALE && stepFraction < 1;
+    const widthScale = fanned
+      ? fanMaxW / (CARD_W * (1 + (n - 1) * stepFraction) + FAN_BULGE)
+      : rowScale;
+    const heightScale = (regionBottom - regionTop - chromeH) / CARD_H;
     const scale = Phaser.Math.Clamp(
-      Math.min(
-        (regionBottom - regionTop - chromeH) / CARD_H,
-        (cardsMaxW - (defs.length - 1) * gap) / (defs.length * CARD_W),
-      ),
-      0.3,
+      Math.min(heightScale, widthScale),
+      MIN_CARD_SCALE,
       1,
     );
     const cardW = CARD_W * scale;
     const cardH = CARD_H * scale;
-    const totalW = defs.length * cardW + (defs.length - 1) * gap;
+    const step = fanned ? cardW * stepFraction : cardW + gap;
+    const totalW = cardW + (n - 1) * step;
+
+    const fanCenter = (n - 1) / 2;
+    const arcStep = fanned ? Math.min(FAN_ARC_MAX, cardH * 0.02) : 0;
+    const arcMax = arcStep * fanCenter;
     // Centre the block in its band so a roomy layout does not leave the cards
     // stranded against the receipt.
+    const blockH = chromeH + cardH + arcMax;
     const top =
-      regionTop + Math.max(0, (regionBottom - regionTop - chromeH - cardH) / 2);
+      regionTop + Math.max(0, (regionBottom - regionTop - blockH) / 2);
     const cardsY = top + headingSize + 16 + cardH / 2;
 
     const heading = this.add
@@ -577,20 +671,76 @@ export class TrialResultsScene extends Phaser.Scene {
         fontStyle: "bold",
       })
       .setOrigin(0.5);
-    const cards = defs.map((def, i) => {
-      const card = buildItemCard(this, def, {
-        locked: false,
-        showCaption: false,
-        displayScale: scale,
-      });
-      card.setPosition(cx - totalW / 2 + cardW / 2 + i * (cardW + gap), cardsY);
-      return card;
-    });
+
+    // A fan holds its middle card in front and its outermost behind. That is a
+    // z-order, and a fan re-orders itself as cards are brought forward, so the
+    // cards go in a container of their own rather than being sorted against the
+    // rest of the screen. Reading order is restored before they are handed back,
+    // so the reveal still lights the group up left to right.
+    const parent = fanned ? this.add.container(0, 0) : undefined;
+    const backToFront = defs
+      .map((_, i) => i)
+      .sort((a, b) => Math.abs(b - fanCenter) - Math.abs(a - fanCenter));
+    const deal = (terse: boolean): Phaser.GameObjects.Container[] => {
+      const dealt: Phaser.GameObjects.Container[] = [];
+      for (const i of backToFront) {
+        const def = defs[i];
+        const offset = i - fanCenter;
+        const card = buildItemCard(this, def, {
+          locked: false,
+          showCaption: false,
+          displayScale: scale,
+          compactType: fanned,
+          terse,
+          note: def.unlock ? describeUnlockAction(def.unlock) : undefined,
+        });
+        card.setPosition(
+          cx - totalW / 2 + cardW / 2 + i * step,
+          cardsY + Math.abs(offset) * arcStep,
+        );
+        if (parent) {
+          card.setRotation(
+            Phaser.Math.DegToRad(
+              Phaser.Math.Clamp(
+                (offset / Math.max(1, fanCenter)) * FAN_MAX_TILT_DEG,
+                -FAN_MAX_TILT_DEG,
+                FAN_MAX_TILT_DEG,
+              ),
+            ),
+          );
+          parent.add(card);
+        }
+        dealt[i] = card;
+      }
+      return dealt;
+    };
+
+    // Whether the copy fits is not a question of scale alone — it depends on how
+    // long each item's description runs — so the cards are printed and then
+    // asked. If any of them has run its fields together, they are all reprinted
+    // with the title alone, and the details move behind a tap. All or none:
+    // one terse card beside a full one reads as a card that failed to draw.
+    let cards = deal(false);
+    const terse = cards.some((card) => !card.getData("copyFits"));
+    if (terse) {
+      for (const card of cards) card.destroy();
+      cards = deal(true);
+    }
+    if (parent) this.wireFan(parent, cards);
+
     const foot = this.add
       .text(
         cx,
-        cardsY + cardH / 2 + 10 + footSize / 2,
-        "Unlocked cards become available next run.",
+        // Held inside the band even where the cards have bottomed out and the
+        // block is taller than the room it was given: the line belongs to the
+        // cards, and printing it over the way on below them helps nobody.
+        Math.min(
+          cardsY + arcMax + cardH / 2 + 10 + footSize / 2,
+          regionBottom - footSize / 2,
+        ),
+        terse
+          ? "Tap a card to read it · available next run."
+          : "Unlocked cards become available next run.",
         {
           fontFamily: SERIF,
           fontSize: `${footSize}px`,
@@ -599,7 +749,207 @@ export class TrialResultsScene extends Phaser.Scene {
         },
       )
       .setOrigin(0.5);
+    fitTextWidth(foot, rowMaxW);
+    if (terse) {
+      this.wireExpansion({
+        defs,
+        cards,
+        parent,
+        cx,
+        regionTop,
+        regionBottom,
+        maxWidth: fanMaxW,
+        collapsedScale: scale,
+        chrome: [heading, foot],
+      });
+    }
     return { objects: [heading, ...cards, foot], burstX: cx, burstY: cardsY };
+  }
+
+  /**
+   * Terse cards carry only a rarity and a title — there was no room for more —
+   * so a press grows a full one out of the card pressed, over the space the
+   * heading, the footnote and the other cards give up while it is open. It is
+   * only a way of reading a card: nothing on this screen waits on it, and the
+   * way on stays where it was, outside the column.
+   */
+  private wireExpansion(opts: {
+    defs: (typeof ITEMS)[number][];
+    cards: Phaser.GameObjects.Container[];
+    parent?: Phaser.GameObjects.Container;
+    cx: number;
+    regionTop: number;
+    regionBottom: number;
+    maxWidth: number;
+    collapsedScale: number;
+    chrome: Phaser.GameObjects.GameObject[];
+  }): void {
+    const { defs, cards, parent, cx, regionTop, regionBottom } = opts;
+    // With the heading, the footnote and the other cards out of the way, an
+    // opened card has the whole band to grow into — and, where the band alone
+    // would still leave it too small to read, as much of the room above the band
+    // as it takes to reach the size a card's copy is written for. It is opened
+    // to be read, so being legible beats staying inside its lines; what it may
+    // not do is reach down over the way on, which is why only its top edge is
+    // allowed past the band.
+    const openScale = Phaser.Math.Clamp(
+      Math.max(
+        Math.min((regionBottom - regionTop) / CARD_H, opts.maxWidth / CARD_W),
+        READABLE_CARD_SCALE,
+      ),
+      opts.collapsedScale,
+      Math.min(
+        (regionBottom - EXPAND_HEADROOM) / CARD_H,
+        opts.maxWidth / CARD_W,
+        1,
+      ),
+    );
+    const collapsedRatio = opts.collapsedScale / openScale;
+    const openHalfH = (CARD_H * openScale) / 2;
+    const openY = Phaser.Math.Clamp(
+      (regionTop + regionBottom) / 2,
+      EXPAND_HEADROOM + openHalfH,
+      regionBottom - openHalfH,
+    );
+    const standAside = [...opts.chrome, ...cards];
+
+    const fade = (alpha: number) => {
+      for (const object of standAside) {
+        this.tweens.killTweensOf(object);
+        if (fx.motion) {
+          this.tweens.add({
+            targets: object,
+            alpha,
+            duration: EXPAND_MS,
+            ease: "Sine.easeInOut",
+          });
+        } else {
+          (object as unknown as Phaser.GameObjects.Components.Alpha).setAlpha(
+            alpha,
+          );
+        }
+      }
+      // A card faded out of the column must not answer a press meant for the
+      // felt behind it.
+      for (const card of cards) {
+        if (alpha === 0) card.disableInteractive();
+        else card.setInteractive({ useHandCursor: true });
+      }
+    };
+
+    const close = () => {
+      const open = this.expansion;
+      if (!open) return;
+      this.expansion = undefined;
+      const source = cards[open.index];
+      this.tweens.killTweensOf(open.card);
+      fade(1);
+      if (!fx.motion) {
+        open.card.destroy();
+        return;
+      }
+      this.tweens.add({
+        targets: open.card,
+        x: source.x,
+        y: source.y,
+        rotation: source.rotation,
+        scaleX: collapsedRatio,
+        scaleY: collapsedRatio,
+        alpha: 0,
+        duration: EXPAND_MS,
+        ease: "Cubic.easeIn",
+        onComplete: () => open.card.destroy(),
+      });
+    };
+
+    const open = (index: number) => {
+      // Only one card is ever open: the cards behind it have faded out of the
+      // column and stopped answering presses, so the way to the next one is
+      // through a press that closes this one.
+      if (!this.complete || this.expansion) return;
+      const def = defs[index];
+      const source = cards[index];
+      const card = buildItemCard(this, def, {
+        locked: false,
+        showCaption: false,
+        displayScale: openScale,
+        note: def.unlock ? describeUnlockAction(def.unlock) : undefined,
+      });
+      parent?.add(card);
+      card
+        .setPosition(source.x, source.y)
+        .setRotation(source.rotation)
+        .setScale(collapsedRatio)
+        .setAlpha(0)
+        .setInteractive({ useHandCursor: true });
+      card.on("pointerdown", close);
+      this.expansion = { index, card, close };
+      fade(0);
+      if (!fx.motion) {
+        card.setPosition(cx, openY).setRotation(0).setScale(1).setAlpha(1);
+        return;
+      }
+      this.tweens.add({
+        targets: card,
+        x: cx,
+        y: openY,
+        rotation: 0,
+        scaleX: 1,
+        scaleY: 1,
+        alpha: 1,
+        duration: EXPAND_MS,
+        ease: "Cubic.easeOut",
+      });
+    };
+
+    cards.forEach((card, index) => {
+      card.setInteractive({ useHandCursor: true });
+      card.on("pointerdown", () => open(index));
+    });
+    this.expandables = [...cards];
+  }
+
+  /** Let a fanned card be brought out from under its neighbour. Focus is
+   *  sticky — a press keeps the card forward, rather than dropping it back the
+   *  moment a finger leaves — so the same gesture reads a card on a touchscreen
+   *  and on a mouse. Held off until the reveal has finished, so a pointer
+   *  resting over the fan cannot fight the entrance tween for the card's y. */
+  private wireFan(
+    parent: Phaser.GameObjects.Container,
+    cards: Phaser.GameObjects.Container[],
+  ): void {
+    const restY = cards.map((card) => card.y);
+    const focus = (index: number) => {
+      if (!this.complete || this.fanFocus === index) return;
+      const previous = this.fanFocus;
+      this.fanFocus = index;
+      const pose = (i: number, lifted: boolean) => {
+        const card = cards[i];
+        this.tweens.killTweensOf(card);
+        const y = restY[i] - (lifted ? FAN_FOCUS_LIFT : 0);
+        const scale = lifted ? FAN_FOCUS_SCALE : 1;
+        if (!fx.motion) {
+          card.setY(y).setScale(scale);
+          return;
+        }
+        this.tweens.add({
+          targets: card,
+          y,
+          scaleX: scale,
+          scaleY: scale,
+          duration: 160,
+          ease: "Cubic.easeOut",
+        });
+      };
+      if (previous !== undefined) pose(previous, false);
+      pose(index, true);
+      parent.bringToTop(cards[index]);
+    };
+    cards.forEach((card, index) => {
+      card.setInteractive({ useHandCursor: true });
+      card.on("pointerover", () => focus(index));
+      card.on("pointerdown", () => focus(index));
+    });
   }
 
   private revealGroup(

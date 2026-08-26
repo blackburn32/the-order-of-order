@@ -9,8 +9,19 @@ import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildItemCard } from "../ui/itemCard";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import { formatScore } from "../ui/formatScore";
-import { destroyAllChildren, onResizeCoalesced } from "../ui/layout";
-import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
+import {
+  compactColumns,
+  destroyAllChildren,
+  isCompactLandscape,
+  onResizeCoalesced,
+} from "../ui/layout";
+import {
+  addFelt,
+  BannerAction,
+  bannerButton,
+  fitTextWidth,
+  stackBannerButtons,
+} from "../ui/widgets";
 
 export interface InventoryData {
   /** Scene key whose input to re-enable when the overlay closes. */
@@ -216,18 +227,30 @@ export class InventoryScene extends Phaser.Scene {
     ambient.setProgress(INVENTORY_AMBIENCE, false);
     this.backdrop = [felt, ambient];
 
+    // Stacked, the masthead, the tabs, the contents and the two footer buttons
+    // share the height four ways — on a short landscape viewport that leaves
+    // the contents a band shorter than half a card. Folded, the chrome takes a
+    // column of its own and the contents get the full height beside it: the
+    // same fold the Codex makes of the same gallery, on the one
+    // `isCompactLandscape` gate, so a device that turns folds both at once.
+    const compact = isCompactLandscape(W, H);
+    const columns = compactColumns(this, { leftFraction: 0.36 });
+
     const header = buildSceneHeader(this, {
       title: "Your Inventory",
       subtitle: "Everything you carry into the trials.",
-      y: Math.max(46, Math.min(H * 0.12, 88)),
-      width: Math.min(W, 760),
+      y: compact ? columns.top + 24 : Math.max(46, Math.min(H * 0.12, 88)),
+      width: compact ? columns.left.width : Math.min(W, 760),
+      ...(compact ? { x: columns.left.cx } : {}),
     });
 
     const run = getRun(this.registry);
-    const tableW = Math.min(W - 32, 1000);
-    const tabsY = header.bottom + 26;
+    // The tabs head the contents when stacked, and the chrome column when
+    // folded — either way they are as wide as whatever they head.
+    const tableW = compact ? columns.left.width : Math.min(W - 32, 1000);
+    const tabsY = header.bottom + (compact ? 20 : 26);
     this.buildTabs(
-      cx,
+      compact ? columns.left.cx : cx,
       tabsY,
       tableW,
       this.ownedItems(run).length,
@@ -236,36 +259,57 @@ export class InventoryScene extends Phaser.Scene {
 
     // The footer is created before the (camera-clipped) content so it is part
     // of the "everything except the track" set the grid camera ignores.
-    const buttonH = 70;
-    const buttonY = H - 20 - buttonH / 2;
-    const footerGap = Math.max(10, Math.min(20, tableW * 0.02));
-    const footerMaxW = (Math.min(tableW, 620) - footerGap) / 2;
-    const codex = bannerButton(
-      this,
-      cx,
-      buttonY,
-      "Codex",
-      () => this.scene.launch("Items", { returnTo: "Inventory" }),
-      footerMaxW,
-    );
-    const close = bannerButton(
-      this,
-      cx,
-      buttonY,
-      "Close",
-      () => this.close(),
-      footerMaxW,
-    );
-    const footerDx = codex.width / 2 + footerGap / 2;
-    codex.setX(cx - footerDx);
-    close.setX(cx + footerDx);
+    const actions: BannerAction[] = [
+      {
+        label: "Codex",
+        onClick: () => this.scene.launch("Items", { returnTo: "Inventory" }),
+      },
+      { label: "Close", onClick: () => this.close() },
+    ];
 
-    const contentTop = tabsY + 32;
+    let contentTop: number;
+    let contentBottom: number;
+    if (compact) {
+      // Folded there is no full-width strip along the bottom for the pair to
+      // sit in, so they stack under the tabs in the chrome column — where
+      // "Close", the one control that must never be out of reach, is beside
+      // the contents rather than below them however far they scroll.
+      const bandTop = tabsY + 34;
+      stackBannerButtons(
+        this,
+        columns.left,
+        { top: bandTop, height: columns.bottom - bandTop },
+        actions,
+      );
+      contentTop = columns.top;
+      contentBottom = columns.bottom;
+    } else {
+      const buttonH = 70;
+      const buttonY = H - 20 - buttonH / 2;
+      const footerGap = Math.max(10, Math.min(20, tableW * 0.02));
+      const footerMaxW = (Math.min(tableW, 620) - footerGap) / 2;
+      const [codex, close] = actions.map((action) =>
+        bannerButton(
+          this,
+          cx,
+          buttonY,
+          action.label,
+          action.onClick,
+          footerMaxW,
+        ),
+      );
+      const footerDx = codex.width / 2 + footerGap / 2;
+      codex.setX(cx - footerDx);
+      close.setX(cx + footerDx);
+      contentTop = tabsY + 32;
+      contentBottom = buttonY - buttonH / 2 - 18;
+    }
+
     this.contentArea = {
-      x: cx - tableW / 2,
+      x: compact ? columns.right.x : cx - tableW / 2,
       y: contentTop,
-      width: tableW,
-      height: Math.max(120, buttonY - buttonH / 2 - 18 - contentTop),
+      width: compact ? columns.right.width : tableW,
+      height: Math.max(120, contentBottom - contentTop),
     };
     this.buildContent();
   }
@@ -281,7 +325,9 @@ export class InventoryScene extends Phaser.Scene {
     diceCount: number,
   ): void {
     const size = Math.round(Phaser.Math.Clamp(tableW * 0.026, 16, 21));
-    const gap = Math.max(30, tableW * 0.05);
+    // The gap closes up as the column narrows: at the folded width the 30px
+    // floor was a third of the room the labels themselves needed.
+    const gap = Math.min(Math.max(30, tableW * 0.05), tableW * 0.12);
 
     const make = (label: string, tab: InventoryTab) => {
       const active = this.tab === tab;
@@ -307,6 +353,18 @@ export class InventoryScene extends Phaser.Scene {
 
     const items = make(`ITEMS · ${formatScore(itemCount)}`, "items");
     const dice = make(`DICE · ${formatScore(diceCount)}`, "dice");
+
+    // Folded, the pair heads a column barely wider than the two labels, and a
+    // long grid ("DICE · 1,024") would push them into the gutter. Give each the
+    // share of the room its own label asks for, measured before either is
+    // resized, so they shrink together rather than one crowding the other.
+    const room = Math.max(1, tableW - gap);
+    if (items.width + dice.width > room) {
+      const [itemsW, diceW] = [items.width, dice.width];
+      fitTextWidth(items, (room * itemsW) / (itemsW + diceW));
+      fitTextWidth(dice, (room * diceW) / (itemsW + diceW));
+    }
+
     const totalW = items.width + gap + dice.width;
     items.setX(cx - totalW / 2 + items.width / 2);
     dice.setX(cx + totalW / 2 - dice.width / 2);
@@ -727,8 +785,23 @@ export class InventoryScene extends Phaser.Scene {
         })
         .setOrigin(1, 0.5),
     );
-    const nameW = Math.max(...names.map((t) => t.width));
-    const countW = Math.max(...counts.map((t) => t.width));
+    // The heads are built alongside the rows and measured with them, because a
+    // column has to be at least as wide as its own heading: "DIE" is wider than
+    // `d6` and "COUNT" than `×1`, so a grid holding one small die laid its
+    // columns out narrower than the words above them and ran the two together.
+    const head = (label: string, originX: number) =>
+      this.add
+        .text(0, HEAD_H / 2 - 6, label, {
+          fontFamily: SERIF,
+          fontSize: `${headSize}px`,
+          color: CSS.dim,
+          letterSpacing: 2,
+        })
+        .setOrigin(originX, 0.5);
+    const heads = [head("DIE", 0), head("COUNT", 1), head("MODIFIERS", 0)];
+
+    const nameW = Math.max(heads[0].width, ...names.map((t) => t.width));
+    const countW = Math.max(heads[1].width, ...counts.map((t) => t.width));
 
     const badges = rows.map((row) => this.buildChips(row.chips, chipSize));
 
@@ -736,7 +809,7 @@ export class InventoryScene extends Phaser.Scene {
     // rather than stretched across the whole band: a handful of short lines
     // ruled edge to edge reads as a table with its right half missing.
     const leftW = iconSize + 14 + nameW + gap + countW;
-    const badgeW = Math.max(...badges.map((b) => b.width));
+    const badgeW = Math.max(heads[2].width, ...badges.map((b) => b.width));
     const roomForBadges = Math.max(48, area.width - pad * 2 - leftW - gap);
     const chipsColW = Math.min(badgeW, roomForBadges);
     const blockW = Math.min(area.width, pad * 2 + leftW + gap + chipsColW);
@@ -751,20 +824,11 @@ export class InventoryScene extends Phaser.Scene {
     const bandW = Math.min(area.width, blockW + 28);
     this.contentSpan = bandW;
 
-    const head = (x: number, label: string, originX: number) =>
-      this.add
-        .text(x, HEAD_H / 2 - 6, label, {
-          fontFamily: SERIF,
-          fontSize: `${headSize}px`,
-          color: CSS.dim,
-          letterSpacing: 2,
-        })
-        .setOrigin(originX, 0.5);
-    const heads = [
-      head(nameX, "DIE", 0),
-      head(countRight, "COUNT", 1),
-      head(chipsX, "MODIFIERS", 0),
-    ];
+    heads[0].setX(nameX);
+    heads[1].setX(countRight);
+    heads[2].setX(chipsX);
+    // Only the modifiers head can still outrun its column — the band may be too
+    // narrow to give the badges the room the word wants.
     fitTextWidth(heads[2], chipsColW);
     // A hairline under the column heads — the one piece of ruling the list
     // needs to separate its head from its body.

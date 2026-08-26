@@ -57,7 +57,11 @@ export function fitTextWidth(
 
 /** Parchment banner button with hover/press feedback. Pass `maxWidth` to resize
  *  it when it would be wider than the space available (e.g. a narrow settings
- *  panel); without one it still stays inside the viewport. The background is
+ *  panel); without one it still stays inside the viewport. Pass `maxHeight`
+ *  where the vertical room is what runs out first — a column of buttons on a
+ *  short viewport, or a stack whose pitch is a fraction of the viewport height
+ *  — and the button shrinks to that budget, label and all, rather than
+ *  overflowing the screen or lapping the button below it. The background is
  *  resized, while the label is re-rendered at its final font size instead of
  *  fractionally scaling the whole container and blurring the text. */
 export function bannerButton(
@@ -67,6 +71,7 @@ export function bannerButton(
   label: string,
   onClick: () => void,
   maxWidth?: number,
+  maxHeight?: number,
 ): Phaser.GameObjects.Container {
   const img = scene.add.image(0, 0, "btn");
   const text = scene.add
@@ -75,7 +80,11 @@ export function bannerButton(
   const container = scene.add.container(x, y, [img, text]);
   const contentW = Math.max(img.width, text.width + BUTTON_LABEL_PAD);
   const limit = maxWidth ?? scene.scale.width - BUTTON_SCREEN_MARGIN;
-  const displayScale = Math.min(1, limit / contentW);
+  // Whichever axis runs out first sets the scale, so the label shrinks with
+  // the parchment instead of being sized off a width that was never the
+  // binding constraint.
+  const heightScale = maxHeight ? Math.max(0, maxHeight) / img.height : 1;
+  const displayScale = Math.min(1, limit / contentW, heightScale);
   const displayW = img.width * displayScale;
   const displayH = img.height * displayScale;
   const labelPad = Math.max(12, BUTTON_LABEL_PAD * displayScale);
@@ -100,12 +109,24 @@ export interface BannerAction {
   onClick: () => void;
 }
 
+/** Vertical breathing room between stacked banner buttons: the pitch opens up
+ *  to the maximum where there's room to spare, and never closes past the
+ *  minimum — which is also the air the stack reserves when it has to shrink
+ *  the buttons to fit the band at all. */
+const STACK_GAP_MIN = 6;
+const STACK_GAP_MAX = 22;
+
 /**
  * Stack banner buttons down a column, each sized to the column's width and the
  * set spaced to sit centred in `band` without ever overlapping. The
  * compact-landscape screens all put their actions in one column, and a fixed
  * vertical pitch is exactly what breaks on a short viewport — so the pitch is
  * derived from the buttons' own measured heights and whatever room is left.
+ *
+ * Once the gap is down to its minimum there's nothing left to give, so below
+ * that the buttons themselves shrink: each is capped at its even share of the
+ * band less the gaps, which is what keeps the last one on screen on a viewport
+ * as short as a handset in landscape.
  */
 export function stackBannerButtons(
   scene: Phaser.Scene,
@@ -113,6 +134,11 @@ export function stackBannerButtons(
   band: { top: number; height: number },
   actions: BannerAction[],
 ): Phaser.GameObjects.Container[] {
+  const gaps = Math.max(1, actions.length - 1);
+  const share = Math.max(
+    1,
+    (band.height - STACK_GAP_MIN * gaps) / Math.max(1, actions.length),
+  );
   const buttons = actions.map((action) =>
     bannerButton(
       scene,
@@ -121,11 +147,15 @@ export function stackBannerButtons(
       action.label,
       action.onClick,
       column.width,
+      share,
     ),
   );
   const stackH = buttons.reduce((sum, button) => sum + button.height, 0);
-  const gaps = Math.max(1, buttons.length - 1);
-  const gap = Phaser.Math.Clamp((band.height - stackH) / gaps, 6, 22);
+  const gap = Phaser.Math.Clamp(
+    (band.height - stackH) / gaps,
+    STACK_GAP_MIN,
+    STACK_GAP_MAX,
+  );
   let y = band.top + Math.max(0, (band.height - stackH - gap * gaps) / 2);
   for (const button of buttons) {
     button.setY(y + button.height / 2);

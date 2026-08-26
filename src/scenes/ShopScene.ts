@@ -45,6 +45,9 @@ import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
 
 const CARD_W = 260;
 const CARD_H = 340;
+/** Top edge of a card's title, in the 'card' texture's own coordinates. See
+ *  `buildCard` for why the title is hung from its top rather than centred. */
+const NAME_TOP = -124;
 const CARD_GAP = 26;
 const MIN_READABLE_CARD_SCALE = 0.5;
 const DRAG_THRESHOLD = 8; // px of pointer movement before a press counts as a scroll, not a tap
@@ -53,6 +56,54 @@ const DRAG_THRESHOLD = 8; // px of pointer movement before a press counts as a s
 // mostly from the horizontal duck and the focused card's scale.
 const FOCUS_LIFT = 8; // px the focused card rises
 const FOCUS_SCALE = 1.05;
+
+// --- Pack-choice layout ----------------------------------------------------
+/** The display scale a card's copy is written for. Below it the type floors in
+ *  `buildCard` stop following the art down, so the lines grow into one another
+ *  and the longest of them run off the parchment. A pack's choices close into a
+ *  fan rather than shrink past this — the same trade the loose cards make when
+ *  they drop into the compact carousel. */
+const READABLE_CARD_SCALE = 0.62;
+/** Largest a pack's choices are ever drawn, however much room there is. */
+const MAX_CHOICE_SCALE = 0.78;
+/** How little of a fanned card its neighbour may leave showing. Half a card is
+ *  enough to read its title and see its face; past that the fan stops
+ *  tightening and the cards give up size again. */
+const MIN_FAN_STEP = 0.5;
+/** Air, in px, kept either side of a fan for the corners its outermost cards
+ *  throw out as they tilt. */
+const FAN_BULGE = 36;
+/** How much larger a fan must draw the cards before it is worth hiding half of
+ *  each one. Every choice legible at once is what the screen is for, so a grid
+ *  that is only a little smaller keeps the screen. */
+const MIN_FAN_GAIN = 1.25;
+/** Tilt of the outermost card in a fan, and the drop of the lower corners. */
+const FAN_MAX_TILT_DEG = 6;
+const FAN_ARC_MAX = 4;
+/** The pose a fanned choice takes when it is brought forward to be read. */
+const FAN_FOCUS_LIFT = 12;
+const FAN_FOCUS_SCALE = 1.06;
+
+/** How a pack's choices are arranged. `step` is a fraction of a card's width:
+ *  1 means the cards in a row stand clear of one another, less means each
+ *  slides under the one beside it. */
+interface ChoiceLayout {
+  cols: number;
+  rows: number;
+  scale: number;
+  fanned: boolean;
+  step: number;
+}
+
+/** The live fan of pack choices, kept so a covered card can be brought out
+ *  from under its neighbour and put back again. */
+interface PackFan {
+  layer: Phaser.GameObjects.Container;
+  cards: Phaser.GameObjects.Container[];
+  restY: number[];
+  restRotation: number[];
+  focus?: number;
+}
 
 type PointerHandler = (
   pointer: Phaser.Input.Pointer,
@@ -104,6 +155,9 @@ export class ShopScene extends Phaser.Scene {
   private packs: BoosterOffer[] = [];
   private packChoices?: ShopOffer[];
   private openingPack?: BoosterOffer;
+  // Set only while the pack's choices are drawn as a fan; a grid of choices
+  // needs none of this, since nothing is covering anything.
+  private packFan?: PackFan;
   private visitWeights!: RarityWeights;
   // Scrolling cards render through their own camera, clipped to the card
   // area's screen rect — Phaser 4's WebGL renderer doesn't reliably support
@@ -172,6 +226,7 @@ export class ShopScene extends Phaser.Scene {
     this.packs = rollBoosterOffers(this.state, 2, this.boonSpent);
     this.packChoices = undefined;
     this.openingPack = undefined;
+    this.packFan = undefined;
     this.state.boonNextShop = false;
     // The scene instance is reused across restarts, but Phaser destroys all
     // non-main cameras on shutdown — these fields would otherwise dangle.
@@ -1784,14 +1839,28 @@ export class ShopScene extends Phaser.Scene {
     allowFilters: boolean,
     compact = false,
     rotation = 0,
+    // Let the type shrink past its usual floors without taking on the
+    // carousel's press-to-select behaviour. A pack's choices need the lower
+    // floors once they are drawn small, but they are still taken by pressing
+    // the card itself rather than through a separate buy button.
+    compactType = compact,
   ): Phaser.GameObjects.Container {
     const affordable = canAfford(this.state, offer);
     // Edge metadata (rarity and price) may shrink furthest; description and
     // title retain progressively larger floors for the card's reading order.
-    const fontSize = (native: number, minimum: number) => {
-      const floor = compact ? Math.round(minimum * 0.55) : minimum;
-      return `${Math.max(floor, Math.round(native * scale))}px`;
+    const sizePx = (native: number, minimum: number) => {
+      const floor = compactType ? Math.round(minimum * 0.55) : minimum;
+      return Math.max(floor, Math.round(native * scale));
     };
+    const fontSize = (native: number, minimum: number) =>
+      `${sizePx(native, minimum)}px`;
+    // Copy wraps against the size it is actually drawn at rather than the
+    // card's, since a font rounded up to the next whole pixel — or held up by
+    // its floor — would otherwise break a line that fits at full size. Capped
+    // at the parchment's inner width so the extra room never reaches the
+    // border.
+    const wrapWidth = (native: number, px: number, nativePx: number) =>
+      Math.min(240 * scale, (native * px) / nativePx);
     const img = this.add.image(0, 0, "card");
     img.setDisplaySize(CARD_W * scale, CARD_H * scale);
     const rarityColor = {
@@ -1807,23 +1876,30 @@ export class ShopScene extends Phaser.Scene {
         fontStyle: "bold",
       })
       .setOrigin(0.5);
+    // The title hangs from its top edge rather than sitting on its centre: a
+    // name long enough for two lines then grows down into the gap above the
+    // description instead of up into the rarity line, which a centred title
+    // runs into at any scale. NAME_TOP is placed so a one-line title lands
+    // where a centred one at -110 did.
+    const namePx = sizePx(26, 16);
     const name = this.add
-      .text(0, -110 * scale, offer.name, {
+      .text(0, NAME_TOP * scale, offer.name, {
         fontFamily: SERIF,
-        fontSize: fontSize(26, 16),
+        fontSize: `${namePx}px`,
         color: CSS.ink,
         fontStyle: "bold",
         align: "center",
-        wordWrap: { width: 220 * scale },
+        wordWrap: { width: wrapWidth(220, namePx, 26) },
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5, 0);
+    const descPx = sizePx(19, 12);
     const desc = this.add
       .text(0, -10 * scale, offer.desc, {
         fontFamily: SERIF,
-        fontSize: fontSize(19, 12),
+        fontSize: `${descPx}px`,
         color: CSS.inkSoft,
         align: "center",
-        wordWrap: { width: 214 * scale },
+        wordWrap: { width: wrapWidth(214, descPx, 19) },
       })
       .setOrigin(0.5);
     const costLabel = offer.freeByCoupon
@@ -1853,13 +1929,17 @@ export class ShopScene extends Phaser.Scene {
       // to the resting scale before pointer release. Wide layouts retain their
       // direct-card interaction on release.
       let pressedHere = false;
-      card.on("pointerover", () => {
+      card.on("pointerover", (pointer: Phaser.Input.Pointer) => {
         const hoverAllowed =
           !compact ||
           this.selectedCarouselIndex === undefined ||
           this.selectedCarouselIndex === index;
         if (affordable && hoverAllowed) img.setTint(0xfff2c8);
         if (compact && hoverAllowed) this.focusCarouselCard(index);
+        // A touch fires `pointerover` on the way down, which would make the
+        // fan's read-then-take press a single tap again. Only a pointer that
+        // genuinely hovers gets to bring a card forward for free.
+        if (!compact && !pointer.wasTouch) this.focusPackCard(offer, index);
       });
       card.on("pointerout", () => {
         if (affordable) img.clearTint();
@@ -1878,7 +1958,9 @@ export class ShopScene extends Phaser.Scene {
           this.focusCarouselCard(index, true);
           this.selectCarouselCard(index);
         } else {
-          pressedHere = affordable;
+          // In a fan this press may be spent bringing the card out from under
+          // its neighbour, in which case it is not also a purchase.
+          pressedHere = affordable && this.focusPackCard(offer, index);
         }
       });
       card.on("pointerup", () => {
@@ -1972,11 +2054,112 @@ export class ShopScene extends Phaser.Scene {
     this.showBoosterChoices(true, origin);
   }
 
+  /** Pick the arrangement that draws a pack's choices largest.
+   *
+   *  Every column count is measured as a plain grid first. Where that would
+   *  drive the cards below the size their copy is written for, the same grid is
+   *  measured again with each row's cards sliding under one another: an
+   *  overlapping row spends none of its width on gaps or on the covered edges,
+   *  which at phone widths buys back enough to draw the cards half again as
+   *  large. A fan is only ever tightened as far as it takes to climb back to a
+   *  readable card, and a fan that would not have to overlap at all is just a
+   *  row, so it stays one.
+   *
+   *  A fan hides half of every card it draws, which on this screen is half of
+   *  every choice on offer — so it has to win by a margin, not by a hair. */
+  private planChoiceLayout(
+    n: number,
+    availW: number,
+    availH: number,
+    gap: number,
+  ): ChoiceLayout {
+    let grid: ChoiceLayout | undefined;
+    let fan: ChoiceLayout | undefined;
+    for (let cols = 1; cols <= n; cols++) {
+      const rows = Math.ceil(n / cols);
+      const heightScale = (availH - (rows - 1) * gap) / (rows * CARD_H);
+      const gridScale = Math.min(
+        MAX_CHOICE_SCALE,
+        heightScale,
+        (availW - (cols - 1) * gap) / (cols * CARD_W),
+      );
+      if (!grid || gridScale > grid.scale) {
+        grid = { cols, rows, scale: gridScale, fanned: false, step: 1 };
+      }
+      // Overlap buys width and nothing else, so it is worth measuring only
+      // where the width is what is holding the cards down.
+      if (cols === 1 || gridScale >= READABLE_CARD_SCALE) continue;
+      const step = Phaser.Math.Clamp(
+        ((availW - FAN_BULGE) / (READABLE_CARD_SCALE * CARD_W) - 1) /
+          (cols - 1),
+        MIN_FAN_STEP,
+        1,
+      );
+      if (step >= 1) continue;
+      const fanScale = Math.min(
+        MAX_CHOICE_SCALE,
+        heightScale,
+        (availW - FAN_BULGE) / (CARD_W * (1 + (cols - 1) * step)),
+      );
+      if (!fan || fanScale > fan.scale) {
+        fan = { cols, rows, scale: fanScale, fanned: true, step };
+      }
+    }
+    const best = grid as ChoiceLayout;
+    return fan && fan.scale > best.scale * MIN_FAN_GAIN ? fan : best;
+  }
+
+  /** Bring a fanned choice out from under its neighbour so it can be read.
+   *
+   *  Returns whether the card was already at the front — that is, whether a
+   *  press on it is a choice rather than a request to read it. A covered card's
+   *  exposed sliver is a large target for a decision that spends the pack, so
+   *  the first press pulls the card clear and only the next one takes it. A
+   *  pointer that can hover has brought the card forward already, so this costs
+   *  a mouse nothing and a finger one tap.
+   *
+   *  A no-op, and true, for every card that is not in a live fan: the loose
+   *  cards and a gridded pack have nothing covering them. */
+  private focusPackCard(offer: ShopOffer, index: number): boolean {
+    const fan = this.packFan;
+    if (!fan || !this.packChoices?.includes(offer)) return true;
+    if (fan.focus === index) return true;
+    const pose = (i: number, lifted: boolean) => {
+      const card = fan.cards[i];
+      if (!card) return;
+      this.tweens.killTweensOf(card);
+      const y = fan.restY[i] - (lifted ? FAN_FOCUS_LIFT : 0);
+      const scale = lifted ? FAN_FOCUS_SCALE : 1;
+      // A card pulled forward to be read straightens up; it tilts back into
+      // the hand when the next one takes its place.
+      const rotation = lifted ? 0 : fan.restRotation[i];
+      if (!fx.motion) {
+        card.setY(y).setScale(scale).setRotation(rotation);
+        return;
+      }
+      this.tweens.add({
+        targets: card,
+        y,
+        rotation,
+        scaleX: scale,
+        scaleY: scale,
+        duration: 160,
+        ease: "Cubic.easeOut",
+      });
+    };
+    if (fan.focus !== undefined) pose(fan.focus, false);
+    fan.focus = index;
+    pose(index, true);
+    fan.layer.bringToTop(fan.cards[index]);
+    return false;
+  }
+
   /** Focus a purchased pack over the shop, break its seal, then flip its free
    * choices into view. Reused without animation after a resize. */
   private showBoosterChoices(animate: boolean, origin?: PackOrigin): void {
     if (!this.packChoices || !this.openingPack) return;
     this.packGroup?.destroy();
+    this.packFan = undefined;
     const staged = animate && fx.motion && !!origin;
     if (staged) origin.source.setVisible(false);
     if (!staged) {
@@ -2011,36 +2194,71 @@ export class ShopScene extends Phaser.Scene {
     objects.push(title);
 
     const n = this.packChoices.length;
-    const portrait = H > W * 1.05;
-    const cols = portrait ? Math.min(2, n) : n;
-    const rows = Math.ceil(n / cols);
     const gap = 14;
     const top = Math.max(78, H * 0.13);
     const bottom = H - 25;
-    const scale = Math.min(
-      0.78,
-      (W - 34) / (cols * CARD_W + (cols - 1) * gap),
-      (bottom - top) / (rows * CARD_H + (rows - 1) * gap),
-    );
+    const plan = this.planChoiceLayout(n, W - 34, bottom - top, gap);
+    const { cols, rows, scale, fanned } = plan;
     const cw = CARD_W * scale;
     const ch = CARD_H * scale;
-    const scaledGap = gap * scale;
-    const gridH = rows * ch + (rows - 1) * scaledGap;
+    const step = fanned ? cw * plan.step : cw + gap;
+    // A fan drops its outer cards a little so the hand curves; a row is level.
+    const arcStep = fanned ? Math.min(FAN_ARC_MAX, ch * 0.02) : 0;
+    const arcMax = (arcStep * (cols - 1)) / 2;
+    const gridH = rows * ch + (rows - 1) * gap + arcMax;
     const gridTop = top + Math.max(0, (bottom - top - gridH) / 2);
+    // Below the size the copy is written for, the type's floors are what break
+    // the card apart — so let it keep following the art down instead.
+    const compactType = scale < READABLE_CARD_SCALE;
+    const fanCenter = (cols - 1) / 2;
+
+    // Fanned cards cover one another, which is a z-order the fan re-shuffles as
+    // cards are brought forward. Keeping them in a layer of their own lets that
+    // happen without disturbing the shade beneath or the pack shell above.
+    const cardLayer = this.add.container(0, 0);
+    objects.push(cardLayer);
     const cards: Phaser.GameObjects.Container[] = [];
+    const restY: number[] = [];
+    const restRotation: number[] = [];
     this.packChoices.forEach((offer, index) => {
       const row = Math.floor(index / cols);
       const rowStart = row * cols;
       const rowCount = Math.min(cols, n - rowStart);
       const col = index - rowStart;
-      const rowW = rowCount * cw + (rowCount - 1) * scaledGap;
-      const x = W / 2 - rowW / 2 + cw / 2 + col * (cw + scaledGap);
-      const y = gridTop + ch / 2 + row * (ch + scaledGap);
-      const card = this.buildCard(x, y, offer, scale, index, true);
-      card.setDepth(102);
+      // A short last row keeps the full row's overlap rather than spreading out
+      // to fill the width, so the two rows read as one hand rather than two.
+      const rowW = cw + (rowCount - 1) * step;
+      const offset = col - (rowCount - 1) / 2;
+      const x = W / 2 - rowW / 2 + cw / 2 + col * step;
+      const y =
+        gridTop + ch / 2 + row * (ch + gap) + Math.abs(offset) * arcStep;
+      const rotation = fanned
+        ? Phaser.Math.DegToRad(
+            (offset / Math.max(1, fanCenter)) * FAN_MAX_TILT_DEG,
+          )
+        : 0;
+      const card = this.buildCard(
+        x,
+        y,
+        offer,
+        scale,
+        index,
+        true,
+        false,
+        rotation,
+        compactType,
+      );
+      // A hand holds its middle card in front and its outermost behind.
+      card.setDepth(102 + cols - Math.abs(offset));
       cards.push(card);
-      objects.push(card);
+      restY.push(y);
+      restRotation.push(rotation);
+      cardLayer.add(card);
     });
+    cardLayer.sort("depth");
+    this.packFan = fanned
+      ? { layer: cardLayer, cards, restY, restRotation }
+      : undefined;
 
     const shellW = Math.min(260, W * 0.48);
     const shellH = Math.min(340, H * 0.55);
@@ -2186,6 +2404,7 @@ export class ShopScene extends Phaser.Scene {
       this.packChoices = undefined;
       this.openingPack = undefined;
       this.packGroup = undefined;
+      this.packFan = undefined;
       this.rebuildShop();
       return;
     }
