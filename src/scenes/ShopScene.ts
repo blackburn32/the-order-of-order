@@ -193,6 +193,7 @@ export class ShopScene extends Phaser.Scene {
   private tutorialCallout?: CalloutHandle;
   private purchasesMade = 0;
   private rerollsThisVisit = 0;
+  private couponFreebieClaimedThisVisit = false;
   // The cards are dealt onto the table once, when the shop opens. Resizes and
   // the die-picker sub-screen rebuild the same offers, and re-dealing them
   // there would read as a new shop rather than the one already being read.
@@ -210,6 +211,7 @@ export class ShopScene extends Phaser.Scene {
     this.state = getRun(this.registry);
     this.purchasesMade = 0;
     this.rerollsThisVisit = 0;
+    this.couponFreebieClaimedThisVisit = false;
     this.dealt = false;
     this.pendingCarouselPan = 0;
     this.purchaseAnimating = false;
@@ -2434,17 +2436,17 @@ export class ShopScene extends Phaser.Scene {
       case "shrink":
         return "Choose a die to shrink";
       case "grindstone":
-        return "Choose a die — its whole size shrinks";
+        return "Choose a die size — every die of it shrinks";
       case "twin":
-        return "Choose a die — its whole size is duplicated";
+        return "Choose a die size — every die of it is duplicated";
       case "loaded_die":
-        return "Choose a die — its whole size is loaded";
+        return "Choose a die size — every die of it is loaded";
       case "wild_face":
-        return "Choose a die — its whole size turns wild";
+        return "Choose a die size — every die of it turns wild";
       case "royal_seal":
-        return "Choose a die — its size receives the Royal Seal";
+        return "Choose a die size to receive the Royal Seal";
       default:
-        return "Choose a die";
+        return offer.targetsSize ? "Choose a die size" : "Choose a die";
     }
   }
 
@@ -2472,7 +2474,9 @@ export class ShopScene extends Phaser.Scene {
         .text(W / 2, H * 0.12, this.promptFor(offer), {
           fontFamily: SERIF,
           fontSize: "34px",
-          color: CSS.ink,
+          // The picker stands on the bare felt with the cards hidden, so the
+          // prompt is set in parchment rather than the ink a card is printed in.
+          color: CSS.parchment,
           fontStyle: "bold",
         })
         .setOrigin(0.5),
@@ -2485,9 +2489,11 @@ export class ShopScene extends Phaser.Scene {
     // always added regardless.
     try {
       items.push(
-        ...(grouped
-          ? this.buildGroupedPicker(offer, area)
-          : this.buildIndividualPicker(offer, area)),
+        ...(offer.targetsSize
+          ? this.buildSizePicker(offer, area)
+          : grouped
+            ? this.buildGroupedPicker(offer, area)
+            : this.buildIndividualPicker(offer, area)),
       );
     } catch (err) {
       console.error("Failed to build die picker", err);
@@ -2550,6 +2556,87 @@ export class ShopScene extends Phaser.Scene {
         sprite.setAlpha(0.35);
       }
       items.push(sprite);
+    });
+    return items;
+  }
+
+  /** One sprite per die SIZE the player holds, with the whole size's count
+   *  under it. Every size-scoped card (Twins, Grindstone, Loaded Die, Wild Face,
+   *  Royal Seal) acts on the size and nothing else, so showing the grid — or
+   *  even one icon per flag combination — asks the player to make a choice the
+   *  card does not offer. Eight sizes at most, so the grid stays responsive at
+   *  any dice count.
+   *
+   *  Where a size is split across flag groups, the representative is one the
+   *  offer can actually act on (a plain d6 among loaded ones, for Loaded Die),
+   *  since it is also the die the effect is applied through. */
+  private buildSizePicker(
+    offer: ShopOffer,
+    area: GridArea,
+  ): Phaser.GameObjects.GameObject[] {
+    interface SizeEntry {
+      die: Die;
+      count: number;
+      index: number;
+      eligible: boolean;
+    }
+    const bySize = new Map<number, SizeEntry>();
+    for (const group of this.state.dice.groups()) {
+      const eligible = this.eligibleFor(offer, group.die);
+      const entry = bySize.get(group.die.sides);
+      if (!entry) {
+        bySize.set(group.die.sides, {
+          die: group.die,
+          count: group.count,
+          index: group.firstIndex,
+          eligible,
+        });
+        continue;
+      }
+      entry.count += group.count;
+      if (eligible && !entry.eligible) {
+        entry.die = group.die;
+        entry.index = group.firstIndex;
+        entry.eligible = true;
+      }
+    }
+    const entries = [...bySize.values()].sort(
+      (a, b) => b.die.sides - a.die.sides,
+    );
+    const { scale, positions } = computeGridPositions(
+      entries.length,
+      area,
+      112,
+    );
+
+    const items: Phaser.GameObjects.GameObject[] = [];
+    entries.forEach((entry, i) => {
+      const { x, y } = positions[i];
+      const sprite = new DieSprite(this, x, y, entry.die);
+      sprite.setScale(scale);
+      sprite.showFace(null);
+      items.push(sprite);
+
+      items.push(
+        this.add
+          .text(x, y + 50 * scale, `×${entry.count}`, {
+            fontFamily: SERIF,
+            fontSize: "15px",
+            color: CSS.goldLight,
+            fontStyle: "bold",
+          })
+          .setOrigin(0.5),
+      );
+
+      if (entry.eligible) {
+        sprite.setSize(104, 104);
+        sprite.setInteractive({ useHandCursor: true });
+        sprite.on("pointerover", () => sprite.setScale(scale * 1.12));
+        sprite.on("pointerout", () => sprite.setScale(scale));
+        sprite.on("pointerdown", () => this.onPick(offer, entry.index));
+      } else {
+        sprite.setAlpha(0.35);
+      }
     });
     return items;
   }
@@ -2631,6 +2718,7 @@ export class ShopScene extends Phaser.Scene {
     recordSelection(offer.id);
     audio.buy();
     this.purchasesMade += 1;
+    if (offer.freeByCoupon) this.couponFreebieClaimedThisVisit = true;
     this.offers = this.offers.filter((candidate) => candidate !== offer);
 
     // Coupon Book affects the rest of the visit in which it is bought: one of
@@ -2670,6 +2758,7 @@ export class ShopScene extends Phaser.Scene {
       this.state.ownedLedger ? 5 : 3,
       Math.random,
       this.visitWeights,
+      !this.couponFreebieClaimedThisVisit,
     );
     this.rebuildShop();
   }

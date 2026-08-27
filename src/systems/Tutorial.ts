@@ -3,6 +3,7 @@ import { newRun, setRun, type RunState } from "../state/RunState";
 import { loadProgress, loadSettings, saveSettings } from "./SaveData";
 import { beginRun as initializeRun } from "../sim/engine";
 import { goalFor } from "./Boss";
+import { GOLD_PER_INTEREST, INTEREST_CAP } from "./Gold";
 import { trialRollTarget } from "./Trial";
 import { WIN_RANK } from "../config";
 
@@ -27,6 +28,7 @@ export enum TutorialStage {
   Rolls,
   Rank,
   Results, // TrialResults: what a clear paid
+  Interest, // TrialResults: and what the purse pays on itself
   Shop, // Shop: spending it
   Boss, // Game, once a Boss Trial is actually in force
   Done,
@@ -57,8 +59,10 @@ export const TUTORIAL_TEXT: Record<
     "Here are your remaining rolls, each one left when the round end rewards one gold.",
   [TutorialStage.Rank]: `This is your current rank. Complete rank ${WIN_RANK} to win.`,
   [TutorialStage.Results]: "Clearing a trial pays gold. Spend it in the shop.",
+  [TutorialStage.Interest]: `Gold you hold pays interest: 1 more for every ${GOLD_PER_INTEREST} in your purse at each clear, up to ${INTEREST_CAP}. Saving earns.`,
   [TutorialStage.Shop]: "Spend your gold. A pack reveals three; you keep one.",
-  [TutorialStage.Boss]: "Be careful, the boss effect is active and will make your task harder. Defeat the boss to advance a rank!",
+  [TutorialStage.Boss]:
+    "Be careful, the boss effect is active and will make your task harder. Defeat the boss to advance a rank!",
 };
 
 export interface TutorialState {

@@ -11,7 +11,6 @@ import {
   INTEREST_CAP,
   interestOn,
   PROSPECTOR_CAP,
-  RELIQUARY_GOLD,
   STARTING_GOLD,
   TRIAL_GOLD_BASE,
   trialPayout,
@@ -134,10 +133,12 @@ console.log("\nBoss trials");
     trialPayout(state).items === BOSS_CLEAR_GOLD,
     "clearing a boss pays its bonus",
   );
+  const plainTotal = trialPayout(state).total;
   state.hasReliquary = true;
+  const relicTotal = trialPayout(state).total;
   check(
-    trialPayout(state).items === BOSS_CLEAR_GOLD + RELIQUARY_GOLD,
-    "and Reliquary adds to it",
+    relicTotal > plainTotal,
+    "and Reliquary takes a share of every payout on top",
   );
 }
 
@@ -280,10 +281,7 @@ console.log("\nShop pricing");
       offers[1].cost === Math.max(1, originalCosts[1] - 2),
     "buying Pawnbroker immediately discounts the current card row",
   );
-  check(
-    offers[2].cost === 0,
-    "Pawnbroker leaves an already-free card free",
-  );
+  check(offers[2].cost === 0, "Pawnbroker leaves an already-free card free");
 }
 
 {

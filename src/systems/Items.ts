@@ -2,6 +2,9 @@ import { MAX_EXTRA_NUMBERS, WIN_RANK, rankOf } from "../config";
 import { RunState } from "../state/RunState";
 import { bossBlocksGrowth, goalFor } from "./Boss";
 import { DieOpts, DieSides } from "./Dice";
+import { RELIQUARY_BONUS_PERCENT } from "./Gold";
+import { JACKPOT_DICE, JACKPOT_POINTS } from "./Scoring";
+import { trialRollTarget } from "./Trial";
 
 export type ShopItemId =
   | "extra_die"
@@ -49,6 +52,8 @@ export type ShopItemId =
   | "dealers_bell"
   | "shopping_cart"
   | "brick_mold"
+  | "chip_mold"
+  | "spike_mold"
   | "tithe_bowl"
   | "lucky_coin"
   | "counting_house"
@@ -107,6 +112,8 @@ type RunCounter =
   | "prism"
   | "lastCall"
   | "brickMold"
+  | "chipMold"
+  | "spikeMold"
   | "titheBowl"
   | "luckyCoin"
   | "countingHouse";
@@ -155,7 +162,7 @@ export type Effect =
   | { kind: "loadSize" } // load every die of the chosen die's size (now + future)
   | { kind: "wildSize" } // make every die of the chosen die's size wild (now + future)
   | { kind: "sealSize" } // make the chosen size's maximum face score (now + future)
-  | { kind: "bonusRollThisRound" }
+  | { kind: "bonusRollsProportional"; fraction: number; min: number } // add max(min, ⌊fraction·roll budget⌋) rolls, this trial only
   | { kind: "bonusRollPerRound" }
   | { kind: "setFlag"; flag: RunFlag }
   | { kind: "incCounter"; counter: RunCounter };
@@ -200,7 +207,11 @@ const twinSize = (): Effect => ({ kind: "twinSize" });
 const loadSize = (): Effect => ({ kind: "loadSize" });
 const wildSize = (): Effect => ({ kind: "wildSize" });
 const sealSize = (): Effect => ({ kind: "sealSize" });
-const bonusRollThisRound = (): Effect => ({ kind: "bonusRollThisRound" });
+const bonusRollsProportional = (fraction: number, min: number): Effect => ({
+  kind: "bonusRollsProportional",
+  fraction,
+  min,
+});
 const bonusRollPerRound = (): Effect => ({ kind: "bonusRollPerRound" });
 const setFlag = (flag: RunFlag): Effect => ({ kind: "setFlag", flag });
 const incCounter = (counter: RunCounter): Effect => ({
@@ -220,6 +231,10 @@ export interface ItemDef {
   /** Card text — a function when it depends on run state (e.g. Extra Number). */
   desc: string | ((state: RunState) => string);
   needsTarget?: boolean; // player must pick a die (shrink, twin, loaded_die, wild_face)
+  /** The pick only names a die SIZE — every die of it is an equally good way of
+   *  saying which one. The shop shows one die per size held for these, rather
+   *  than the whole grid; an item without it targets one specific die. */
+  targetsSize?: boolean;
   targetCount?: number; // >1 for multi-pick items (grindstone)
   /** Single-time item: a second copy would do nothing (boolean-flag items like
    *  Snake Eyes). Once purchased it's recorded in `state.ownedUnique` and no
@@ -240,6 +255,72 @@ export interface ItemDef {
 const STARTER_GRID_CAP = 75;
 const smallGrid = (s: RunState) => s.dice.length < STARTER_GRID_CAP;
 
+/** The figure a card gives now, then the one it would give with another copy —
+ *  so "what does one more of these buy me?" is answered on the card itself.
+ *
+ *  Written as an arrow rather than with the old value struck out: a Phaser Text
+ *  has no rich text of its own, and the combining stroke overlay (U+0336) draws
+ *  as a spacing dash in the card's serif, which reads as part of the arrow
+ *  rather than as a line through the figure. */
+export function upgrade(
+  current: string | number,
+  next: string | number,
+): string {
+  return `${current} → ${next}`;
+}
+
+/**
+ * Card text for a stacking passive. `owned` reads the run's copy count, `value`
+ * turns a copy count into the figure the card advertises, and `line` prints it
+ * (given the figure and whether the value it is selling is plural). With nothing
+ * owned the card reads as a plain sentence; from the first copy on, the figure
+ * becomes old → new.
+ */
+function stacking(
+  owned: (s: RunState) => number,
+  value: (copies: number, s: RunState) => string | number,
+  line: (figure: string, plural: boolean) => string,
+): (s: RunState) => string {
+  return (s) => {
+    const copies = owned(s);
+    const next = value(copies + 1, s);
+    return line(
+      copies > 0 ? upgrade(value(copies, s), next) : String(next),
+      String(next) !== "1",
+    );
+  };
+}
+
+/** How many dice an `addDiceProportional` effect adds right now — the one
+ *  definition behind both the effect and the card that advertises it. */
+export function proportionalCount(
+  state: RunState,
+  fraction: number,
+  min: number,
+): number {
+  return Math.max(min, Math.floor(state.dice.length * fraction));
+}
+
+/** Extra Dice scales with the grid so it never becomes a rounding error. */
+const EXTRA_DICE_FRACTION = 0.25;
+const EXTRA_DICE_MIN = 5;
+
+/** Overtime buys a quarter of the trial's own roll budget rather than a flat
+ *  two — which was a seventh of a Lesser Trial and a twentieth of a Greater
+ *  one — and never less than the two it used to give. */
+const OVERTIME_FRACTION = 0.25;
+const OVERTIME_MIN = 2;
+export function overtimeRolls(state: RunState): number {
+  return Math.max(
+    OVERTIME_MIN,
+    Math.floor(trialRollTarget(state) * OVERTIME_FRACTION),
+  );
+}
+
+/** Shopping Cart's across-the-board discount. Declared here with the card that
+ *  promises it; the shop's pricing reads it back (see systems/Shop). */
+export const SHOPPING_CART_DISCOUNT_PERCENT = 25;
+
 /** Every item, in rough rarity/cost order. This array is the single source of
  *  truth: the shop's offer pool, the dev panel's grant list, and each item's
  *  effects all derive from it. */
@@ -254,7 +335,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "chip",
-    name: "Chips",
+    name: "Two cents",
     priceBand: "low",
     stackPricing: "linear",
     rarity: "uncommon",
@@ -263,24 +344,46 @@ export const ITEMS: ItemDef[] = [
     effects: [addDice(2, 2)],
   },
   {
-    id: "pocket_change",
-    name: "Pocket Change",
-    priceBand: "low",
-    stackPricing: "linear",
-    rarity: "common",
-    desc: "Gain 2 points on every roll.",
-    available: smallGrid,
-    effects: [incCounter("pocketChange")],
-  },
-  {
     id: "spike",
-    name: "Spikes",
+    name: "Two spikes",
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
     desc: "Add two d4 to your grid.",
     available: smallGrid,
     effects: [addDice(4, 2)],
+  },
+  {
+    id: "rollplayer",
+    name: "Rollplayer",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: "Add a d20. Its highest face always scores and doubles all points that roll.",
+    effects: [addDice(20, 1, { maxFaceBonus: true })],
+  },
+  {
+    id: "centurion",
+    name: "Centurion",
+    priceBand: "strong",
+    stackPricing: "linear",
+    rarity: "rare",
+    desc: "Add a d100. Its highest face always scores and quadruples all points that roll.",
+    effects: [addDice(100, 1, { maxFaceBonus: true })],
+  },
+  {
+    id: "pocket_change",
+    name: "Pocket Change",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    desc: stacking(
+      (s) => s.pocketChange,
+      (copies) => 2 * copies,
+      (points) => `Gain ${points} points on every roll.`,
+    ),
+    available: smallGrid,
+    effects: [incCounter("pocketChange")],
   },
   {
     id: "shrink",
@@ -294,12 +397,31 @@ export const ITEMS: ItemDef[] = [
     effects: [shrinkTarget(2)],
   },
   {
+    id: "grindstone",
+    name: "Grindstone",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: "Choose a die size — every die of that size shrinks two steps.",
+    needsTarget: true,
+    targetsSize: true,
+    available: (s) => s.dice.shrinkableCount() > 0,
+    effects: [shrinkSize(2)],
+  },
+  {
     id: "whetstone",
     name: "Whetstone",
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
-    desc: "Each roll, a 10% chance to shrink a random die one step.",
+    // Each copy rolls its own 10% chance, so the figure is the per-roll rate
+    // rather than the odds of exactly one shrink.
+    desc: stacking(
+      (s) => s.whetstone,
+      (copies) => `${10 * copies}%`,
+      (chance) =>
+        `Each roll, a ${chance} chance to shrink a random die one size.`,
+    ),
     effects: [incCounter("whetstone")],
   },
   {
@@ -308,8 +430,9 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "common",
-    desc: "Choose a die — duplicate every die of its size.",
+    desc: "Choose a die size — every die of that size is duplicated.",
     needsTarget: true,
+    targetsSize: true,
     effects: [twinSize()],
   },
   {
@@ -318,8 +441,22 @@ export const ITEMS: ItemDef[] = [
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
-    desc: "Add two rolls to this trial only.",
-    effects: [bonusRollThisRound(), bonusRollThisRound()],
+    desc: (s) => `Add ${overtimeRolls(s)} rolls to this trial only.`,
+    effects: [bonusRollsProportional(OVERTIME_FRACTION, OVERTIME_MIN)],
+  },
+  {
+    id: "metronome",
+    name: "Metronome",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => s.bonusRollsPerRound,
+      (copies) => copies,
+      (rolls, plural) =>
+        `Add ${rolls} permanent roll${plural ? "s" : ""} to every trial.`,
+    ),
+    effects: [bonusRollPerRound()],
   },
   {
     id: "extra_dice",
@@ -327,17 +464,11 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
-    desc: "Add d6 equal to a quarter of your grid (at least 5).",
-    effects: [addDiceProportional(6, 0.25, 5)],
-  },
-  {
-    id: "rollplayer",
-    name: "Rollplayer",
-    priceBand: "standard",
-    stackPricing: "linear",
-    rarity: "uncommon",
-    desc: "Add a d20. Its highest face always scores and doubles all points that roll.",
-    effects: [addDice(20, 1, { maxFaceBonus: true })],
+    // Quoted against the grid the player is holding, because "a quarter of your
+    // grid" is the rule, not the answer to "is this worth five gold right now?".
+    desc: (s) =>
+      `Add ${proportionalCount(s, EXTRA_DICE_FRACTION, EXTRA_DICE_MIN)} d6 to your grid — a quarter of it, at least ${EXTRA_DICE_MIN}.`,
+    effects: [addDiceProportional(6, EXTRA_DICE_FRACTION, EXTRA_DICE_MIN)],
   },
   {
     id: "mult2",
@@ -349,24 +480,13 @@ export const ITEMS: ItemDef[] = [
     effects: [multiplyDice(2)],
   },
   {
-    id: "metronome",
-    name: "Metronome",
-    priceBand: "standard",
-    stackPricing: "linear",
-    rarity: "uncommon",
-    desc: "Add one permanent roll to every trial.",
-    effects: [bonusRollPerRound()],
-  },
-  {
-    id: "grindstone",
-    name: "Grindstone",
-    priceBand: "standard",
-    stackPricing: "linear",
-    rarity: "uncommon",
-    desc: "Choose a die — shrink every die of its size two steps.",
-    needsTarget: true,
-    available: (s) => s.dice.shrinkableCount() > 0,
-    effects: [shrinkSize(2)],
+    id: "mult3",
+    name: "Multiply Dice ×3",
+    priceBand: "build",
+    stackPricing: "explosive",
+    rarity: "rare",
+    desc: "Triple every die in your grid.",
+    effects: [multiplyDice(3)],
   },
   {
     id: "loaded_die",
@@ -374,8 +494,9 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
-    desc: "Choose a die — every die of its size never rolls its two highest faces, now and later.",
+    desc: "Choose a die size — every die of that size never rolls its two highest faces, now and later.",
     needsTarget: true,
+    targetsSize: true,
     available: (s) => s.dice.loadableCount() > 0,
     effects: [loadSize()],
   },
@@ -403,25 +524,20 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "rare",
-    desc: "Each scoring die grants +1 more point.",
+    // A scoring die always pays at least its own point, so the figure this
+    // replaces is worth printing even on the first copy.
+    desc: (s) =>
+      `Each scoring die grants ${upgrade(1 + s.extraPoints, 2 + s.extraPoints)} points.`,
     effects: [extraPoint()],
   },
   {
-    id: "mult3",
-    name: "Multiply Dice ×3",
-    priceBand: "build",
-    stackPricing: "explosive",
-    rarity: "rare",
-    desc: "Triple every die in your grid.",
-    effects: [multiplyDice(3)],
-  },
-  {
     id: "extra_number",
-    name: "Extra Number",
+    name: "Decree",
     priceBand: "strong",
     stackPricing: "linear",
     rarity: "rare",
-    desc: (s) => `Dice showing ${2 + s.extraNumberCount} also score.`,
+    desc: (s) =>
+      `The Order decrees that dice showing ${2 + s.extraNumberCount} also score.`,
     available: (s) => s.extraNumberCount < MAX_EXTRA_NUMBERS,
     effects: [extraNumber()],
   },
@@ -431,7 +547,9 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     rarity: "rare",
     unique: true,
-    desc: "Double all points earned from rolls.",
+    // "points earned from rolls" was every point the game pays: there is no
+    // other kind, and the qualifier only invited the question.
+    desc: "Double every point you earn.",
     effects: [setFlag("hasAmplifier")],
   },
   {
@@ -450,35 +568,34 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     stackPricing: "linear",
     rarity: "rare",
-    desc: "Choose a die — every die of its size scores on every face, now and later.",
+    desc: "Choose a die size — every die of that size scores on every face, now and later.",
     needsTarget: true,
+    targetsSize: true,
     effects: [wildSize()],
   },
-  {
-    id: "centurion",
-    name: "Centurion",
-    priceBand: "strong",
-    stackPricing: "linear",
-    rarity: "rare",
-    desc: "Add a d100. Its highest face always scores and quadruples all points that roll.",
-    effects: [addDice(100, 1, { maxFaceBonus: true })],
-  },
+  // Interest itself is taught by the tutorial's Interest step, on the trial
+  // results receipt (see systems/Tutorial and TrialResultsScene), so this card
+  // lands on a rule the player has already been shown.
   {
     id: "vault",
     name: "Vault",
     priceBand: "standard",
     rarity: "rare",
     unique: true,
-    desc: "Interest pays out to 10 gold per trial instead of 5.",
+    desc: "Interest pays up to 10 gold per trial instead of 5.",
     effects: [setFlag("hasVault")],
   },
+  // A few flat points per written 7 was a rounding error beside any grid worth
+  // having. As a ×7 on the whole roll it is the largest single multiplier in
+  // the game, and it asks a real price: only dice of seven faces or more can
+  // show a 7, so it pulls directly against shrinking the grid down to d1s.
   {
     id: "lucky_seven",
     name: "Lucky Seven",
     priceBand: "strong",
     rarity: "uncommon",
     unique: true,
-    desc: "Gain 7 points for every digit 7 in the rolled values (77 gains 14).",
+    desc: "If any rolled value contains a 7, multiply all points earned that roll by 7.",
     effects: [setFlag("hasLuckySeven")],
   },
   {
@@ -499,22 +616,59 @@ export const ITEMS: ItemDef[] = [
     desc: "If at least three different die sizes score, double all points earned that roll.",
     effects: [setFlag("hasMenagerie")],
   },
+  // The molds all pour the same way (see MOLDS below); what separates them is
+  // the size they pour. A d2 scores on half its faces where a d6 scores on a
+  // sixth, so the smaller the mold, the dearer and rarer it is.
+  {
+    id: "chip_mold",
+    name: "Chip Mold",
+    priceBand: "strong",
+    stackPricing: "linear",
+    rarity: "rare",
+    desc: stacking(
+      (s) => s.chipMold,
+      (copies) => copies,
+      (count) => `Add ${count} d2 to your grid after every roll.`,
+    ),
+    effects: [incCounter("chipMold")],
+  },
+  {
+    id: "spike_mold",
+    name: "Spike Mold",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => s.spikeMold,
+      (copies) => copies,
+      (count) => `Add ${count} d4 to your grid after every roll.`,
+    ),
+    effects: [incCounter("spikeMold")],
+  },
   {
     id: "brick_mold",
     name: "Brick Mold",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
-    desc: "Add one d6 to your grid after every roll.",
+    desc: stacking(
+      (s) => s.brickMold,
+      (copies) => copies,
+      (count) => `Add ${count} d6 to your grid after every roll.`,
+    ),
     effects: [incCounter("brickMold")],
   },
+  // The seal pays the face rather than a flat point, so sealing a d100 is worth
+  // sealing a d100 for — under the old rule the largest die on the board and a
+  // d2 were sealed to exactly the same effect.
   {
     id: "royal_seal",
     name: "Royal Seal",
     priceBand: "strong",
     rarity: "rare",
     needsTarget: true,
-    desc: "Choose a die size. Its maximum face scores, now and on future dice of that size.",
+    targetsSize: true,
+    desc: "Choose a die size. Its maximum face scores its own value, now and on future dice of that size.",
     available: (s) =>
       Object.keys(s.dice.sizeCounts()).some(
         (side) => !s.royalSealSizes.includes(Number(side) as DieSides),
@@ -554,7 +708,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     rarity: "rare",
     unique: true,
-    desc: "One random non-free item in every shop becomes free.",
+    desc: "One random item in every shop becomes free.",
     effects: [setFlag("hasCouponBook")],
   },
   {
@@ -563,7 +717,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     rarity: "rare",
     unique: true,
-    desc: "The first reroll in every shop is free.",
+    desc: "Your first reroll in the shop is free.",
     effects: [setFlag("hasDealersBell")],
   },
   {
@@ -572,9 +726,10 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     rarity: "rare",
     unique: true,
-    desc: "Every item in the shop costs 15% less gold.",
+    desc: `Every item in the shop costs ${SHOPPING_CART_DISCOUNT_PERCENT}% less gold.`,
     effects: [setFlag("hasShoppingCart")],
   },
+
   {
     id: "double_the_fun",
     name: "Double the Fun",
@@ -586,13 +741,21 @@ export const ITEMS: ItemDef[] = [
     effects: [setFlag("hasDoubleTheFun")],
   },
   // --- Unlockable stacking passives ---------------------------------------
+  // Every repeatable card below quotes what it pays now against what a further
+  // copy would pay (see `stacking`), since the whole decision at the counter is
+  // whether the next copy is worth its rising price.
   {
     id: "dividend",
     name: "Dividend",
     priceBand: "build",
     stackPricing: "linear",
     rarity: "common",
-    desc: "On every roll, gain 1 point for every 3 dice you own.",
+    desc: stacking(
+      (s) => s.dividend,
+      (copies) => copies,
+      (points) =>
+        `On every roll, gain ${points} points for every 3 dice you own.`,
+    ),
     unlock: { kind: "reachRank", rank: 2 },
     effects: [incCounter("dividend")],
   },
@@ -602,7 +765,12 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "common",
-    desc: "Each consecutive roll that scores adds +2 to points earned; a scoreless roll resets it to 0.",
+    desc: stacking(
+      (s) => s.momentum,
+      (copies) => 2 * copies,
+      (points) =>
+        `Each consecutive roll that scores adds +${points} to points earned; a scoreless roll resets it to 0.`,
+    ),
     unlock: { kind: "scoreStreak", count: 12 },
     effects: [incCounter("momentum")],
   },
@@ -612,28 +780,49 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "common",
-    desc: "Each d1 scores +2 bonus when it scores (a d1 is worth 3).",
+    // A scoring d1 pays its own point plus two per copy.
+    desc: stacking(
+      (s) => s.keenEdge,
+      (copies) => 1 + 2 * copies,
+      (points) => `Each d1 scores ${points} points when it scores.`,
+    ),
     unlock: { kind: "diceOfSize", sides: 1, count: 10 },
     available: (s) => s.dice.countOfSize(1) > 0,
     effects: [incCounter("keenEdge")],
   },
+  // Five more of the smallest die stopped being felt the moment the grid ran to
+  // hundreds. Doubling that size instead keeps the card's promise proportional
+  // to the grid it is poured into, which is what its explosive price assumes.
   {
     id: "foundry",
     name: "Foundry",
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "uncommon",
-    desc: "At the start of each trial, add 5 copies of your smallest die.",
+    desc: stacking(
+      (s) => s.foundry,
+      (copies) => 2 ** copies,
+      (factor) =>
+        `At the start of each trial, multiply the number of your smallest dice by ${factor}.`,
+    ),
     unlock: { kind: "diceInGrid", count: 29 },
     effects: [incCounter("foundry")],
   },
+  // Matching faces was Snake Eyes' rule with a higher threshold. Jackpot now
+  // pays for the SIZE of a scoring roll instead: nothing at all until five dice
+  // land, then a flat purse for every five that do.
   {
     id: "jackpot",
     name: "Jackpot",
     priceBand: "build",
     stackPricing: "linear",
     rarity: "uncommon",
-    desc: "When 3+ dice show the same face, score that face × the number of dice showing it (each face separately).",
+    desc: stacking(
+      (s) => s.jackpot,
+      (copies) => JACKPOT_POINTS * copies,
+      (points) =>
+        `When ${JACKPOT_DICE} or more dice score, gain ${points} points for every ${JACKPOT_DICE} that scored.`,
+    ),
     unlock: { kind: "sameFaceCount", count: 6 },
     effects: [incCounter("jackpot")],
   },
@@ -643,7 +832,12 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "uncommon",
-    desc: "Points earned on the final roll of each trial are quadrupled.",
+    desc: stacking(
+      (s) => s.lastCall,
+      (copies) => `×${4 ** copies}`,
+      (factor) =>
+        `Points earned on the final roll of each trial are multiplied by ${factor}.`,
+    ),
     unlock: { kind: "clutchClear" },
     effects: [incCounter("lastCall")],
   },
@@ -653,7 +847,12 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "rare",
-    desc: "Whenever a die scores, add a copy of that die to the grid (max +20 dice per roll).",
+    desc: stacking(
+      (s) => s.genesis,
+      (copies) => 20 * copies,
+      (cap) =>
+        `Whenever a die scores, add a copy of that die to the grid (max +${cap} dice per roll).`,
+    ),
     unlock: { kind: "reachRank", rank: 4 },
     effects: [incCounter("genesis")],
   },
@@ -663,7 +862,12 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     stackPricing: "linear",
     rarity: "rare",
-    desc: "Each roll left in hand when a trial clears pays 1 extra gold.",
+    desc: stacking(
+      (s) => s.reserve,
+      (copies) => copies,
+      (gold) =>
+        `Each roll left in hand when a trial clears pays ${gold} extra gold.`,
+    ),
     unlock: { kind: "scoreVsTarget", factor: 2 },
     effects: [incCounter("reserve")],
   },
@@ -673,7 +877,11 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "rare",
-    desc: "Triple all points earned from rolls (multiplies with Amplifier).",
+    desc: stacking(
+      (s) => s.prism,
+      (copies) => `×${3 ** copies}`,
+      (factor) => `Every point you earn is multiplied by ${factor}.`,
+    ),
     unlock: { kind: "winGame" },
     effects: [incCounter("prism")],
   },
@@ -681,13 +889,21 @@ export const ITEMS: ItemDef[] = [
   // These pay in gold rather than points. They do nothing for the trial in
   // front of you and everything for the shop after it, which is the trade the
   // whole economy is built on.
+  // An early-game card by construction: it pays for the rolls that score
+  // nothing, and a large grid has none. Held to the same small-grid shelf as
+  // the other starter items rather than sold to a player it cannot help.
   {
     id: "tithe_bowl",
     name: "Tithe Bowl",
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
-    desc: "Gain 1 gold on every roll that scores nothing.",
+    desc: stacking(
+      (s) => s.titheBowl,
+      (copies) => copies,
+      (gold) => `Gain ${gold} gold on every roll that scores nothing.`,
+    ),
+    available: smallGrid,
     effects: [incCounter("titheBowl")],
   },
   {
@@ -696,7 +912,13 @@ export const ITEMS: ItemDef[] = [
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
-    desc: "Each roll, a 10% chance to turn up 1 gold.",
+    // As with Whetstone, each copy rolls its own chance; the figure is the
+    // per-roll rate.
+    desc: stacking(
+      (s) => s.luckyCoin,
+      (copies) => `${10 * copies}%`,
+      (chance) => `Each roll, a ${chance} chance to turn up 1 gold.`,
+    ),
     effects: [incCounter("luckyCoin")],
   },
   {
@@ -704,8 +926,12 @@ export const ITEMS: ItemDef[] = [
     name: "Counting House",
     priceBand: "standard",
     stackPricing: "linear",
-    rarity: "uncommon",
-    desc: "Gain 1 extra gold every time you clear a trial.",
+    rarity: "common",
+    desc: stacking(
+      (s) => s.countingHouse,
+      (copies) => copies,
+      (gold) => `Gain ${gold} extra gold every time you clear a trial.`,
+    ),
     effects: [incCounter("countingHouse")],
   },
   {
@@ -718,13 +944,16 @@ export const ITEMS: ItemDef[] = [
     unlock: { kind: "goldHeld", amount: 25 },
     effects: [setFlag("hasProspector")],
   },
+  // Three gold on the three Boss Trials of a run was a fixed sum in a purse
+  // that grows all run. A share of every clear instead scales with the economy
+  // the player has built, and rewards buying it early.
   {
     id: "reliquary",
     name: "Reliquary",
     priceBand: "strong",
     rarity: "rare",
     unique: true,
-    desc: "Gain 3 extra gold every time you clear a Boss Trial.",
+    desc: `Every trial you clear pays ${RELIQUARY_BONUS_PERCENT}% more gold.`,
     unlock: { kind: "clearBosses", count: 3 },
     effects: [setFlag("hasReliquary")],
   },
@@ -872,10 +1101,7 @@ export function applyEffect(
       return true;
     case "addDiceProportional": {
       // Scale the add with the grid so it keeps pace late game; never below `min`.
-      const count = Math.max(
-        effect.min,
-        Math.floor(state.dice.length * effect.fraction),
-      );
+      const count = proportionalCount(state, effect.fraction, effect.min);
       state.dice.addDice(
         effect.sides,
         count,
@@ -939,8 +1165,12 @@ export function applyEffect(
       state.royalSealSizes.push(sides);
       return true;
     }
-    case "bonusRollThisRound":
-      state.bonusRollsThisRound += 1;
+    case "bonusRollsProportional":
+      // Bought between trials, so the budget this reads is the one it extends.
+      state.bonusRollsThisRound += Math.max(
+        effect.min,
+        Math.floor(trialRollTarget(state) * effect.fraction),
+      );
       return true;
     case "bonusRollPerRound":
       state.bonusRollsPerRound += 1;
@@ -954,6 +1184,46 @@ export function applyEffect(
   }
 }
 
+/** The molds, which each pour dice of one size into the grid after every roll,
+ *  one per copy owned. A new mold is a row here and a card above — nothing else
+ *  in the roll loop knows how many kinds there are. */
+export const MOLDS: {
+  id: ShopItemId;
+  counter: RunCounter;
+  sides: DieSides;
+}[] = [
+  { id: "chip_mold", counter: "chipMold", sides: 2 },
+  { id: "spike_mold", counter: "spikeMold", sides: 4 },
+  { id: "brick_mold", counter: "brickMold", sides: 6 },
+];
+
+/** How many dice the molds will pour on a roll, without pouring them (the
+ *  Drought's "dice denied" cue). */
+export function moldDiceCount(state: RunState): number {
+  return MOLDS.reduce((n, mold) => n + state[mold.counter], 0);
+}
+
+/** Pour every owned mold into the grid, newest dice carrying the mold's own item
+ *  id as their source. Returns what each mold added, so the scene can label the
+ *  new dice with the card that made them. */
+export function applyMolds(
+  state: RunState,
+): { id: ShopItemId; count: number }[] {
+  const poured: { id: ShopItemId; count: number }[] = [];
+  for (const mold of MOLDS) {
+    const count = state[mold.counter];
+    if (count <= 0) continue;
+    state.dice.addDice(
+      mold.sides,
+      count,
+      withSizeAuras(state, mold.sides),
+      mold.id,
+    );
+    poured.push({ id: mold.id, count });
+  }
+  return poured;
+}
+
 /**
  * Apply the trial-start passives (Foundry dice) to the run and return the number
  * of dice added, so the caller can decide whether to re-lay the grid. Called
@@ -964,12 +1234,11 @@ export function applyTrialStart(state: RunState): number {
   // The Drought shuts off every source of new dice for its Boss Trial, Foundry
   // included — otherwise a Foundry build would walk straight through it.
   if (bossBlocksGrowth(state)) return 0;
-  // Foundry: add copies of the smallest die per copy owned, scaled to the grid
-  // (5% of it, at least 5) so the payout keeps pace late game instead of a flat
-  // 5. The pool no-ops when Foundry isn't owned or the grid is empty.
+  // Foundry: double the smallest size on the grid, once per copy owned. A flat
+  // handful of dice was noise past the first few trials; a doubling stays worth
+  // the explosive price the card is sold at.
   if (state.foundry <= 0) return 0;
-  const perCopy = Math.max(5, Math.floor(state.dice.length * 0.05));
-  return state.dice.foundry(perCopy * state.foundry);
+  return state.dice.foundryDouble(state.foundry);
 }
 
 /**
@@ -988,6 +1257,8 @@ export const ITEM_THEMES: Record<ShopItemId, ItemTheme[]> = {
   mult2: ["swarm"],
   mult3: ["swarm"],
   brick_mold: ["swarm"],
+  chip_mold: ["swarm", "precision"],
+  spike_mold: ["swarm", "precision"],
   foundry: ["swarm"],
   genesis: ["swarm"],
   double_the_fun: ["swarm"],

@@ -13,11 +13,14 @@ import {
 import { Die } from "./Dice";
 import { RunState } from "../state/RunState";
 import {
-  countSevens,
   isHourglassRoll,
+  JACKPOT_DICE,
+  JACKPOT_POINTS,
+  LUCKY_SEVEN_MULT,
   RollResult,
   ScoreModifier,
   ScoreOpts,
+  showsASeven,
 } from "./Scoring";
 
 /** Aggregate view of a rolled dice grid — everything scoreRoll actually needs,
@@ -33,6 +36,8 @@ export interface DiceAgg {
   extraNumberScoringCount: number; // scoring faces above 1 enabled by Extra Number
   wildFaceScoringCount: number; // dice that scored only because they are wild
   royalSealScoringCount: number; // dice that scored only because Royal Seal matched their maximum
+  royalSealBonus: number; // face value ABOVE the base point, summed over every
+  // sealed-size die showing its maximum (sides - 1 each)
   windfallScoringCount: number; // dice that scored only because top-face Windfall hit
   allSizes: Set<number>; // distinct die sizes present in the grid
   scoringSizes: Set<number>; // distinct die sizes that scored this roll
@@ -54,6 +59,7 @@ export function aggFromDice(
   let extraNumberScoringCount = 0;
   let wildFaceScoringCount = 0;
   let royalSealScoringCount = 0;
+  let royalSealBonus = 0;
   let windfallScoringCount = 0;
   const windfallFactors = new Set<number>();
   const scoring = new Set(scoringNumbers);
@@ -78,6 +84,8 @@ export function aggFromDice(
       else if (!numberScores && !die.wildFace && !windfallHit && royalSealHit)
         royalSealScoringCount += 1;
     }
+    // The seal pays the whole face, and the base point is already counted above.
+    if (royalSealHit) royalSealBonus += die.sides - 1;
     if (windfallHit) windfallFactors.add(die.maxFaceBonus);
   }
   let windfallMult = 1n;
@@ -90,6 +98,7 @@ export function aggFromDice(
     extraNumberScoringCount,
     wildFaceScoringCount,
     royalSealScoringCount,
+    royalSealBonus,
     windfallScoringCount,
     allSizes,
     scoringSizes,
@@ -190,6 +199,7 @@ export function rollBucketsToAgg(
   let extraNumberScoringCount = 0;
   let wildFaceScoringCount = 0;
   let royalSealScoringCount = 0;
+  let royalSealBonus = 0;
   let windfallScoringCount = 0;
   const windfallFactors = new Set<number>();
   const scoring = new Set(scoringNumbers);
@@ -219,6 +229,7 @@ export function rollBucketsToAgg(
         else if (!numberScores && !b.wildFace && !windfallHit && royalSealHit)
           royalSealScoringCount += c;
       }
+      if (royalSealHit) royalSealBonus += (b.sides - 1) * c;
       // Windfall only fires on a die's own top face; a loaded die (faces < sides)
       // can never show it, matching rollDie's behaviour.
       if (windfallHit) windfallFactors.add(b.maxFaceBonus);
@@ -234,6 +245,7 @@ export function rollBucketsToAgg(
     extraNumberScoringCount,
     wildFaceScoringCount,
     royalSealScoringCount,
+    royalSealBonus,
     windfallScoringCount,
     allSizes,
     scoringSizes,
@@ -318,12 +330,15 @@ export function scoreRollHistogram(
   }
 
   const royalSealScoringCount = applyDeadDice(state, agg.royalSealScoringCount);
-  if (royalSealScoringCount > 0) {
+  const royalSealBonus = applyDeadDice(state, agg.royalSealBonus);
+  if (royalSealScoringCount > 0 || royalSealBonus > 0) {
     modifiers.push({
       id: "royalSeal",
       name: "Royal Seal",
-      points: 0n,
-      displayPoints: BigInt(royalSealScoringCount),
+      // Its own contribution is the face value above the base point each sealed
+      // die already scored under Scoring, hence the split with displayPoints.
+      points: BigInt(royalSealBonus),
+      displayPoints: BigInt(royalSealScoringCount + royalSealBonus),
       color: COLORS.goldLight,
       dice: noDice,
       bigPulse: false,
@@ -376,38 +391,17 @@ export function scoreRollHistogram(
   }
 
   const jackpot = jackpotFor(state);
-  if (jackpot > 0) {
-    let bonus = 0n;
-    for (const [value, count] of valueCounts)
-      if (count >= 3) bonus += BigInt(value) * BigInt(count);
-    if (bonus > 0n) {
-      modifiers.push({
-        id: "jackpot",
-        name: "Jackpot",
-        points: bonus * BigInt(jackpot),
-        color: COLORS.goldLight,
-        dice: noDice,
-        bigPulse: true,
-        float: "aggregate",
-      });
-    }
-  }
-
-  if (luckySevenFor(state)) {
-    let bonus = 0n;
-    for (const [value, count] of valueCounts)
-      bonus += BigInt(countSevens(value) * 7) * BigInt(count);
-    if (bonus > 0n) {
-      modifiers.push({
-        id: "luckySeven",
-        name: "Lucky Seven",
-        points: bonus,
-        color: COLORS.goldLight,
-        dice: noDice,
-        bigPulse: true,
-        float: "aggregate",
-      });
-    }
+  const jackpotSets = Math.floor(scoringCount / JACKPOT_DICE);
+  if (jackpot > 0 && jackpotSets > 0) {
+    modifiers.push({
+      id: "jackpot",
+      name: "Jackpot",
+      points: BigInt(jackpotSets * JACKPOT_POINTS * jackpot),
+      color: COLORS.goldLight,
+      dice: noDice,
+      bigPulse: true,
+      float: "aggregate",
+    });
   }
 
   if (agg.windfallMult > 1n) {
@@ -475,6 +469,7 @@ export function scoreRollHistogram(
   const uniformActive =
     state.hasUniform && agg.total > 0 && agg.allSizes.size === 1;
   const hourglassActive = state.hasHourglass && isHourglassRoll(state);
+  const luckySevenActive = luckySevenFor(state) && showsASeven(valueCounts);
   const multiplier = applyBossMultiplier(
     state,
     (state.hasAmplifier ? 2n : 1n) *
@@ -484,6 +479,7 @@ export function scoreRollHistogram(
       (menagerieActive ? 2n : 1n) *
       (uniformActive ? 3n : 1n) *
       (hourglassActive ? 2n : 1n) *
+      (luckySevenActive ? LUCKY_SEVEN_MULT : 1n) *
       agg.windfallMult,
   );
 
@@ -568,6 +564,18 @@ export function scoreRollHistogram(
       color: COLORS.goldLight,
       dice: noDice,
       bigPulse: false,
+      float: "aggregate",
+    });
+  }
+  if (luckySevenActive) {
+    modifiers.push({
+      id: "luckySeven",
+      name: "Lucky Seven",
+      points: 0n,
+      mult: LUCKY_SEVEN_MULT,
+      color: COLORS.goldLight,
+      dice: noDice,
+      bigPulse: true,
       float: "aggregate",
     });
   }

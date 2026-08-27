@@ -5,9 +5,9 @@
 // Whetstone's `shrinkRandom`) that call Math.random directly and can't take an
 // injected rng.
 
-import { ShopItemId } from '../systems/Items';
+import { ShopItemId } from "../systems/Items";
 
-const KEY_PROGRESS = 'ooo_progress_v1';
+const KEY_PROGRESS = "ooo_progress_v1";
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -44,7 +44,11 @@ export function installStorage(unlockedAtStart: ShopItemId[]): void {
   (globalThis as { localStorage?: unknown }).localStorage = storage;
   storage.setItem(
     KEY_PROGRESS,
-    JSON.stringify({ unlocked: unlockedAtStart, selectionCounts: {}, gamesCompleted: 0 })
+    JSON.stringify({
+      unlocked: unlockedAtStart,
+      selectionCounts: {},
+      gamesCompleted: 0,
+    }),
   );
 }
 

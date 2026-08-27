@@ -41,8 +41,13 @@ export const BOSS_CLEAR_GOLD = 2;
 export const PROSPECTOR_DICE_PER_GOLD = 25;
 export const PROSPECTOR_CAP = 5;
 
-/** Reliquary's flat bonus for every Boss Trial cleared. */
-export const RELIQUARY_GOLD = 3;
+/** Reliquary's share of every trial payout. A percentage rather than the flat
+ *  three gold it used to pay on Boss Trials only: a fixed sum in a purse that
+ *  grows all run stops being felt, where a share of it never does. Interest is
+ *  excluded for the same reason The Hoard excludes it — it is earned on the
+ *  bank, not on the trial. */
+export const RELIQUARY_BONUS_PERCENT = 25;
+const RELIQUARY_MULT_MILLI = 1_000 + RELIQUARY_BONUS_PERCENT * 10;
 
 /** Lucky Coin's per-copy chance, each roll, of turning up a gold piece. */
 export const LUCKY_COIN_CHANCE = 0.1;
@@ -108,12 +113,11 @@ export function trialPayout(state: RunState): GoldBreakdown {
       Math.floor(state.dice.length / PROSPECTOR_DICE_PER_GOLD),
     );
   }
-  if (isBossTrial(state.trial)) {
-    items += BOSS_CLEAR_GOLD;
-    if (state.hasReliquary) items += RELIQUARY_GOLD;
-  }
+  if (isBossTrial(state.trial)) items += BOSS_CLEAR_GOLD;
 
-  const multMilli = bossGoldMultMilli(state);
+  const multMilli = state.hasReliquary
+    ? Math.floor((bossGoldMultMilli(state) * RELIQUARY_MULT_MILLI) / 1_000)
+    : bossGoldMultMilli(state);
   const scale = (n: number) => Math.floor((n * multMilli) / 1000);
 
   const scaled = {

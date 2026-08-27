@@ -36,6 +36,8 @@ export interface BossModifier {
   name: string;
   /** One line, shown on the announcement banner and the GOAL badge tooltip. */
   desc: string;
+  /** Compact all-caps rule used by the in-trial ribbon. */
+  shortDesc: string;
   /** Added to the trial's roll budget (negative shortens it). */
   rollDelta?: number;
   /** Per-mille multiplier on the trial's goal (1_400 = +40%). */
@@ -59,48 +61,56 @@ export const BOSS_MODIFIERS: BossModifier[] = [
     id: "famine",
     name: "The Famine",
     desc: "Extra Point and Keen Edge grant nothing.",
+    shortDesc: "BONUSES SEALED",
     suppress: ["extraPoint", "keenEdge"],
   },
   {
     id: "drought",
     name: "The Drought",
     desc: "No dice are added this trial.",
+    shortDesc: "NO DICE ADDED",
     blocksGrowth: true,
   },
   {
     id: "eclipse",
     name: "The Eclipse",
     desc: "Your roll multiplier is halved.",
+    shortDesc: "MULTIPLIER HALVED",
     halveMultiplier: true,
   },
   {
     id: "silence",
     name: "The Silence",
     desc: "Only 1s score — the numbers you unlocked are silenced.",
+    shortDesc: "UNLOCKED NUMBERS SILENCED",
     suppress: ["extraNumber"],
   },
   {
     id: "hunger",
     name: "The Hunger",
     desc: "Five fewer rolls.",
+    shortDesc: "5 FEWER ROLLS",
     rollDelta: -5,
   },
   {
     id: "warden",
     name: "The Warden",
     desc: "Snake Eyes, Jackpot and Lucky Seven grant nothing.",
+    shortDesc: "PATTERNS SEALED",
     suppress: ["patterns"],
   },
   {
     id: "toll",
     name: "The Toll",
     desc: "A tenth of your dice score nothing.",
+    shortDesc: "10% OF DICE INERT",
     deadDiceFraction: 0.1,
   },
   {
     id: "hoard",
     name: "The Hoard",
     desc: "The goal is 40% higher, but clearing it pays double gold.",
+    shortDesc: "+40% GOAL · ×2 GOLD",
     goalMultMilli: 1_400,
     goldMultMilli: 2_000,
   },

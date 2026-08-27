@@ -477,7 +477,9 @@ export class HallScene extends Phaser.Scene {
     const date = new Date(entry.startedAt).toLocaleDateString();
     this.scene.launch("Analysis", {
       returnTo: "Hall",
-      title: `Run Analysis · ${formatScore(entry.score)} pts`,
+      // The masthead wants a short title and the detail beneath it; the run's
+      // score is the headline the analysis screen prints for itself.
+      title: "Run Analysis",
       subtitle: `${date} · rank ${entry.rank}-${entry.trial}${entry.won ? " · victory" : ""}`,
       dicePoints: toNumberPointMap(entry.dicePoints ?? {}),
       itemPoints: toNumberPointMap(entry.itemPoints ?? {}),
@@ -487,8 +489,8 @@ export class HallScene extends Phaser.Scene {
   private openAnalysisGlobal(row: GlobalScoreRow): void {
     this.scene.launch("Analysis", {
       returnTo: "Hall",
-      title: `Global · rank ${row.rank}${row.name ? ` · ${row.name}` : ""}`,
-      subtitle: "Approximate points, from the leaderboard’s per-item shares",
+      title: row.name || "Global Run",
+      subtitle: `global rank ${row.rank} · approximate per-item shares`,
       entries: row.breakdown,
     });
   }

@@ -79,19 +79,32 @@ function receiptHeight(lines: number, lineGap: number): number {
   );
 }
 
+/** The label of the interest row, which the tutorial's Interest step points at. */
+const INTEREST_LABEL = "Interest";
+
 /** The itemised gold lines worth printing: every source that paid, plus the
  *  trial reward itself even when it paid nothing (a receipt with no first
- *  line reads as an error rather than as a small reward). */
-function receiptLines(o: TrialEndOutcome): Array<[string, number]> {
+ *  line reads as an error rather than as a small reward). While the tutorial is
+ *  running the interest row is kept too, at +0 or not: it is the thing the
+ *  Interest step explains, and a lesson needs a row to point at. A first purse
+ *  is four gold, so that row would otherwise never appear during the tutorial —
+ *  which is exactly why players did not know interest existed. */
+function receiptLines(
+  o: TrialEndOutcome,
+  teaching = false,
+): Array<[string, number]> {
   const all: Array<[string, number]> = [
     ["Trial reward", o.goldBreakdown.base],
     ["Rolls left in hand", o.goldBreakdown.rolls],
-    ["Interest", o.goldBreakdown.interest],
+    [INTEREST_LABEL, o.goldBreakdown.interest],
     ["Relics and boss rewards", o.goldBreakdown.items],
     ["Tithe Bowl during rolls", o.rollGold.titheBowl],
     ["Lucky Coin during rolls", o.rollGold.luckyCoin],
   ];
-  return all.filter(([, amount], i) => amount > 0 || i === 0);
+  return all.filter(
+    ([label, amount], i) =>
+      amount > 0 || i === 0 || (teaching && label === INTEREST_LABEL),
+  );
 }
 
 /** A laid-out results screen, handed to the reveal sequence: the groups it
@@ -126,6 +139,8 @@ export class TrialResultsScene extends Phaser.Scene {
   // Screen rect of the gold receipt, which the first-run tutorial points at
   // once the reveal has finished.
   private receiptRect?: Phaser.Geom.Rectangle;
+  // The interest row inside it, which the tutorial's Interest step points at.
+  private interestRect?: Phaser.Geom.Rectangle;
   private tutorialCallout?: CalloutHandle;
   // Which fanned card is currently pulled to the front, so the same card is
   // not re-focused on every pointer move across it.
@@ -400,7 +415,7 @@ export class TrialResultsScene extends Phaser.Scene {
     // measures itself, so the pair can be centred in the column as one block.
     const lineGap = Phaser.Math.Clamp(columns.height * 0.07, 16, 27);
     const boxH = receiptHeight(
-      receiptLines(this.dataIn.outcome).length,
+      receiptLines(this.dataIn.outcome, this.teachingReceipt()).length,
       lineGap,
     );
     const button = this.buildContinueButton(
@@ -525,7 +540,7 @@ export class TrialResultsScene extends Phaser.Scene {
     lineGap: number,
   ): { objects: Phaser.GameObjects.GameObject[]; bottom: number } {
     const o = this.dataIn.outcome;
-    const lines = receiptLines(o);
+    const lines = receiptLines(o, this.teachingReceipt());
     const bottom = top + receiptHeight(lines.length, lineGap);
     // The accounting sits straight on the felt, like every other line on this
     // screen. `width` still describes the block it occupies — it places the
@@ -549,8 +564,17 @@ export class TrialResultsScene extends Phaser.Scene {
     // Inset off the type basis, then held inside the block itself, so a screen
     // wide enough to cap that width can't push the labels past its edge.
     const labelDx = Math.min(typeBasis * 0.3, width / 2 - 12);
+    this.interestRect = undefined;
     const rows = lines.flatMap(([label, amount], i) => {
       const y = top + RECEIPT_LINES_INSET + i * lineGap;
+      if (label === INTEREST_LABEL) {
+        this.interestRect = new Phaser.Geom.Rectangle(
+          cx - labelDx,
+          y - lineGap / 2,
+          labelDx * 2,
+          lineGap,
+        );
+      }
       const name = this.add
         .text(cx - labelDx, y, label, {
           fontFamily: SERIF,
@@ -572,18 +596,38 @@ export class TrialResultsScene extends Phaser.Scene {
     return { objects: [goldTitle, ...rows], bottom };
   }
 
-  /** The first run's one results-screen step: what the clear just paid. It
-   *  waits for the reveal to finish, so the callout never dims a receipt that
+  /** Whether the receipt is being used to teach, which is what keeps the
+   *  interest row on it while the purse is still too small to earn any. */
+  private teachingReceipt(): boolean {
+    const t = getTutorial(this.registry);
+    return (
+      t.active &&
+      (t.stage === TutorialStage.Results || t.stage === TutorialStage.Interest)
+    );
+  }
+
+  /** The first run's two results-screen steps: what the clear just paid, then
+   *  the line on the receipt that pays for holding gold rather than earning it.
+   *  Both wait for the reveal to finish, so a callout never dims a receipt that
    *  is still counting itself up. */
   private renderTutorial(): void {
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
     const t = getTutorial(this.registry);
-    if (!t.active || t.stage !== TutorialStage.Results || !this.receiptRect)
-      return;
+    if (!t.active) return;
+    const step =
+      t.stage === TutorialStage.Results || t.stage === TutorialStage.Interest
+        ? t.stage
+        : undefined;
+    if (step === undefined) return;
+    const anchor =
+      step === TutorialStage.Results
+        ? this.receiptRect
+        : (this.interestRect ?? this.receiptRect);
+    if (!anchor) return;
     this.tutorialCallout = showCallout(this, {
-      anchor: this.receiptRect,
-      text: TUTORIAL_TEXT[TutorialStage.Results],
+      anchor,
+      text: TUTORIAL_TEXT[step],
       onContinue: () => {
         advanceTutorial(this.registry);
         this.renderTutorial();

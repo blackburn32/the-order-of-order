@@ -232,6 +232,7 @@ export class GameOverScene extends Phaser.Scene {
     this.scene.launch("Analysis", {
       returnTo: "GameOver",
       title: "Run Analysis",
+      subtitle: "where this run’s points came from",
       dicePoints: toNumberPointMap(state.dicePoints),
       itemPoints: toNumberPointMap(state.itemPoints),
     });

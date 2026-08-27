@@ -1,6 +1,6 @@
-import Phaser from 'phaser';
-import { COLORS } from '../art/palette';
-import { fx } from '../systems/Effects';
+import Phaser from "phaser";
+import { COLORS } from "../art/palette";
+import { fx } from "../systems/Effects";
 
 /**
  * The dice shown on the masthead rule, left to right: d4, d6, d8. Each is the
@@ -14,7 +14,7 @@ import { fx } from '../systems/Effects';
 const SHAPES = [
   { sides: 3, rotationDeg: -90, radiusRatio: 1.25 }, // d4
   { sides: 4, rotationDeg: -45, radiusRatio: 1.12 }, // d6
-  { sides: 8, rotationDeg: -112.5, radiusRatio: 1.0 } // d8
+  { sides: 8, rotationDeg: -112.5, radiusRatio: 1.0 }, // d8
 ];
 
 /** Mean gap between rolls, and how far either side of it a gap may land. */
@@ -58,7 +58,14 @@ export class RuleDice extends Phaser.GameObjects.Container {
       const holder = scene.add.container((i - offset) * spacing, 0);
       const g = scene.add.graphics();
       g.fillStyle(COLORS.gold, SHAPE_ALPHA);
-      g.fillPoints(polygonPoints((size / 2) * shape.radiusRatio, shape.sides, shape.rotationDeg), true);
+      g.fillPoints(
+        polygonPoints(
+          (size / 2) * shape.radiusRatio,
+          shape.sides,
+          shape.rotationDeg,
+        ),
+        true,
+      );
       holder.add(g);
       this.add(holder);
       this.shapes.push(holder);
@@ -73,7 +80,8 @@ export class RuleDice extends Phaser.GameObjects.Container {
   }
 
   private scheduleNext(): void {
-    const delay = ROLL_INTERVAL_MS + Phaser.Math.Between(-ROLL_JITTER_MS, ROLL_JITTER_MS);
+    const delay =
+      ROLL_INTERVAL_MS + Phaser.Math.Between(-ROLL_JITTER_MS, ROLL_JITTER_MS);
     this.nextRoll = this.scene.time.delayedCall(delay, () => {
       this.roll();
       this.scheduleNext();
@@ -82,7 +90,9 @@ export class RuleDice extends Phaser.GameObjects.Container {
 
   private roll(): void {
     // Any shape but the one that went last.
-    const candidates = this.shapes.map((_, i) => i).filter((i) => i !== this.lastRolled);
+    const candidates = this.shapes
+      .map((_, i) => i)
+      .filter((i) => i !== this.lastRolled);
     const index = candidates[Phaser.Math.Between(0, candidates.length - 1)];
     this.lastRolled = index;
 
@@ -93,10 +103,10 @@ export class RuleDice extends Phaser.GameObjects.Container {
       targets: holder,
       rotation: Math.PI * 2,
       duration: ROLL_MS,
-      ease: 'Cubic.easeOut',
+      ease: "Cubic.easeOut",
       // A full turn ends where it started, but leaving the rotation at 2π
       // would make the next roll's `setRotation(0)` snap visibly.
-      onComplete: () => holder.setRotation(0)
+      onComplete: () => holder.setRotation(0),
     });
   }
 
@@ -122,11 +132,20 @@ export class RuleDice extends Phaser.GameObjects.Container {
  * so leaving it uncorrected sits it visibly high of the rule and of its two
  * neighbours. The even-sided shapes are already symmetric and shift by zero.
  */
-function polygonPoints(radius: number, sides: number, rotationDeg: number): Phaser.Math.Vector2[] {
+function polygonPoints(
+  radius: number,
+  sides: number,
+  rotationDeg: number,
+): Phaser.Math.Vector2[] {
   const points: Phaser.Math.Vector2[] = [];
   for (let i = 0; i < sides; i++) {
     const angle = Phaser.Math.DegToRad(rotationDeg + (360 / sides) * i);
-    points.push(new Phaser.Math.Vector2(radius * Math.cos(angle), radius * Math.sin(angle)));
+    points.push(
+      new Phaser.Math.Vector2(
+        radius * Math.cos(angle),
+        radius * Math.sin(angle),
+      ),
+    );
   }
 
   const ys = points.map((p) => p.y);

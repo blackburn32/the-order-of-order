@@ -409,6 +409,41 @@ export function floatText(
   return text;
 }
 
+/** A denied score float: the value appears in the usual scoring colour, but a
+ * red stroke cancels it before the pair drifts away together. */
+export function struckFloatText(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  message: string,
+  color: string = CSS.goldLight,
+  size = 24,
+): Phaser.GameObjects.Container {
+  const text = scene.add
+    .text(0, 0, message, {
+      fontFamily: SERIF,
+      fontSize: `${size}px`,
+      color,
+      fontStyle: "bold",
+      stroke: "#0d0a12",
+      strokeThickness: 4,
+    })
+    .setOrigin(0.5);
+  const strike = scene.add.graphics();
+  strike.lineStyle(Math.max(2, size * 0.11), COLORS.waxRed, 1);
+  strike.lineBetween(-text.width / 2 - 4, 0, text.width / 2 + 4, 0);
+  const container = scene.add.container(x, y, [text, strike]).setDepth(50);
+  scene.tweens.add({
+    targets: container,
+    y: y - 70,
+    alpha: 0,
+    duration: 1100,
+    ease: "Quad.easeOut",
+    onComplete: () => container.destroy(),
+  });
+  return container;
+}
+
 /** Centered announcement banner that slides in, holds, and fades. Returns
  *  its GameObjects — see `floatText` for why. */
 export function showBanner(

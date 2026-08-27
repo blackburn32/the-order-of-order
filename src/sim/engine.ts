@@ -15,7 +15,7 @@ import {
   rollGoldBreakdown,
   trialPayout,
 } from "../systems/Gold";
-import { applyTrialStart } from "../systems/Items";
+import { applyMolds, applyTrialStart, type ShopItemId } from "../systems/Items";
 import { accumulatePoints } from "../systems/ItemPoints";
 import { RollResult } from "../systems/Scoring";
 import { scoreRollHistogram } from "../systems/ScoringHistogram";
@@ -89,7 +89,10 @@ export function resolveRoll(
 ): {
   result: RollResult;
   spawnedCount: number;
-  spawnedBySource: { genesis: number; brickMold: number };
+  spawnedBySource: {
+    genesis: number;
+    molds: { id: ShopItemId; count: number }[];
+  };
   shrunk: number[];
   goldGained: number;
 } {
@@ -136,19 +139,9 @@ export function resolveRoll(
     state.genesis > 0 && !growthBlocked
       ? state.dice.genesis(20 * state.genesis)
       : 0;
-  const brickMoldCount = growthBlocked ? 0 : state.brickMold;
-  if (brickMoldCount > 0) {
-    state.dice.addDice(
-      6,
-      brickMoldCount,
-      {
-        loaded: state.loadedSizes.includes(6),
-        wildFace: state.wildSizes.includes(6),
-      },
-      "brick_mold",
-    );
-  }
-  const spawnedCount = doubleTheFunCount + genesisCount + brickMoldCount;
+  const molds = growthBlocked ? [] : applyMolds(state);
+  const moldCount = molds.reduce((n, mold) => n + mold.count, 0);
+  const spawnedCount = doubleTheFunCount + genesisCount + moldCount;
 
   // Whetstone: each copy owned has a 10% chance this roll to shrink one random
   // die a step. Applied after scoring so it only helps future rolls. Below the
@@ -166,7 +159,7 @@ export function resolveRoll(
     spawnedCount,
     spawnedBySource: {
       genesis: genesisCount,
-      brickMold: brickMoldCount,
+      molds,
     },
     shrunk,
     goldGained,

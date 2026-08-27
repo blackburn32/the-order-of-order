@@ -291,6 +291,7 @@ export class DicePool {
     let extraNumberScoringCount = 0;
     let wildFaceScoringCount = 0;
     let royalSealScoringCount = 0;
+    let royalSealBonus = 0;
     let windfallScoringCount = 0;
 
     if (this.mode === "list") {
@@ -300,8 +301,7 @@ export class DicePool {
         valueCounts.set(die.value, (valueCounts.get(die.value) ?? 0) + 1);
         const windfallHit =
           die.maxFaceBonus > 0 && !die.loaded && die.value === die.sides;
-        const royalSealHit =
-          sealed.has(die.sides) && die.value === die.sides;
+        const royalSealHit = sealed.has(die.sides) && die.value === die.sides;
         const numberScores = scoring.has(die.value);
         if (numberScores || die.wildFace || windfallHit || royalSealHit) {
           scoringCount += 1;
@@ -323,6 +323,8 @@ export class DicePool {
             (scoringBySource.get(die.source) ?? 0) + 1,
           );
         }
+        // A sealed size pays its whole face; the base point is counted above.
+        if (royalSealHit) royalSealBonus += die.sides - 1;
         if (windfallHit) windfallFactors.add(die.maxFaceBonus);
       }
     } else {
@@ -364,6 +366,7 @@ export class DicePool {
             )
               royalSealScoringCount += c;
           }
+          if (royalSealHit) royalSealBonus += (b.sides - 1) * c;
           if (windfallHit) windfallFactors.add(b.maxFaceBonus);
         }
         b.lastScoring = bucketScoring;
@@ -393,6 +396,7 @@ export class DicePool {
         extraNumberScoringCount,
         wildFaceScoringCount,
         royalSealScoringCount,
+        royalSealBonus,
         windfallScoringCount,
         allSizes,
         scoringSizes,
@@ -518,31 +522,53 @@ export class DicePool {
     );
   }
 
-  /** Foundry: at round start, add `perCopy` copies of the smallest die. Returns
-   *  the number added. */
-  foundry(perCopy: number): number {
-    if (perCopy <= 0 || this._count === 0) return 0;
+  /** Foundry: at trial start, double every die of the smallest size on the grid,
+   *  once per copy owned (two copies quadruple them). Returns the number added.
+   *  Acts on the whole size rather than one representative die, so a size split
+   *  across several buckets (loaded, wild, differently sourced) doubles as one.
+   */
+  foundryDouble(copies: number): number {
+    if (copies <= 0 || this._count === 0) return 0;
+    const extraPerDie = 2 ** copies - 1;
     if (this.mode === "list") {
-      const smallest = this.list.reduce((m, d) => (d.sides < m.sides ? d : m));
-      const copies: Die[] = [];
-      for (let i = 0; i < perCopy; i++)
-        copies.push(cloneDie(smallest, "foundry"));
-      for (const d of copies) this.list.push(d);
-      this._count += copies.length;
-      this.ensureMode();
-      return copies.length;
+      const smallestSides = this.list.reduce(
+        (m, d) => (d.sides < m ? d.sides : m),
+        this.list[0].sides,
+      );
+      const targets = this.list.filter((d) => d.sides === smallestSides);
+      const added = targets.length * extraPerDie;
+      // A doubling that would cross the threshold buckets first rather than
+      // materialise the copies as individual dice.
+      if (this._count + added < bucketThreshold) {
+        for (const d of targets)
+          for (let i = 0; i < extraPerDie; i++)
+            this.list.push(cloneDie(d, "foundry"));
+        this._count += added;
+        return added;
+      }
+      this.convert();
     }
-    const smallest = this.buckets.reduce((m, b) => (b.sides < m.sides ? b : m));
-    this.addBucket(
-      smallest.sides,
-      smallest.maxFaceBonus,
-      smallest.loaded,
-      smallest.wildFace,
-      "foundry",
-      perCopy,
+    const smallestSides = this.buckets.reduce(
+      (m, b) => (b.sides < m ? b.sides : m),
+      this.buckets[0].sides,
     );
-    this._count += perCopy;
-    return perCopy;
+    // Snapshot first: addBucket may append the Foundry copies as new buckets.
+    const targets = this.buckets.filter((b) => b.sides === smallestSides);
+    let added = 0;
+    for (const b of targets) {
+      const extra = b.count * extraPerDie;
+      this.addBucket(
+        b.sides,
+        b.maxFaceBonus,
+        b.loaded,
+        b.wildFace,
+        "foundry",
+        extra,
+      );
+      added += extra;
+    }
+    this._count += added;
+    return added;
   }
 
   /** Whetstone: shrink one random shrinkable die a step. Returns the grid index

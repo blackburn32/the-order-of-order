@@ -1,11 +1,11 @@
-import Phaser from 'phaser';
-import { COLORS, CSS, SERIF } from '../art/palette';
-import { loadSettings, saveSettings } from '../systems/SaveData';
-import { beginRun } from '../systems/Tutorial';
-import { addFelt, bannerButton, checkboxRow } from '../ui/widgets';
-import { destroyAllChildren, responsive } from '../ui/layout';
-import { AmbientLayer } from '../ui/AmbientLayer';
-import { slideSceneIn, slideSceneOut } from '../ui/sceneSlide';
+import Phaser from "phaser";
+import { COLORS, CSS, SERIF } from "../art/palette";
+import { loadSettings, saveSettings } from "../systems/SaveData";
+import { beginRun } from "../systems/Tutorial";
+import { addFelt, bannerButton, checkboxRow } from "../ui/widgets";
+import { destroyAllChildren, responsive } from "../ui/layout";
+import { AmbientLayer } from "../ui/AmbientLayer";
+import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 
 interface Page {
   title: string;
@@ -19,29 +19,29 @@ interface Page {
 // a placeholder 4:3 rectangle until real art drops in.
 const PAGES: Page[] = [
   {
-    title: 'A Gathering Chaos',
+    title: "A Gathering Chaos",
     blurb:
-      'Across the realm, order frays. Numbers fall as they please, and the wild churn of chance brings great peril to every living thing.',
-    image: 'intro-volcano',
+      "Across the realm, order frays. Numbers fall as they please, and the wild churn of chance brings great peril to every living thing.",
+    image: "intro-volcano",
   },
   {
-    title: 'The Brave Monks',
+    title: "The Brave Monks",
     blurb:
-      'In the high monasteries, a devoted few refuse to yield. Searching the old vaults, they uncover a relic of impossible make.',
-    image: 'intro-monastery'
+      "In the high monasteries, a devoted few refuse to yield. Searching the old vaults, they uncover a relic of impossible make.",
+    image: "intro-monastery",
   },
   {
-    title: 'The Sacred Dice',
+    title: "The Sacred Dice",
     blurb:
-      'The artifact is a set of dice — and rolled with discipline, they can bind the chaos and restore the world’s order. The rite is yours to perform.',
-    image: 'intro-dice-twirl'
+      "The artifact is a set of dice — and rolled with discipline, they can bind the chaos and restore the world’s order. The rite is yours to perform.",
+    image: "intro-dice-twirl",
   },
   {
-    title: 'The Race is On',
+    title: "The Race is On",
     blurb:
-      'Humble monk, take up the dice and roll the sacred numbers. The Order of Order is depending on you to bring balance back to the realm before it\'s too late!',
-    image: 'intro-dice-earth'
-  }
+      "Humble monk, take up the dice and roll the sacred numbers. The Order of Order is depending on you to bring balance back to the realm before it's too late!",
+    image: "intro-dice-earth",
+  },
 ];
 
 /** Fixed sigil brightness for the backdrop. Set below the other rooms' values:
@@ -57,7 +57,7 @@ export class IntroScene extends Phaser.Scene {
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
-    super('Intro');
+    super("Intro");
   }
 
   create(): void {
@@ -92,10 +92,10 @@ export class IntroScene extends Phaser.Scene {
         fontFamily: SERIF,
         fontSize: `${Math.round(Phaser.Math.Clamp(W * 0.05, 26, 52))}px`,
         color: CSS.gold,
-        fontStyle: 'bold'
+        fontStyle: "bold",
       })
       .setOrigin(0.5)
-      .setShadow(0, 3, '#000000', 8, false, true);
+      .setShadow(0, 3, "#000000", 8, false, true);
 
     // Image sized to fit both width and the vertical band left between the title
     // and the text/controls below, keeping a 4:3 frame.
@@ -111,13 +111,27 @@ export class IntroScene extends Phaser.Scene {
       const sprite = this.add.image(cx, imgCy, p.image);
       const scale = Math.min(imgW / sprite.width, imgH / sprite.height);
       sprite.setScale(scale);
-      this.add.rectangle(cx, imgCy, imgW, imgH).setStrokeStyle(2, COLORS.gold, 0.4);
+      this.add
+        .rectangle(cx, imgCy, imgW, imgH)
+        .setStrokeStyle(2, COLORS.gold, 0.4);
     } else {
       // Placeholder 4:3 rectangle for pages without art yet.
-      const image = this.add.rectangle(cx, imgCy, imgW, imgH, COLORS.feltLight, 0.6);
+      const image = this.add.rectangle(
+        cx,
+        imgCy,
+        imgW,
+        imgH,
+        COLORS.feltLight,
+        0.6,
+      );
       image.setStrokeStyle(2, COLORS.gold, 0.4);
       this.add
-        .text(cx, imgCy, '4 : 3', { fontFamily: SERIF, fontSize: '18px', color: CSS.dim, fontStyle: 'italic' })
+        .text(cx, imgCy, "4 : 3", {
+          fontFamily: SERIF,
+          fontSize: "18px",
+          color: CSS.dim,
+          fontStyle: "italic",
+        })
         .setOrigin(0.5);
     }
 
@@ -125,8 +139,8 @@ export class IntroScene extends Phaser.Scene {
       fontFamily: SERIF,
       fontSize: `${Math.round(Phaser.Math.Clamp(W * 0.022, 16, 22))}px`,
       color: CSS.parchment,
-      align: 'center',
-      wordWrap: { width: Math.min(W - 48, 620) }
+      align: "center",
+      wordWrap: { width: Math.min(W - 48, 620) },
     };
     const blurbTop = imgCy + imgH / 2 + 26;
     this.add.text(cx, blurbTop, p.blurb, blurbStyle).setOrigin(0.5, 0);
@@ -136,18 +150,20 @@ export class IntroScene extends Phaser.Scene {
     // changes. (Measure off-screen, then discard.)
     const maxBlurbH = Math.max(
       ...PAGES.map((page) => {
-        const probe = this.add.text(0, 0, page.blurb, blurbStyle).setVisible(false);
+        const probe = this.add
+          .text(0, 0, page.blurb, blurbStyle)
+          .setVisible(false);
         const h = probe.height;
         probe.destroy();
         return h;
-      })
+      }),
     );
 
     // The button sits just under the reserved text band with a little padding,
     // clamped so the whole control block stays on short screens.
     const blockTop = Math.min(blurbTop + maxBlurbH + 28, H - 150);
 
-    const label = last ? 'Begin' : 'Continue';
+    const label = last ? "Begin" : "Continue";
     const button = bannerButton(this, cx, 0, label, () => {
       if (last) this.leave(() => beginRun(this));
       else this.nextPage();
@@ -162,7 +178,7 @@ export class IntroScene extends Phaser.Scene {
         this,
         cx,
         cursorY,
-        'Skip the intro on future runs',
+        "Skip the intro on future runs",
         this.skip,
         (value) => {
           this.skip = value;
@@ -173,7 +189,7 @@ export class IntroScene extends Phaser.Scene {
         26,
         // The row sits on the dark felt, so use light text and a parchment
         // border instead of the panel-friendly ink defaults.
-        { textColor: CSS.ivory, boxStroke: COLORS.parchment }
+        { textColor: CSS.ivory, boxStroke: COLORS.parchment },
       );
       row.setDepth(1);
       cursorY += 34;
@@ -182,7 +198,12 @@ export class IntroScene extends Phaser.Scene {
     // Page dots, closing out the control block.
     const dotGap = 22;
     PAGES.forEach((_, i) => {
-      const dot = this.add.circle(cx + (i - (PAGES.length - 1) / 2) * dotGap, cursorY, 5, COLORS.gold);
+      const dot = this.add.circle(
+        cx + (i - (PAGES.length - 1) / 2) * dotGap,
+        cursorY,
+        5,
+        COLORS.gold,
+      );
       dot.setAlpha(i === this.page ? 1 : 0.35);
     });
   }
@@ -193,17 +214,21 @@ export class IntroScene extends Phaser.Scene {
   private nextPage(): void {
     if (this.transitioning) return;
     this.transitioning = true;
-    slideSceneOut(this, () => {
-      this.page += 1;
-      destroyAllChildren(this);
-      this.build();
-      // slideSceneOut disables input before invoking its completion. Re-arm it
-      // so slideSceneIn can own the incoming panel's input lock and restore it.
-      this.input.enabled = true;
-      slideSceneIn(this, this.slideBackdrop, () => {
-        this.transitioning = false;
-      });
-    }, this.slideBackdrop);
+    slideSceneOut(
+      this,
+      () => {
+        this.page += 1;
+        destroyAllChildren(this);
+        this.build();
+        // slideSceneOut disables input before invoking its completion. Re-arm it
+        // so slideSceneIn can own the incoming panel's input lock and restore it.
+        this.input.enabled = true;
+        slideSceneIn(this, this.slideBackdrop, () => {
+          this.transitioning = false;
+        });
+      },
+      this.slideBackdrop,
+    );
   }
 
   private leave(complete: () => void): void {

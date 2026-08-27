@@ -19,8 +19,15 @@ export interface GridLayout {
  * to keep every item visible, with the last, possibly-partial row centered.
  * Shared by the main dice grid and the shop's shrink-die picker grid.
  */
-export function computeGridPositions(n: number, area: GridArea, maxCell = 120): GridLayout {
-  const cols = Math.max(1, Math.ceil(Math.sqrt((n * area.width) / area.height)));
+export function computeGridPositions(
+  n: number,
+  area: GridArea,
+  maxCell = 120,
+): GridLayout {
+  const cols = Math.max(
+    1,
+    Math.ceil(Math.sqrt((n * area.width) / area.height)),
+  );
   const rows = Math.ceil(n / cols);
   const cell = Math.min(maxCell, area.width / cols, area.height / rows);
   const scale = Math.max(0.1, Math.min(1, (cell - 6) / 104));

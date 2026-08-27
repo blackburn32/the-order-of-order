@@ -1,48 +1,52 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <!-- The dice grid does its own pinch-to-zoom, so the browser must not
+  <head>
+    <meta charset="UTF-8" />
+    <!-- The dice grid does its own pinch-to-zoom, so the browser must not
        hijack a two-finger gesture as a page zoom on top of it. -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>The Order of Order</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      /* Hand every touch gesture to the game rather than to the browser's
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <title>The Order of Order</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        /* Hand every touch gesture to the game rather than to the browser's
          own pan/zoom, which would otherwise swallow the grid's pinch. */
-      touch-action: none;
-      overscroll-behavior: none;
-      background: #0d0a12;
-      height: 100%;
-      overflow: hidden;
-    }
-    #game {
-      width: 100%;
-      height: 100%;
-      box-sizing: border-box;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: #0d0a12;
-    }
-    /* Gold frame around the game. Applied by src/buildFlags.ts (GOLD_BORDER),
+        touch-action: none;
+        overscroll-behavior: none;
+        background: #0d0a12;
+        height: 100%;
+        overflow: hidden;
+      }
+      #game {
+        width: 100%;
+        height: 100%;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0d0a12;
+      }
+      /* Gold frame around the game. Applied by src/buildFlags.ts (GOLD_BORDER),
        which is only on for itch.io builds. */
-    #game.gold-border {
-      border: 2px solid #c9a227;
-    }
-    canvas {
-      display: block;
-      touch-action: none;
-      max-width: 100%;
-      max-height: 100%;
-      image-rendering: auto;
-    }
-  </style>
-</head>
-<body>
-  <div id="game"></div>
-  <script type="module" src="/src/main.ts"></script>
-</body>
+      #game.gold-border {
+        border: 2px solid #c9a227;
+      }
+      canvas {
+        display: block;
+        touch-action: none;
+        max-width: 100%;
+        max-height: 100%;
+        image-rendering: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="game"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>

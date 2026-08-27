@@ -15,6 +15,22 @@ import { Die } from "./Dice";
 import { RunState } from "../state/RunState";
 import { trialRollTarget } from "./Trial";
 
+/** Jackpot pays this much per full set of scoring dice, per copy owned... */
+export const JACKPOT_POINTS = 25;
+/** ...and pays nothing at all until a roll puts up this many scoring dice. */
+export const JACKPOT_DICE = 5;
+/** Lucky Seven's factor on a roll that turned up a seven anywhere. */
+export const LUCKY_SEVEN_MULT = 7n;
+
+/** Whether any die on this roll shows a value with a 7 written in it — the
+ *  condition Lucky Seven multiplies on. Counts are read rather than keys,
+ *  because The Toll scales a face's count to zero without dropping it. */
+export function showsASeven(valueCounts: Map<number, number>): boolean {
+  for (const [value, count] of valueCounts)
+    if (count > 0 && countSevens(value) > 0) return true;
+  return false;
+}
+
 export function countSevens(value: number): number {
   let remaining = Math.abs(Math.trunc(value));
   let count = 0;
@@ -94,6 +110,7 @@ export function scoreRoll(
   let extraNumberScoringCount = 0;
   let wildFaceScoringCount = 0;
   let royalSealScoringCount = 0;
+  let rawRoyalSealBonus = 0;
   let windfallScoringCount = 0;
 
   // Boss suppressions are read through the shared accessors so this reference
@@ -126,6 +143,9 @@ export function scoreRoll(
       }
       scoringDice.push(i);
     }
+    // A sealed size pays its whole face; the base point every scoring die earns
+    // is already counted above, so the seal adds the rest of the face's value.
+    if (royalSealHit) rawRoyalSealBonus += die.sides - 1;
     if (windfallHit) {
       // Rollplayer/Centurion multiply the whole roll when they hit their top
       // face — once per card effect, so the factor stays bounded at ×8.
@@ -154,14 +174,12 @@ export function scoreRoll(
   extraNumberScoringCount = applyDeadDice(state, extraNumberScored);
   wildFaceScoringCount = applyDeadDice(state, wildFaceScoringCount);
   royalSealScoringCount = applyDeadDice(state, royalSealScoringCount);
+  const royalSealBonus = applyDeadDice(state, rawRoyalSealBonus);
   windfallScoringCount = applyDeadDice(state, windfallScoringCount);
 
   const extraPointBonus = basePoints * extraPointsFor(state);
   const keenEdge = keenEdgeFor(state);
   const keenEdgeBonus = keenEdge > 0 ? scoringD1Count * keenEdge * 2 : 0;
-  let luckySevenBonus = 0;
-  for (const [value, count] of valueCounts)
-    luckySevenBonus += countSevens(value) * 7 * count;
   // NOTE: this per-die scoreRoll is retained only for the parity harness
   // (src/sim/compareScoring.ts). The live game and sim score through
   // scoreRollHistogram, which is O(distinct faces) and works when bucketed.
@@ -207,12 +225,14 @@ export function scoreRoll(
       float: "aggregate",
     });
   }
-  if (royalSealScoringCount > 0) {
+  if (royalSealScoringCount > 0 || royalSealBonus > 0) {
     modifiers.push({
       id: "royalSeal",
       name: "Royal Seal",
-      points: 0n,
-      displayPoints: BigInt(royalSealScoringCount),
+      // Its own contribution is the face value above the base point each sealed
+      // die already scored under `Scoring`, hence the split with displayPoints.
+      points: BigInt(royalSealBonus),
+      displayPoints: BigInt(royalSealScoringCount + royalSealBonus),
       color: COLORS.goldLight,
       dice: [],
       bigPulse: false,
@@ -271,39 +291,19 @@ export function scoreRoll(
     }
   }
 
-  // Jackpot (item): any face shown by 3+ dice scores that face × the number of
-  // dice showing it; each qualifying face adds separately, and the whole payout
-  // scales with the number of Jackpot copies owned.
+  // Jackpot (item): pays for the SIZE of a scoring roll rather than for matching
+  // faces, which was Snake Eyes' rule at a higher threshold. Nothing at all
+  // until JACKPOT_DICE dice score, then a flat purse for every full set of them,
+  // scaled by the copies owned.
   const jackpot = jackpotFor(state);
-  if (jackpot > 0) {
-    let bonus = 0n;
-    for (const [value, count] of valueCounts) {
-      if (count >= 3) bonus += BigInt(value) * BigInt(count);
-    }
-    if (bonus > 0n) {
-      const flash: number[] = [];
-      dice.forEach((die, i) => {
-        if ((valueCounts.get(die.value) ?? 0) >= 3) flash.push(i);
-      });
-      modifiers.push({
-        id: "jackpot",
-        name: "Jackpot",
-        points: bonus * BigInt(jackpot),
-        color: COLORS.goldLight,
-        dice: flash,
-        bigPulse: true,
-        float: "aggregate",
-      });
-    }
-  }
-
-  if (luckySevenFor(state) && luckySevenBonus > 0) {
+  const jackpotSets = Math.floor(basePoints / JACKPOT_DICE);
+  if (jackpot > 0 && jackpotSets > 0) {
     modifiers.push({
-      id: "luckySeven",
-      name: "Lucky Seven",
-      points: BigInt(luckySevenBonus),
+      id: "jackpot",
+      name: "Jackpot",
+      points: BigInt(jackpotSets * JACKPOT_POINTS * jackpot),
       color: COLORS.goldLight,
-      dice: luckySevenDice,
+      dice: scoringDice,
       bigPulse: true,
       float: "aggregate",
     });
@@ -382,9 +382,10 @@ export function scoreRoll(
   const uniformActive =
     state.hasUniform && dice.length > 0 && allSizes.size === 1;
   const hourglassActive = state.hasHourglass && isHourglassRoll(state);
+  const luckySevenActive = luckySevenFor(state) && showsASeven(valueCounts);
   // Amplifier ×2, Prism ×3 per copy, Last Call ×4 per copy on the final roll,
-  // and Windfall (Rollplayer/Centurion top-face) — all compound into one run
-  // multiplier.
+  // Lucky Seven ×7 on a roll that turned up a seven, and Windfall
+  // (Rollplayer/Centurion top-face) — all compound into one run multiplier.
   const multiplier = applyBossMultiplier(
     state,
     (state.hasAmplifier ? 2n : 1n) *
@@ -394,6 +395,7 @@ export function scoreRoll(
       (menagerieActive ? 2n : 1n) *
       (uniformActive ? 3n : 1n) *
       (hourglassActive ? 2n : 1n) *
+      (luckySevenActive ? LUCKY_SEVEN_MULT : 1n) *
       windfallMult,
   );
 
@@ -481,6 +483,18 @@ export function scoreRoll(
       color: COLORS.goldLight,
       dice: [],
       bigPulse: false,
+      float: "aggregate",
+    });
+  }
+  if (luckySevenActive) {
+    modifiers.push({
+      id: "luckySeven",
+      name: "Lucky Seven",
+      points: 0n,
+      mult: LUCKY_SEVEN_MULT,
+      color: COLORS.goldLight,
+      dice: luckySevenDice,
+      bigPulse: true,
       float: "aggregate",
     });
   }

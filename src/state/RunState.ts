@@ -66,7 +66,7 @@ export interface RunState {
   hasDealersBell: boolean; // first reroll each shop is free
   hasShoppingCart: boolean; // every card costs less
   hasProspector: boolean; // gold per die held, on a clear
-  hasReliquary: boolean; // gold for every Boss Trial cleared
+  hasReliquary: boolean; // a share on top of every trial's gold payout
   hasPawnbroker: boolean; // every card costs less, flat
   // Stacking passives — the count of each owned (incremented per purchase), read
   // at their relevant moment (scoring, trial start, trial clear). Unlike the
@@ -76,13 +76,17 @@ export interface RunState {
   dividend: number; // +1 pt per 3 dice every roll, per copy
   momentum: number; // +2 × momentumStreak per copy on each scoring roll
   keenEdge: number; // +2 per copy when a d1 scores
-  foundry: number; // +5 copies of the smallest die at trial start, per copy
-  jackpot: number; // 3+ matching dice score face×count, per copy
+  foundry: number; // doubles the smallest die size at trial start, per copy
+  jackpot: number; // a purse per 5 scoring dice, per copy
   genesis: number; // scoring dice spawn copies, cap +20/roll per copy
   reserve: number; // +1 gold per unused roll on a clear, per copy
   prism: number; // ×3 all roll points per copy
   lastCall: number; // ×4 points on the final roll per copy
-  brickMold: number; // add one d6 after every roll per copy
+  // The molds: each adds one die of its own size after every roll, per copy
+  // (see Items.MOLDS, which is what the roll loop actually iterates).
+  chipMold: number; // d2
+  spikeMold: number; // d4
+  brickMold: number; // d6
   titheBowl: number; // +1 gold per copy on a roll that scores nothing
   luckyCoin: number; // 10% chance per copy each roll of +1 gold
   countingHouse: number; // +1 gold per copy at every trial clear
@@ -166,6 +170,8 @@ export function newRun(shopUnlocks: readonly ShopItemId[] = []): RunState {
     reserve: 0,
     prism: 0,
     lastCall: 0,
+    chipMold: 0,
+    spikeMold: 0,
     brickMold: 0,
     titheBowl: 0,
     luckyCoin: 0,

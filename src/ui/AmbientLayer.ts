@@ -61,6 +61,9 @@ export interface AmbientOptions {
    *  band. Off by default: in-game the layer sits inside the grid viewport,
    *  where a second ring would be mostly cropped away. */
   ring?: boolean;
+  /** Fixed inner mark for a themed room. Omitted rooms keep a random ambient
+   * variant; Boss Trials pass their boss's identity sigil here. */
+  sigilTexture?: string;
 }
 
 /**
@@ -94,7 +97,7 @@ export class AmbientLayer extends Phaser.GameObjects.Container {
     super(scene, 0, 0);
 
     this.sigil = scene.add
-      .image(0, 0, randomSigilTexture())
+      .image(0, 0, options.sigilTexture ?? randomSigilTexture())
       .setTint(COLORS.gold)
       .setAlpha(SIGIL_ALPHA_IDLE);
     this.add(this.sigil);

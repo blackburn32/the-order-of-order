@@ -1,5 +1,5 @@
-import Phaser from 'phaser';
-import { Die } from '../systems/Dice';
+import Phaser from "phaser";
+import { Die } from "../systems/Dice";
 
 const BORDER_WIDTH = 5;
 
@@ -69,13 +69,13 @@ export class DieSprite extends Phaser.GameObjects.Container {
     this.die = die;
 
     this.bodyImage = scene.add.image(0, 0, `die-${die.sides}`);
-    this.typeImage = scene.add.image(0, 36, 'die-atlas', `label-d${die.sides}`);
+    this.typeImage = scene.add.image(0, 36, "die-atlas", `label-d${die.sides}`);
     // Placeholder frame; showFace() below sets the real one immediately.
-    this.faceImage = scene.add.image(0, -4, 'die-atlas', `face-${die.sides}-1`);
+    this.faceImage = scene.add.image(0, -4, "die-atlas", `face-${die.sides}-1`);
     this.add([this.bodyImage, this.typeImage, this.faceImage]);
 
     if (die.maxFaceBonus) {
-      this.marker = scene.add.image(34, -34, 'pip-gold');
+      this.marker = scene.add.image(34, -34, "pip-gold");
       this.add(this.marker);
     }
 
@@ -127,7 +127,10 @@ export class DieSprite extends Phaser.GameObjects.Container {
       const cur = BORDER_PATH[i];
       travelled += Math.hypot(cur.x - prev.x, cur.y - prev.y);
       g.lineTo(cur.x, cur.y);
-      if (colorIndex < colors.length - 1 && travelled >= segment * (colorIndex + 1)) {
+      if (
+        colorIndex < colors.length - 1 &&
+        travelled >= segment * (colorIndex + 1)
+      ) {
         g.strokePath();
         colorIndex++;
         g.lineStyle(BORDER_WIDTH, colors[colorIndex], 1);
@@ -144,13 +147,13 @@ export class DieSprite extends Phaser.GameObjects.Container {
       scaleY: this.scaleY * scale,
       duration: 130,
       yoyo: true,
-      ease: 'Quad.easeOut'
+      ease: "Quad.easeOut",
     });
     this.scene.tweens.add({
       targets: g,
       alpha: 0,
       duration: 420,
-      ease: 'Quad.easeIn'
+      ease: "Quad.easeIn",
     });
   }
 
@@ -180,7 +183,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
     if (this.wobbleAmplitude === 0) return;
     this.setRotation(
       this.wobbleAmplitude *
-        Math.sin(this.wobbleRate * elapsed + this.wobblePhase)
+        Math.sin(this.wobbleRate * elapsed + this.wobblePhase),
     );
   }
 
@@ -197,7 +200,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
       rotation: 0,
       duration: 260,
       delay,
-      ease: 'Back.easeOut'
+      ease: "Back.easeOut",
     });
   }
 

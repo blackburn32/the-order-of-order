@@ -1,6 +1,6 @@
-import Phaser from 'phaser';
-import { COLORS, CSS, SERIF } from '../art/palette';
-import { addPanel, bannerButton } from './widgets';
+import Phaser from "phaser";
+import { COLORS, CSS, SERIF } from "../art/palette";
+import { addPanel, bannerButton } from "./widgets";
 
 export interface CalloutOptions {
   /** Screen-space rectangle of the element being pointed at. Pass several when
@@ -39,7 +39,10 @@ const PAD = 8;
  * rectangles can't have holes, so the "hole" is the gap the dim bands leave —
  * see the band math below.
  */
-export function showCallout(scene: Phaser.Scene, opts: CalloutOptions): CalloutHandle {
+export function showCallout(
+  scene: Phaser.Scene,
+  opts: CalloutOptions,
+): CalloutHandle {
   const W = scene.scale.width;
   const H = scene.scale.height;
   const objects: Phaser.GameObjects.GameObject[] = [];
@@ -47,18 +50,21 @@ export function showCallout(scene: Phaser.Scene, opts: CalloutOptions): CalloutH
   // Every lit region, padded and clipped to the viewport. Anything the padding
   // pushed off screen entirely is dropped rather than left as a sliver.
   const holes = (Array.isArray(opts.anchor) ? opts.anchor : [opts.anchor])
-    .map(a => {
+    .map((a) => {
       const x0 = Phaser.Math.Clamp(a.x - PAD, 0, W);
       const y0 = Phaser.Math.Clamp(a.y - PAD, 0, H);
       const x1 = Phaser.Math.Clamp(a.x + a.width + PAD, 0, W);
       const y1 = Phaser.Math.Clamp(a.y + a.height + PAD, 0, H);
       return new Phaser.Geom.Rectangle(x0, y0, x1 - x0, y1 - y0);
     })
-    .filter(r => r.width > 0 && r.height > 0);
+    .filter((r) => r.width > 0 && r.height > 0);
 
   const band = (x: number, y: number, w: number, h: number) => {
     if (w <= 0 || h <= 0) return;
-    const r = scene.add.rectangle(x, y, w, h, DIM_COLOR, DIM_ALPHA).setOrigin(0, 0).setDepth(DIM_DEPTH);
+    const r = scene.add
+      .rectangle(x, y, w, h, DIM_COLOR, DIM_ALPHA)
+      .setOrigin(0, 0)
+      .setDepth(DIM_DEPTH);
     r.setInteractive(); // swallow clicks on the dimmed area
     objects.push(r);
   };
@@ -69,16 +75,19 @@ export function showCallout(scene: Phaser.Scene, opts: CalloutOptions): CalloutH
   // merge into one band, so a two-hole step still costs a handful of rects
   // rather than a grid of them. Each swallows input (topOnly is on, so they
   // block whatever sits beneath them).
-  const edges = (values: number[]) => [...new Set(values)].sort((a, b) => a - b);
-  const xs = edges([0, W, ...holes.flatMap(h => [h.x, h.right])]);
-  const ys = edges([0, H, ...holes.flatMap(h => [h.y, h.bottom])]);
+  const edges = (values: number[]) =>
+    [...new Set(values)].sort((a, b) => a - b);
+  const xs = edges([0, W, ...holes.flatMap((h) => [h.x, h.right])]);
+  const ys = edges([0, H, ...holes.flatMap((h) => [h.y, h.bottom])]);
   for (let row = 0; row < ys.length - 1; row++) {
     const top = ys[row];
     const height = ys[row + 1] - top;
     const mid = top + height / 2;
     let runX: number | undefined; // left edge of the dim run being extended
     for (let col = 0; col < xs.length - 1; col++) {
-      const cellLit = holes.some(h => Phaser.Geom.Rectangle.Contains(h, (xs[col] + xs[col + 1]) / 2, mid));
+      const cellLit = holes.some((h) =>
+        Phaser.Geom.Rectangle.Contains(h, (xs[col] + xs[col + 1]) / 2, mid),
+      );
       if (!cellLit && runX === undefined) runX = xs[col];
       if (cellLit && runX !== undefined) {
         band(runX, top, xs[col] - runX, height);
@@ -115,10 +124,10 @@ export function showCallout(scene: Phaser.Scene, opts: CalloutOptions): CalloutH
   const body = scene.add
     .text(0, 0, opts.text, {
       fontFamily: SERIF,
-      fontSize: '18px',
+      fontSize: "18px",
       color: CSS.ink,
-      align: 'center',
-      wordWrap: { width: wrapW }
+      align: "center",
+      wordWrap: { width: wrapW },
     })
     .setOrigin(0.5, 0)
     .setDepth(TEXT_DEPTH);
@@ -137,7 +146,7 @@ export function showCallout(scene: Phaser.Scene, opts: CalloutOptions): CalloutH
       Phaser.Math.Clamp(x, panelW / 2 + 10, W - panelW / 2 - 10) - panelW / 2,
       Phaser.Math.Clamp(y, panelH / 2 + 10, H - panelH / 2 - 10) - panelH / 2,
       panelW,
-      panelH
+      panelH,
     );
   const covers = (r: Phaser.Geom.Rectangle) =>
     holes.reduce((sum, h) => {
@@ -150,16 +159,21 @@ export function showCallout(scene: Phaser.Scene, opts: CalloutOptions): CalloutH
   // leave no room on any one side. The first that covers nothing wins, so a
   // single-anchor step still lands on its roomiest side as it always has.
   const gap = 18;
-  const space = { above: spotlit.y, below: H - spotlit.bottom, left: spotlit.x, right: W - spotlit.right };
+  const space = {
+    above: spotlit.y,
+    below: H - spotlit.bottom,
+    left: spotlit.x,
+    right: W - spotlit.right,
+  };
   const sideSpot: Record<keyof typeof space, [number, number]> = {
     above: [spotlit.centerX, spotlit.y - panelH / 2 - gap],
     below: [spotlit.centerX, spotlit.bottom + panelH / 2 + gap],
     left: [spotlit.x - panelW / 2 - gap, spotlit.centerY],
-    right: [spotlit.right + panelW / 2 + gap, spotlit.centerY]
+    right: [spotlit.right + panelW / 2 + gap, spotlit.centerY],
   };
   const candidates = (Object.keys(space) as (keyof typeof space)[])
     .sort((a, b) => space[b] - space[a])
-    .map(side => sideSpot[side]);
+    .map((side) => sideSpot[side]);
   const SWEEP = 4;
   for (let row = 0; row <= SWEEP; row++) {
     for (let col = 0; col <= SWEEP; col++) {
@@ -190,7 +204,14 @@ export function showCallout(scene: Phaser.Scene, opts: CalloutOptions): CalloutH
     // 0.7 of the parchment is the look on a roomy viewport; on a narrow one the
     // panel is the tighter constraint, so take whichever is smaller.
     const btnMaxW = Math.min(panelW - 40, 340 * 0.7);
-    const btn = bannerButton(scene, px, py + panelH / 2 - 30, 'Continue', () => opts.onContinue!(), btnMaxW);
+    const btn = bannerButton(
+      scene,
+      px,
+      py + panelH / 2 - 30,
+      "Continue",
+      () => opts.onContinue!(),
+      btnMaxW,
+    );
     btn.setDepth(BUTTON_DEPTH);
     objects.push(btn);
   }
@@ -199,6 +220,6 @@ export function showCallout(scene: Phaser.Scene, opts: CalloutOptions): CalloutH
     objects,
     destroy() {
       for (const o of objects) o.destroy();
-    }
+    },
   };
 }

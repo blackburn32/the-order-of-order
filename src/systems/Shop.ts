@@ -11,6 +11,7 @@ import {
   ItemTheme,
   PriceBand,
   Rarity,
+  SHOPPING_CART_DISCOUNT_PERCENT,
   ShopItemId,
   StackPricing,
   itemsInTheme,
@@ -32,6 +33,7 @@ export interface ShopOffer {
   desc: string;
   rarity: Rarity;
   needsTarget: boolean; // player must pick a die (shrink, twin, loaded_die, wild_face)
+  targetsSize: boolean; // that pick only names a die size, not one specific die
   targetCount?: number; // >1 for multi-pick items (grindstone)
   freeByCoupon?: boolean;
 }
@@ -65,8 +67,8 @@ const STACK_FACTOR: Record<StackPricing, number> = {
   explosive: 1.8,
 };
 
-/** Shopping Cart's across-the-board discount. */
-const SHOPPING_CART_DISCOUNT = 0.15;
+/** Shopping Cart's across-the-board discount, as the card promises it. */
+const SHOPPING_CART_DISCOUNT = SHOPPING_CART_DISCOUNT_PERCENT / 100;
 /** Pawnbroker's flat reduction, applied after every other adjustment. */
 const PAWNBROKER_DISCOUNT = 2;
 
@@ -129,6 +131,7 @@ export function offerFor(
     desc: typeof def.desc === "function" ? def.desc(state) : def.desc,
     rarity: def.rarity,
     needsTarget: def.needsTarget ?? false,
+    targetsSize: def.targetsSize ?? false,
     targetCount: def.targetCount,
     freeByCoupon: false,
   };
@@ -191,6 +194,7 @@ function rollOffers(
   rng: () => number,
   weights: RarityWeights,
   includeTwoBricks: boolean,
+  couponFreebieAvailable: boolean,
 ): ShopOffer[] {
   const eligibleIds = availableIds(state).filter(
     (id) => includeTwoBricks || id !== "extra_die",
@@ -224,7 +228,7 @@ function rollOffers(
     offers[offers.length - 1] = offerFor("extra_die", state);
   }
 
-  applyCouponFreebie(state, offers, rng);
+  if (couponFreebieAvailable) applyCouponFreebie(state, offers, rng);
   return offers;
 }
 
@@ -238,18 +242,21 @@ export function rollShopOffers(
   rng: () => number = Math.random,
   weights: RarityWeights = weightsFor(state),
 ): ShopOffer[] {
-  return rollOffers(state, count, rng, weights, true);
+  return rollOffers(state, count, rng, weights, true, true);
 }
 
 /** Rerolls never offer or inject Two Bricks. Otherwise a player can trade one
- *  gold for its free dice repeatedly by cycling the shop. */
+ *  gold for its free dice repeatedly by cycling the shop. Coupon Book follows
+ *  an unclaimed freebie onto the new row, but cannot award another card after
+ *  its freebie for this visit has been claimed. */
 export function rerollShopOffers(
   state: RunState,
   count = 3,
   rng: () => number = Math.random,
   weights: RarityWeights = weightsFor(state),
+  couponFreebieAvailable = true,
 ): ShopOffer[] {
-  return rollOffers(state, count, rng, weights, false);
+  return rollOffers(state, count, rng, weights, false, couponFreebieAvailable);
 }
 
 // ---- Booster packs --------------------------------------------------------

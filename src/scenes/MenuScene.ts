@@ -1,21 +1,21 @@
-import Phaser from 'phaser';
-import { COLORS, CSS, SERIF } from '../art/palette';
-import { audio } from '../systems/Audio';
-import { fx } from '../systems/Effects';
-import { loadProgress, loadSettings } from '../systems/SaveData';
-import { beginRun } from '../systems/Tutorial';
+import Phaser from "phaser";
+import { COLORS, CSS, SERIF } from "../art/palette";
+import { audio } from "../systems/Audio";
+import { fx } from "../systems/Effects";
+import { loadProgress, loadSettings } from "../systems/SaveData";
+import { beginRun } from "../systems/Tutorial";
 import {
   addFelt,
   bannerButton,
   BannerAction,
   fitTextWidth,
   showBanner,
-  stackBannerButtons
-} from '../ui/widgets';
-import { AmbientLayer } from '../ui/AmbientLayer';
-import { RuleDice } from '../ui/RuleDice';
-import { compactColumns, isCompactLandscape, responsive } from '../ui/layout';
-import { slideSceneIn, slideSceneOut } from '../ui/sceneSlide';
+  stackBannerButtons,
+} from "../ui/widgets";
+import { AmbientLayer } from "../ui/AmbientLayer";
+import { RuleDice } from "../ui/RuleDice";
+import { compactColumns, isCompactLandscape, responsive } from "../ui/layout";
+import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 
 /**
  * Fixed "trial progress" handed to the menu's AmbientLayer. There's no trial
@@ -48,7 +48,7 @@ export class MenuScene extends Phaser.Scene {
   private leaving = false;
 
   constructor() {
-    super('Menu');
+    super("Menu");
   }
 
   create(): void {
@@ -64,13 +64,15 @@ export class MenuScene extends Phaser.Scene {
     const activateCursorGlow = (pointer: Phaser.Input.Pointer) => {
       if (this.cursorGlowActivated) return;
       this.cursorGlowActivated = true;
-      this.cursorGlow?.setPosition(pointer.worldX, pointer.worldY).setAlpha(CURSOR_GLOW_ALPHA);
+      this.cursorGlow
+        ?.setPosition(pointer.worldX, pointer.worldY)
+        .setAlpha(CURSOR_GLOW_ALPHA);
     };
-    this.input.once('pointermove', activateCursorGlow);
-    this.input.once('pointerdown', activateCursorGlow);
+    this.input.once("pointermove", activateCursorGlow);
+    this.input.once("pointerdown", activateCursorGlow);
 
     // Browsers require a gesture before audio; first click starts the soundtrack.
-    this.input.once('pointerdown', () => {
+    this.input.once("pointerdown", () => {
       audio.startMusic();
     });
   }
@@ -105,10 +107,13 @@ export class MenuScene extends Phaser.Scene {
     // rings instead of as light falling on them — and `spark` is drawn
     // precisely to hold up as a light source when blown far past its own size.
     const glow = this.add
-      .image(mast.cx, titleY, 'spark')
+      .image(mast.cx, titleY, "spark")
       .setTint(COLORS.glow)
       .setBlendMode(Phaser.BlendModes.ADD)
-      .setDisplaySize(compact ? mast.width * 1.06 : Math.min(720, W * 0.8), compact ? 190 : 300);
+      .setDisplaySize(
+        compact ? mast.width * 1.06 : Math.min(720, W * 0.8),
+        compact ? 190 : 300,
+      );
     if (fx.motion) {
       // setDisplaySize bakes the stretch into scaleX, so the breathe has to
       // swing around that baked value instead of around 1.
@@ -120,7 +125,7 @@ export class MenuScene extends Phaser.Scene {
         duration: 2400,
         yoyo: true,
         repeat: -1,
-        ease: 'Sine.easeInOut'
+        ease: "Sine.easeInOut",
       });
     } else {
       glow.setAlpha(0.2);
@@ -134,24 +139,24 @@ export class MenuScene extends Phaser.Scene {
 
     const titleSize = Math.round(Phaser.Math.Clamp(W * 0.053, 30, 68));
     const title = this.add
-      .text(mast.cx, titleY, 'The Order of Order', {
+      .text(mast.cx, titleY, "The Order of Order", {
         fontFamily: SERIF,
         fontSize: `${titleSize}px`,
         color: CSS.gold,
-        fontStyle: 'bold',
+        fontStyle: "bold",
         // The sigil's tick ring and arcs pass behind the letterforms now, and
         // gold-on-gold at low alpha is exactly the collision a drop shadow
         // underneath doesn't solve. A near-black stroke (felt dark, as
         // `floatText` uses) cuts the glyphs out of whatever is turning behind
         // them; scaled off the font size so it stays proportionate from the
         // 30px floor to the 68px ceiling.
-        stroke: '#0d0a12',
-        strokeThickness: Math.max(3, Math.round(titleSize * 0.09))
+        stroke: "#0d0a12",
+        strokeThickness: Math.max(3, Math.round(titleSize * 0.09)),
       })
       .setOrigin(0.5)
       // shadowStroke on as well, so the soft shadow follows the stroke's
       // outline rather than only the gold fill sitting inside it.
-      .setShadow(0, 4, '#000000', 10, true, true);
+      .setShadow(0, 4, "#000000", 10, true, true);
     fitTextWidth(title, textMaxW);
 
     // The stacked layout spaces the two lines off the viewport height; a
@@ -159,11 +164,11 @@ export class MenuScene extends Phaser.Scene {
     // lands inside the title's own line box.
     const subtitleGap = compact ? titleSize * 0.62 + 20 : H * 0.09;
     const subtitle = this.add
-      .text(mast.cx, titleY + subtitleGap, 'An incremental rite of dice', {
+      .text(mast.cx, titleY + subtitleGap, "An incremental rite of dice", {
         fontFamily: SERIF,
         fontSize: `${Math.round(Phaser.Math.Clamp(W * 0.019, 16, 24))}px`,
         color: CSS.dim,
-        fontStyle: 'italic'
+        fontStyle: "italic",
       })
       .setOrigin(0.5);
     fitTextWidth(subtitle, textMaxW);
@@ -183,7 +188,12 @@ export class MenuScene extends Phaser.Scene {
     // height pads each box well past the ink), while the clear air between the
     // glyphs themselves is several times that. Scaling with the title keeps
     // the row proportionate to the masthead at every viewport.
-    const dice = new RuleDice(this, mast.cx, ruleY, Phaser.Math.Clamp(titleSize * 0.26, 10, 18));
+    const dice = new RuleDice(
+      this,
+      mast.cx,
+      ruleY,
+      Phaser.Math.Clamp(titleSize * 0.26, 10, 18),
+    );
     const ruleGap = dice.width / 2 + 12;
 
     const rule = this.add.graphics();
@@ -195,34 +205,37 @@ export class MenuScene extends Phaser.Scene {
     const itemsUnlocked = loadProgress().gamesCompleted > 0;
     const actions: BannerAction[] = [
       {
-        label: 'Start New Run',
-        onClick: () => this.leave(() => {
-          // Intro plays on every main-menu run until the player skips it; Victory /
-          // Game Over "Begin a New Run" skip straight to the game (they call
-          // setRun + start('Game') directly, so the intro is main-menu only).
-          if (loadSettings().showIntro) this.scene.start('Intro');
-          else beginRun(this);
-        })
+        label: "Start New Run",
+        onClick: () =>
+          this.leave(() => {
+            // Intro plays on every main-menu run until the player skips it; Victory /
+            // Game Over "Begin a New Run" skip straight to the game (they call
+            // setRun + start('Game') directly, so the intro is main-menu only).
+            if (loadSettings().showIntro) this.scene.start("Intro");
+            else beginRun(this);
+          }),
       },
       {
-        label: 'Hall of High Scores',
-        onClick: () => this.leave(() => this.scene.start('Hall'))
+        label: "Hall of High Scores",
+        onClick: () => this.leave(() => this.scene.start("Hall")),
       },
       {
-        label: 'Codex',
+        label: "Codex",
         onClick: () => {
-          if (itemsUnlocked) this.leave(() => this.scene.start('Items', { returnTo: 'Menu' }));
-          else showBanner(this, 'Complete a run to unlock the Codex', 1200);
-        }
+          if (itemsUnlocked)
+            this.leave(() => this.scene.start("Items", { returnTo: "Menu" }));
+          else showBanner(this, "Complete a run to unlock the Codex", 1200);
+        },
       },
       {
         // Pass returnTo explicitly: Phaser keeps a scene's previous start-data
         // when none is supplied, so without this Settings would inherit a stale
         // `{ returnTo: 'Game' }` from a mid-run visit and wrongly offer "Return
         // to Game" / "Abandon Run" from the Vestibule.
-        label: 'Settings',
-        onClick: () => this.leave(() => this.scene.start('Settings', { returnTo: 'Menu' }))
-      }
+        label: "Settings",
+        onClick: () =>
+          this.leave(() => this.scene.start("Settings", { returnTo: "Menu" })),
+      },
     ];
 
     // Folded, the buttons fill their own column and take their pitch from their
@@ -244,8 +257,8 @@ export class MenuScene extends Phaser.Scene {
             action.label,
             action.onClick,
             undefined,
-            btnGap - STACKED_BUTTON_GAP
-          )
+            btnGap - STACKED_BUTTON_GAP,
+          ),
         );
 
     if (!itemsUnlocked) {
@@ -259,10 +272,10 @@ export class MenuScene extends Phaser.Scene {
       const img = itemsBtn.getAt(0) as Phaser.GameObjects.Image;
       const lockSize = Math.max(12, Math.round(24 * img.scaleY));
       const lock = this.add
-        .text(-img.displayWidth / 2 + lockSize, 0, '\u{1F512}', {
+        .text(-img.displayWidth / 2 + lockSize, 0, "\u{1F512}", {
           fontFamily: SERIF,
           fontSize: `${lockSize}px`,
-          color: CSS.ink
+          color: CSS.ink,
         })
         .setOrigin(0, 0.5);
       itemsBtn.add(lock);
@@ -276,15 +289,15 @@ export class MenuScene extends Phaser.Scene {
       .text(
         mast.cx,
         compact ? columns.bottom - 4 : H - Math.min(28, H * 0.05),
-        'Roll ones. Appease the Order. Survive the thresholds.',
+        "Roll ones. Appease the Order. Survive the thresholds.",
         {
           fontFamily: SERIF,
-          fontSize: '16px',
+          fontSize: "16px",
           color: CSS.dim,
-          fontStyle: 'italic',
-          align: 'center',
-          ...(compact ? { wordWrap: { width: textMaxW } } : {})
-        }
+          fontStyle: "italic",
+          align: "center",
+          ...(compact ? { wordWrap: { width: textMaxW } } : {}),
+        },
       )
       .setOrigin(0.5, compact ? 1 : 0.5);
     fitTextWidth(tagline, textMaxW);
@@ -299,7 +312,7 @@ export class MenuScene extends Phaser.Scene {
     if (fx.on) {
       const pointer = this.input.activePointer;
       this.cursorGlow = this.add
-        .image(pointer.worldX, pointer.worldY, 'spark')
+        .image(pointer.worldX, pointer.worldY, "spark")
         .setTint(COLORS.glow)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setDisplaySize(CURSOR_GLOW_SIZE, CURSOR_GLOW_SIZE)

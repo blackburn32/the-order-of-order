@@ -1,6 +1,7 @@
-import Phaser from 'phaser';
-import { COLORS, CSS, DIE_BORDER, SERIF } from './palette';
-import { DIE_LADDER } from '../systems/Dice';
+import Phaser from "phaser";
+import { COLORS, CSS, DIE_BORDER, SERIF } from "./palette";
+import { DIE_LADDER } from "../systems/Dice";
+import type { BossModifierId } from "../systems/Boss";
 
 // Square so it stretches evenly onto any viewport aspect ratio via setDisplaySize.
 const FELT_SIZE = 1024;
@@ -20,6 +21,7 @@ export function buildTextures(scene: Phaser.Scene): void {
   buildSpark(scene);
   buildShockwave(scene);
   buildSigils(scene);
+  buildBossSigils(scene);
   buildSigilRings(scene);
 }
 
@@ -38,19 +40,40 @@ export const SIGIL_RING_OUTER_INK_RADIUS = 500 / 512;
 /** Texture keys for the interchangeable pieces of the ambient sigil. Every
  * variant keeps the same outer/inner ink bounds, so callers can size any pair
  * with the constants above. The original keys stay first for existing uses. */
-export const SIGIL_TEXTURE_KEYS = ['sigil', 'sigil-2', 'sigil-3'] as const;
+export const SIGIL_TEXTURE_KEYS = ["sigil", "sigil-2", "sigil-3"] as const;
 export const SIGIL_RING_TEXTURE_KEYS = [
-  'sigil-ring',
-  'sigil-ring-2',
-  'sigil-ring-3'
+  "sigil-ring",
+  "sigil-ring-2",
+  "sigil-ring-3",
 ] as const;
 
+/** A fixed inner sigil for each boss. Unlike the ambient variants, these are
+ * identities: meeting The Warden again always brings back the same mark. */
+export const BOSS_SIGIL_TEXTURE_KEYS: Record<BossModifierId, string> = {
+  famine: "sigil-boss-famine",
+  drought: "sigil-boss-drought",
+  eclipse: "sigil-boss-eclipse",
+  silence: "sigil-boss-silence",
+  hunger: "sigil-boss-hunger",
+  warden: "sigil-boss-warden",
+  toll: "sigil-boss-toll",
+  hoard: "sigil-boss-hoard",
+};
+
+export function bossSigilTexture(id: BossModifierId): string {
+  return BOSS_SIGIL_TEXTURE_KEYS[id];
+}
+
 export function randomSigilTexture(): (typeof SIGIL_TEXTURE_KEYS)[number] {
-  return SIGIL_TEXTURE_KEYS[Math.floor(Math.random() * SIGIL_TEXTURE_KEYS.length)];
+  return SIGIL_TEXTURE_KEYS[
+    Math.floor(Math.random() * SIGIL_TEXTURE_KEYS.length)
+  ];
 }
 
 export function randomSigilRingTexture(): (typeof SIGIL_RING_TEXTURE_KEYS)[number] {
-  return SIGIL_RING_TEXTURE_KEYS[Math.floor(Math.random() * SIGIL_RING_TEXTURE_KEYS.length)];
+  return SIGIL_RING_TEXTURE_KEYS[
+    Math.floor(Math.random() * SIGIL_RING_TEXTURE_KEYS.length)
+  ];
 }
 
 /**
@@ -61,13 +84,20 @@ export function randomSigilRingTexture(): (typeof SIGIL_RING_TEXTURE_KEYS)[numbe
  */
 function buildSpark(scene: Phaser.Scene): void {
   const size = 64;
-  const tex = scene.textures.createCanvas('spark', size, size);
+  const tex = scene.textures.createCanvas("spark", size, size);
   if (!tex) return;
   const ctx = tex.getContext();
-  const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.35, 'rgba(255,255,255,0.65)');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  const grad = ctx.createRadialGradient(
+    size / 2,
+    size / 2,
+    0,
+    size / 2,
+    size / 2,
+    size / 2,
+  );
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.35, "rgba(255,255,255,0.65)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
   tex.refresh();
@@ -80,7 +110,7 @@ function buildShockwave(scene: Phaser.Scene): void {
   g.strokeCircle(128, 128, 118);
   g.lineStyle(2, 0xffffff, 0.45);
   g.strokeCircle(128, 128, 106);
-  g.generateTexture('shockwave', 256, 256);
+  g.generateTexture("shockwave", 256, 256);
   g.destroy();
 }
 
@@ -121,7 +151,7 @@ function buildSigil(scene: Phaser.Scene, key: string, variant: number): void {
       c + Math.cos(angle) * inner,
       c + Math.sin(angle) * inner,
       c + Math.cos(angle) * 232,
-      c + Math.sin(angle) * 232
+      c + Math.sin(angle) * 232,
     );
   }
 
@@ -151,7 +181,7 @@ function buildSigil(scene: Phaser.Scene, key: string, variant: number): void {
         c + Math.cos(angle) * 104,
         c + Math.sin(angle) * 104,
         c + Math.cos(angle) * 148,
-        c + Math.sin(angle) * 148
+        c + Math.sin(angle) * 148,
       );
     }
     g.lineStyle(2, 0xffffff, 0.42);
@@ -175,6 +205,151 @@ function buildSigil(scene: Phaser.Scene, key: string, variant: number): void {
   g.destroy();
 }
 
+/** Boss marks share the ambient sigils' measured outer rings, but replace the
+ * centre with a rule-specific emblem. The silhouettes stay intentionally bold:
+ * they spend most of the game behind dice at very low opacity. */
+function buildBossSigils(scene: Phaser.Scene): void {
+  (
+    Object.entries(BOSS_SIGIL_TEXTURE_KEYS) as [BossModifierId, string][]
+  ).forEach(([id, key], index) => buildBossSigil(scene, key, id, index));
+}
+
+function buildBossSigil(
+  scene: Phaser.Scene,
+  key: string,
+  id: BossModifierId,
+  index: number,
+): void {
+  const size = 512;
+  const c = size / 2;
+  const g = scene.add.graphics();
+
+  g.lineStyle(3, 0xffffff, 0.9);
+  g.strokeCircle(c, c, 248);
+  g.lineStyle(1.5, 0xffffff, 0.55);
+  g.strokeCircle(c, c, 232);
+  const ticks = 32 + (index % 3) * 8;
+  for (let i = 0; i < ticks; i++) {
+    const angle = (Math.PI * 2 * i) / ticks;
+    const major = i % 8 === 0;
+    const inner = major ? 208 : 220;
+    g.lineStyle(major ? 3 : 1.5, 0xffffff, major ? 0.85 : 0.42);
+    g.lineBetween(
+      c + Math.cos(angle) * inner,
+      c + Math.sin(angle) * inner,
+      c + Math.cos(angle) * 232,
+      c + Math.sin(angle) * 232,
+    );
+  }
+  strokeBrokenRing(g, c, 180, 8, Math.PI / 8, 0.1, 0.48);
+  g.lineStyle(4, 0xffffff, 0.72);
+
+  switch (id) {
+    case "famine":
+      // An empty bowl beneath three descending, broken grain stalks.
+      g.beginPath();
+      g.arc(c, c + 28, 94, 0.12, Math.PI - 0.12, false);
+      g.strokePath();
+      g.lineBetween(c - 76, c + 56, c + 76, c + 56);
+      for (const x of [c - 48, c, c + 48]) {
+        g.lineBetween(x, c - 104, x, c - 42);
+        g.lineBetween(x - 10, c - 84, x, c - 72);
+        g.lineBetween(x + 10, c - 62, x, c - 50);
+      }
+      break;
+    case "drought":
+      // A split water drop, cracked before it reaches the basin.
+      g.beginPath();
+      g.moveTo(c, c - 118);
+      g.lineTo(c - 76, c - 10);
+      g.lineTo(c - 62, c + 66);
+      g.lineTo(c, c + 104);
+      g.lineTo(c + 62, c + 66);
+      g.lineTo(c + 76, c - 10);
+      g.closePath();
+      g.strokePath();
+      g.lineBetween(c + 12, c - 76, c - 16, c - 8);
+      g.lineBetween(c - 16, c - 8, c + 24, c + 18);
+      g.lineBetween(c + 24, c + 18, c - 12, c + 88);
+      break;
+    case "eclipse":
+      // Offset orbits make the occluding disc read even while it turns.
+      g.strokeCircle(c, c, 104);
+      g.lineStyle(8, 0xffffff, 0.68);
+      g.strokeCircle(c + 42, c - 12, 82);
+      g.lineStyle(3, 0xffffff, 0.5);
+      for (let i = 0; i < 8; i++) {
+        const a = (Math.PI * i) / 4;
+        g.lineBetween(
+          c + Math.cos(a) * 124,
+          c + Math.sin(a) * 124,
+          c + Math.cos(a) * 148,
+          c + Math.sin(a) * 148,
+        );
+      }
+      break;
+    case "silence":
+      // A clapperless bell cut through by the boss's binding stroke.
+      g.beginPath();
+      g.moveTo(c - 82, c + 62);
+      g.lineTo(c - 56, c + 26);
+      g.lineTo(c - 44, c - 58);
+      g.lineTo(c, c - 92);
+      g.lineTo(c + 44, c - 58);
+      g.lineTo(c + 56, c + 26);
+      g.lineTo(c + 82, c + 62);
+      g.closePath();
+      g.strokePath();
+      g.lineBetween(c - 112, c - 104, c + 112, c + 104);
+      break;
+    case "hunger":
+      // An open maw whose inward teeth consume the empty centre.
+      g.strokePoints(polygonPoints(c, c, 118, 4, 45), true, true);
+      for (const x of [c - 72, c - 24, c + 24, c + 72]) {
+        g.lineBetween(x, c - 70, x + 18, c - 28);
+        g.lineBetween(x, c + 70, x - 18, c + 28);
+      }
+      g.lineBetween(c - 104, c, c + 104, c);
+      break;
+    case "warden":
+      // A barred gate under a peaked lintel.
+      g.lineBetween(c - 108, c + 92, c - 108, c - 34);
+      g.lineBetween(c + 108, c + 92, c + 108, c - 34);
+      g.lineBetween(c - 108, c - 34, c, c - 116);
+      g.lineBetween(c, c - 116, c + 108, c - 34);
+      for (const x of [c - 66, c - 22, c + 22, c + 66])
+        g.lineBetween(x, c - 62, x, c + 92);
+      g.lineBetween(c - 124, c + 92, c + 124, c + 92);
+      break;
+    case "toll":
+      // A balance with one pan visibly lower than the other.
+      g.lineBetween(c, c - 110, c, c + 96);
+      g.lineBetween(c - 108, c - 58, c + 108, c - 38);
+      g.lineBetween(c - 84, c - 56, c - 110, c + 34);
+      g.lineBetween(c + 84, c - 40, c + 110, c + 72);
+      g.beginPath();
+      g.arc(c - 110, c + 34, 52, 0, Math.PI, false);
+      g.strokePath();
+      g.beginPath();
+      g.arc(c + 110, c + 72, 52, 0, Math.PI, false);
+      g.strokePath();
+      g.lineBetween(c - 66, c + 96, c + 66, c + 96);
+      break;
+    case "hoard":
+      // A guarded stack of coins crowned by a closed diamond.
+      for (const y of [c + 72, c + 24, c - 24]) {
+        g.strokeEllipse(c, y, 170, 42);
+        g.lineBetween(c - 85, y, c - 85, y + 34);
+        g.lineBetween(c + 85, y, c + 85, y + 34);
+      }
+      g.strokePoints(polygonPoints(c, c - 92, 46, 4, 45), true, true);
+      break;
+  }
+
+  g.generateTexture(key, size, size);
+  g.destroy();
+}
+
 /**
  * The sigil's outer ring: the same vocabulary — paired circles, a tick ring,
  * broken arcs — arranged as a band rather than a disc, so it reads as a
@@ -186,10 +361,16 @@ function buildSigil(scene: Phaser.Scene, key: string, variant: number): void {
  * hollow is what the inner sigil is centred in. White, for tinting.
  */
 function buildSigilRings(scene: Phaser.Scene): void {
-  SIGIL_RING_TEXTURE_KEYS.forEach((key, variant) => buildSigilRing(scene, key, variant));
+  SIGIL_RING_TEXTURE_KEYS.forEach((key, variant) =>
+    buildSigilRing(scene, key, variant),
+  );
 }
 
-function buildSigilRing(scene: Phaser.Scene, key: string, variant: number): void {
+function buildSigilRing(
+  scene: Phaser.Scene,
+  key: string,
+  variant: number,
+): void {
   const size = 1024;
   const c = size / 2;
   const outer = c * SIGIL_RING_OUTER_INK_RADIUS;
@@ -215,7 +396,7 @@ function buildSigilRing(scene: Phaser.Scene, key: string, variant: number): void
       c + Math.cos(angle) * from,
       c + Math.sin(angle) * from,
       c + Math.cos(angle) * (outer - 16),
-      c + Math.sin(angle) * (outer - 16)
+      c + Math.sin(angle) * (outer - 16),
     );
   }
 
@@ -226,7 +407,15 @@ function buildSigilRing(scene: Phaser.Scene, key: string, variant: number): void
   const gap = [0.1, 0.08, 0.12][variant];
   strokeBrokenRing(g, c, arcR, segments, 0, gap);
   if (variant === 1) {
-    strokeBrokenRing(g, c, arcR + 18, segments, Math.PI / segments, gap * 0.8, 0.42);
+    strokeBrokenRing(
+      g,
+      c,
+      arcR + 18,
+      segments,
+      Math.PI / segments,
+      gap * 0.8,
+      0.42,
+    );
   }
 
   // Lozenges, triangles, and pentagons distinguish the three gate patterns.
@@ -240,7 +429,7 @@ function buildSigilRing(scene: Phaser.Scene, key: string, variant: number): void
       c + Math.sin(angle) * arcR,
       markerRadius,
       markerSides,
-      Phaser.Math.RadToDeg(angle) - 90
+      Phaser.Math.RadToDeg(angle) - 90,
     );
     g.fillPoints(pts, true);
   }
@@ -262,7 +451,7 @@ function strokeBrokenRing(
   segments: number,
   offset: number,
   gap: number,
-  alpha = 0.7
+  alpha = 0.7,
 ): void {
   g.lineStyle(2, 0xffffff, alpha);
   const step = (Math.PI * 2) / segments;
@@ -274,7 +463,7 @@ function strokeBrokenRing(
       radius,
       offset + step * i + gap,
       offset + step * (i + 1) - gap,
-      false
+      false,
     );
     g.strokePath();
   }
@@ -283,24 +472,31 @@ function strokeBrokenRing(
 /** Dark table felt with speckle noise and a vignette; stretched to fit any viewport. */
 function buildFelt(scene: Phaser.Scene): void {
   const size = FELT_SIZE;
-  const tex = scene.textures.createCanvas('felt', size, size);
+  const tex = scene.textures.createCanvas("felt", size, size);
   if (!tex) return;
   const ctx = tex.getContext();
 
-  ctx.fillStyle = '#161226';
+  ctx.fillStyle = "#161226";
   ctx.fillRect(0, 0, size, size);
 
   for (let i = 0; i < 9000; i++) {
     const x = Math.random() * size;
     const y = Math.random() * size;
     const light = Math.random() > 0.5;
-    ctx.fillStyle = light ? 'rgba(120, 100, 170, 0.05)' : 'rgba(0, 0, 0, 0.07)';
+    ctx.fillStyle = light ? "rgba(120, 100, 170, 0.05)" : "rgba(0, 0, 0, 0.07)";
     ctx.fillRect(x, y, 1.5, 1.5);
   }
 
-  const grad = ctx.createRadialGradient(size / 2, size / 2, size * 0.35, size / 2, size / 2, size * 0.7);
-  grad.addColorStop(0, 'rgba(0,0,0,0)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.55)');
+  const grad = ctx.createRadialGradient(
+    size / 2,
+    size / 2,
+    size * 0.35,
+    size / 2,
+    size / 2,
+    size * 0.7,
+  );
+  grad.addColorStop(0, "rgba(0,0,0,0)");
+  grad.addColorStop(1, "rgba(0,0,0,0.55)");
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
 
@@ -310,11 +506,22 @@ function buildFelt(scene: Phaser.Scene): void {
 const DIE_CENTER = 48;
 
 /** Regular-polygon vertices, pointy-top by default. */
-function polygonPoints(cx: number, cy: number, radius: number, sides: number, rotationDeg = -90): Phaser.Math.Vector2[] {
+function polygonPoints(
+  cx: number,
+  cy: number,
+  radius: number,
+  sides: number,
+  rotationDeg = -90,
+): Phaser.Math.Vector2[] {
   const pts: Phaser.Math.Vector2[] = [];
   for (let i = 0; i < sides; i++) {
     const angle = Phaser.Math.DegToRad(rotationDeg + (360 / sides) * i);
-    pts.push(new Phaser.Math.Vector2(cx + radius * Math.cos(angle), cy + radius * Math.sin(angle)));
+    pts.push(
+      new Phaser.Math.Vector2(
+        cx + radius * Math.cos(angle),
+        cy + radius * Math.sin(angle),
+      ),
+    );
   }
   return pts;
 }
@@ -382,7 +589,7 @@ function buildPips(scene: Phaser.Scene): void {
   const g = scene.add.graphics();
   g.fillStyle(COLORS.gold, 1);
   g.fillCircle(6, 6, 5);
-  g.generateTexture('pip-gold', 12, 12);
+  g.generateTexture("pip-gold", 12, 12);
   g.destroy();
 }
 
@@ -398,17 +605,21 @@ const FACE_CELL = 76;
  * offset that lands the glyph's own ink at the target point, instead of
  * guessing a fixed pixel nudge.
  */
-function numeralYOffset(fontSize: number, bold: boolean, liftFraction: number): number {
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d');
+function numeralYOffset(
+  fontSize: number,
+  bold: boolean,
+  liftFraction: number,
+): number {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
   if (!ctx) return 0;
-  ctx.font = `${bold ? 'bold ' : ''}${fontSize}px ${SERIF}`;
+  ctx.font = `${bold ? "bold " : ""}${fontSize}px ${SERIF}`;
 
-  const ref = ctx.measureText('|MÉqgy'); // matches Phaser's TextStyle.testString
+  const ref = ctx.measureText("|MÉqgy"); // matches Phaser's TextStyle.testString
   const refAscent = ref.actualBoundingBoxAscent;
   const refDescent = ref.actualBoundingBoxDescent;
 
-  const digits = ctx.measureText('0123456789');
+  const digits = ctx.measureText("0123456789");
   const digitAscent = digits.actualBoundingBoxAscent;
   const digitDescent = digits.actualBoundingBoxDescent;
 
@@ -434,9 +645,16 @@ function numeralYOffset(fontSize: number, bold: boolean, liftFraction: number): 
  */
 function buildDiceAtlas(scene: Phaser.Scene): void {
   const faces = DIE_LADDER.flatMap((sides) =>
-    Array.from({ length: sides }, (_, i) => ({ name: `face-${sides}-${i + 1}`, sides, value: i + 1 }))
+    Array.from({ length: sides }, (_, i) => ({
+      name: `face-${sides}-${i + 1}`,
+      sides,
+      value: i + 1,
+    })),
   );
-  const labels = DIE_LADDER.map((sides) => ({ name: `label-d${sides}`, sides }));
+  const labels = DIE_LADDER.map((sides) => ({
+    name: `label-d${sides}`,
+    sides,
+  }));
 
   const total = faces.length + labels.length;
   const cols = Math.ceil(Math.sqrt(total));
@@ -466,7 +684,12 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
     const { cx, cy } = placeAt(face.name);
     const offset = face.sides === 6 ? numeralOffsetD6 : numeralOffset;
     const numeral = scene.add
-      .text(0, 0, String(face.value), { fontFamily: SERIF, fontSize: '34px', color: CSS.ink, fontStyle: 'bold' })
+      .text(0, 0, String(face.value), {
+        fontFamily: SERIF,
+        fontSize: "34px",
+        color: CSS.ink,
+        fontStyle: "bold",
+      })
       .setOrigin(0.5);
     rt.draw(numeral, cx, cy + offset);
     throwaways.push(numeral);
@@ -479,14 +702,18 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
     // where that same ink is nearly invisible — use a light parchment tone there.
     const color = label.sides === 6 ? CSS.inkSoft : CSS.parchment;
     const text = scene.add
-      .text(0, 0, `d${label.sides}`, { fontFamily: SERIF, fontSize: '13px', color })
+      .text(0, 0, `d${label.sides}`, {
+        fontFamily: SERIF,
+        fontSize: "13px",
+        color,
+      })
       .setOrigin(0.5);
     rt.draw(text, cx, cy);
     throwaways.push(text);
   }
 
   rt.render();
-  const tex = rt.saveTexture('die-atlas');
+  const tex = rt.saveTexture("die-atlas");
   for (const r of regions) tex.add(r.name, 0, r.x, r.y, FACE_CELL, FACE_CELL);
   for (const t of throwaways) t.destroy();
   rt.destroy();
@@ -501,7 +728,7 @@ function buildCard(scene: Phaser.Scene): void {
   g.strokeRoundedRect(2, 2, 256, 336, 12);
   g.lineStyle(2, COLORS.inkSoft, 0.6);
   g.strokeRoundedRect(10, 10, 240, 320, 8);
-  g.generateTexture('card', 260, 340);
+  g.generateTexture("card", 260, 340);
   g.destroy();
 }
 
@@ -516,7 +743,7 @@ function buildPlaque(scene: Phaser.Scene): void {
   g.fillRoundedRect(3, 1, 244, 53, 8);
   g.lineStyle(2, COLORS.gold, 0.75);
   g.strokeRoundedRect(5, 3, 240, 49, 7);
-  g.generateTexture('plaque', 250, 58);
+  g.generateTexture("plaque", 250, 58);
   g.destroy();
 }
 
@@ -531,7 +758,7 @@ function buildSeal(scene: Phaser.Scene): void {
   g.strokeCircle(85, 82, 58);
   g.fillStyle(0xffffff, 0.12);
   g.fillEllipse(65, 52, 62, 30);
-  g.generateTexture('seal', 170, 170);
+  g.generateTexture("seal", 170, 170);
   g.destroy();
 }
 
@@ -542,7 +769,7 @@ function buildButton(scene: Phaser.Scene): void {
   g.fillRoundedRect(0, 0, 340, 70, 10);
   g.lineStyle(3, COLORS.ink, 0.85);
   g.strokeRoundedRect(4, 4, 332, 62, 8);
-  g.generateTexture('btn', 340, 70);
+  g.generateTexture("btn", 340, 70);
   g.destroy();
 }
 
@@ -555,7 +782,7 @@ function buildPanel(scene: Phaser.Scene): void {
   g.strokeRoundedRect(3, 3, 1094, 574, 15);
   g.lineStyle(2, COLORS.inkSoft, 0.5);
   g.strokeRoundedRect(14, 14, 1072, 552, 10);
-  g.generateTexture('panel', 1100, 580);
+  g.generateTexture("panel", 1100, 580);
   g.destroy();
 }
 
@@ -567,6 +794,6 @@ function buildBanner(scene: Phaser.Scene): void {
   g.lineStyle(2, COLORS.gold, 1);
   g.lineBetween(0, 3, 720, 3);
   g.lineBetween(0, 89, 720, 89);
-  g.generateTexture('banner', 720, 92);
+  g.generateTexture("banner", 720, 92);
   g.destroy();
 }

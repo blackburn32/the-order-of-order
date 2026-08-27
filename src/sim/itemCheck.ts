@@ -1,6 +1,7 @@
 import { STARTING_DICE } from "../config";
 import { newRun } from "../state/RunState";
 import { applyDeadDice, goalFor } from "../systems/Boss";
+import { applyTrialStart } from "../systems/Items";
 import { makeDie } from "../systems/Dice";
 import {
   applyOffer,
@@ -8,7 +9,7 @@ import {
   rerollShopOffers,
   rollShopOffers,
 } from "../systems/Shop";
-import { scoreRoll } from "../systems/Scoring";
+import { JACKPOT_POINTS, scoreRoll } from "../systems/Scoring";
 import { scoreRollHistogram } from "../systems/ScoringHistogram";
 import { resolveRoll, resolveTrialEnd } from "./engine";
 
@@ -22,18 +23,64 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   return d;
 }
 
-// Lucky Seven counts every written 7, not merely values divisible by seven.
+// Lucky Seven multiplies the whole roll, on any value with a 7 written in it.
 {
   const state = newRun();
   state.hasLuckySeven = true;
-  const result = scoreRoll(state, [
-    die(100, 7),
-    die(100, 17),
-    die(100, 27),
-    die(100, 77),
-  ]);
-  const lucky = result.modifiers.find((mod) => mod.id === "luckySeven");
-  check(lucky?.points === 35n, "Lucky Seven should score 7+7+7+14");
+  const sevenless = scoreRoll(state, [die(6, 1), die(6, 1)]);
+  check(
+    sevenless.multiplier === 1n,
+    "a roll with no 7 should not be multiplied",
+  );
+
+  const state7 = newRun();
+  state7.hasLuckySeven = true;
+  // Two scoring 1s and a 17 nobody scored: the 7 is in the written value.
+  const lucky = scoreRoll(state7, [die(6, 1), die(6, 1), die(100, 17)]);
+  check(lucky.multiplier === 7n, "a written 7 should multiply the roll by 7");
+  check(lucky.points === 14n, "and multiply the points the roll did score");
+  check(
+    lucky.modifiers.some((mod) => mod.id === "luckySeven" && mod.mult === 7n),
+    "Lucky Seven should appear in the breakdown as a multiplier",
+  );
+}
+
+// Jackpot pays per full set of scoring dice, and nothing below the threshold.
+{
+  const four = newRun();
+  four.jackpot = 1;
+  const shy = scoreRoll(
+    four,
+    Array.from({ length: 4 }, () => die(6, 1)),
+  );
+  check(
+    !shy.modifiers.some((mod) => mod.id === "jackpot"),
+    "four scoring dice should pay no Jackpot",
+  );
+
+  const eleven = newRun();
+  eleven.jackpot = 2;
+  const paid = scoreRoll(
+    eleven,
+    Array.from({ length: 11 }, () => die(6, 1)),
+  );
+  const jackpot = paid.modifiers.find((mod) => mod.id === "jackpot");
+  check(
+    jackpot?.points === BigInt(2 * JACKPOT_POINTS * 2),
+    "eleven scoring dice should pay two sets, doubled by two copies",
+  );
+}
+
+// Foundry doubles the smallest size on the grid, once per copy owned.
+{
+  const state = newRun();
+  state.dice.addDice(2, 5, {}, "test");
+  state.dice.addDice(20, 3, {}, "test");
+  state.foundry = 2; // x4
+  const added = applyTrialStart(state);
+  check(added === 15, "two Foundry copies should quadruple five d2");
+  check(state.dice.countOfSize(2) === 20, "leaving twenty d2");
+  check(state.dice.countOfSize(20) === 3, "and the larger dice untouched");
 }
 
 // Royal Seal is a size aura and its scoring face feeds the ordinary scorer.
@@ -45,10 +92,10 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   state.dice.roll(() => 0.999, state.scoringNumbers, state.royalSealSizes);
   const { result } = resolveRoll(state, () => 0);
   // Every starting die is a d6 and every one of them rolls its maximum here, so
-  // the seal should score the whole opening grid.
+  // the seal should pay each of them its own face value.
   check(
-    result.points === BigInt(STARTING_DICE),
-    "A Royal-Sealed d6 maximum should score",
+    result.points === BigInt(STARTING_DICE) * 6n,
+    "A Royal-Sealed d6 maximum should score the face, not a flat point",
   );
   check(
     result.modifiers.some((mod) => mod.id === "royalSeal"),
@@ -121,6 +168,18 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   const freebies = offers.filter((offer) => offer.freeByCoupon);
   check(freebies.length === 1, "Coupon Book should free one random paid card");
   check(freebies[0].cost === 0, "Coupon Book card should cost zero");
+
+  const unclaimedReroll = rerollShopOffers(state, 5, rng);
+  check(
+    unclaimedReroll.filter((offer) => offer.freeByCoupon).length === 1,
+    "Coupon Book should follow an unclaimed freebie onto a rerolled row",
+  );
+
+  const claimedReroll = rerollShopOffers(state, 5, rng, undefined, false);
+  check(
+    !claimedReroll.some((offer) => offer.freeByCoupon),
+    "Coupon Book should not award another freebie after one was claimed",
+  );
 }
 
 // Two Bricks is an initial-shop safety net, never a reroll reward.
@@ -141,21 +200,25 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   }
 }
 
-// Brick Mold creates a source-tagged d6 after scoring, for the scene indicator.
+// Every mold pours its own size after scoring, source-tagged for the scene.
 {
   const state = newRun();
-  state.brickMold = 1;
+  state.chipMold = 1;
+  state.spikeMold = 1;
+  state.brickMold = 2;
   const before = state.dice.length;
   state.dice.roll(() => 0, state.scoringNumbers, state.royalSealSizes);
   const outcome = resolveRoll(state, () => 0);
-  check(
-    outcome.spawnedBySource.brickMold === 1,
-    "Brick Mold should report one d6",
+  const poured = new Map(
+    outcome.spawnedBySource.molds.map((mold) => [mold.id, mold.count]),
   );
-  check(state.dice.length === before + 1, "Brick Mold should grow the grid");
+  check(poured.get("chip_mold") === 1, "Chip Mold should report one d2");
+  check(poured.get("spike_mold") === 1, "Spike Mold should report one d4");
+  check(poured.get("brick_mold") === 2, "two Brick Molds should report two d6");
+  check(state.dice.length === before + 4, "the molds should grow the grid");
   check(
     state.dice.dieAt(state.dice.length - 1)?.source === "brick_mold",
-    "Brick Mold d6 should carry its item source",
+    "a moulded die should carry its item source",
   );
 }
 
@@ -236,6 +299,7 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   const state = newRun();
   state.trial = 3;
   state.bossModifier = "drought";
+  state.chipMold = 1;
   state.brickMold = 2;
   state.genesis = 1;
   const before = state.dice.length;

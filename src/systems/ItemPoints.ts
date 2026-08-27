@@ -23,7 +23,7 @@ const MODIFIER_ITEM: Record<string, ShopItemId> = {
   momentum: "momentum",
   pocketChange: "pocket_change",
   dividend: "dividend",
-  luckySeven: "lucky_seven",
+  royalSeal: "royal_seal",
 };
 
 /** Persistent multiplier -> the item whose top-face effect carries it. This is
@@ -115,6 +115,12 @@ export function accumulatePoints(
   if (state.hasHourglass) {
     const hourglass = result.modifiers.find((m) => m.id === "hourglass");
     if (hourglass) weights.push(["hourglass", 1n]);
+  }
+  // Lucky Seven's ×7 only fires on a roll that turned up a seven, so the roll's
+  // own modifier list is what says whether it was one.
+  if (state.hasLuckySeven) {
+    const lucky = result.modifiers.find((m) => m.id === "luckySeven");
+    if (lucky?.mult) weights.push(["lucky_seven", lucky.mult - 1n]);
   }
   // Each distinct card effect that hit its current top face contributes
   // factor - 1, credited independently of the die's post-shrink size.

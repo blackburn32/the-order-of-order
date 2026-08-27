@@ -1,26 +1,40 @@
 import Phaser from "phaser";
 import { rankOf, trialInRank } from "../config";
 import { COLORS, CSS, SERIF } from "../art/palette";
+import { bossSigilTexture } from "../art/textures";
 import { getRun, type RunState } from "../state/RunState";
 import type { Die } from "../systems/Dice";
-import type { ShopItemId } from "../systems/Items";
-import { activeBoss, goalFor } from "../systems/Boss";
+import { moldDiceCount, type ShopItemId } from "../systems/Items";
+import { sourceLabel } from "../systems/ItemPoints";
+import { activeBoss, goalFor, scoringNumbersFor } from "../systems/Boss";
 import {
   resolveRoll,
   resolveTrialEnd,
   trialComplete,
   trialRollTarget,
 } from "../sim/engine";
-import { scoringNumbersFor } from "../systems/Boss";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
+import {
+  JACKPOT_DICE,
+  JACKPOT_POINTS,
+  LUCKY_SEVEN_MULT,
+  showsASeven,
+  type RollResult,
+} from "../systems/Scoring";
+import type { DiceAgg } from "../systems/ScoringHistogram";
 import { evaluateAndUnlock } from "../systems/SaveData";
 import { finalizeRun } from "../systems/RunEnd";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { DieSprite } from "../ui/DieSprite";
 import { DiceSummaryCard } from "../ui/DiceSummaryCard";
 import { formatScore } from "../ui/formatScore";
-import { addFelt, floatText, BannerStack } from "../ui/widgets";
+import {
+  addFelt,
+  floatText,
+  struckFloatText,
+  BannerStack,
+} from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
 import {
   advanceTutorial,
@@ -93,6 +107,11 @@ const SETTLE_RIPPLE_MS = 140;
 const MAX_PULSED_DICE = 64;
 const MAX_INDIVIDUAL_SETTLE_DICE = 100;
 
+interface BossRollCue {
+  kind: "struck" | "penalty";
+  message: string;
+}
+
 /** Select evenly across an index-ordered list instead of clustering feedback
  *  at the start of the grid. Returns the original list when it fits the cap. */
 function evenlySample<T>(items: T[], limit: number): T[] {
@@ -123,6 +142,7 @@ interface HudCell {
 
 interface Layout {
   hud: Record<HudStatKey, HudCell>;
+  bossRibbon?: { x: number; y: number; w: number; h: number; compact: boolean };
   footer: { numbersY: number; settingsY: number };
   grid: GridArea;
   /** Seal centre, plus the scale the seal art is drawn at — the compact
@@ -416,6 +436,7 @@ export class GameScene extends Phaser.Scene {
     const W = this.scale.width;
     const H = this.scale.height;
     const margin = 16;
+    const boss = activeBoss(this.state);
     const portrait = isPortrait(this);
     // Too short to stack the grid above the seal: the two sit side by side
     // instead, seal on the right. See the compact branch below.
@@ -453,9 +474,8 @@ export class GameScene extends Phaser.Scene {
       settingsY: portrait ? H - 16 : H - footerH + 10,
     };
 
-    const gridTop = hudBottom + (compact ? 10 : 16);
-
     if (compact) {
+      const gridTop = hudBottom + 10;
       // Seal in a rail down the right edge, dice filling everything left of
       // it. Stacking them would leave the grid a band a couple of dice tall.
       const railW = Phaser.Math.Clamp(W * 0.2, 132, 200);
@@ -464,11 +484,27 @@ export class GameScene extends Phaser.Scene {
       // The rail also has to clear the Inventory/Settings links, which sit
       // above the footer baseline in the same corner.
       const railBottom = H - footerH - 28;
-      const sealSize = Math.min(railW - 12, railBottom - gridTop - 12);
+      // On a short landscape screen the boss ribbon occupies the seal rail,
+      // not a strip across the playfield. The grid keeps its pre-boss bounds.
+      const ribbonH = boss ? Phaser.Math.Clamp(H * 0.075, 24, 30) : 0;
+      const bossRibbon = boss
+        ? {
+            x: railLeft + railW / 2,
+            y: gridTop + ribbonH / 2,
+            w: railW - 12,
+            h: ribbonH,
+            compact: true,
+          }
+        : undefined;
+      const sealTop = bossRibbon
+        ? bossRibbon.y + bossRibbon.h / 2 + 6
+        : gridTop;
+      const sealSize = Math.min(railW - 12, railBottom - sealTop - 8);
       const scale = Phaser.Math.Clamp(sealSize / (SEAL_RADIUS * 2), 0.5, 1);
 
       return {
         hud,
+        bossRibbon,
         footer,
         grid: {
           x: margin,
@@ -478,17 +514,36 @@ export class GameScene extends Phaser.Scene {
         },
         button: {
           x: railLeft + railW / 2,
-          y: (gridTop + railBottom) / 2,
+          y: (sealTop + railBottom) / 2,
           scale,
         },
       };
     }
 
+    // In portrait and roomy landscape, one shallow line sits under the HUD.
+    // Its height is capped aggressively; a Boss Trial spends only ~20px more
+    // vertical space than the normal HUD-to-grid gap.
+    const ribbonH = boss
+      ? Phaser.Math.Clamp(Math.min(W * 0.075, H * 0.05), 26, 34)
+      : 0;
+    const bossRibbon = boss
+      ? {
+          x: W / 2,
+          y: hudBottom + 5 + ribbonH / 2,
+          w: Math.min(600, W - hudMargin * 2),
+          h: ribbonH,
+          compact: false,
+        }
+      : undefined;
+    const gridTop = bossRibbon
+      ? bossRibbon.y + bossRibbon.h / 2 + 7
+      : hudBottom + 16;
     const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14, scale: 1 };
     const gridBottom = button.y - SEAL_RADIUS - 16;
 
     return {
       hud,
+      bossRibbon,
       footer,
       grid: {
         x: portrait ? margin : W * 0.06,
@@ -563,6 +618,9 @@ export class GameScene extends Phaser.Scene {
     this.hudTarget = plaqueByKey.target.value;
     this.hudScorePlaque = plaqueByKey.score.container;
 
+    const bossRibbon = this.buildBossRibbon(layout);
+    if (bossRibbon) items.push(bossRibbon);
+
     const { numbersY } = layout.footer;
     // Sacred numbers pinned bottom-left; Inventory (upper) and Settings (lower)
     // pinned bottom-right. The left text wraps within the half-width gap so it
@@ -581,6 +639,81 @@ export class GameScene extends Phaser.Scene {
 
     this.updateHud();
     return items;
+  }
+
+  /** Persistent Boss Trial identity. Roomy layouts use one thin horizontal
+   * line; compact landscape uses two tiny lines in the seal rail. */
+  private buildBossRibbon(
+    layout: Layout,
+  ): Phaser.GameObjects.Container | undefined {
+    const boss = activeBoss(this.state);
+    const cell = layout.bossRibbon;
+    if (!boss || !cell) return undefined;
+
+    const container = this.add.container(cell.x, cell.y);
+    const background = this.add.graphics();
+    background.fillStyle(COLORS.feltDark, 0.96);
+    background.fillRoundedRect(
+      -cell.w / 2,
+      -cell.h / 2,
+      cell.w,
+      cell.h,
+      cell.h / 2,
+    );
+    background.lineStyle(1.5, COLORS.waxRed, 0.95);
+    background.strokeRoundedRect(
+      -cell.w / 2 + 1,
+      -cell.h / 2 + 1,
+      cell.w - 2,
+      cell.h - 2,
+      cell.h / 2 - 1,
+    );
+
+    const iconSize = cell.h - 6;
+    const iconX = -cell.w / 2 + iconSize / 2 + 4;
+    const icon = this.add
+      .image(iconX, 0, bossSigilTexture(boss.id))
+      .setDisplaySize(iconSize, iconSize)
+      .setTint(COLORS.waxRed)
+      .setAlpha(0.95);
+    const textLeft = iconX + iconSize / 2 + 5;
+    const textWidth = cell.w / 2 - textLeft - 7;
+
+    if (cell.compact) {
+      const title = this.add
+        .text(textLeft, -cell.h * 0.2, boss.name.toUpperCase(), {
+          fontFamily: SERIF,
+          fontSize: "10px",
+          color: CSS.parchment,
+          fontStyle: "bold",
+        })
+        .setOrigin(0, 0.5);
+      const rule = this.add
+        .text(textLeft, cell.h * 0.22, boss.shortDesc, {
+          fontFamily: SERIF,
+          fontSize: "8px",
+          color: CSS.red,
+          fontStyle: "bold",
+        })
+        .setOrigin(0, 0.5);
+      for (const text of [title, rule]) {
+        if (text.width > textWidth) text.setScale(textWidth / text.width);
+      }
+      container.add([background, icon, title, rule]);
+    } else {
+      const label = this.add
+        .text(textLeft, 0, `${boss.name.toUpperCase()}  ·  ${boss.shortDesc}`, {
+          fontFamily: SERIF,
+          fontSize: `${Phaser.Math.Clamp(cell.h * 0.4, 11, 14)}px`,
+          color: CSS.parchment,
+          fontStyle: "bold",
+          letterSpacing: 1,
+        })
+        .setOrigin(0, 0.5);
+      if (label.width > textWidth) label.setScale(textWidth / label.width);
+      container.add([background, icon, label]);
+    }
+    return container;
   }
 
   private makePlaque(
@@ -744,7 +877,11 @@ export class GameScene extends Phaser.Scene {
     this.ambient = undefined;
     if (!fx.on) return;
 
-    this.ambient = new AmbientLayer(this, { ring: true });
+    const boss = activeBoss(this.state);
+    this.ambient = new AmbientLayer(this, {
+      ring: true,
+      sigilTexture: boss ? bossSigilTexture(boss.id) : undefined,
+    });
   }
 
   /** Reconciles the live sprite pool against the current scroll/zoom window,
@@ -942,7 +1079,7 @@ export class GameScene extends Phaser.Scene {
    *  shop additions are the direct result of the player's selection. */
   private cueCreatedDice(
     count: number,
-    source: "foundry" | "genesis" | "brick_mold",
+    source: string,
     label: string,
     borderColor: number,
     textColor: string,
@@ -1350,6 +1487,105 @@ export class GameScene extends Phaser.Scene {
     this.settleRoll(200, true);
   }
 
+  /** Describe only penalties that materially fired on this roll. Suppressed
+   * scoring bonuses use crossed-out versions of their normal score floats;
+   * non-score effects use concise red notices. */
+  private bossRollCues(agg: DiceAgg, result: RollResult): BossRollCue[] {
+    const boss = activeBoss(this.state);
+    if (!boss) return [];
+    const cues: BossRollCue[] = [];
+    const mult = result.multiplier;
+    const cancelled = (name: string, points: number | bigint) => {
+      const lost = BigInt(points) * mult;
+      if (lost > 0n)
+        cues.push({
+          kind: "struck",
+          message: `${name.toUpperCase()} +${formatScore(lost)}`,
+        });
+    };
+
+    switch (boss.id) {
+      case "famine":
+        cancelled("Extra Point", agg.scoringCount * this.state.extraPoints);
+        cancelled("Keen Edge", agg.scoringD1Count * this.state.keenEdge * 2);
+        break;
+      case "drought": {
+        const doubled = this.state.hasDoubleTheFun
+          ? (agg.valueCounts.get(5) ?? 0) + (agg.valueCounts.get(6) ?? 0)
+          : 0;
+        const genesis = Math.min(agg.scoringCount, 20 * this.state.genesis);
+        const denied = doubled + genesis + moldDiceCount(this.state);
+        if (denied > 0)
+          cues.push({
+            kind: "penalty",
+            message: `DROUGHT · ${denied.toLocaleString()} DICE DENIED`,
+          });
+        break;
+      }
+      case "eclipse": {
+        const subtotal = result.modifiers.reduce(
+          (sum, mod) => sum + mod.points,
+          0n,
+        );
+        const unhalved = result.modifiers.reduce(
+          (product, mod) => product * (mod.mult ?? 1n),
+          1n,
+        );
+        const unmitigated = subtotal * unhalved;
+        if (unmitigated > result.points)
+          cues.push({
+            kind: "struck",
+            message: `ROLL +${formatScore(unmitigated)}`,
+          });
+        break;
+      }
+      case "silence": {
+        let silenced = 0;
+        for (const value of this.state.scoringNumbers) {
+          if (value !== 1) silenced += agg.valueCounts.get(value) ?? 0;
+        }
+        cancelled("Extra Number", silenced);
+        break;
+      }
+      case "warden": {
+        if (this.state.hasSnakeEyes) {
+          let points = 0;
+          for (const [value, count] of agg.valueCounts)
+            if (count >= 2) points += value * count;
+          cancelled("Snake Eyes", points);
+        }
+        if (this.state.jackpot > 0) {
+          const sets = Math.floor(agg.scoringCount / JACKPOT_DICE);
+          cancelled("Jackpot", sets * JACKPOT_POINTS * this.state.jackpot);
+        }
+        if (this.state.hasLuckySeven && showsASeven(agg.valueCounts)) {
+          // A refused multiplier, priced as the points it would have added on
+          // top of the roll as it actually scored.
+          const subtotal = result.modifiers.reduce(
+            (sum, mod) => sum + mod.points,
+            0n,
+          );
+          cancelled("Lucky Seven", subtotal * (LUCKY_SEVEN_MULT - 1n));
+        }
+        break;
+      }
+      case "toll": {
+        const inert = Math.floor(agg.total * (boss.deadDiceFraction ?? 0));
+        if (inert > 0)
+          cues.push({
+            kind: "penalty",
+            message: `TOLL · ${inert.toLocaleString()} DICE INERT`,
+          });
+        break;
+      }
+      // Hunger is paid up front in the roll budget; Hoard is paid in the goal.
+      case "hunger":
+      case "hoard":
+        break;
+    }
+    return cues;
+  }
+
   private settleRoll(holdMs: number, autoReroll: boolean): void {
     this.tumbling = false;
     const s = this.state;
@@ -1413,7 +1649,9 @@ export class GameScene extends Phaser.Scene {
 
     // Score the roll and grow the grid (Genesis / Double the Fun) — all state
     // mutation lives in the shared engine so the sim can't drift from the game.
+    const rolledAgg = s.dice.agg();
     const { result, spawnedCount, spawnedBySource, shrunk } = resolveRoll(s);
+    const bossCues = this.bossRollCues(rolledAgg, result);
     if (shrunk.length > 0) this.cardDataDirty = true;
 
     // The engine already appended any spawned dice to s.dice and may have shrunk
@@ -1534,6 +1772,12 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
+    const listedEffects =
+      result.points > 0n
+        ? result.modifiers.filter(
+            (mod) => mod.float === "aggregate" || Boolean(mod.mult),
+          )
+        : [];
     if (result.points > 0) {
       audio.score(Number(result.points > 100n ? 100n : result.points));
       this.overlay(
@@ -1547,42 +1791,62 @@ export class GameScene extends Phaser.Scene {
         ),
       );
       this.celebrateRoll(result.points);
-      const listedEffects = result.modifiers.filter(
-        (mod) => mod.float === "aggregate" || Boolean(mod.mult),
-      );
-      let floatY = 195;
-      const floatStep = Math.min(
-        45,
-        Math.max(
-          20,
-          (this.scale.height - floatY - 24) /
-            Math.max(1, listedEffects.length - 1),
-        ),
-      );
-      const effectFontSize = floatStep < 32 ? 18 : 22;
-      for (const mod of listedEffects) {
-        // Multipliers show their marginal contribution to the final total.
-        // Windfall may also have made an otherwise non-scoring top face score;
-        // include that base point after every other active multiplier.
-        const addedPoints = mod.mult
-          ? result.points -
-            result.points / mod.mult +
-            (mod.displayPoints ?? 0n) * (result.multiplier / mod.mult)
-          : (mod.displayPoints ?? mod.points);
-        this.overlay(
-          floatText(
-            this,
-            this.scale.width / 2,
-            floatY,
-            `${mod.name.toUpperCase()} +${formatScore(addedPoints)}`,
-            CSS.goldLight,
-            effectFontSize,
-          ),
-        );
-        floatY += 45;
-      }
     } else {
       audio.dud();
+    }
+
+    // Item effects and the boss's answer share one bounded vertical stack.
+    // Suppressed score sources look exactly like their usual float with a red
+    // cancellation stroke; effects that do not map to points read in red.
+    let floatY = 195;
+    const rowCount = listedEffects.length + bossCues.length;
+    const floatStep = Math.min(
+      45,
+      Math.max(20, (this.scale.height - floatY - 24) / Math.max(1, rowCount)),
+    );
+    const effectFontSize = floatStep < 32 ? 18 : 22;
+    for (const mod of listedEffects) {
+      // Multipliers show their marginal contribution to the final total.
+      // Windfall may also have made an otherwise non-scoring top face score;
+      // include that base point after every other active multiplier.
+      const addedPoints = mod.mult
+        ? result.points -
+          result.points / mod.mult +
+          (mod.displayPoints ?? 0n) * (result.multiplier / mod.mult)
+        : (mod.displayPoints ?? mod.points);
+      this.overlay(
+        floatText(
+          this,
+          this.scale.width / 2,
+          floatY,
+          `${mod.name.toUpperCase()} +${formatScore(addedPoints)}`,
+          CSS.goldLight,
+          effectFontSize,
+        ),
+      );
+      floatY += floatStep;
+    }
+    for (const cue of bossCues) {
+      this.overlay(
+        cue.kind === "struck"
+          ? struckFloatText(
+              this,
+              this.scale.width / 2,
+              floatY,
+              cue.message,
+              CSS.goldLight,
+              effectFontSize,
+            )
+          : floatText(
+              this,
+              this.scale.width / 2,
+              floatY,
+              cue.message,
+              CSS.red,
+              effectFontSize,
+            ),
+      );
+      floatY += floatStep;
     }
 
     // Whetstone: flash a steel border on and float a label over each die it
@@ -1604,13 +1868,15 @@ export class GameScene extends Phaser.Scene {
           COLORS.rarityRare,
           CSS.rarityRare,
         );
-        this.cueCreatedDice(
-          spawnedBySource.brickMold,
-          "brick_mold",
-          "BRICK MOLD",
-          COLORS.rarityUncommon,
-          CSS.rarityUncommon,
-        );
+        for (const mold of spawnedBySource.molds) {
+          this.cueCreatedDice(
+            mold.count,
+            mold.id,
+            sourceLabel(mold.id).toUpperCase(),
+            COLORS.rarityUncommon,
+            CSS.rarityUncommon,
+          );
+        }
       }
       this.checkUnlocks();
       this.updateHud();

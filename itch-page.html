@@ -7,176 +7,667 @@
   }
 
   body {
-    background:
-      radial-gradient(circle at 50% 0%, #211a33 0%, #100d19 48%, #09070d 100%);
+    background: radial-gradient(
+      circle at 50% 0%,
+      #211a33 0%,
+      #100d19 48%,
+      #09070d 100%
+    );
     background-attachment: fixed;
   }
 </style>
 
-<div style="min-height: 100vh; box-sizing: border-box; padding: 32px 18px; background: radial-gradient(circle at 50% 0%, rgba(42, 32, 64, 0.8) 0%, rgba(13, 10, 18, 0.96) 52%, #09070d 100%);">
-<div style="max-width: 920px; margin: 0 auto; color: #f3ead2; font-family: Georgia, 'Palatino Linotype', 'Times New Roman', serif; line-height: 1.55;">
-
-  <!-- HERO -->
-  <div style="position: relative; overflow: hidden; margin: 0 0 28px; padding: 38px 24px 30px; text-align: center; background: radial-gradient(circle at 50% 20%, #2b2343 0%, #161226 55%, #0d0a12 100%); border: 2px solid #c9a227; border-radius: 12px; box-shadow: 0 0 28px rgba(201, 162, 39, 0.32), inset 0 0 42px rgba(0, 0, 0, 0.55);">
-    <div style="margin-bottom: 7px; color: #e6c65a; font-size: 13px; font-weight: bold; letter-spacing: 0.26em; text-transform: uppercase;">
-      An incremental rite of dice
+<div
+  style="
+    min-height: 100vh;
+    box-sizing: border-box;
+    padding: 32px 18px;
+    background: radial-gradient(
+      circle at 50% 0%,
+      rgba(42, 32, 64, 0.8) 0%,
+      rgba(13, 10, 18, 0.96) 52%,
+      #09070d 100%
+    );
+  "
+>
+  <div
+    style="
+      max-width: 920px;
+      margin: 0 auto;
+      color: #f3ead2;
+      font-family:
+        Georgia, &quot;Palatino Linotype&quot;, &quot;Times New Roman&quot;,
+        serif;
+      line-height: 1.55;
+    "
+  >
+    <!-- HERO -->
+    <div
+      style="
+        position: relative;
+        overflow: hidden;
+        margin: 0 0 28px;
+        padding: 38px 24px 30px;
+        text-align: center;
+        background: radial-gradient(
+          circle at 50% 20%,
+          #2b2343 0%,
+          #161226 55%,
+          #0d0a12 100%
+        );
+        border: 2px solid #c9a227;
+        border-radius: 12px;
+        box-shadow:
+          0 0 28px rgba(201, 162, 39, 0.32),
+          inset 0 0 42px rgba(0, 0, 0, 0.55);
+      "
+    >
+      <div
+        style="
+          margin-bottom: 7px;
+          color: #e6c65a;
+          font-size: 13px;
+          font-weight: bold;
+          letter-spacing: 0.26em;
+          text-transform: uppercase;
+        "
+      >
+        An incremental rite of dice
+      </div>
+      <h1
+        style="
+          margin: 0;
+          color: #e6c65a;
+          font-size: clamp(38px, 8vw, 70px);
+          line-height: 1.05;
+          text-shadow:
+            0 3px 0 #5a4a2e,
+            0 0 24px rgba(255, 217, 119, 0.38);
+        "
+      >
+        The Order of Order
+      </h1>
+      <p
+        style="
+          max-width: 680px;
+          margin: 18px auto 0;
+          color: #cdb27a;
+          font-size: 20px;
+          font-style: italic;
+        "
+      >
+        Roll ones. Survive the thresholds. Save the world.
+      </p>
     </div>
-    <h1 style="margin: 0; color: #e6c65a; font-size: clamp(38px, 8vw, 70px); line-height: 1.05; text-shadow: 0 3px 0 #5a4a2e, 0 0 24px rgba(255, 217, 119, 0.38);">
-      The Order of Order
-    </h1>
-    <p style="max-width: 680px; margin: 18px auto 0; color: #cdb27a; font-size: 20px; font-style: italic;">
-      Roll ones. Survive the thresholds. Save the world.
-    </p>
-  </div>
 
-  <!-- PRIMARY GIF -->
-  <div style="margin: 0 0 30px; padding: 7px; background: #0d0a12; border: 1px solid #5a4a2e; border-radius: 9px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);">
-    <img src="https://img.itch.zone/aW1nLzI4NzAyNTExLmdpZg==/original/0Ln5XW.gif" alt="A huge mixed grid of dice rolling in The Order of Order" style="display: block; width: 100%; height: auto; border-radius: 5px;">
-  </div>
-
-  <!-- PITCH -->
-  <div style="margin: 0 0 28px; padding: 24px; background: linear-gradient(135deg, #221a38, #161226); border-left: 6px solid #8a1f2b; border-radius: 6px;">
-    <p style="margin: 0; color: #f3ead2; font-size: 19px;">
-      <strong style="color: #e6c65a;">The Order of Order</strong> is a dice-building incremental roguelike about turning one humble d6 into a screen-filling engine of chance. Every point keeps you alive—but those same points are the only currency accepted by the shop. Spend too much and miss the round's target. Spend too little and your build may never grow strong enough for what comes next.
-    </p>
-  </div>
-
-  <!-- FEATURE CARDS -->
-  <h2 style="margin: 34px 0 15px; color: #e6c65a; font-size: 30px; text-align: center; text-shadow: 0 0 14px rgba(230, 198, 90, 0.25);">
-    What Awaits Within
-  </h2>
-
-  <div style="display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 30px;">
-    <div style="flex: 1 1 250px; padding: 19px; background: #161226; border: 1px solid #d4b83c; border-top: 5px solid #d4b83c; border-radius: 8px;">
-      <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px;">Build a Dice Empire</h3>
-      <p style="margin: 0; color: #e9d8a6;">Grow from a single die to dozens, hundreds, or far beyond. d1, d2, d4, d6, d8, d10, d20, and d100 dice each have their own readable shape.</p>
+    <!-- PRIMARY GIF -->
+    <div
+      style="
+        margin: 0 0 30px;
+        padding: 7px;
+        background: #0d0a12;
+        border: 1px solid #5a4a2e;
+        border-radius: 9px;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+      "
+    >
+      <img
+        src="https://img.itch.zone/aW1nLzI4NzAyNTExLmdpZg==/original/0Ln5XW.gif"
+        alt="A huge mixed grid of dice rolling in The Order of Order"
+        style="display: block; width: 100%; height: auto; border-radius: 5px"
+      />
     </div>
 
-    <div style="flex: 1 1 250px; padding: 19px; background: #161226; border: 1px solid #4a7fc9; border-top: 5px solid #4a7fc9; border-radius: 8px;">
-      <h3 style="margin: 0 0 8px; color: #cfd6df; font-size: 21px;">Break the Scoring Rules</h3>
-      <p style="margin: 0; color: #e9d8a6;">Score matching faces, load or shrink whole die sizes, add wild faces, multiply every point, and discover combos that turn a quiet roll into an avalanche.</p>
+    <!-- PITCH -->
+    <div
+      style="
+        margin: 0 0 28px;
+        padding: 24px;
+        background: linear-gradient(135deg, #221a38, #161226);
+        border-left: 6px solid #8a1f2b;
+        border-radius: 6px;
+      "
+    >
+      <p style="margin: 0; color: #f3ead2; font-size: 19px">
+        <strong style="color: #e6c65a">The Order of Order</strong> is a
+        dice-building incremental roguelike about turning one humble d6 into a
+        screen-filling engine of chance. Every point keeps you alive—but those
+        same points are the only currency accepted by the shop. Spend too much
+        and miss the round's target. Spend too little and your build may never
+        grow strong enough for what comes next.
+      </p>
     </div>
 
-    <div style="flex: 1 1 250px; padding: 19px; background: #161226; border: 1px solid #9a4fc9; border-top: 5px solid #9a4fc9; border-radius: 8px;">
-      <h3 style="margin: 0 0 8px; color: #d9a8f2; font-size: 21px;">45 Shop Items</h3>
-      <p style="margin: 0; color: #e9d8a6;">Common, uncommon, and rare relics create wildly different runs—from disciplined small-die builds to explosive grids that reproduce whenever they score.</p>
-    </div>
-
-    <div style="flex: 1 1 250px; padding: 19px; background: #161226; border: 1px solid #8a1f2b; border-top: 5px solid #8a1f2b; border-radius: 8px;">
-      <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px;">Chasing the Score</h3>
-      <p style="margin: 0; color: #e9d8a6;">Every round raises the score you must reach to survive. Grow your engine, chase the next threshold, and carry your run through all 10 escalating rounds.</p>
-    </div>
-
-    <div style="flex: 1 1 250px; padding: 19px; background: #161226; border: 1px solid #c9a227; border-top: 5px solid #c9a227; border-radius: 8px;">
-      <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px;">Permanent Discoveries</h3>
-      <p style="margin: 0; color: #e9d8a6;">Complete feats during a run to unlock new items. Track every discovery, unlock condition, and purchase count inside the Codex.</p>
-    </div>
-
-    <div style="flex: 1 1 250px; padding: 19px; background: #161226; border: 1px solid #5a4a2e; border-top: 5px solid #5a4a2e; border-radius: 8px;">
-      <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px;">Built for Replays</h3>
-      <p style="margin: 0; color: #e9d8a6;">Ten escalating rounds, randomized shops, dynamic prices, a Hall of High Scores, persistent progression, and a harder mode waiting beyond your first victory.</p>
-    </div>
-  </div>
-
-  <!-- SHOP SCREENSHOT -->
-  <div style="margin: 34px 0;">
-    <div style="padding: 7px; background: #0d0a12; border: 1px solid #c9a227; border-radius: 9px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);">
-      <img src="https://img.itch.zone/aW1nLzI4NzAyNTcwLnBuZw==/original/H%2F5iEB.png" alt="The shop offering common, uncommon, and rare items" style="display: block; width: 100%; height: auto; border-radius: 5px;">
-    </div>
-    <p style="margin: 9px 12px 0; color: #8c7a55; font-size: 14px; font-style: italic; text-align: center;">
-      Every price is a wager against the score you still need to survive.
-    </p>
-  </div>
-
-  <!-- HOW TO PLAY -->
-  <div style="margin: 36px 0; padding: 26px; background: #e9d8a6; color: #2a1f14; border: 3px double #8c7a55; border-radius: 8px; box-shadow: inset 0 0 30px rgba(90, 74, 46, 0.2);">
-    <h2 style="margin: 0 0 18px; color: #561019; font-size: 30px; text-align: center;">
-      How to Perform the Rite
+    <!-- FEATURE CARDS -->
+    <h2
+      style="
+        margin: 34px 0 15px;
+        color: #e6c65a;
+        font-size: 30px;
+        text-align: center;
+        text-shadow: 0 0 14px rgba(230, 198, 90, 0.25);
+      "
+    >
+      What Awaits Within
     </h2>
 
-    <div style="display: flex; gap: 14px; align-items: flex-start; margin: 0 0 14px;">
-      <div style="flex: 0 0 34px; height: 34px; color: #f3ead2; background: #8a1f2b; border-radius: 50%; font-weight: bold; line-height: 34px; text-align: center;">1</div>
-      <div><strong>Roll the dice.</strong> A die showing a sacred scoring number earns points. At first, that number is <strong>1</strong>.</div>
+    <div style="display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 30px">
+      <div
+        style="
+          flex: 1 1 250px;
+          padding: 19px;
+          background: #161226;
+          border: 1px solid #d4b83c;
+          border-top: 5px solid #d4b83c;
+          border-radius: 8px;
+        "
+      >
+        <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px">
+          Build a Dice Empire
+        </h3>
+        <p style="margin: 0; color: #e9d8a6">
+          Grow from a single die to dozens, hundreds, or far beyond. d1, d2, d4,
+          d6, d8, d10, d20, and d100 dice each have their own readable shape.
+        </p>
+      </div>
+
+      <div
+        style="
+          flex: 1 1 250px;
+          padding: 19px;
+          background: #161226;
+          border: 1px solid #4a7fc9;
+          border-top: 5px solid #4a7fc9;
+          border-radius: 8px;
+        "
+      >
+        <h3 style="margin: 0 0 8px; color: #cfd6df; font-size: 21px">
+          Break the Scoring Rules
+        </h3>
+        <p style="margin: 0; color: #e9d8a6">
+          Score matching faces, load or shrink whole die sizes, add wild faces,
+          multiply every point, and discover combos that turn a quiet roll into
+          an avalanche.
+        </p>
+      </div>
+
+      <div
+        style="
+          flex: 1 1 250px;
+          padding: 19px;
+          background: #161226;
+          border: 1px solid #9a4fc9;
+          border-top: 5px solid #9a4fc9;
+          border-radius: 8px;
+        "
+      >
+        <h3 style="margin: 0 0 8px; color: #d9a8f2; font-size: 21px">
+          45 Shop Items
+        </h3>
+        <p style="margin: 0; color: #e9d8a6">
+          Common, uncommon, and rare relics create wildly different runs—from
+          disciplined small-die builds to explosive grids that reproduce
+          whenever they score.
+        </p>
+      </div>
+
+      <div
+        style="
+          flex: 1 1 250px;
+          padding: 19px;
+          background: #161226;
+          border: 1px solid #8a1f2b;
+          border-top: 5px solid #8a1f2b;
+          border-radius: 8px;
+        "
+      >
+        <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px">
+          Chasing the Score
+        </h3>
+        <p style="margin: 0; color: #e9d8a6">
+          Every round raises the score you must reach to survive. Grow your
+          engine, chase the next threshold, and carry your run through all 10
+          escalating rounds.
+        </p>
+      </div>
+
+      <div
+        style="
+          flex: 1 1 250px;
+          padding: 19px;
+          background: #161226;
+          border: 1px solid #c9a227;
+          border-top: 5px solid #c9a227;
+          border-radius: 8px;
+        "
+      >
+        <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px">
+          Permanent Discoveries
+        </h3>
+        <p style="margin: 0; color: #e9d8a6">
+          Complete feats during a run to unlock new items. Track every
+          discovery, unlock condition, and purchase count inside the Codex.
+        </p>
+      </div>
+
+      <div
+        style="
+          flex: 1 1 250px;
+          padding: 19px;
+          background: #161226;
+          border: 1px solid #5a4a2e;
+          border-top: 5px solid #5a4a2e;
+          border-radius: 8px;
+        "
+      >
+        <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px">
+          Built for Replays
+        </h3>
+        <p style="margin: 0; color: #e9d8a6">
+          Ten escalating rounds, randomized shops, dynamic prices, a Hall of
+          High Scores, persistent progression, and a harder mode waiting beyond
+          your first victory.
+        </p>
+      </div>
     </div>
 
-    <div style="display: flex; gap: 14px; align-items: flex-start; margin: 0 0 14px;">
-      <div style="flex: 0 0 34px; height: 34px; color: #f3ead2; background: #8a1f2b; border-radius: 50%; font-weight: bold; line-height: 34px; text-align: center;">2</div>
-      <div><strong>Watch the target.</strong> Each round gives you 20 rolls to reach the displayed score threshold.</div>
+    <!-- SHOP SCREENSHOT -->
+    <div style="margin: 34px 0">
+      <div
+        style="
+          padding: 7px;
+          background: #0d0a12;
+          border: 1px solid #c9a227;
+          border-radius: 9px;
+          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+        "
+      >
+        <img
+          src="https://img.itch.zone/aW1nLzI4NzAyNTcwLnBuZw==/original/H%2F5iEB.png"
+          alt="The shop offering common, uncommon, and rare items"
+          style="display: block; width: 100%; height: auto; border-radius: 5px"
+        />
+      </div>
+      <p
+        style="
+          margin: 9px 12px 0;
+          color: #8c7a55;
+          font-size: 14px;
+          font-style: italic;
+          text-align: center;
+        "
+      >
+        Every price is a wager against the score you still need to survive.
+      </p>
     </div>
 
-    <div style="display: flex; gap: 14px; align-items: flex-start; margin: 0 0 14px;">
-      <div style="flex: 0 0 34px; height: 34px; color: #f3ead2; background: #8a1f2b; border-radius: 50%; font-weight: bold; line-height: 34px; text-align: center;">3</div>
-      <div><strong>Visit the shop.</strong> After rolls 5 and 15, trade some of your score for new dice, extra scoring faces, multipliers, rule-changing relics, and stranger powers.</div>
+    <!-- HOW TO PLAY -->
+    <div
+      style="
+        margin: 36px 0;
+        padding: 26px;
+        background: #e9d8a6;
+        color: #2a1f14;
+        border: 3px double #8c7a55;
+        border-radius: 8px;
+        box-shadow: inset 0 0 30px rgba(90, 74, 46, 0.2);
+      "
+    >
+      <h2
+        style="
+          margin: 0 0 18px;
+          color: #561019;
+          font-size: 30px;
+          text-align: center;
+        "
+      >
+        How to Perform the Rite
+      </h2>
+
+      <div
+        style="
+          display: flex;
+          gap: 14px;
+          align-items: flex-start;
+          margin: 0 0 14px;
+        "
+      >
+        <div
+          style="
+            flex: 0 0 34px;
+            height: 34px;
+            color: #f3ead2;
+            background: #8a1f2b;
+            border-radius: 50%;
+            font-weight: bold;
+            line-height: 34px;
+            text-align: center;
+          "
+        >
+          1
+        </div>
+        <div>
+          <strong>Roll the dice.</strong> A die showing a sacred scoring number
+          earns points. At first, that number is <strong>1</strong>.
+        </div>
+      </div>
+
+      <div
+        style="
+          display: flex;
+          gap: 14px;
+          align-items: flex-start;
+          margin: 0 0 14px;
+        "
+      >
+        <div
+          style="
+            flex: 0 0 34px;
+            height: 34px;
+            color: #f3ead2;
+            background: #8a1f2b;
+            border-radius: 50%;
+            font-weight: bold;
+            line-height: 34px;
+            text-align: center;
+          "
+        >
+          2
+        </div>
+        <div>
+          <strong>Watch the target.</strong> Each round gives you 20 rolls to
+          reach the displayed score threshold.
+        </div>
+      </div>
+
+      <div
+        style="
+          display: flex;
+          gap: 14px;
+          align-items: flex-start;
+          margin: 0 0 14px;
+        "
+      >
+        <div
+          style="
+            flex: 0 0 34px;
+            height: 34px;
+            color: #f3ead2;
+            background: #8a1f2b;
+            border-radius: 50%;
+            font-weight: bold;
+            line-height: 34px;
+            text-align: center;
+          "
+        >
+          3
+        </div>
+        <div>
+          <strong>Visit the shop.</strong> After rolls 5 and 15, trade some of
+          your score for new dice, extra scoring faces, multipliers,
+          rule-changing relics, and stranger powers.
+        </div>
+      </div>
+
+      <div
+        style="
+          display: flex;
+          gap: 14px;
+          align-items: flex-start;
+          margin: 0 0 14px;
+        "
+      >
+        <div
+          style="
+            flex: 0 0 34px;
+            height: 34px;
+            color: #f3ead2;
+            background: #8a1f2b;
+            border-radius: 50%;
+            font-weight: bold;
+            line-height: 34px;
+            text-align: center;
+          "
+        >
+          4
+        </div>
+        <div>
+          <strong>Survive the reckoning.</strong> Reach the target by the final
+          roll or the run ends. Clear the round and your score resets—unless
+          your build has found a way around that.
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 14px; align-items: flex-start">
+        <div
+          style="
+            flex: 0 0 34px;
+            height: 34px;
+            color: #f3ead2;
+            background: #8a1f2b;
+            border-radius: 50%;
+            font-weight: bold;
+            line-height: 34px;
+            text-align: center;
+          "
+        >
+          5
+        </div>
+        <div>
+          <strong>Clear all 10 rounds.</strong> The final threshold is waiting.
+          Defeat it to restore order—and unlock an even harsher challenge.
+        </div>
+      </div>
+
+      <p
+        style="
+          margin: 22px 0 0;
+          padding-top: 16px;
+          color: #5a4a2e;
+          border-top: 1px solid #8c7a55;
+          font-size: 15px;
+          text-align: center;
+        "
+      >
+        <strong>Controls:</strong> mouse or touch. Press the Roll button, tap
+        cards to buy them, and select dice when an item asks for a target. Zoom
+        in and out, then pan around the board to explore even the most enormous
+        dice grids.
+      </p>
     </div>
 
-    <div style="display: flex; gap: 14px; align-items: flex-start; margin: 0 0 14px;">
-      <div style="flex: 0 0 34px; height: 34px; color: #f3ead2; background: #8a1f2b; border-radius: 50%; font-weight: bold; line-height: 34px; text-align: center;">4</div>
-      <div><strong>Survive the reckoning.</strong> Reach the target by the final roll or the run ends. Clear the round and your score resets—unless your build has found a way around that.</div>
+    <!-- BUILD CALLOUT -->
+    <div style="margin: 32px 0; text-align: center">
+      <div
+        style="
+          display: inline-block;
+          padding: 6px 13px;
+          color: #2a1f14;
+          background: #d4b83c;
+          border-radius: 999px;
+          font-weight: bold;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        "
+      >
+        Common
+      </div>
+      <div
+        style="
+          display: inline-block;
+          margin-left: 6px;
+          padding: 6px 13px;
+          color: #f3ead2;
+          background: #4a7fc9;
+          border-radius: 999px;
+          font-weight: bold;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        "
+      >
+        Uncommon
+      </div>
+      <div
+        style="
+          display: inline-block;
+          margin-left: 6px;
+          padding: 6px 13px;
+          color: #f3ead2;
+          background: #9a4fc9;
+          border-radius: 999px;
+          font-weight: bold;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        "
+      >
+        Rare
+      </div>
+      <p
+        style="
+          max-width: 720px;
+          margin: 15px auto 0;
+          color: #e9d8a6;
+          font-size: 18px;
+        "
+      >
+        Duplicate every die. Turn an entire die size wild. Score repeated faces.
+        Add a d100 that can quadruple the roll. Carry points between rounds.
+        Create dice whenever dice score. Then multiply the whole catastrophe.
+      </p>
     </div>
 
-    <div style="display: flex; gap: 14px; align-items: flex-start;">
-      <div style="flex: 0 0 34px; height: 34px; color: #f3ead2; background: #8a1f2b; border-radius: 50%; font-weight: bold; line-height: 34px; text-align: center;">5</div>
-      <div><strong>Clear all 10 rounds.</strong> The final threshold is waiting. Defeat it to restore order—and unlock an even harsher challenge.</div>
+    <!-- HIGH SCORES + CODEX -->
+    <div style="display: flex; flex-wrap: wrap; gap: 18px; margin: 38px 0 32px">
+      <div
+        style="
+          flex: 1 1 360px;
+          padding: 7px;
+          background: #0d0a12;
+          border: 1px solid #8a1f2b;
+          border-radius: 9px;
+        "
+      >
+        <img
+          src="https://img.itch.zone/aW1nLzI4NzAyNzI4LnBuZw==/original/BY6weM.png"
+          alt="The Hall of High Scores"
+          style="display: block; width: 100%; height: auto; border-radius: 5px"
+        />
+        <h3 style="margin: 13px 12px 3px; color: #e6c65a; font-size: 21px">
+          Hall of High Scores
+        </h3>
+        <p style="margin: 0 12px 13px; color: #cdb27a">
+          Climb the global leaderboard and compare your greatest runs with
+          players around the world—complete with final grids, total scores, and
+          deepest rounds.
+        </p>
+      </div>
+
+      <div
+        style="
+          flex: 1 1 360px;
+          padding: 7px;
+          background: #0d0a12;
+          border: 1px solid #9a4fc9;
+          border-radius: 9px;
+        "
+      >
+        <img
+          src="https://img.itch.zone/aW1nLzI4NzAyNTY3LmdpZg==/original/PTnG7O.gif"
+          alt="The Codex of unlockable items"
+          style="display: block; width: 100%; height: auto; border-radius: 5px"
+        />
+        <h3 style="margin: 13px 12px 3px; color: #e6c65a; font-size: 21px">
+          The Codex
+        </h3>
+        <p style="margin: 0 12px 13px; color: #cdb27a">
+          Catalog every item, reveal hidden relics through achievements, and
+          track what you choose across runs.
+        </p>
+      </div>
     </div>
 
-    <p style="margin: 22px 0 0; padding-top: 16px; color: #5a4a2e; border-top: 1px solid #8c7a55; font-size: 15px; text-align: center;">
-      <strong>Controls:</strong> mouse or touch. Press the Roll button, tap cards to buy them, and select dice when an item asks for a target. Zoom in and out, then pan around the board to explore even the most enormous dice grids.
+    <!-- SOURCE -->
+    <div
+      style="
+        margin: 34px 0 18px;
+        padding: 23px;
+        text-align: center;
+        background: linear-gradient(135deg, #221a38, #161226);
+        border: 1px solid #5a4a2e;
+        border-radius: 8px;
+      "
+    >
+      <h2 style="margin: 0 0 9px; color: #e6c65a; font-size: 27px">
+        Open Source
+      </h2>
+      <p style="max-width: 690px; margin: 0 auto 17px; color: #e9d8a6">
+        Want to study the machinery behind the dice? The complete TypeScript and
+        Phaser source code is available on GitHub under the MIT License.
+      </p>
+      <a
+        href="https://github.com/blackburn32/the-order-of-order"
+        target="_blank"
+        rel="noopener"
+        style="
+          display: inline-block;
+          padding: 11px 18px;
+          color: #2a1f14;
+          background: #e6c65a;
+          border: 2px solid #c9a227;
+          border-radius: 6px;
+          font-weight: bold;
+          text-decoration: none;
+        "
+      >
+        View the source on GitHub
+      </a>
+    </div>
+
+    <!-- CREDITS -->
+    <div
+      style="
+        margin: 24px 0 18px;
+        padding: 21px;
+        text-align: center;
+        background: #161226;
+        border: 1px solid #c9a227;
+        border-radius: 8px;
+      "
+    >
+      <h2 style="margin: 0 0 12px; color: #e6c65a; font-size: 27px">Credits</h2>
+      <p style="margin: 0 0 7px; color: #e9d8a6">
+        <strong>Alex Blackburn</strong> — Coding, game design, music, and sound
+        effects
+      </p>
+      <p style="margin: 0; color: #e9d8a6">
+        <strong>Mandee Mae</strong> — Pixel art
+      </p>
+    </div>
+
+    <!-- FINAL TAGLINE -->
+    <p
+      style="
+        margin: 26px 0 8px;
+        color: #cdb27a;
+        font-size: 20px;
+        font-style: italic;
+        text-align: center;
+      "
+    >
+      Chance creates chaos. Your build gives it order.
+    </p>
+    <p
+      style="
+        margin: 0;
+        color: #8c7a55;
+        font-size: 13px;
+        text-align: center;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      "
+    >
+      Responsive browser play · Mouse &amp; touch · Persistent unlocks · No
+      account required
     </p>
   </div>
-
-  <!-- BUILD CALLOUT -->
-  <div style="margin: 32px 0; text-align: center;">
-    <div style="display: inline-block; padding: 6px 13px; color: #2a1f14; background: #d4b83c; border-radius: 999px; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase;">Common</div>
-    <div style="display: inline-block; margin-left: 6px; padding: 6px 13px; color: #f3ead2; background: #4a7fc9; border-radius: 999px; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase;">Uncommon</div>
-    <div style="display: inline-block; margin-left: 6px; padding: 6px 13px; color: #f3ead2; background: #9a4fc9; border-radius: 999px; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase;">Rare</div>
-    <p style="max-width: 720px; margin: 15px auto 0; color: #e9d8a6; font-size: 18px;">
-      Duplicate every die. Turn an entire die size wild. Score repeated faces. Add a d100 that can quadruple the roll. Carry points between rounds. Create dice whenever dice score. Then multiply the whole catastrophe.
-    </p>
-  </div>
-
-  <!-- HIGH SCORES + CODEX -->
-  <div style="display: flex; flex-wrap: wrap; gap: 18px; margin: 38px 0 32px;">
-    <div style="flex: 1 1 360px; padding: 7px; background: #0d0a12; border: 1px solid #8a1f2b; border-radius: 9px;">
-      <img src="https://img.itch.zone/aW1nLzI4NzAyNzI4LnBuZw==/original/BY6weM.png" alt="The Hall of High Scores" style="display: block; width: 100%; height: auto; border-radius: 5px;">
-      <h3 style="margin: 13px 12px 3px; color: #e6c65a; font-size: 21px;">Hall of High Scores</h3>
-      <p style="margin: 0 12px 13px; color: #cdb27a;">Climb the global leaderboard and compare your greatest runs with players around the world—complete with final grids, total scores, and deepest rounds.</p>
-    </div>
-
-    <div style="flex: 1 1 360px; padding: 7px; background: #0d0a12; border: 1px solid #9a4fc9; border-radius: 9px;">
-      <img src="https://img.itch.zone/aW1nLzI4NzAyNTY3LmdpZg==/original/PTnG7O.gif" alt="The Codex of unlockable items" style="display: block; width: 100%; height: auto; border-radius: 5px;">
-      <h3 style="margin: 13px 12px 3px; color: #e6c65a; font-size: 21px;">The Codex</h3>
-      <p style="margin: 0 12px 13px; color: #cdb27a;">Catalog every item, reveal hidden relics through achievements, and track what you choose across runs.</p>
-    </div>
-  </div>
-
-  <!-- SOURCE -->
-  <div style="margin: 34px 0 18px; padding: 23px; text-align: center; background: linear-gradient(135deg, #221a38, #161226); border: 1px solid #5a4a2e; border-radius: 8px;">
-    <h2 style="margin: 0 0 9px; color: #e6c65a; font-size: 27px;">Open Source</h2>
-    <p style="max-width: 690px; margin: 0 auto 17px; color: #e9d8a6;">
-      Want to study the machinery behind the dice? The complete TypeScript and Phaser source code is available on GitHub under the MIT License.
-    </p>
-    <a href="https://github.com/blackburn32/the-order-of-order" target="_blank" rel="noopener" style="display: inline-block; padding: 11px 18px; color: #2a1f14; background: #e6c65a; border: 2px solid #c9a227; border-radius: 6px; font-weight: bold; text-decoration: none;">
-      View the source on GitHub
-    </a>
-  </div>
-
-  <!-- CREDITS -->
-  <div style="margin: 24px 0 18px; padding: 21px; text-align: center; background: #161226; border: 1px solid #c9a227; border-radius: 8px;">
-    <h2 style="margin: 0 0 12px; color: #e6c65a; font-size: 27px;">Credits</h2>
-    <p style="margin: 0 0 7px; color: #e9d8a6;">
-      <strong>Alex Blackburn</strong> — Coding, game design, music, and sound effects
-    </p>
-    <p style="margin: 0; color: #e9d8a6;">
-      <strong>Mandee Mae</strong> — Pixel art
-    </p>
-  </div>
-
-  <!-- FINAL TAGLINE -->
-  <p style="margin: 26px 0 8px; color: #cdb27a; font-size: 20px; font-style: italic; text-align: center;">
-    Chance creates chaos. Your build gives it order.
-  </p>
-  <p style="margin: 0; color: #8c7a55; font-size: 13px; text-align: center; letter-spacing: 0.08em; text-transform: uppercase;">
-    Responsive browser play · Mouse &amp; touch · Persistent unlocks · No account required
-  </p>
-</div>
 </div>

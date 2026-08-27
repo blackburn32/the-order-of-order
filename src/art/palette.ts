@@ -19,24 +19,24 @@ export const COLORS = {
   // Shop rarity tiers.
   rarityCommon: 0xd4b83c,
   rarityUncommon: 0x4a7fc9,
-  rarityRare: 0x9a4fc9
+  rarityRare: 0x9a4fc9,
 };
 
 export const CSS = {
-  parchment: '#e9d8a6',
-  parchmentDark: '#cdb27a',
-  ivory: '#f3ead2',
-  ink: '#2a1f14',
-  inkSoft: '#5a4a2e',
-  gold: '#c9a227',
-  goldLight: '#e6c65a',
-  steel: '#cfd6df',
-  dim: '#8c7a55',
-  red: '#d96a5a',
-  waxRed: '#8a1f2b',
-  rarityCommon: '#d4b83c',
-  rarityUncommon: '#4a7fc9',
-  rarityRare: '#9a4fc9'
+  parchment: "#e9d8a6",
+  parchmentDark: "#cdb27a",
+  ivory: "#f3ead2",
+  ink: "#2a1f14",
+  inkSoft: "#5a4a2e",
+  gold: "#c9a227",
+  goldLight: "#e6c65a",
+  steel: "#cfd6df",
+  dim: "#8c7a55",
+  red: "#d96a5a",
+  waxRed: "#8a1f2b",
+  rarityCommon: "#d4b83c",
+  rarityUncommon: "#4a7fc9",
+  rarityRare: "#9a4fc9",
 };
 
 export const SERIF = 'Georgia, "Palatino Linotype", "Times New Roman", serif';
@@ -50,5 +50,5 @@ export const DIE_BORDER: Record<number, number> = {
   8: 0xb07830,
   10: 0xa4552f,
   20: 0x8a1f2b,
-  100: 0x5e3a72
+  100: 0x5e3a72,
 };
