@@ -5,7 +5,7 @@
 // `sum(dicePoints) + sum(itemPoints) === totalScore` for the run.
 
 import { RunState } from "../state/RunState";
-import { RollResult } from "./Scoring";
+import { FLAT_MULTIPLIERS, RollResult } from "./Scoring";
 import { ITEMS, ShopItemId } from "./Items";
 
 /** Sentinel source for the run's initial die, which no item provided. */
@@ -24,6 +24,7 @@ const MODIFIER_ITEM: Record<string, ShopItemId> = {
   pocketChange: "pocket_change",
   dividend: "dividend",
   royalSeal: "royal_seal",
+  ouroboros: "ouroboros",
 };
 
 /** Persistent multiplier -> the item whose top-face effect carries it. This is
@@ -93,7 +94,10 @@ export function accumulatePoints(
   const amplification = subtotal * (result.multiplier - 1n);
   if (amplification <= 0n) return;
   const weights: [ShopItemId, bigint][] = [];
-  if (state.hasAmplifier) weights.push(["amplifier", 2n - 1n]);
+  // Every unconditional flat multiplier the run owns — Amplifier and the cursed
+  // cards that sell one — from the single table both scorers multiply by.
+  for (const def of FLAT_MULTIPLIERS)
+    if (state[def.flag]) weights.push([def.item as ShopItemId, def.mult - 1n]);
   if (state.prism > 0) weights.push(["prism", 3n ** BigInt(state.prism) - 1n]);
   if (finalRoll && state.lastCall > 0)
     weights.push(["last_call", 4n ** BigInt(state.lastCall) - 1n]);
@@ -115,6 +119,19 @@ export function accumulatePoints(
   if (state.hasHourglass) {
     const hourglass = result.modifiers.find((m) => m.id === "hourglass");
     if (hourglass) weights.push(["hourglass", 1n]);
+  }
+  // Downbeat only pays on its own beat, so — as with Hourglass — the roll's
+  // modifier list is what says whether this was one of its rolls.
+  if (state.downbeat > 0) {
+    const downbeat = result.modifiers.find((m) => m.id === "downbeat");
+    if (downbeat?.mult) weights.push(["downbeat", downbeat.mult - 1n]);
+  }
+  // Hair Trigger pays only on a trial's opening roll, so — as with Hourglass —
+  // the roll's own modifier list is what says whether this was one of its rolls.
+  if (state.hasHairTrigger) {
+    const hairTrigger = result.modifiers.find((m) => m.id === "hairTrigger");
+    if (hairTrigger?.mult)
+      weights.push(["hair_trigger", hairTrigger.mult - 1n]);
   }
   // Lucky Seven's ×7 only fires on a roll that turned up a seven, so the roll's
   // own modifier list is what says whether it was one.

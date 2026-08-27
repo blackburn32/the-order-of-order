@@ -7,17 +7,25 @@
 
 import { WIN_TRIAL, isBossTrial } from "../config";
 import { RunState } from "../state/RunState";
-import { bossBlocksGrowth, bossForRank, goalFor } from "../systems/Boss";
+import { afflictionsFor, blocksGrowth } from "../systems/Afflictions";
+import { bossesForRank, goalFor } from "../systems/Boss";
 import {
+  applyGoldCeiling,
   EMPTY_BREAKDOWN,
   GoldBreakdown,
   grantGold,
   rollGoldBreakdown,
   trialPayout,
+  unusedRolls,
 } from "../systems/Gold";
-import { applyMolds, applyTrialStart, type ShopItemId } from "../systems/Items";
+import {
+  applyMolds,
+  applyTrialStart,
+  enforceGridCap,
+  type ShopItemId,
+} from "../systems/Items";
 import { accumulatePoints } from "../systems/ItemPoints";
-import { RollResult } from "../systems/Scoring";
+import { deniedRoll, RollResult } from "../systems/Scoring";
 import { scoreRollHistogram } from "../systems/ScoringHistogram";
 import { trialRollTarget } from "../systems/Trial";
 
@@ -64,9 +72,13 @@ export interface TrialEndOutcome {
   completedGoal: bigint;
   goldEarned: number;
   goldBreakdown: GoldBreakdown;
+  /** Gold a ceiling affliction took back as the trial ended (Pauper's Vow). */
+  goldForfeited: number;
   rollGold: { titheBowl: number; luckyCoin: number; total: number };
   totalGoldEarned: number;
-  diceAdded: number; // Foundry dice added by applyTrialStart on advance (0 otherwise)
+  // Net change in grid size from applyTrialStart on advance (0 otherwise):
+  // Foundry's dice, less anything a grid-cap affliction culled.
+  diceAdded: number;
   insuranceUsed: boolean;
   bossCleared: boolean;
 }
@@ -95,12 +107,42 @@ export function resolveRoll(
   };
   shrunk: number[];
   goldGained: number;
+  /** Dice destroyed by a breakage affliction after this roll scored. */
+  broken: number;
+  /** Dice culled by a grid-cap affliction after this roll's growth. */
+  culled: number;
+  /** The affliction that took this roll, if one did. */
+  denied: "tollkeeper" | "gamblersCurse" | null;
 } {
   const finalRoll = state.roll + 1 >= trialRollTarget(state);
   const scoreBefore = state.score;
+  const afflictions = afflictionsFor(state);
+
+  // Two afflictions can take a roll away before its dice are ever read. The toll
+  // is charged first and only bites when the purse is empty, so a run that keeps
+  // its gold up never feels it; the gamble is pure variance and always can.
+  let denied: "tollkeeper" | "gamblersCurse" | null = null;
+  if (afflictions.rollGoldCost > 0) {
+    if (state.gold >= afflictions.rollGoldCost)
+      state.gold -= afflictions.rollGoldCost;
+    else denied = "tollkeeper";
+  }
+  if (
+    denied === null &&
+    afflictions.dudRollChance > 0 &&
+    rng() < afflictions.dudRollChance
+  ) {
+    denied = "gamblersCurse";
+  }
+
   // Score from the pool's cached roll aggregate — O(distinct faces) in either
   // storage mode. Attribution reads the pool's per-source tallies (below).
-  const result = scoreRollHistogram(state, state.dice.agg(), { finalRoll });
+  const result =
+    denied === "tollkeeper"
+      ? deniedRoll(state, "tollkeeper", "Toll unpaid")
+      : denied === "gamblersCurse"
+        ? deniedRoll(state, "gamblersCurse", "Gambler's Curse")
+        : scoreRollHistogram(state, state.dice.agg(), { finalRoll });
   accumulatePoints(state, result, finalRoll);
   state.roll += 1;
   state.score += result.points;
@@ -132,7 +174,7 @@ export function resolveRoll(
   // grows in place — O(buckets) once bucketed, so Double the Fun doubling into
   // the millions no longer walks (or reallocates) a giant array. The Drought
   // switches all of it off for its trial.
-  const growthBlocked = bossBlocksGrowth(state);
+  const growthBlocked = blocksGrowth(state);
   const doubleTheFunCount =
     state.hasDoubleTheFun && !growthBlocked ? state.dice.doubleTheFun() : 0;
   const genesisCount =
@@ -142,6 +184,23 @@ export function resolveRoll(
   const molds = growthBlocked ? [] : applyMolds(state);
   const moldCount = molds.reduce((n, mold) => n + mold.count, 0);
   const spawnedCount = doubleTheFunCount + genesisCount + moldCount;
+
+  // Breakage bills the dice that scored, and is charged AFTER the growth
+  // passives so a die that scored still spawns its copy before it shatters —
+  // which is the whole of the Ouroboros/Genesis engine. A denied roll scored
+  // nothing, so nothing shatters on it.
+  const broken =
+    denied === null && afflictions.dieBreakChance > 0
+      ? state.dice.breakScoring(
+          breakCount(
+            state.dice.agg().scoringCount,
+            afflictions.dieBreakChance,
+            rng,
+          ),
+        )
+      : 0;
+  // Whatever the grid grew to this roll, the cap has the last word.
+  const culled = enforceGridCap(state);
 
   // Whetstone: each copy owned has a 10% chance this roll to shrink one random
   // die a step. Applied after scoring so it only helps future rolls. Below the
@@ -163,8 +222,35 @@ export function resolveRoll(
     },
     shrunk,
     goldGained,
+    broken,
+    culled,
+    denied,
   };
 }
+
+/**
+ * How many of a roll's scoring dice a breakage affliction takes. Rolled die by
+ * die while the count is small enough for the variance to be felt, and settled
+ * by expectation above that — a grid of a million dice cannot afford a million
+ * rng calls, and at that size the binomial has collapsed onto its mean anyway.
+ */
+function breakCount(
+  scoring: number,
+  chance: number,
+  rng: () => number,
+): number {
+  if (scoring <= 0 || chance <= 0) return 0;
+  if (scoring <= INDIVIDUAL_BREAK_ROLLS) {
+    let broken = 0;
+    for (let i = 0; i < scoring; i++) if (rng() < chance) broken += 1;
+    return broken;
+  }
+  const expected = scoring * chance;
+  const whole = Math.floor(expected);
+  return whole + (rng() < expected - whole ? 1 : 0);
+}
+
+const INDIVIDUAL_BREAK_ROLLS = 64;
 
 /**
  * Resolve the end of a trial once it is complete — its goal met or its rolls
@@ -199,6 +285,7 @@ export function resolveTrialEnd(
       completedGoal: goal,
       goldEarned: 0,
       goldBreakdown: EMPTY_BREAKDOWN,
+      goldForfeited: 0,
       rollGold: rollGoldReceipt,
       totalGoldEarned: rollGoldReceipt.total,
       diceAdded: 0,
@@ -219,10 +306,24 @@ export function resolveTrialEnd(
   // count as beating the boss. With culling off (the designer's pass) a failed
   // trial is paid as though cleared, so the shops it feeds still resemble a
   // real run's income rather than starving the build being measured.
+  // Rolls still in hand as this trial ends. Read before anything advances the
+  // ladder, since the budget it counts against belongs to the trial just played.
+  // A trial survived on Insurance was not cleared, so it neither carries rolls
+  // forward nor counts toward Rain Check's unlock.
+  const rollsLeft = cleared ? unusedRolls(state) : 0;
+  if (rollsLeft > state.peakRollsLeftOnClear)
+    state.peakRollsLeftOnClear = rollsLeft;
+  // Rain Check banks up to one of those rolls per copy owned; they arrive in
+  // the next trial exactly as Overtime's do, and expire with it just the same.
+  const carriedRolls = Math.min(state.rainCheck, rollsLeft);
+
   const bossCleared = cleared && isBossTrial(state.trial);
   const goldBreakdown =
     cleared || !cullingEnabled ? trialPayout(state) : EMPTY_BREAKDOWN;
   grantGold(state, goldBreakdown.total);
+  // The purse is skimmed once the trial's own pay is in it, so what a ceiling
+  // affliction leaves behind is exactly what the player walks into the shop with.
+  const goldForfeited = applyGoldCeiling(state);
   if (bossCleared) {
     state.bossesCleared += 1;
     state.boonNextShop = true;
@@ -236,6 +337,7 @@ export function resolveTrialEnd(
       completedGoal: goal,
       goldEarned: goldBreakdown.total,
       goldBreakdown,
+      goldForfeited,
       rollGold: rollGoldReceipt,
       totalGoldEarned: goldBreakdown.total + rollGoldReceipt.total,
       diceAdded: 0,
@@ -247,13 +349,18 @@ export function resolveTrialEnd(
   state.trial += 1;
   state.roll = 0;
   state.trialCleared = false;
-  state.bonusRollsThisRound = 0;
+  state.bonusRollsThisRound = carriedRolls;
   // Score is progress toward one trial's goal and nothing else — it always
   // starts a trial at zero. Gold is what carries across.
   state.score = 0n;
   state.trialScore = 0n;
   state.trialRollGold = { titheBowl: 0, luckyCoin: 0 };
-  state.bossModifier = bossForRank(state.trial, rng, state.bossModifier);
+  state.bossModifiers = bossesForRank(
+    state,
+    state.trial,
+    rng,
+    state.bossModifiers,
+  );
   const diceAdded = applyTrialStart(state);
   return {
     phase: "advanced",
@@ -262,6 +369,7 @@ export function resolveTrialEnd(
     completedGoal: goal,
     goldEarned: goldBreakdown.total,
     goldBreakdown,
+    goldForfeited,
     rollGold: rollGoldReceipt,
     totalGoldEarned: goldBreakdown.total + rollGoldReceipt.total,
     diceAdded,
@@ -276,7 +384,7 @@ export function beginRun(
   state: RunState,
   rng: () => number = Math.random,
 ): void {
-  state.bossModifier = bossForRank(state.trial, rng, null);
+  state.bossModifiers = bossesForRank(state, state.trial, rng);
 }
 
 /** Continue a won run into endless without ending or recording it. This
@@ -286,14 +394,23 @@ export function continueEndless(
   state: RunState,
   rng: () => number = Math.random,
 ): void {
+  // The won trial was cleared, so Rain Check's carry follows the run into
+  // endless rather than being dropped at the finish line. Counted before the
+  // ladder moves, while the budget still belongs to the trial just won.
+  const carriedRolls = Math.min(state.rainCheck, unusedRolls(state));
   state.endless = true;
   state.trial += 1;
   state.roll = 0;
   state.trialCleared = false;
-  state.bonusRollsThisRound = 0;
+  state.bonusRollsThisRound = carriedRolls;
   state.score = 0n;
   state.trialScore = 0n;
   state.trialRollGold = { titheBowl: 0, luckyCoin: 0 };
-  state.bossModifier = bossForRank(state.trial, rng, state.bossModifier);
+  state.bossModifiers = bossesForRank(
+    state,
+    state.trial,
+    rng,
+    state.bossModifiers,
+  );
   applyTrialStart(state);
 }

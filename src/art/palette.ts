@@ -20,6 +20,9 @@ export const COLORS = {
   rarityCommon: 0xd4b83c,
   rarityUncommon: 0x4a7fc9,
   rarityRare: 0x9a4fc9,
+  // Wash laid over a cursed card's parchment, so a card that carries a
+  // drawback reads as a different kind of card before its copy is read.
+  cursedCard: 0xc98d86,
 };
 
 export const CSS = {
@@ -37,6 +40,7 @@ export const CSS = {
   rarityCommon: "#d4b83c",
   rarityUncommon: "#4a7fc9",
   rarityRare: "#9a4fc9",
+  cursed: "#7d1622",
 };
 
 export const SERIF = 'Georgia, "Palatino Linotype", "Times New Roman", serif';

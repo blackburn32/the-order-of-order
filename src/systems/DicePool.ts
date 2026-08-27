@@ -2,7 +2,7 @@
 //
 // Below BUCKET_THRESHOLD the pool is backed by an explicit `Die[]` — full per-die
 // identity, so the scene can flash individual dice and the shop can target one.
-// At/above the threshold it flips (permanently, since dice only ever grow) to
+// At/above the threshold it flips (permanently — see the note on ensureMode) to
 // *buckets* of identical dice keyed by their attributes, holding just a count.
 // A run with a million dice still has only a few dozen buckets, so rolling,
 // scoring, growth, and serialization all become O(buckets × faces) instead of
@@ -203,8 +203,11 @@ export class DicePool {
 
   // --- transition ----------------------------------------------------------
 
-  /** Flip to bucket storage once the grid is large enough. One-way: dice only
-   *  grow past the threshold, and a rare Whetstone shrink never drops the count. */
+  /** Flip to bucket storage once the grid is large enough. One-way, even though
+   *  afflictions can now destroy dice (breakage, a grid cap): the mode records
+   *  how large the grid HAS been, and re-materialising a shrinking grid back
+   *  into a list would cost more than the per-die fidelity is worth to a run
+   *  that has already been that big. */
   private ensureMode(): void {
     if (this.mode === "list" && this._count >= bucketThreshold) this.convert();
   }
@@ -601,6 +604,14 @@ export class DicePool {
     return -1;
   }
 
+  private stepUp(die: Die): void {
+    const i = DIE_LADDER.indexOf(die.sides);
+    if (i >= 0 && i < DIE_LADDER.length - 1) {
+      die.sides = DIE_LADDER[i + 1];
+      die.value = die.sides;
+    }
+  }
+
   private stepDown(die: Die): void {
     const i = DIE_LADDER.indexOf(die.sides);
     if (i > 0) {
@@ -683,6 +694,117 @@ export class DicePool {
         b.count * (factor - 1),
       );
     this._count *= factor;
+  }
+
+  /** Grow every die `steps` rungs — Refinement run backwards, for an affliction
+   *  that swells the grid (The Bloat). Dice already at the top of the ladder
+   *  stay there. */
+  growAll(steps: number): void {
+    if (this.mode === "list") {
+      for (const d of this.list) for (let s = 0; s < steps; s++) this.stepUp(d);
+      return;
+    }
+    // Move whole buckets up the ladder, merging as sizes collide.
+    for (let s = 0; s < steps; s++) {
+      const old = this.buckets;
+      this.buckets = [];
+      for (const b of old) {
+        const i = DIE_LADDER.indexOf(b.sides);
+        const sides =
+          i >= 0 && i < DIE_LADDER.length - 1 ? DIE_LADDER[i + 1] : b.sides;
+        this.addBucket(
+          sides,
+          b.maxFaceBonus,
+          b.loaded,
+          b.wildFace,
+          b.source,
+          b.count,
+        );
+      }
+    }
+  }
+
+  // --- destruction (afflictions) -------------------------------------------
+  //
+  // The only paths that take dice OFF the grid. Both share `removeSpread`,
+  // which shaves a count across candidate buckets in proportion to their size,
+  // so a broken die is drawn from the grid as it actually stands rather than
+  // emptying whichever bucket happens to sit first. Removal never flips the pool
+  // back out of bucket mode: the mode is a storage decision about how large the
+  // grid HAS been, and re-materialising a list here would cost more than it saves.
+
+  /** Destroy `count` dice from among those that scored on the most recent roll
+   *  (the breakage afflictions). Returns how many were actually destroyed. */
+  breakScoring(count: number): number {
+    if (count <= 0 || this._count === 0) return 0;
+    if (this.mode === "list") {
+      // Walk only the dice that were present for the roll, newest first, so the
+      // copies growth passives spawned after it are never the ones billed.
+      let removed = 0;
+      for (
+        let k = Math.min(this.rolledCount, this.list.length) - 1;
+        k >= 0 && removed < count;
+        k--
+      ) {
+        if (!this.dieScored(this.list[k])) continue;
+        this.list.splice(k, 1);
+        removed += 1;
+      }
+      this._count -= removed;
+      return removed;
+    }
+    const removed = this.removeSpread(count, (b) => b.lastScoring ?? 0);
+    // The dice are gone, so they cannot be billed again by a later pass.
+    for (const b of this.buckets) if (b.lastScoring) b.lastScoring = 0;
+    return removed;
+  }
+
+  /** Cull the grid down to `max` dice (a grid-cap affliction). Returns how many
+   *  were destroyed. */
+  cull(max: number): number {
+    const excess = this._count - Math.max(0, Math.floor(max));
+    if (excess <= 0) return 0;
+    if (this.mode === "list") {
+      this.list.length = this.list.length - excess;
+      this._count -= excess;
+      return excess;
+    }
+    return this.removeSpread(excess, (b) => b.count);
+  }
+
+  /** Take `count` dice off the bucketed grid, spread across the buckets `weight`
+   *  finds candidates in, proportionally to that weight. Any rounding shortfall
+   *  is taken from the largest candidates until the count is met. */
+  private removeSpread(count: number, weight: (b: Bucket) => number): number {
+    const candidates = this.buckets
+      .map((b) => ({ b, weight: Math.min(weight(b), b.count) }))
+      .filter((c) => c.weight > 0);
+    const available = candidates.reduce((n, c) => n + c.weight, 0);
+    const target = Math.min(count, available);
+    if (target <= 0) return 0;
+    let removed = 0;
+    for (const c of candidates) {
+      const share = Math.min(
+        c.weight,
+        Math.floor((target * c.weight) / available),
+      );
+      c.b.count -= share;
+      c.weight -= share;
+      removed += share;
+    }
+    // Proportional shares floor, so hand the remainder to the fullest buckets.
+    if (removed < target) {
+      candidates.sort((a, b) => b.weight - a.weight);
+      for (const c of candidates) {
+        if (removed >= target) break;
+        const take = Math.min(c.weight, target - removed);
+        c.b.count -= take;
+        removed += take;
+      }
+    }
+    this._count -= removed;
+    this.pruneEmpty();
+    return removed;
   }
 
   /** Shrink every die `steps` rungs (Refinement). */

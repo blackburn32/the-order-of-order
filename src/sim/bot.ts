@@ -15,12 +15,8 @@ import {
   ShopItemId,
 } from "../systems/Items";
 import { toNumberPointMap } from "../systems/ItemPoints";
-import {
-  activeBoss,
-  BossModifierId,
-  goalFor,
-  scoringNumbersFor,
-} from "../systems/Boss";
+import { activeBosses, BossModifierId, goalFor } from "../systems/Boss";
+import { scoringNumbersFor } from "../systems/Afflictions";
 import { GOLD_PER_INTEREST, INTEREST_CAP } from "../systems/Gold";
 import {
   applyBoosterChoice,
@@ -417,7 +413,10 @@ export function simulateRun(
     trackUnlocks(state, record.unlocksAchieved);
 
     if (trialComplete(state)) {
-      const boss = activeBoss(state)?.id ?? null;
+      // A trial can carry more than one modifier (The Long Night): the
+      // trajectory row names the first, the tally counts every one faced.
+      const bosses = activeBosses(state).map((b) => b.id);
+      const boss = bosses[0] ?? null;
       record.trajectory.push({
         trial: state.trial,
         rank: rankOf(state.trial),
@@ -430,8 +429,8 @@ export function simulateRun(
       });
 
       const end = resolveTrialEnd(state, rng);
-      if (boss) {
-        const tally = (record.bossesFaced[boss] ??= { faced: 0, cleared: 0 });
+      for (const id of bosses) {
+        const tally = (record.bossesFaced[id] ??= { faced: 0, cleared: 0 });
         tally.faced += 1;
         if (end.bossCleared) tally.cleared += 1;
       }

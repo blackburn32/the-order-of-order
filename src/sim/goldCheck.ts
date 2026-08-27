@@ -128,7 +128,7 @@ console.log("\nBoss trials");
 
 {
   const state = runAt(3, 20);
-  state.bossModifier = "famine";
+  state.bossModifiers = ["famine"];
   check(
     trialPayout(state).items === BOSS_CLEAR_GOLD,
     "clearing a boss pays its bonus",
@@ -144,9 +144,9 @@ console.log("\nBoss trials");
 
 {
   const plain = runAt(3, 20);
-  plain.bossModifier = "famine";
+  plain.bossModifiers = ["famine"];
   const hoard = runAt(3, 20);
-  hoard.bossModifier = "hoard";
+  hoard.bossModifiers = ["hoard"];
   check(
     activeBoss(hoard)!.goldMultMilli === 2_000,
     "The Hoard declares a double payout",

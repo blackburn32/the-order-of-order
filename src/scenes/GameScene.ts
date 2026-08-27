@@ -6,7 +6,13 @@ import { getRun, type RunState } from "../state/RunState";
 import type { Die } from "../systems/Dice";
 import { moldDiceCount, type ShopItemId } from "../systems/Items";
 import { sourceLabel } from "../systems/ItemPoints";
-import { activeBoss, goalFor, scoringNumbersFor } from "../systems/Boss";
+import {
+  activeBoss,
+  activeBosses,
+  goalFor,
+  type BossModifier,
+} from "../systems/Boss";
+import { deadDiceFraction, scoringNumbersFor } from "../systems/Afflictions";
 import {
   resolveRoll,
   resolveTrialEnd,
@@ -110,6 +116,35 @@ const MAX_INDIVIDUAL_SETTLE_DICE = 100;
 interface BossRollCue {
   kind: "struck" | "penalty";
   message: string;
+}
+
+/**
+ * What a standing affliction did to this roll, in the same red notices the Boss
+ * Trials use — a roll taken outright, dice shattered by breakage, dice culled by
+ * a grid cap. Written here rather than in `bossRollCues` because none of it
+ * depends on which boss (if any) is presiding: these are the run's own curses.
+ */
+function afflictionRollCues(
+  broken: number,
+  culled: number,
+  denied: "tollkeeper" | "gamblersCurse" | null,
+): BossRollCue[] {
+  const cues: BossRollCue[] = [];
+  if (denied === "tollkeeper")
+    cues.push({ kind: "penalty", message: "TOLL UNPAID · ROLL FORFEIT" });
+  if (denied === "gamblersCurse")
+    cues.push({ kind: "penalty", message: "GAMBLER'S CURSE · ROLL FORFEIT" });
+  if (broken > 0)
+    cues.push({
+      kind: "penalty",
+      message: `${broken.toLocaleString()} DICE SHATTERED`,
+    });
+  if (culled > 0)
+    cues.push({
+      kind: "penalty",
+      message: `${culled.toLocaleString()} DICE CULLED`,
+    });
+  return cues;
 }
 
 /** Select evenly across an index-ordered list instead of clustering feedback
@@ -646,9 +681,16 @@ export class GameScene extends Phaser.Scene {
   private buildBossRibbon(
     layout: Layout,
   ): Phaser.GameObjects.Container | undefined {
-    const boss = activeBoss(this.state);
+    // A trial can preside under more than one modifier (The Long Night), so the
+    // ribbon names every one of them and the sigil shows the first. The label
+    // already scales itself down to the rail, which is what keeps a two-boss
+    // ribbon legible without a second row.
+    const bosses = activeBosses(this.state);
+    const boss = bosses[0];
     const cell = layout.bossRibbon;
     if (!boss || !cell) return undefined;
+    const bossName = bosses.map((b) => b.name).join(" · ");
+    const bossRule = bosses.map((b) => b.shortDesc).join(" · ");
 
     const container = this.add.container(cell.x, cell.y);
     const background = this.add.graphics();
@@ -681,7 +723,7 @@ export class GameScene extends Phaser.Scene {
 
     if (cell.compact) {
       const title = this.add
-        .text(textLeft, -cell.h * 0.2, boss.name.toUpperCase(), {
+        .text(textLeft, -cell.h * 0.2, bossName.toUpperCase(), {
           fontFamily: SERIF,
           fontSize: "10px",
           color: CSS.parchment,
@@ -689,7 +731,7 @@ export class GameScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5);
       const rule = this.add
-        .text(textLeft, cell.h * 0.22, boss.shortDesc, {
+        .text(textLeft, cell.h * 0.22, bossRule, {
           fontFamily: SERIF,
           fontSize: "8px",
           color: CSS.red,
@@ -702,7 +744,7 @@ export class GameScene extends Phaser.Scene {
       container.add([background, icon, title, rule]);
     } else {
       const label = this.add
-        .text(textLeft, 0, `${boss.name.toUpperCase()}  ·  ${boss.shortDesc}`, {
+        .text(textLeft, 0, `${bossName.toUpperCase()}  ·  ${bossRule}`, {
           fontFamily: SERIF,
           fontSize: `${Phaser.Math.Clamp(cell.h * 0.4, 11, 14)}px`,
           color: CSS.parchment,
@@ -1491,8 +1533,17 @@ export class GameScene extends Phaser.Scene {
    * scoring bonuses use crossed-out versions of their normal score floats;
    * non-score effects use concise red notices. */
   private bossRollCues(agg: DiceAgg, result: RollResult): BossRollCue[] {
-    const boss = activeBoss(this.state);
-    if (!boss) return [];
+    const cues: BossRollCue[] = [];
+    for (const boss of activeBosses(this.state))
+      cues.push(...this.cuesForBoss(boss, agg, result));
+    return cues;
+  }
+
+  private cuesForBoss(
+    boss: BossModifier,
+    agg: DiceAgg,
+    result: RollResult,
+  ): BossRollCue[] {
     const cues: BossRollCue[] = [];
     const mult = result.multiplier;
     const cancelled = (name: string, points: number | bigint) => {
@@ -1570,7 +1621,7 @@ export class GameScene extends Phaser.Scene {
         break;
       }
       case "toll": {
-        const inert = Math.floor(agg.total * (boss.deadDiceFraction ?? 0));
+        const inert = Math.floor(agg.total * deadDiceFraction(this.state));
         if (inert > 0)
           cues.push({
             kind: "penalty",
@@ -1650,9 +1701,21 @@ export class GameScene extends Phaser.Scene {
     // Score the roll and grow the grid (Genesis / Double the Fun) — all state
     // mutation lives in the shared engine so the sim can't drift from the game.
     const rolledAgg = s.dice.agg();
-    const { result, spawnedCount, spawnedBySource, shrunk } = resolveRoll(s);
-    const bossCues = this.bossRollCues(rolledAgg, result);
-    if (shrunk.length > 0) this.cardDataDirty = true;
+    const {
+      result,
+      spawnedCount,
+      spawnedBySource,
+      shrunk,
+      broken,
+      culled,
+      denied,
+    } = resolveRoll(s);
+    const bossCues = [
+      ...this.bossRollCues(rolledAgg, result),
+      ...afflictionRollCues(broken, culled, denied),
+    ];
+    if (shrunk.length > 0 || broken > 0 || culled > 0)
+      this.cardDataDirty = true;
 
     // The engine already appended any spawned dice to s.dice and may have shrunk
     // some (Whetstone); re-lay the grid first — before any flashing — so pulses
@@ -1996,10 +2059,13 @@ export class GameScene extends Phaser.Scene {
   /** Announce the Boss Trial's modifier as the trial opens, so the player knows
    *  what they are fighting before they spend a roll finding out. */
   private announceBoss(): void {
-    const boss = activeBoss(this.state);
-    if (!boss) return;
+    const bosses = activeBosses(this.state);
+    if (bosses.length === 0) return;
     const holdMs = 1600;
-    this.banners.push(`${boss.name} presides`, { holdMs, detail: boss.desc });
+    this.banners.push(
+      `${bosses.map((b) => b.name).join(" and ")} preside${bosses.length > 1 ? "" : "s"}`,
+      { holdMs, detail: bosses.map((b) => b.desc).join(" ") },
+    );
     // The Boss tutorial step waits for the banner it would otherwise dim.
     if (getTutorial(this.registry).active) {
       this.time.delayedCall(holdMs + 500, () => {

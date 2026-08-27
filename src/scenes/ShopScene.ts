@@ -10,6 +10,7 @@ import {
   boosterPrice,
   type BoosterOffer,
   canAfford,
+  shopClosed,
   discountOffersForPawnbroker,
   openBooster,
   rerollCost,
@@ -41,6 +42,7 @@ import {
 } from "../ui/layout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
+import { CURSED_TINT, rarityMark } from "../ui/itemCard";
 import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
 
 const CARD_W = 260;
@@ -770,7 +772,10 @@ export class ShopScene extends Phaser.Scene {
     banner = false,
   ): Phaser.GameObjects.Container {
     const price = boosterPrice(this.state, pack);
-    const affordable = this.state.gold >= price && !pack.sold;
+    // A pack whose card could not then be claimed would be gold thrown away, so
+    // a closed counter seals the packs along with the loose cards.
+    const affordable =
+      this.state.gold >= price && !pack.sold && !this.counterClosed();
     const bg = this.add
       .rectangle(0, 0, w, h, pack.color, pack.sold ? 0.22 : 0.94)
       .setStrokeStyle(3, pack.sold ? COLORS.inkSoft : COLORS.gold, 0.9);
@@ -1471,10 +1476,16 @@ export class ShopScene extends Phaser.Scene {
       if (!entry || !button || !label || !plate) return;
       this.selectedCarouselIndex = index;
       this.focusCarouselCard(index, true);
-      const affordable = canAfford(this.state, entry.offer);
+      const affordable = this.canBuy(entry.offer);
       const price =
         entry.offer.cost === 0 ? "FREE" : `${entry.offer.cost} GOLD`;
-      label.setText(affordable ? `BUY · ${price}` : `NEED ${price}`);
+      label.setText(
+        affordable
+          ? `BUY · ${price}`
+          : this.counterClosed()
+            ? "DOORS SEALED"
+            : `NEED ${price}`,
+      );
       label.setColor(affordable ? CSS.ivory : CSS.red);
       plate.setStrokeStyle(2, affordable ? COLORS.gold : COLORS.waxRed, 0.9);
       const target = this.carouselBuyButtonPosition(index);
@@ -1531,7 +1542,7 @@ export class ShopScene extends Phaser.Scene {
     const index = this.selectedCarouselIndex;
     if (index === undefined || this.purchaseAnimating) return;
     const entry = this.carouselCards[index];
-    if (!entry || !canAfford(this.state, entry.offer)) {
+    if (!entry || !this.canBuy(entry.offer)) {
       audio.deny();
       return;
     }
@@ -1847,7 +1858,7 @@ export class ShopScene extends Phaser.Scene {
     // the card itself rather than through a separate buy button.
     compactType = compact,
   ): Phaser.GameObjects.Container {
-    const affordable = canAfford(this.state, offer);
+    const affordable = this.canBuy(offer);
     // Edge metadata (rarity and price) may shrink furthest; description and
     // title retain progressively larger floors for the card's reading order.
     const sizePx = (native: number, minimum: number) => {
@@ -1865,16 +1876,18 @@ export class ShopScene extends Phaser.Scene {
       Math.min(240 * scale, (native * px) / nativePx);
     const img = this.add.image(0, 0, "card");
     img.setDisplaySize(CARD_W * scale, CARD_H * scale);
-    const rarityColor = {
-      common: CSS.rarityCommon,
-      uncommon: CSS.rarityUncommon,
-      rare: CSS.rarityRare,
-    }[offer.rarity];
+    // A cursed card's parchment carries a red wash, so it reads as a different
+    // kind of card across the row before any of its copy has been. It is the
+    // card's resting tint: hovering brightens it and the pointer leaving puts
+    // it back, where an ordinary card simply clears.
+    const restTint = offer.cursed ? CURSED_TINT : undefined;
+    if (restTint !== undefined) img.setTint(restTint);
+    const mark = rarityMark(offer.rarity, offer.cursed);
     const rarityLabel = this.add
-      .text(0, -148 * scale, offer.rarity.toUpperCase(), {
+      .text(0, -148 * scale, mark.text, {
         fontFamily: SERIF,
         fontSize: fontSize(13, 8),
-        color: rarityColor,
+        color: mark.color,
         fontStyle: "bold",
       })
       .setOrigin(0.5);
@@ -1944,7 +1957,10 @@ export class ShopScene extends Phaser.Scene {
         if (!compact && !pointer.wasTouch) this.focusPackCard(offer, index);
       });
       card.on("pointerout", () => {
-        if (affordable) img.clearTint();
+        if (affordable) {
+          if (restTint !== undefined) img.setTint(restTint);
+          else img.clearTint();
+        }
         pressedHere = false;
         if (compact && !this.carouselDragging) {
           if (this.selectedCarouselIndex !== undefined) {
@@ -1982,7 +1998,13 @@ export class ShopScene extends Phaser.Scene {
       cost.setAlpha(0.86);
     }
 
-    if (allowFilters && offer.rarity === "rare") this.markRare(img);
+    // A cursed card takes the red pulse in place of the rare card's gold one:
+    // two glows on one card read as neither, and the warning is the more
+    // urgent of the two things to say.
+    if (allowFilters) {
+      if (offer.cursed) this.markCursed(img);
+      else if (offer.rarity === "rare") this.markRare(img);
+    }
     this.dealIn(card, index);
     return card;
   }
@@ -2015,6 +2037,21 @@ export class ShopScene extends Phaser.Scene {
    *  tier gates — and a shop holds at most one or two rares. */
   private markRare(img: Phaser.GameObjects.Image): void {
     const glow = fx.glow(img, COLORS.goldLight, 0);
+    if (!glow) return;
+    this.tweens.add({
+      targets: glow,
+      outerStrength: 5,
+      duration: 1600,
+      yoyo: true,
+      repeat: -1,
+      ease: "Sine.easeInOut",
+    });
+  }
+
+  /** The cursed counterpart to `markRare`: the same slow pulse in wax red, so a
+   *  card that will cost the run something is visible from across the row. */
+  private markCursed(img: Phaser.GameObjects.Image): void {
+    const glow = fx.glow(img, COLORS.waxRed, 0);
     if (!glow) return;
     this.tweens.add({
       targets: glow,
@@ -2363,6 +2400,19 @@ export class ShopScene extends Phaser.Scene {
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
     this.removeCalloutCamera();
+  }
+
+  /** Whether this card can be taken right now: the gold is there AND the visit
+   *  still has a purchase left in it. A purchase-limit affliction (Sealed Doors)
+   *  closes the counter for the rest of the visit after its allowance, which the
+   *  buy affordances read exactly as they read an empty purse. */
+  private canBuy(offer: ShopOffer): boolean {
+    if (this.counterClosed()) return false;
+    return canAfford(this.state, offer);
+  }
+
+  private counterClosed(): boolean {
+    return shopClosed(this.state, this.purchasesMade);
   }
 
   private choose(offer: ShopOffer): void {

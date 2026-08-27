@@ -1,19 +1,26 @@
 import { COLORS } from "../art/palette";
 import {
-  applyBossMultiplier,
   applyDeadDice,
   applyDeadDiceCounts,
-  bossSuppresses,
+  applyMultiplierPenalty,
   extraPointsFor,
   jackpotFor,
   keenEdgeFor,
   luckySevenFor,
   snakeEyesFor,
-} from "./Boss";
+  suppresses,
+} from "./Afflictions";
 import { Die } from "./Dice";
 import { RunState } from "../state/RunState";
 import {
+  DOWNBEAT_MULT,
+  flatMultiplier,
+  flatMultiplierModifiers,
+  HAIR_TRIGGER_MULT,
+  isDownbeatRoll,
+  isFirstRoll,
   isHourglassRoll,
+  OUROBOROS_BONUS,
   JACKPOT_DICE,
   JACKPOT_POINTS,
   LUCKY_SEVEN_MULT,
@@ -271,7 +278,7 @@ export function scoreRollHistogram(
   // the whole modifier. Doing it here means a caller that passes the unfiltered
   // scoring numbers still gets the right answer, and doing it on a caller that
   // already filtered them is a no-op (the count is already zero).
-  const silenced = bossSuppresses(state, "extraNumber");
+  const silenced = suppresses(state, "extraNumber");
   const extraNumberScored = silenced ? 0 : agg.extraNumberScoringCount;
 
   // The Toll makes a fraction of the grid inert. It is applied to the COUNTS
@@ -298,6 +305,20 @@ export function scoreRollHistogram(
       dice: noDice,
       bigPulse: false,
       float: "none",
+    });
+  }
+
+  // Ouroboros pays ten for a die where the grid pays one — the nine above the
+  // base point, so the two stack rather than one replacing the other.
+  if (state.hasOuroboros && basePoints > 0) {
+    modifiers.push({
+      id: "ouroboros",
+      name: "Ouroboros",
+      points: BigInt(basePoints) * OUROBOROS_BONUS,
+      color: COLORS.goldLight,
+      dice: noDice,
+      bigPulse: true,
+      float: "aggregate",
     });
   }
 
@@ -469,32 +490,25 @@ export function scoreRollHistogram(
   const uniformActive =
     state.hasUniform && agg.total > 0 && agg.allSizes.size === 1;
   const hourglassActive = state.hasHourglass && isHourglassRoll(state);
+  const downbeatActive = state.downbeat > 0 && isDownbeatRoll(state);
+  const hairTriggerActive = state.hasHairTrigger && isFirstRoll(state);
   const luckySevenActive = luckySevenFor(state) && showsASeven(valueCounts);
-  const multiplier = applyBossMultiplier(
+  const multiplier = applyMultiplierPenalty(
     state,
-    (state.hasAmplifier ? 2n : 1n) *
+    flatMultiplier(state) *
       3n ** BigInt(state.prism) *
       (opts.finalRoll ? 4n ** BigInt(state.lastCall) : 1n) *
       (paradeActive ? 2n : 1n) *
       (menagerieActive ? 2n : 1n) *
       (uniformActive ? 3n : 1n) *
       (hourglassActive ? 2n : 1n) *
+      (downbeatActive ? DOWNBEAT_MULT ** BigInt(state.downbeat) : 1n) *
+      (hairTriggerActive ? HAIR_TRIGGER_MULT : 1n) *
       (luckySevenActive ? LUCKY_SEVEN_MULT : 1n) *
       agg.windfallMult,
   );
 
-  if (state.hasAmplifier) {
-    modifiers.push({
-      id: "amplifier",
-      name: "Amplifier",
-      points: 0n,
-      mult: 2n,
-      color: COLORS.goldLight,
-      dice: noDice,
-      bigPulse: false,
-      float: "aggregate",
-    });
-  }
+  modifiers.push(...flatMultiplierModifiers(state));
   if (state.prism > 0) {
     modifiers.push({
       id: "prism",
@@ -516,6 +530,30 @@ export function scoreRollHistogram(
       color: COLORS.goldLight,
       dice: noDice,
       bigPulse: false,
+      float: "aggregate",
+    });
+  }
+  if (downbeatActive) {
+    modifiers.push({
+      id: "downbeat",
+      name: "Downbeat",
+      points: 0n,
+      mult: DOWNBEAT_MULT ** BigInt(state.downbeat),
+      color: COLORS.goldLight,
+      dice: noDice,
+      bigPulse: false,
+      float: "aggregate",
+    });
+  }
+  if (hairTriggerActive) {
+    modifiers.push({
+      id: "hairTrigger",
+      name: "Hair Trigger",
+      points: 0n,
+      mult: HAIR_TRIGGER_MULT,
+      color: COLORS.goldLight,
+      dice: noDice,
+      bigPulse: true,
       float: "aggregate",
     });
   }

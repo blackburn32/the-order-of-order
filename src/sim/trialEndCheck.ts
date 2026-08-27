@@ -191,14 +191,23 @@ console.log("\nAdvancing");
   state.trialCleared = true;
   resolveTrialEnd(state);
   check(state.trial === 3, "advanced into the Boss Trial");
-  check(state.bossModifier !== null, "a boss modifier is armed for trial 3");
-  const firstBoss = state.bossModifier;
+  check(
+    state.bossModifiers.length > 0,
+    "a boss modifier is armed for trial 3",
+  );
+  const firstBoss = state.bossModifiers[0];
 
   state.trialCleared = true;
   resolveTrialEnd(state);
   check(state.trial === 4, "advanced out of the Boss Trial");
-  check(state.bossModifier !== null, "the next rank has a previewable boss");
-  check(state.bossModifier !== firstBoss, "consecutive ranks avoid repeats");
+  check(
+    state.bossModifiers.length > 0,
+    "the next rank has a previewable boss",
+  );
+  check(
+    state.bossModifiers[0] !== firstBoss,
+    "consecutive ranks avoid repeats",
+  );
 }
 
 {
@@ -306,7 +315,7 @@ console.log("\nStarting state");
   );
   beginRun(state, () => 0);
   check(
-    state.bossModifier !== null,
+    state.bossModifiers.length > 0,
     "and previews the rank's boss immediately",
   );
   check(activeBoss(state) === null, "without applying the boss before trial 3");

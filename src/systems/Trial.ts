@@ -4,13 +4,15 @@
 // needs to know which rolls are the first and last two) and the gold payout
 // (unused rolls) need it, and neither can import the engine without a cycle.
 
-import { isBossTrial, rollsForTrial } from "../config";
+import { rollsForTrial } from "../config";
 import type { RunState } from "../state/RunState";
-import { bossRollDeltaFor } from "./Boss";
+import { afflictionsForTrial } from "./Afflictions";
 
 /** This trial's roll budget: its base length, plus Metronome's permanent bonus
- *  and Overtime's this-trial-only bonus, minus anything the boss takes away.
- *  Never drops below 1 — a boss that shortens a trial must not erase it. */
+ *  and Overtime's this-trial-only bonus, minus whatever every affliction in
+ *  force takes off it (The Hunger's five, Crunch Time's three) or adds to it
+ *  (The Long Night's five).
+ *  Never drops below 1 — an affliction that shortens a trial must not erase it. */
 export function trialRollTarget(s: RunState): number {
   return trialRollTargetFor(s, s.trial);
 }
@@ -24,6 +26,6 @@ export function trialRollTargetFor(s: RunState, trial: number): number {
     rollsForTrial(trial) +
       s.bonusRollsPerRound +
       (trial === s.trial ? s.bonusRollsThisRound : 0) +
-      (isBossTrial(trial) ? bossRollDeltaFor(s.bossModifier) : 0),
+      afflictionsForTrial(s, trial).rollDelta,
   );
 }

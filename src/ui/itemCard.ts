@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { CSS, SERIF } from "../art/palette";
+import { COLORS, CSS, SERIF } from "../art/palette";
 import { newRun } from "../state/RunState";
 import { describeCriterion, ItemDef } from "../systems/Items";
 
@@ -64,6 +64,31 @@ const RARITY_COLOR: Record<ItemDef["rarity"], string> = {
 };
 
 /**
+ * A cursed card takes over the line that would name its rarity, and its
+ * parchment is washed in the same red. Both surfaces that draw cards — this one
+ * and the shop's own builder — read the treatment from here, so a cursed card
+ * looks the same wherever it is drawn.
+ *
+ * The rarity line is where the mark goes because it is the one field already
+ * set apart in colour, and reusing it costs the card no layout: the copy below
+ * is measured and wrapped exactly as before (see `copyFits`). What it costs is
+ * the rarity itself, which the card no longer prints — a fair trade, since
+ * "this will cost you something" is the more urgent of the two.
+ */
+export const CURSED_LABEL = "CURSED";
+export const CURSED_TINT = COLORS.cursedCard;
+
+/** The rarity line's text and colour, given whether the item is cursed. */
+export function rarityMark(
+  rarity: ItemDef["rarity"],
+  cursed: boolean,
+): { text: string; color: string } {
+  return cursed
+    ? { text: CURSED_LABEL, color: CSS.cursed }
+    : { text: rarity.toUpperCase(), color: RARITY_COLOR[rarity] };
+}
+
+/**
  * A static (non-interactive) item card for the Items gallery. Unlocked cards
  * show the item's real name/rarity/description plus a "Selected N times"
  * caption; locked cards are dimmed with every text field replaced by "???" and
@@ -94,16 +119,24 @@ export function buildItemCard(
     Math.min(WRAP_CAP * scale, (native * px) / nativePx);
   const img = scene.add.image(0, 0, "card");
   img.setDisplaySize(260 * scale, 340 * scale);
+  // A locked card gives nothing away, its curse included.
+  const cursed = (def.cursed ?? false) && !opts.locked;
+  if (cursed) img.setTint(CURSED_TINT);
 
   const terse = opts.terse ?? false;
-  const rarityText = opts.locked ? "???" : def.rarity.toUpperCase();
+  const mark = rarityMark(def.rarity, cursed);
   const rarity = scene.add
-    .text(0, (terse ? TERSE_RARITY_TOP : RARITY_Y) * scale, rarityText, {
-      fontFamily: SERIF,
-      fontSize: fontSize(13, 8),
-      color: opts.locked ? CSS.dim : RARITY_COLOR[def.rarity],
-      fontStyle: "bold",
-    })
+    .text(
+      0,
+      (terse ? TERSE_RARITY_TOP : RARITY_Y) * scale,
+      opts.locked ? "???" : mark.text,
+      {
+        fontFamily: SERIF,
+        fontSize: fontSize(13, 8),
+        color: opts.locked ? CSS.dim : mark.color,
+        fontStyle: "bold",
+      },
+    )
     .setOrigin(0.5, terse ? 0 : 0.5);
 
   // A terse card prints nothing under the title, so the title takes the middle

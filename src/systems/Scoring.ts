@@ -1,16 +1,16 @@
 import { COLORS } from "../art/palette";
 import {
-  applyBossMultiplier,
   applyDeadDice,
   applyDeadDiceCounts,
-  bossSuppresses,
+  applyMultiplierPenalty,
   extraPointsFor,
   jackpotFor,
   keenEdgeFor,
   luckySevenFor,
   scoringNumbersFor,
   snakeEyesFor,
-} from "./Boss";
+  suppresses,
+} from "./Afflictions";
 import { Die } from "./Dice";
 import { RunState } from "../state/RunState";
 import { trialRollTarget } from "./Trial";
@@ -39,6 +39,177 @@ export function countSevens(value: number): number {
     remaining = Math.floor(remaining / 10);
   }
   return count;
+}
+
+/** Downbeat falls on every fourth roll of a trial, counted from its first.
+ *  Counted forward from the start rather than back from the end so buying rolls
+ *  (Metronome, Overtime, Rain Check) never moves the beat under the player. */
+export const DOWNBEAT_INTERVAL = 4;
+/** Downbeat's factor, per copy owned, on a roll that lands on the beat. */
+export const DOWNBEAT_MULT = 2n;
+/** Crunch Time's factor on every roll — what the shorter trial buys. */
+export const CRUNCH_TIME_MULT = 3n;
+
+/** What one die pays over its base point when Ouroboros is burning the grid
+ *  down: the card promises ten, and the base scoring modifier already counts
+ *  the first. Carried as its own modifier rather than by inflating `Scoring` so
+ *  the points are credited to the card that cost the dice their lives. */
+export const OUROBOROS_BONUS = 9n;
+
+/** Hair Trigger's factor on the opening roll of every trial. */
+export const HAIR_TRIGGER_MULT = 10n;
+
+/**
+ * Every item whose whole scoring effect is one unconditional factor on the
+ * roll. A table rather than a branch apiece because both scorers, the
+ * attribution pass and the card copy all need the same list, and a cursed card
+ * that sells a flat multiplier for a standing drawback is now the commonest
+ * shape on the roster.
+ *
+ * Conditional multipliers (Hourglass, Parade, Downbeat, Last Call) stay as
+ * their own branches below: what makes them interesting is the condition, and
+ * a table of unconditional factors is exactly the wrong place to hide one.
+ */
+export interface FlatMultiplierDef {
+  /** Modifier id, in the camelCase the float text and breakdown use. */
+  id: string;
+  /** The item that owns it, for per-item attribution. */
+  item: string;
+  name: string;
+  /** The run flag set when the item is owned. */
+  flag: FlatMultiplierFlag;
+  mult: bigint;
+}
+
+export type FlatMultiplierFlag =
+  | "hasAmplifier"
+  | "hasCrunchTime"
+  | "hasBloodPrice"
+  | "hasFamishedIdol"
+  | "hasBloat"
+  | "hasGamblersCurse"
+  | "hasReckoning";
+
+export const FLAT_MULTIPLIERS: FlatMultiplierDef[] = [
+  {
+    id: "amplifier",
+    item: "amplifier",
+    name: "Amplifier",
+    flag: "hasAmplifier",
+    mult: 2n,
+  },
+  {
+    id: "crunchTime",
+    item: "crunch_time",
+    name: "Crunch Time",
+    flag: "hasCrunchTime",
+    mult: CRUNCH_TIME_MULT,
+  },
+  {
+    id: "bloodPrice",
+    item: "blood_price",
+    name: "Blood Price",
+    flag: "hasBloodPrice",
+    mult: 4n,
+  },
+  {
+    id: "famishedIdol",
+    item: "famished_idol",
+    name: "Famished Idol",
+    flag: "hasFamishedIdol",
+    mult: 5n,
+  },
+  {
+    id: "bloat",
+    item: "the_bloat",
+    name: "The Bloat",
+    flag: "hasBloat",
+    mult: 4n,
+  },
+  {
+    id: "gamblersCurse",
+    item: "gamblers_curse",
+    name: "Gambler's Curse",
+    flag: "hasGamblersCurse",
+    mult: 4n,
+  },
+  {
+    id: "reckoning",
+    item: "the_reckoning",
+    name: "The Reckoning",
+    flag: "hasReckoning",
+    mult: 2n,
+  },
+];
+
+/** The compounded factor of every flat multiplier the run owns. */
+export function flatMultiplier(state: RunState): bigint {
+  let mult = 1n;
+  for (const def of FLAT_MULTIPLIERS) if (state[def.flag]) mult *= def.mult;
+  return mult;
+}
+
+/** One display-only modifier per flat multiplier owned, for the roll breakdown. */
+export function flatMultiplierModifiers(state: RunState): ScoreModifier[] {
+  const mods: ScoreModifier[] = [];
+  for (const def of FLAT_MULTIPLIERS) {
+    if (!state[def.flag]) continue;
+    mods.push({
+      id: def.id,
+      name: def.name,
+      points: 0n,
+      mult: def.mult,
+      color: COLORS.goldLight,
+      dice: [],
+      bigPulse: false,
+      float: "aggregate",
+    });
+  }
+  return mods;
+}
+
+/**
+ * A roll that never got to be scored — the toll went unpaid (Tollkeeper) or the
+ * gamble came in (Gambler's Curse). It carries one named modifier so the roll
+ * breakdown can say WHICH affliction took the roll, and resets the scoring
+ * streaks exactly as a scoreless roll would, since that is what it is.
+ *
+ * Lives here rather than in the engine so both scoring paths agree on what a
+ * denied roll is worth: nothing, and no streak.
+ */
+export function deniedRoll(
+  state: RunState,
+  id: string,
+  name: string,
+): RollResult {
+  state.scoreStreak = 0;
+  state.momentumStreak = 0;
+  return {
+    points: 0n,
+    multiplier: 1n,
+    modifiers: [
+      {
+        id,
+        name,
+        points: 0n,
+        color: COLORS.cursedCard,
+        dice: [],
+        bigPulse: false,
+        float: "aggregate",
+      },
+    ],
+  };
+}
+
+/** Whether the roll about to be scored is a trial's opening roll — the one Hair
+ *  Trigger multiplies, and the only one its curse spares. */
+export function isFirstRoll(state: RunState): boolean {
+  return state.roll === 0;
+}
+
+/** Whether the roll about to be scored lands on Downbeat's beat. */
+export function isDownbeatRoll(state: RunState): boolean {
+  return (state.roll + 1) % DOWNBEAT_INTERVAL === 0;
 }
 
 export function isHourglassRoll(state: RunState): boolean {
@@ -163,7 +334,7 @@ export function scoreRoll(
   // The Silence: mirrors the histogram scorer exactly — `scoringNumbersFor`
   // above already excluded them, so this subtraction is a no-op here, but the
   // two scorers state the rule identically rather than relying on it.
-  const silenced = bossSuppresses(state, "extraNumber");
+  const silenced = suppresses(state, "extraNumber");
   const extraNumberScored = silenced ? 0 : extraNumberScoringCount;
   const basePoints = applyDeadDice(
     state,
@@ -195,6 +366,21 @@ export function scoreRoll(
       dice: scoringDice,
       bigPulse: false,
       float: "none",
+    });
+  }
+
+  // Ouroboros pays ten for a die where the grid pays one — the nine above the
+  // base point, so the two stack rather than one replacing the other, and Extra
+  // Point keeps paying on top of both.
+  if (state.hasOuroboros && basePoints > 0) {
+    modifiers.push({
+      id: "ouroboros",
+      name: "Ouroboros",
+      points: BigInt(basePoints) * OUROBOROS_BONUS,
+      color: COLORS.goldLight,
+      dice: scoringDice,
+      bigPulse: true,
+      float: "aggregate",
     });
   }
 
@@ -382,19 +568,25 @@ export function scoreRoll(
   const uniformActive =
     state.hasUniform && dice.length > 0 && allSizes.size === 1;
   const hourglassActive = state.hasHourglass && isHourglassRoll(state);
+  const downbeatActive = state.downbeat > 0 && isDownbeatRoll(state);
+  const hairTriggerActive = state.hasHairTrigger && isFirstRoll(state);
   const luckySevenActive = luckySevenFor(state) && showsASeven(valueCounts);
-  // Amplifier ×2, Prism ×3 per copy, Last Call ×4 per copy on the final roll,
-  // Lucky Seven ×7 on a roll that turned up a seven, and Windfall
-  // (Rollplayer/Centurion top-face) — all compound into one run multiplier.
-  const multiplier = applyBossMultiplier(
+  // The flat multipliers (Amplifier, and every cursed card that sells one),
+  // Prism ×3 per copy, Last Call ×4 per copy on the final roll, Lucky Seven ×7
+  // on a roll that turned up a seven, Hair Trigger ×10 on a trial's opening
+  // roll, and Windfall (Rollplayer/Centurion top-face) — all compound into one
+  // run multiplier.
+  const multiplier = applyMultiplierPenalty(
     state,
-    (state.hasAmplifier ? 2n : 1n) *
+    flatMultiplier(state) *
       3n ** BigInt(state.prism) *
       (opts.finalRoll ? 4n ** BigInt(state.lastCall) : 1n) *
       (paradeActive ? 2n : 1n) *
       (menagerieActive ? 2n : 1n) *
       (uniformActive ? 3n : 1n) *
       (hourglassActive ? 2n : 1n) *
+      (downbeatActive ? DOWNBEAT_MULT ** BigInt(state.downbeat) : 1n) *
+      (hairTriggerActive ? HAIR_TRIGGER_MULT : 1n) *
       (luckySevenActive ? LUCKY_SEVEN_MULT : 1n) *
       windfallMult,
   );
@@ -402,18 +594,7 @@ export function scoreRoll(
   // Surface every item-owned multiplier through the same modifier list as the
   // additive effects. These entries are display-only; the factors above remain
   // the single source of scoring truth.
-  if (state.hasAmplifier) {
-    modifiers.push({
-      id: "amplifier",
-      name: "Amplifier",
-      points: 0n,
-      mult: 2n,
-      color: COLORS.goldLight,
-      dice: [],
-      bigPulse: false,
-      float: "aggregate",
-    });
-  }
+  modifiers.push(...flatMultiplierModifiers(state));
   if (state.prism > 0) {
     modifiers.push({
       id: "prism",
@@ -435,6 +616,30 @@ export function scoreRoll(
       color: COLORS.goldLight,
       dice: [],
       bigPulse: false,
+      float: "aggregate",
+    });
+  }
+  if (downbeatActive) {
+    modifiers.push({
+      id: "downbeat",
+      name: "Downbeat",
+      points: 0n,
+      mult: DOWNBEAT_MULT ** BigInt(state.downbeat),
+      color: COLORS.goldLight,
+      dice: [],
+      bigPulse: false,
+      float: "aggregate",
+    });
+  }
+  if (hairTriggerActive) {
+    modifiers.push({
+      id: "hairTrigger",
+      name: "Hair Trigger",
+      points: 0n,
+      mult: HAIR_TRIGGER_MULT,
+      color: COLORS.goldLight,
+      dice: [],
+      bigPulse: true,
       float: "aggregate",
     });
   }

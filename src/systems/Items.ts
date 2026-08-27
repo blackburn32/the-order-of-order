@@ -1,9 +1,24 @@
 import { MAX_EXTRA_NUMBERS, WIN_RANK, rankOf } from "../config";
 import { RunState } from "../state/RunState";
-import { bossBlocksGrowth, goalFor } from "./Boss";
-import { DieOpts, DieSides } from "./Dice";
-import { RELIQUARY_BONUS_PERCENT } from "./Gold";
-import { JACKPOT_DICE, JACKPOT_POINTS } from "./Scoring";
+import {
+  AFFLICTIONS,
+  afflict,
+  afflictionsFor,
+  blocksGrowth,
+  type AfflictionId,
+} from "./Afflictions";
+import { goalFor } from "./Boss";
+import { DIE_LADDER, DieOpts, DieSides } from "./Dice";
+import { grantGold, RELIQUARY_BONUS_PERCENT } from "./Gold";
+import {
+  DOWNBEAT_INTERVAL,
+  DOWNBEAT_MULT,
+  FLAT_MULTIPLIERS,
+  HAIR_TRIGGER_MULT,
+  JACKPOT_DICE,
+  JACKPOT_POINTS,
+  OUROBOROS_BONUS,
+} from "./Scoring";
 import { trialRollTarget } from "./Trial";
 
 export type ShopItemId =
@@ -22,6 +37,9 @@ export type ShopItemId =
   | "twin"
   | "overtime"
   | "metronome"
+  | "rain_check"
+  | "downbeat"
+  | "crunch_time"
   | "grindstone"
   | "loaded_die"
   | "snake_eyes"
@@ -59,7 +77,24 @@ export type ShopItemId =
   | "counting_house"
   | "prospector"
   | "reliquary"
-  | "pawnbroker";
+  | "pawnbroker"
+  // Cursed cards. Each pays for a real boon with a standing drawback, written
+  // as an affliction (see systems/Afflictions) rather than in gold alone.
+  | "blood_price"
+  | "ouroboros"
+  | "famished_idol"
+  | "the_bloat"
+  | "iron_debt"
+  | "paupers_vow"
+  | "sealed_doors"
+  | "devils_bargain"
+  | "leaden_dice"
+  | "locust_idol"
+  | "gamblers_curse"
+  | "the_reckoning"
+  | "hair_trigger"
+  | "long_night"
+  | "tollkeeper";
 
 export type Rarity = "common" | "uncommon" | "rare";
 export type PriceBand = "free" | "low" | "standard" | "strong" | "build";
@@ -90,12 +125,23 @@ type RunFlag =
   | "hasUniform"
   | "hasHourglass"
   | "hasInsurancePolicy"
+  | "hasCrunchTime"
   | "hasCouponBook"
   | "hasDealersBell"
   | "hasShoppingCart"
   | "hasProspector"
   | "hasReliquary"
-  | "hasPawnbroker";
+  | "hasPawnbroker"
+  // The boon half of a cursed card. Its drawback is an affliction, never a flag
+  // — so a boss can inflict the drawback without granting the boon with it.
+  | "hasBloodPrice"
+  | "hasOuroboros"
+  | "hasFamishedIdol"
+  | "hasBloat"
+  | "hasSealedDoors"
+  | "hasGamblersCurse"
+  | "hasReckoning"
+  | "hasHairTrigger";
 
 /** Integer run counters a repeatable item bumps on each purchase — its effect
  *  compounds with the count (see the stacking passives on RunState). */
@@ -109,6 +155,8 @@ type RunCounter =
   | "jackpot"
   | "genesis"
   | "reserve"
+  | "rainCheck"
+  | "downbeat"
   | "prism"
   | "lastCall"
   | "brickMold"
@@ -135,7 +183,8 @@ export type UnlockCriterion =
   | { kind: "clutchClear" } // cross the goal on a trial's final roll
   | { kind: "scoreVsTarget"; factor: number } // reach `factor`× the current trial's goal
   | { kind: "clearBosses"; count: number } // clear `count` Boss Trials in one run
-  | { kind: "goldHeld"; amount: number }; // hold `amount` gold at once
+  | { kind: "goldHeld"; amount: number } // hold `amount` gold at once
+  | { kind: "rollsLeftOnClear"; count: number }; // clear a trial with `count` rolls to spare
 
 /**
  * The mutations an item can apply to the run. Items are composed from these
@@ -163,9 +212,13 @@ export type Effect =
   | { kind: "wildSize" } // make every die of the chosen die's size wild (now + future)
   | { kind: "sealSize" } // make the chosen size's maximum face score (now + future)
   | { kind: "bonusRollsProportional"; fraction: number; min: number } // add max(min, ⌊fraction·roll budget⌋) rolls, this trial only
-  | { kind: "bonusRollPerRound" }
+  | { kind: "bonusRollPerRound"; count?: number }
   | { kind: "setFlag"; flag: RunFlag }
-  | { kind: "incCounter"; counter: RunCounter };
+  | { kind: "incCounter"; counter: RunCounter }
+  | { kind: "addGold"; amount: number }
+  /** Inflict a standing drawback for the rest of the run. The curse half of
+   *  every cursed card, and the one effect that makes a purchase worse. */
+  | { kind: "afflict"; id: AfflictionId };
 
 /** Which die/dice a target-consuming effect should act on. `index` is a single
  *  chosen die (shrink, twin, loaded, wild); `indices` are the multi-pick dice
@@ -212,8 +265,13 @@ const bonusRollsProportional = (fraction: number, min: number): Effect => ({
   fraction,
   min,
 });
-const bonusRollPerRound = (): Effect => ({ kind: "bonusRollPerRound" });
+const bonusRollPerRound = (count = 1): Effect => ({
+  kind: "bonusRollPerRound",
+  count,
+});
 const setFlag = (flag: RunFlag): Effect => ({ kind: "setFlag", flag });
+const addGold = (amount: number): Effect => ({ kind: "addGold", amount });
+const afflictWith = (id: AfflictionId): Effect => ({ kind: "afflict", id });
 const incCounter = (counter: RunCounter): Effect => ({
   kind: "incCounter",
   counter,
@@ -245,6 +303,12 @@ export interface ItemDef {
   /** When present, the item is hidden from the shop until the player has met
    *  this persistent-unlock condition (see `meetsCriterion`). */
   unlock?: UnlockCriterion;
+  /** A cursed item: strong, but paid for with a standing drawback rather than
+   *  gold alone. Purely a presentation flag — nothing in the rules branches on
+   *  it, the drawback lives in the item's own effects — but every card surface
+   *  marks it, so a card that will cost the run something is never mistaken for
+   *  an ordinary one (see ui/itemCard's cursed treatment). */
+  cursed?: boolean;
   effects: Effect[];
 }
 
@@ -316,6 +380,35 @@ export function overtimeRolls(state: RunState): number {
     Math.floor(trialRollTarget(state) * OVERTIME_FRACTION),
   );
 }
+
+// --- Cursed card copy -------------------------------------------------------
+//
+// A cursed card states two things it must never get wrong: what it pays, and
+// what it costs. Both are read back from the tables that actually enforce them —
+// the scoring multipliers from FLAT_MULTIPLIERS, the drawbacks from AFFLICTIONS
+// — so a tuning change moves the card text with it.
+
+/** A flat multiplier as its card prints it (`×4`), by the item that sells it. */
+function flatMult(item: ShopItemId): string {
+  const def = FLAT_MULTIPLIERS.find((m) => m.item === item);
+  return def ? `×${def.mult}` : "×1";
+}
+
+/** A drawback's chance as its card prints it (`10%`). */
+function pct(fraction = 0): string {
+  return `${Math.round(fraction * 100)}%`;
+}
+
+/** A goal multiplier as the card prints the rise (`25%`). */
+function goalRise(multMilli = 1_000): string {
+  return `${Math.round((multMilli - 1_000) / 10)}%`;
+}
+
+/** What The Long Night buys, and what Devil's Bargain lends. */
+const LONG_NIGHT_BONUS_ROLLS = 5;
+const DEVILS_BARGAIN_GOLD = 20;
+/** What Ouroboros pays for a die the grid pays one for. */
+const OUROBOROS_DIE_POINTS = 1n + OUROBOROS_BONUS;
 
 /** Shopping Cart's across-the-board discount. Declared here with the card that
  *  promises it; the shop's pricing reads it back (see systems/Shop). */
@@ -441,7 +534,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
-    desc: (s) => `Add ${overtimeRolls(s)} rolls to this trial only.`,
+    desc: (s) => `Add ${overtimeRolls(s)} rolls to the next trial.`,
     effects: [bonusRollsProportional(OVERTIME_FRACTION, OVERTIME_MIN)],
   },
   {
@@ -458,6 +551,40 @@ export const ITEMS: ItemDef[] = [
     ),
     effects: [bonusRollPerRound()],
   },
+  // Overtime rents rolls for one trial and Metronome buys them outright; Rain
+  // Check earns them, by clearing with room to spare. It pays nothing to a
+  // build that needs every roll it is given, which is the point: it rewards
+  // overkill instead of adding to it.
+  {
+    id: "rain_check",
+    name: "Rain Check",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => s.rainCheck,
+      (copies) => copies,
+      (rolls, plural) =>
+        `When you clear a trial, carry up to ${rolls} unused roll${plural ? "s" : ""} into the next one.`,
+    ),
+    unlock: { kind: "rollsLeftOnClear", count: 8 },
+    effects: [incCounter("rainCheck")],
+  },
+  {
+    id: "downbeat",
+    name: "Downbeat",
+    priceBand: "strong",
+    stackPricing: "explosive",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => s.downbeat,
+      (copies) => `×${DOWNBEAT_MULT ** BigInt(copies)}`,
+      (factor) =>
+        `Every ${DOWNBEAT_INTERVAL}th roll of a trial multiplies points by ${factor}.`,
+    ),
+    unlock: { kind: "scoreStreak", count: 20 },
+    effects: [incCounter("downbeat")],
+  },
   {
     id: "extra_dice",
     name: "Extra Dice",
@@ -467,7 +594,7 @@ export const ITEMS: ItemDef[] = [
     // Quoted against the grid the player is holding, because "a quarter of your
     // grid" is the rule, not the answer to "is this worth five gold right now?".
     desc: (s) =>
-      `Add ${proportionalCount(s, EXTRA_DICE_FRACTION, EXTRA_DICE_MIN)} d6 to your grid — a quarter of it, at least ${EXTRA_DICE_MIN}.`,
+      `Add ${proportionalCount(s, EXTRA_DICE_FRACTION, EXTRA_DICE_MIN)} d6 to your grid`,
     effects: [addDiceProportional(6, EXTRA_DICE_FRACTION, EXTRA_DICE_MIN)],
   },
   {
@@ -701,6 +828,241 @@ export const ITEMS: ItemDef[] = [
     unique: true,
     desc: "If a trial ends at 75% of its goal, clear it anyway and destroy this item.",
     effects: [setFlag("hasInsurancePolicy")],
+  },
+  // --- Cursed cards --------------------------------------------------------
+  //
+  // Each is a real boon sold for a standing drawback instead of gold alone. The
+  // two halves are deliberately separate: the boon is a flag (or a plain effect)
+  // and the drawback is an `afflict`, so the same drawback can later be handed
+  // to a boss without the boon following it (see systems/Afflictions).
+  //
+  // All are unique. A curse folds only once, but a second copy would stack the
+  // boon on top of a drawback already paid for, which is not a decision worth
+  // offering.
+  {
+    id: "crunch_time",
+    name: "Crunch Time",
+    priceBand: "build",
+    rarity: "rare",
+    unique: true,
+    cursed: true,
+    desc: `Every point you earn is multiplied by ${flatMult("crunch_time")}, but every trial grants ${-AFFLICTIONS.crunchTime.rollDelta!} fewer rolls.`,
+    unlock: { kind: "winGame" },
+    effects: [setFlag("hasCrunchTime"), afflictWith("crunchTime")],
+  },
+  // Breakage bills the player for success rather than failure, which is what
+  // keeps it from fading on a late-game grid: the more a build scores, the more
+  // of it burns. Two sources of it stack into one likelier break (see the
+  // dieBreakChance fold), so Blood Price and Ouroboros together are a build.
+  {
+    id: "blood_price",
+    name: "Blood Price",
+    priceBand: "build",
+    rarity: "rare",
+    unique: true,
+    cursed: true,
+    desc: `Every point you earn is multiplied by ${flatMult("blood_price")}, but each die that scores has a ${pct(AFFLICTIONS.bloodPrice.dieBreakChance)} chance to shatter.`,
+    unlock: { kind: "reachRank", rank: 3 },
+    effects: [setFlag("hasBloodPrice"), afflictWith("bloodPrice")],
+  },
+  {
+    id: "ouroboros",
+    name: "Ouroboros",
+    priceBand: "build",
+    rarity: "rare",
+    unique: true,
+    cursed: true,
+    desc: `Every die that scores pays ${OUROBOROS_DIE_POINTS} points instead of 1, but each one has a ${pct(AFFLICTIONS.ouroboros.dieBreakChance)} chance to shatter.`,
+    unlock: { kind: "winGame" },
+    effects: [setFlag("hasOuroboros"), afflictWith("ouroboros")],
+  },
+  {
+    id: "famished_idol",
+    name: "Famished Idol",
+    priceBand: "build",
+    rarity: "rare",
+    unique: true,
+    cursed: true,
+    desc: `Every point you earn is multiplied by ${flatMult("famished_idol")}, but your grid can never hold more than ${AFFLICTIONS.famishedIdol.gridCap} dice.`,
+    unlock: { kind: "scoreVsTarget", factor: 2 },
+    effects: [setFlag("hasFamishedIdol"), afflictWith("famishedIdol")],
+  },
+  {
+    id: "the_bloat",
+    name: "The Bloat",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    cursed: true,
+    desc: `Every point you earn is multiplied by ${flatMult("the_bloat")}, but every die in your grid grows one size at the start of each trial.`,
+    effects: [setFlag("hasBloat"), afflictWith("bloat")],
+  },
+  // The economy curses. Each takes a different part of the shop away — its
+  // income, its banking, its breadth — so a run can only afford one of them.
+  {
+    id: "iron_debt",
+    name: "Iron Debt",
+    priceBand: "strong",
+    rarity: "rare",
+    unique: true,
+    cursed: true,
+    // Buys the whole precision build in one card, then takes away the shop that
+    // would have sold it: what the run holds when it signs is what it rides.
+    desc: (s) =>
+      `The Order decrees that dice showing ${2 + s.extraNumberCount} and ${3 + s.extraNumberCount} also score, but a cleared trial pays nothing but its interest.`,
+    available: (s) => s.extraNumberCount <= MAX_EXTRA_NUMBERS - 2,
+    unlock: { kind: "goldHeld", amount: 25 },
+    effects: [extraNumber(), extraNumber(), afflictWith("ironDebt")],
+  },
+  {
+    id: "paupers_vow",
+    name: "Pauper's Vow",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    cursed: true,
+    desc: (s) =>
+      `Each scoring die grants ${upgrade(1 + s.extraPoints, 4 + s.extraPoints)} points, but you lose all gold above ${AFFLICTIONS.paupersVow.goldCeiling} when a trial ends.`,
+    effects: [
+      extraPoint(),
+      extraPoint(),
+      extraPoint(),
+      afflictWith("paupersVow"),
+    ],
+  },
+  {
+    id: "sealed_doors",
+    name: "Sealed Doors",
+    priceBand: "build",
+    rarity: "rare",
+    unique: true,
+    cursed: true,
+    // Trades quantity for quality, and carries a constraint the copy does not
+    // spell out: a second application does nothing for a one-time card, so this
+    // wants a stacking build and quietly punishes a shelf of unique flags.
+    desc: `Every item you buy takes effect twice, but you may buy only ${AFFLICTIONS.sealedDoors.purchaseLimit} item in each shop.`,
+    unlock: { kind: "goldHeld", amount: 40 },
+    effects: [setFlag("hasSealedDoors"), afflictWith("sealedDoors")],
+  },
+  {
+    id: "devils_bargain",
+    name: "Devil's Bargain",
+    priceBand: "low",
+    rarity: "common",
+    unique: true,
+    cursed: true,
+    // A loan: the only curse on the roster that gets worse the longer the run
+    // lives, since the goal it raises is the one thing that grows all game.
+    desc: `Gain ${DEVILS_BARGAIN_GOLD} gold now. Every trial's goal is ${goalRise(AFFLICTIONS.devilsBargain.goalMultMilli)} higher for the rest of the run.`,
+    effects: [addGold(DEVILS_BARGAIN_GOLD), afflictWith("devilsBargain")],
+  },
+  {
+    id: "tollkeeper",
+    name: "Tollkeeper",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    cursed: true,
+    // Turns gold into a per-roll resource, which is what makes Tithe Bowl and
+    // Lucky Coin fuel rather than filler.
+    desc: (s) =>
+      `Each scoring die grants ${upgrade(1 + s.extraPoints, 5 + s.extraPoints)} points, but every roll costs ${AFFLICTIONS.tollkeeper.rollGoldCost} gold — a roll you cannot pay for scores nothing.`,
+    unlock: { kind: "reachRank", rank: 2 },
+    effects: [
+      extraPoint(),
+      extraPoint(),
+      extraPoint(),
+      extraPoint(),
+      afflictWith("tollkeeper"),
+    ],
+  },
+  // The rules curses: permanent versions of hostile rules the Boss Trials only
+  // ever impose for one trial.
+  {
+    id: "leaden_dice",
+    name: "Leaden Dice",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    cursed: true,
+    // Reads harmless and is not: loading the whole grid helps 1s land, and in
+    // the same stroke kills Windfall, Royal Seal and most of Lucky Seven.
+    desc: (s) =>
+      `Each scoring die grants ${upgrade(1 + s.extraPoints, 4 + s.extraPoints)} points, but every die is loaded — now and later — and never rolls its two highest faces.`,
+    unlock: { kind: "winGame" },
+    effects: [
+      extraPoint(),
+      extraPoint(),
+      extraPoint(),
+      afflictWith("leadenDice"),
+    ],
+  },
+  {
+    id: "locust_idol",
+    name: "Locust Idol",
+    priceBand: "build",
+    rarity: "rare",
+    unique: true,
+    cursed: true,
+    // A timing card rather than a power card. One last enormous pour, after
+    // which the grid is frozen and every growth card in the shop is dead space —
+    // so buying it early is a trap and buying it late is the play.
+    desc: "Multiply every die in your grid by 5. Nothing will ever add a die to your grid again.",
+    unlock: { kind: "diceInGrid", count: 1000 },
+    effects: [multiplyDice(5), afflictWith("locustIdol")],
+  },
+  {
+    id: "gamblers_curse",
+    name: "Gambler's Curse",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    cursed: true,
+    desc: `Every point you earn is multiplied by ${flatMult("gamblers_curse")}, but each roll has a ${pct(AFFLICTIONS.gamblersCurse.dudRollChance)} chance to score nothing at all.`,
+    effects: [setFlag("hasGamblersCurse"), afflictWith("gamblersCurse")],
+  },
+  // The structural curses, which reshape a trial rather than a rule.
+  {
+    id: "the_reckoning",
+    name: "The Reckoning",
+    priceBand: "standard",
+    rarity: "common",
+    unique: true,
+    cursed: true,
+    // The honest arithmetic trade, and the one cursed card worth buying early:
+    // the multiplier compounds with everything else the run owns, and the goal
+    // it doubles does not.
+    desc: `Every point you earn is multiplied by ${flatMult("the_reckoning")}, but every trial's goal is doubled.`,
+    effects: [setFlag("hasReckoning"), afflictWith("reckoning")],
+  },
+  {
+    id: "hair_trigger",
+    name: "Hair Trigger",
+    priceBand: "strong",
+    rarity: "rare",
+    unique: true,
+    cursed: true,
+    // Rebuilds the trial around its opening roll: Foundry fires before it, the
+    // molds never get going, and Metronome buys rolls worth half as much.
+    desc: `The first roll of every trial earns ${HAIR_TRIGGER_MULT}× points, but on every roll after it ${pct(AFFLICTIONS.hairTrigger.lateRollDeadFraction)} of your dice score nothing.`,
+    unlock: { kind: "clutchClear" },
+    effects: [setFlag("hasHairTrigger"), afflictWith("hairTrigger")],
+  },
+  {
+    id: "long_night",
+    name: "The Long Night",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    cursed: true,
+    // The mirror of Crunch Time: that card sells rolls for points, this one buys
+    // them with boss pain.
+    desc: `Every trial grants ${LONG_NIGHT_BONUS_ROLLS} more rolls, but every Boss Trial rolls ${AFFLICTIONS.longNight.bossModifierCount} modifiers instead of one.`,
+    unlock: { kind: "clearBosses", count: 3 },
+    effects: [
+      bonusRollPerRound(LONG_NIGHT_BONUS_ROLLS),
+      afflictWith("longNight"),
+    ],
   },
   {
     id: "coupon_book",
@@ -995,6 +1357,8 @@ export function describeCriterion(c: UnlockCriterion): string {
       return `Locked — clear ${c.count} Boss Trials in one run`;
     case "goldHeld":
       return `Locked — hold ${c.amount} gold at once`;
+    case "rollsLeftOnClear":
+      return `Locked — clear a trial with ${c.count} rolls to spare`;
   }
 }
 
@@ -1026,6 +1390,8 @@ export function describeUnlockAction(c: UnlockCriterion): string {
       return `Cleared ${c.count} Boss Trials in one run`;
     case "goldHeld":
       return `Held ${c.amount} gold at once`;
+    case "rollsLeftOnClear":
+      return `Cleared a trial with ${c.count} rolls to spare`;
   }
 }
 
@@ -1056,6 +1422,10 @@ export function meetsCriterion(c: UnlockCriterion, state: RunState): boolean {
       return state.bossesCleared >= c.count;
     case "goldHeld":
       return state.peakGold >= c.amount;
+    case "rollsLeftOnClear":
+      // Read off the run's best clear rather than the live trial: a clear
+      // resets the roll counter before unlocks are next evaluated.
+      return state.peakRollsLeftOnClear >= c.count;
   }
 }
 
@@ -1090,6 +1460,12 @@ export function applyEffect(
   effect: Effect,
   ctx: EffectContext,
 ): boolean {
+  // A growth-blocking affliction (Locust Idol for the rest of the run, The
+  // Drought for its trial) means exactly what it says: no effect may put dice on
+  // the grid. Refusing here rather than silently doing nothing aborts the sale,
+  // so the player is never charged for a card that could not act.
+  if (GROWTH_EFFECTS.has(effect.kind) && blocksGrowth(state)) return false;
+
   switch (effect.kind) {
     case "addDice":
       state.dice.addDice(
@@ -1173,8 +1549,26 @@ export function applyEffect(
       );
       return true;
     case "bonusRollPerRound":
-      state.bonusRollsPerRound += 1;
+      state.bonusRollsPerRound += effect.count ?? 1;
       return true;
+    case "addGold":
+      grantGold(state, effect.amount);
+      return true;
+    case "afflict": {
+      afflict(state, effect.id);
+      // An affliction that loads the grid is carried out through the same
+      // persistent size aura Loaded Die uses, so dice added later inherit it.
+      // That makes it a drawback for a PERMANENT source; a trial-scoped version
+      // would need its own field, read at roll time rather than applied here.
+      if (AFFLICTIONS[effect.id].loadsAllDice) {
+        for (const sides of DIE_LADDER) {
+          if (sides <= 1) continue;
+          if (!state.loadedSizes.includes(sides)) state.loadedSizes.push(sides);
+          state.dice.loadAllOfSize(sides);
+        }
+      }
+      return true;
+    }
     case "setFlag":
       state[effect.flag] = true;
       return true;
@@ -1183,6 +1577,39 @@ export function applyEffect(
       return true;
   }
 }
+
+/** The effect kinds that put dice on the grid, and so are refused outright while
+ *  growth is blocked. The passives that grow the grid on their own (Genesis, the
+ *  molds, Foundry, Double the Fun) are stopped where they fire instead — in the
+ *  roll loop and in applyTrialStart — since owning them is not the moment they
+ *  act. */
+const GROWTH_EFFECTS = new Set<Effect["kind"]>([
+  "addDice",
+  "addDiceProportional",
+  "multiplyDice",
+  "twinSize",
+]);
+
+/** Whether a card would put dice on the grid, either at once or by paying out
+ *  over the run. Read by the shop, which stops offering these once a permanent
+ *  affliction has frozen the grid — a card that can do nothing at all is worse
+ *  than a bad card. */
+export function itemGrowsGrid(def: ItemDef): boolean {
+  return def.effects.some(
+    (effect) =>
+      GROWTH_EFFECTS.has(effect.kind) ||
+      (effect.kind === "incCounter" && GROWTH_COUNTERS.has(effect.counter)) ||
+      (effect.kind === "setFlag" && effect.flag === "hasDoubleTheFun"),
+  );
+}
+
+const GROWTH_COUNTERS = new Set<RunCounter>([
+  "chipMold",
+  "spikeMold",
+  "brickMold",
+  "foundry",
+  "genesis",
+]);
 
 /** The molds, which each pour dice of one size into the grid after every roll,
  *  one per copy owned. A new mold is a row here and a card above — nothing else
@@ -1231,14 +1658,33 @@ export function applyMolds(
  * Dividend are not here — they pay out every roll, so they live in scoreRoll.
  */
 export function applyTrialStart(state: RunState): number {
+  const before = state.dice.length;
+  const afflictions = afflictionsFor(state);
+  // The Bloat walks the whole grid UP the ladder — the inverse of Refinement,
+  // and the reason it fights every build that spent the run shrinking. Applied
+  // before Foundry, so Foundry doubles the size the grid actually starts on.
+  if (afflictions.dieGrowthPerTrial > 0)
+    state.dice.growAll(afflictions.dieGrowthPerTrial);
   // The Drought shuts off every source of new dice for its Boss Trial, Foundry
-  // included — otherwise a Foundry build would walk straight through it.
-  if (bossBlocksGrowth(state)) return 0;
-  // Foundry: double the smallest size on the grid, once per copy owned. A flat
-  // handful of dice was noise past the first few trials; a doubling stays worth
-  // the explosive price the card is sold at.
-  if (state.foundry <= 0) return 0;
-  return state.dice.foundryDouble(state.foundry);
+  // included — otherwise a Foundry build would walk straight through it. Locust
+  // Idol says the same thing for the rest of the run.
+  if (!blocksGrowth(state) && state.foundry > 0) {
+    // Foundry: double the smallest size on the grid, once per copy owned. A flat
+    // handful of dice was noise past the first few trials; a doubling stays worth
+    // the explosive price the card is sold at.
+    state.dice.foundryDouble(state.foundry);
+  }
+  enforceGridCap(state);
+  return state.dice.length - before;
+}
+
+/** Cull the grid back to whatever ceiling is in force (Famished Idol's hundred).
+ *  Returns how many dice were culled. Called wherever the grid can have grown:
+ *  as a trial starts, and after every roll's growth passives. */
+export function enforceGridCap(state: RunState): number {
+  const cap = afflictionsFor(state).gridCap;
+  if (!Number.isFinite(cap) || state.dice.length <= cap) return 0;
+  return state.dice.cull(cap);
 }
 
 /**
@@ -1303,9 +1749,28 @@ export const ITEM_THEMES: Record<ShopItemId, ItemTheme[]> = {
   ledger: ["economy"],
   dealers_bell: ["economy"],
 
+  blood_price: ["multiplier"],
+  ouroboros: ["precision", "swarm"],
+  famished_idol: ["multiplier", "precision"],
+  the_bloat: ["multiplier"],
+  iron_debt: ["precision"],
+  paupers_vow: ["precision", "economy"],
+  sealed_doors: ["economy"],
+  devils_bargain: ["economy"],
+  leaden_dice: ["precision"],
+  locust_idol: ["swarm"],
+  gamblers_curse: ["multiplier"],
+  the_reckoning: ["multiplier"],
+  hair_trigger: ["multiplier", "tempo"],
+  long_night: ["tempo"],
+  tollkeeper: ["precision", "economy"],
+
   overtime: ["tempo"],
   metronome: ["tempo"],
   insurance_policy: ["tempo"],
+  rain_check: ["tempo"],
+  downbeat: ["tempo", "multiplier"],
+  crunch_time: ["tempo", "multiplier"],
 };
 
 /** Every item that serves `theme`, in roster order. */

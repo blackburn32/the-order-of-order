@@ -14,6 +14,7 @@
 
 import { isBossTrial, trialInRank } from "../config";
 import type { RunState } from "../state/RunState";
+import { afflictionsFor } from "./Afflictions";
 import { bossGoldMultMilli } from "./Boss";
 import { trialRollTarget } from "./Trial";
 
@@ -115,9 +116,14 @@ export function trialPayout(state: RunState): GoldBreakdown {
   }
   if (isBossTrial(state.trial)) items += BOSS_CLEAR_GOLD;
 
-  const multMilli = state.hasReliquary
-    ? Math.floor((bossGoldMultMilli(state) * RELIQUARY_MULT_MILLI) / 1_000)
-    : bossGoldMultMilli(state);
+  // The Hoard's doubling, Reliquary's share, and any affliction that garnishes
+  // a clear (Iron Debt pays none of it) all meet in one per-mille factor.
+  let multMilli = bossGoldMultMilli(state);
+  if (state.hasReliquary)
+    multMilli = Math.floor((multMilli * RELIQUARY_MULT_MILLI) / 1_000);
+  multMilli = Math.floor(
+    (multMilli * afflictionsFor(state).clearGoldMultMilli) / 1_000,
+  );
   const scale = (n: number) => Math.floor((n * multMilli) / 1000);
 
   const scaled = {
@@ -160,6 +166,20 @@ export function rollGoldBreakdown(
     if (rng() < LUCKY_COIN_CHANCE) luckyCoin += 1;
   }
   return { titheBowl, luckyCoin, total: titheBowl + luckyCoin };
+}
+
+/**
+ * Take back whatever a standing affliction will not let the run carry out of a
+ * trial (Pauper's Vow leaves seven). Called as a trial ends, after its payout
+ * has been banked, so the ceiling is what the player walks into the shop with —
+ * and returns the gold lost, which the results receipt reports.
+ */
+export function applyGoldCeiling(state: RunState): number {
+  const ceiling = afflictionsFor(state).goldCeiling;
+  if (!Number.isFinite(ceiling) || state.gold <= ceiling) return 0;
+  const lost = state.gold - ceiling;
+  state.gold = ceiling;
+  return lost;
 }
 
 /** Bank gold on the run, keeping the lifetime and peak tallies in step. The

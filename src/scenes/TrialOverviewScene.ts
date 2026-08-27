@@ -2,7 +2,7 @@ import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { TRIALS_PER_RANK, rankOf, trialInRank, trialName } from "../config";
 import { getRun, type RunState } from "../state/RunState";
-import { goalForTrial, rankBoss } from "../systems/Boss";
+import { goalForTrial, rankBosses } from "../systems/Boss";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { trialRollTargetFor } from "../systems/Trial";
@@ -186,9 +186,12 @@ export class TrialOverviewScene extends Phaser.Scene {
         data: {
           ordinal: TRIAL_ORDINALS[slot] ?? String(slot + 1),
           title: trialName(trial),
-          goal: formatScore(goalForTrial(trial, this.state.bossModifier)),
+          goal: formatScore(goalForTrial(this.state, trial)),
           rolls: String(trialRollTargetFor(this.state, trial)),
-          curse: boss ? (rankBoss(this.state) ?? undefined) : undefined,
+          // A rank can hold more than one modifier (The Long Night); the card
+          // has room for one line of each, so they are joined rather than
+          // stacked.
+          curse: boss ? curseFor(rankBosses(this.state)) : undefined,
         },
         status: {
           complete: trial < this.state.trial,
@@ -409,4 +412,17 @@ export class TrialOverviewScene extends Phaser.Scene {
     audio.trialUp();
     slideSceneOut(this, () => this.scene.start("Game"), this.slideBackdrop);
   }
+}
+
+/** The rank's modifiers as one card curse: a single boss reads exactly as it
+ *  always has, and several are joined into one name and one rule. */
+function curseFor(
+  bosses: { name: string; desc: string }[],
+): { name: string; desc: string } | undefined {
+  if (bosses.length === 0) return undefined;
+  if (bosses.length === 1) return bosses[0];
+  return {
+    name: bosses.map((b) => b.name).join(" · "),
+    desc: bosses.map((b) => b.desc).join(" "),
+  };
 }

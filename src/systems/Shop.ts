@@ -1,4 +1,5 @@
 import { RunState } from "../state/RunState";
+import { afflictionsFor, permanentAfflictions } from "../systems/Afflictions";
 import {
   BOON_RARITY_WEIGHTS,
   RARITY_WEIGHTS,
@@ -6,6 +7,7 @@ import {
 } from "../config";
 import {
   applyEffect,
+  enforceGridCap,
   ITEMS,
   ItemDef,
   ItemTheme,
@@ -14,6 +16,7 @@ import {
   SHOPPING_CART_DISCOUNT_PERCENT,
   ShopItemId,
   StackPricing,
+  itemGrowsGrid,
   itemsInTheme,
 } from "./Items";
 
@@ -35,6 +38,7 @@ export interface ShopOffer {
   needsTarget: boolean; // player must pick a die (shrink, twin, loaded_die, wild_face)
   targetsSize: boolean; // that pick only names a die size, not one specific die
   targetCount?: number; // >1 for multi-pick items (grindstone)
+  cursed: boolean; // carries a standing drawback — marked on the card
   freeByCoupon?: boolean;
 }
 
@@ -71,6 +75,9 @@ const STACK_FACTOR: Record<StackPricing, number> = {
 const SHOPPING_CART_DISCOUNT = SHOPPING_CART_DISCOUNT_PERCENT / 100;
 /** Pawnbroker's flat reduction, applied after every other adjustment. */
 const PAWNBROKER_DISCOUNT = 2;
+
+/** How many times Sealed Doors runs a purchased card's effects. */
+const SEALED_DOORS_APPLICATIONS = 2;
 
 /** A reroll costs this, plus one more for each reroll already taken in the
  *  visit — cheap enough to use, expensive enough to be a real choice. */
@@ -133,6 +140,7 @@ export function offerFor(
     needsTarget: def.needsTarget ?? false,
     targetsSize: def.targetsSize ?? false,
     targetCount: def.targetCount,
+    cursed: def.cursed ?? false,
     freeByCoupon: false,
   };
 }
@@ -145,8 +153,13 @@ function rollMarketFactor(rng: () => number): number {
 
 export function availableIds(state: RunState): ShopItemId[] {
   const unlocked = new Set(state.shopUnlocks);
+  // A run that has frozen its grid for good (Locust Idol) is never offered a
+  // card that only adds dice. Read off the PERMANENT afflictions, not the live
+  // ones: a boss that blocks growth for its own trial should not also reshape
+  // the shop the player visits before it.
+  const frozen = permanentAfflictions(state).blocksGrowth;
   return (
-    ITEMS
+    ITEMS.filter((it) => !frozen || !itemGrowsGrid(it))
       // Criterion-gated items stay out of the pool unless they were unlocked
       // before this run began. Mid-run unlocks become eligible next run.
       .filter((it) => !it.unlock || unlocked.has(it.id))
@@ -498,6 +511,21 @@ export function canAfford(state: RunState, offer: ShopOffer): boolean {
   return state.gold >= offer.cost;
 }
 
+/** How many more cards this visit may take, given the purchases already made.
+ *  Unlimited (Infinity) unless an affliction says otherwise — Sealed Doors
+ *  allows exactly one. */
+export function purchasesRemaining(
+  state: RunState,
+  purchasesMade: number,
+): number {
+  return afflictionsFor(state).purchaseLimit - purchasesMade;
+}
+
+/** Whether an affliction has closed the counter for the rest of this visit. */
+export function shopClosed(state: RunState, purchasesMade: number): boolean {
+  return purchasesRemaining(state, purchasesMade) <= 0;
+}
+
 /**
  * Apply a purchased offer. Deducts the gold and runs each of the item's
  * effects in turn. `targetIndex` is the die index for single-target items
@@ -528,9 +556,26 @@ export function applyOffer(
     if (!applyEffect(state, effect, ctx)) return false;
   }
 
+  // Sealed Doors buys one card a shop and takes it twice. The second pass is a
+  // bonus rather than part of the purchase: an effect with nothing left to do —
+  // a flag already set, a die already at the floor of the ladder — leaves the
+  // card bought and paid for rather than failing the sale. It is also why the
+  // card wants a stacking build; a shelf of one-time flags gains nothing here.
+  const applications = state.hasSealedDoors ? SEALED_DOORS_APPLICATIONS : 1;
+  for (let pass = 1; pass < applications; pass++) {
+    for (const effect of def.effects) applyEffect(state, effect, ctx);
+  }
+
   if (def.unique && !state.ownedUnique.includes(def.id))
     state.ownedUnique.push(def.id);
-  state.purchases[def.id] = (state.purchases[def.id] ?? 0) + 1;
+  // A unique card is recorded once however many times its effects ran — it is
+  // one card on the shelf. A stacking card records every application, so its
+  // rising price and its "one more copy buys you this" line both stay honest.
+  state.purchases[def.id] =
+    (state.purchases[def.id] ?? 0) + (def.unique ? 1 : applications);
   state.gold -= offer.cost;
+  // A card that grew the grid may have pushed it past a cap affliction; the
+  // ceiling holds between rolls as well as during them.
+  enforceGridCap(state);
   return true;
 }

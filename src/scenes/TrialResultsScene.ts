@@ -100,10 +100,14 @@ function receiptLines(
     ["Relics and boss rewards", o.goldBreakdown.items],
     ["Tithe Bowl during rolls", o.rollGold.titheBowl],
     ["Lucky Coin during rolls", o.rollGold.luckyCoin],
+    // The one line that can take gold away: a ceiling affliction skimming the
+    // purse as the trial ends (Pauper's Vow). Printed last, and signed, so the
+    // receipt still adds up to what the player is carrying into the shop.
+    ["Forfeited to your vow", -o.goldForfeited],
   ];
   return all.filter(
     ([label, amount], i) =>
-      amount > 0 || i === 0 || (teaching && label === INTEREST_LABEL),
+      amount !== 0 || i === 0 || (teaching && label === INTEREST_LABEL),
   );
 }
 
@@ -583,10 +587,10 @@ export class TrialResultsScene extends Phaser.Scene {
         })
         .setOrigin(0, 0.5);
       const amountText = this.add
-        .text(cx + labelDx, y, `+${amount}`, {
+        .text(cx + labelDx, y, amount < 0 ? `${amount}` : `+${amount}`, {
           fontFamily: SERIF,
           fontSize: `${Phaser.Math.Clamp(typeBasis * 0.02, 13, 19)}px`,
-          color: CSS.gold,
+          color: amount < 0 ? CSS.red : CSS.gold,
           fontStyle: "bold",
         })
         .setOrigin(1, 0.5);

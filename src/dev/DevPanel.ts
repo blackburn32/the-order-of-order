@@ -17,7 +17,7 @@ import {
   activeBoss,
   BOSS_MODIFIERS,
   BossModifierId,
-  rollBossModifier,
+  rollBossModifiers,
 } from "../systems/Boss";
 import { DicePool } from "../systems/DicePool";
 import { getRun, RunState } from "../state/RunState";
@@ -352,7 +352,7 @@ function setTrial(
   // Past the final rank the ladder only continues for an endless run, so a jump
   // there implies one — otherwise the very first resolve would declare victory.
   if (trial > WIN_TRIAL) state.endless = true;
-  state.bossModifier = boss ?? rollBossModifier();
+  state.bossModifiers = boss ? [boss] : rollBossModifiers();
   game.registry.set("run", state);
   refreshActiveScene(game);
   const name = activeBoss(state)?.name;

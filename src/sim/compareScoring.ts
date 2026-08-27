@@ -100,6 +100,44 @@ function scenarios(): Scenario[] {
       hasHourglass: true,
       roll: 0,
     }),
+    // Downbeat lands on every fourth roll, so `roll: 3` is the roll it pays on
+    // and `roll: 2` the one it must not; Crunch Time pays on all of them.
+    s("downbeat on the beat", many(100, 6), { downbeat: 2, roll: 3 }),
+    s("downbeat off the beat", many(100, 6), { downbeat: 2, roll: 2 }),
+    s("crunch time", many(100, 6), { hasCrunchTime: true, roll: 5 }),
+    // The cursed cards. The flat multipliers all arrive through one table, so
+    // one case with several of them on proves the table as well as the cards;
+    // Ouroboros changes what a scoring die is worth, and Hair Trigger is the
+    // only rule in the game that reads WHICH roll of the trial this is for its
+    // multiplier and for its dead dice both.
+    s("cursed multipliers", many(100, 6), {
+      hasBloodPrice: true,
+      hasFamishedIdol: true,
+      hasReckoning: true,
+    }),
+    s("ouroboros pays ten", many(100, 6), {
+      hasOuroboros: true,
+      extraPoints: 2,
+    }),
+    s("hair trigger opening roll", many(100, 6), {
+      hasHairTrigger: true,
+      afflictions: ["hairTrigger"],
+      roll: 0,
+    }),
+    s("hair trigger later roll", many(100, 6), {
+      hasHairTrigger: true,
+      afflictions: ["hairTrigger"],
+      roll: 3,
+    }),
+    // A curse and a boss dead-dicing the same roll: the two fractions sum, and
+    // both scorers must round the sum identically.
+    s("hair trigger under the toll", many(100, 6), {
+      hasHairTrigger: true,
+      afflictions: ["hairTrigger"],
+      trial: 3,
+      bossModifiers: ["toll"],
+      roll: 2,
+    }),
     s(
       "kitchen sink",
       [
@@ -126,6 +164,11 @@ function scenarios(): Scenario[] {
         hasMenagerie: true,
         hasUniform: false,
         hasHourglass: true,
+        downbeat: 1,
+        hasCrunchTime: true,
+        hasBloodPrice: true,
+        hasOuroboros: true,
+        hasReckoning: true,
       },
       true,
     ),
@@ -135,32 +178,32 @@ function scenarios(): Scenario[] {
     // thing on a per-die grid and on a bucketed one.
     s("boss: the famine", many(60, 6), {
       trial: 3,
-      bossModifier: "famine",
+      bossModifiers: ["famine"],
       extraPoints: 4,
       keenEdge: 2,
     }),
     s("boss: the silence", many(60, 6), {
       trial: 3,
-      bossModifier: "silence",
+      bossModifiers: ["silence"],
       scoringNumbers: [1, 2, 3],
       extraNumberCount: 2,
     }),
     s("boss: the warden", many(60, 6), {
       trial: 3,
-      bossModifier: "warden",
+      bossModifiers: ["warden"],
       hasSnakeEyes: true,
       jackpot: 2,
       hasLuckySeven: true,
     }),
     s("boss: the eclipse", many(60, 6), {
       trial: 3,
-      bossModifier: "eclipse",
+      bossModifiers: ["eclipse"],
       hasAmplifier: true,
       prism: 1,
     }),
     s("boss: the toll", many(100, 6), {
       trial: 3,
-      bossModifier: "toll",
+      bossModifiers: ["toll"],
       extraPoints: 2,
       hasSnakeEyes: true,
     }),
@@ -169,7 +212,7 @@ function scenarios(): Scenario[] {
       [...many(60, 6), ...many(30, 4), ...many(10, 20, { maxFaceBonus: 2 })],
       {
         trial: 3,
-        bossModifier: "toll",
+        bossModifiers: ["toll"],
         scoringNumbers: [1, 2, 3],
         extraPoints: 3,
         keenEdge: 2,

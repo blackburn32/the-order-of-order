@@ -1,20 +1,33 @@
 // Boss Trial modifiers.
 //
 // The third trial of every rank is a Boss Trial: it rolls one hostile modifier
-// that makes its goal harder to reach, and rewards the player with a better
-// shop if they clear it anyway. Each modifier is a small guarded branch in code
-// that already exists (the scorer, the roll loop, the goal lookup) rather than a
-// subsystem of its own — the table below is the whole design.
+// (more, under an affliction that says so) that makes its goal harder to reach,
+// and rewards the player with a better shop if they clear it anyway.
 //
-// IMPORTANT: modifiers that touch scoring must behave identically in both
+// A boss no longer describes its own mechanics. What it DOES is an affliction —
+// the same vocabulary a cursed card writes its drawback in (see
+// systems/Afflictions) — looked up by the boss's own id, so the table below is
+// only naming, copy, and whatever REWARD the boss carries. That split is what
+// lets a future boss inflict a cursed card's drawback, or a card a boss's,
+// without either side gaining a special case.
+//
+// IMPORTANT: afflictions that touch scoring must behave identically in both
 // scorers — `ScoringHistogram.scoreRollHistogram` (the live path) and
 // `Scoring.scoreRoll` (the reference implementation). `npx tsx
 // src/sim/compareScoring.ts` fails loudly if they drift.
 
 import { isBossTrial, trialGoal, trialInRank } from "../config";
 import type { RunState } from "../state/RunState";
+import {
+  afflictionsFor,
+  fold,
+  permanentAfflictions,
+  type AfflictionId,
+} from "./Afflictions";
 
-export type BossModifierId =
+/** Boss ids are affliction ids: `AFFLICTIONS[id]` is what the boss does. */
+export type BossModifierId = Extract<
+  AfflictionId,
   | "famine"
   | "drought"
   | "eclipse"
@@ -22,14 +35,8 @@ export type BossModifierId =
   | "hunger"
   | "warden"
   | "toll"
-  | "hoard";
-
-/** Scoring bonuses a modifier can switch off for the duration of its trial. */
-export type SuppressibleBonus =
-  | "extraPoint" // Extra Point's per-scoring-die bonus
-  | "keenEdge" // Keen Edge's d1 bonus
-  | "patterns" // Snake Eyes, Jackpot, Lucky Seven
-  | "extraNumber"; // the 2/3/4 scoring numbers, leaving only 1
+  | "hoard"
+>;
 
 export interface BossModifier {
   id: BossModifierId;
@@ -38,22 +45,10 @@ export interface BossModifier {
   desc: string;
   /** Compact all-caps rule used by the in-trial ribbon. */
   shortDesc: string;
-  /** Added to the trial's roll budget (negative shortens it). */
-  rollDelta?: number;
-  /** Per-mille multiplier on the trial's goal (1_400 = +40%). */
-  goalMultMilli?: number;
-  /** Per-mille multiplier on the gold paid for clearing (2_000 = double). */
+  /** Per-mille multiplier on the gold paid for clearing (2_000 = double). The
+   *  one field that is a boon rather than a penalty, which is why it stays here
+   *  rather than moving to the affliction table. */
   goldMultMilli?: number;
-  /** No dice are added this trial — Genesis, Double the Fun, Brick Mold and
-   *  Foundry all produce nothing. */
-  blocksGrowth?: boolean;
-  suppress?: SuppressibleBonus[];
-  /** The compounded run multiplier is halved (floored at 1). */
-  halveMultiplier?: boolean;
-  /** This fraction of the grid scores nothing. Applied to the roll AGGREGATE,
-   *  never to individual dice, so it behaves the same in bucket mode where
-   *  individual dice do not exist. */
-  deadDiceFraction?: number;
 }
 
 export const BOSS_MODIFIERS: BossModifier[] = [
@@ -62,56 +57,48 @@ export const BOSS_MODIFIERS: BossModifier[] = [
     name: "The Famine",
     desc: "Extra Point and Keen Edge grant nothing.",
     shortDesc: "BONUSES SEALED",
-    suppress: ["extraPoint", "keenEdge"],
   },
   {
     id: "drought",
     name: "The Drought",
     desc: "No dice are added this trial.",
     shortDesc: "NO DICE ADDED",
-    blocksGrowth: true,
   },
   {
     id: "eclipse",
     name: "The Eclipse",
     desc: "Your roll multiplier is halved.",
     shortDesc: "MULTIPLIER HALVED",
-    halveMultiplier: true,
   },
   {
     id: "silence",
     name: "The Silence",
     desc: "Only 1s score — the numbers you unlocked are silenced.",
     shortDesc: "UNLOCKED NUMBERS SILENCED",
-    suppress: ["extraNumber"],
   },
   {
     id: "hunger",
     name: "The Hunger",
     desc: "Five fewer rolls.",
     shortDesc: "5 FEWER ROLLS",
-    rollDelta: -5,
   },
   {
     id: "warden",
     name: "The Warden",
     desc: "Snake Eyes, Jackpot and Lucky Seven grant nothing.",
     shortDesc: "PATTERNS SEALED",
-    suppress: ["patterns"],
   },
   {
     id: "toll",
     name: "The Toll",
     desc: "A tenth of your dice score nothing.",
     shortDesc: "10% OF DICE INERT",
-    deadDiceFraction: 0.1,
   },
   {
     id: "hoard",
     name: "The Hoard",
     desc: "The goal is 40% higher, but clearing it pays double gold.",
     shortDesc: "+40% GOAL · ×2 GOLD",
-    goalMultMilli: 1_400,
     goldMultMilli: 2_000,
   },
 ];
@@ -124,157 +111,106 @@ export function bossById(id: BossModifierId | null): BossModifier | null {
   return id ? (BY_ID.get(id) ?? null) : null;
 }
 
-/** The modifier in force right now, or null outside a Boss Trial. */
+/** The modifiers in force right now — empty outside a Boss Trial. */
+export function activeBosses(state: RunState): BossModifier[] {
+  if (!isBossTrial(state.trial)) return [];
+  return rankBosses(state);
+}
+
+/** The first modifier in force, for the surfaces that show one thing — the
+ *  ambient sigil, the layout's "is there a boss" question. Anything that lists
+ *  what the player is up against should use `activeBosses`. */
 export function activeBoss(state: RunState): BossModifier | null {
-  return isBossTrial(state.trial) ? bossById(state.bossModifier) : null;
+  return activeBosses(state)[0] ?? null;
 }
 
-/** The modifier assigned to the current rank, including while the player is
- * still approaching its Boss Trial. Overview/shop screens use this preview;
- * gameplay must use `activeBoss`, which guards against applying it early. */
-export function rankBoss(state: RunState): BossModifier | null {
-  return bossById(state.bossModifier);
+/** The modifiers assigned to the current rank, including while the player is
+ *  still approaching its Boss Trial. Overview/shop screens use this preview;
+ *  gameplay must use `activeBosses`, which guards against applying it early. */
+export function rankBosses(state: RunState): BossModifier[] {
+  return state.bossModifiers
+    .map((id) => bossById(id))
+    .filter((b): b is BossModifier => b !== null);
 }
 
-/** Pick the modifier for a Boss Trial, never repeating the one just faced so
- *  back-to-back ranks feel different. */
-export function rollBossModifier(
+/** How many modifiers a Boss Trial rolls. One, unless a standing affliction (The
+ *  Long Night) says otherwise — read off the run's permanent afflictions, since
+ *  the count has to be known while assigning a rank's boss, before its Boss
+ *  Trial is the live one. */
+export function bossModifierCount(state: RunState): number {
+  return permanentAfflictions(state).bossModifierCount;
+}
+
+/** Pick `count` distinct modifiers for a Boss Trial, never repeating one just
+ *  faced so back-to-back ranks feel different. */
+export function rollBossModifiers(
+  count = 1,
   rng: () => number = Math.random,
-  exclude: BossModifierId | null = null,
-): BossModifierId {
-  const pool = BOSS_MODIFIERS.filter((b) => b.id !== exclude);
-  return pool[Math.floor(rng() * pool.length)].id;
-}
-
-// ---- Query helpers used by the engine and the scorers ----------------------
-
-export function bossSuppresses(
-  state: RunState,
-  bonus: SuppressibleBonus,
-): boolean {
-  return activeBoss(state)?.suppress?.includes(bonus) ?? false;
-}
-
-export function bossBlocksGrowth(state: RunState): boolean {
-  return activeBoss(state)?.blocksGrowth ?? false;
-}
-
-export function bossRollDelta(state: RunState): number {
-  return activeBoss(state)?.rollDelta ?? 0;
-}
-
-export function bossRollDeltaFor(id: BossModifierId | null): number {
-  return bossById(id)?.rollDelta ?? 0;
-}
-
-export function bossHalvesMultiplier(state: RunState): boolean {
-  return activeBoss(state)?.halveMultiplier ?? false;
-}
-
-export function bossDeadDiceFraction(state: RunState): number {
-  return activeBoss(state)?.deadDiceFraction ?? 0;
-}
-
-/** Scale a die count down by the active modifier's dead-dice fraction. The one
- *  place that rounding is decided, so both scorers agree exactly. */
-export function applyDeadDice(state: RunState, count: number): number {
-  const fraction = bossDeadDiceFraction(state);
-  if (fraction <= 0 || count <= 0) return count;
-  return Math.max(0, count - Math.floor(count * fraction));
-}
-
-/** Every face count, scaled by the dead-dice fraction. Returns the original map
- *  untouched when no modifier is dead-dicing, so the common path allocates
- *  nothing. */
-export function applyDeadDiceCounts(
-  state: RunState,
-  counts: Map<number, number>,
-): Map<number, number> {
-  if (bossDeadDiceFraction(state) <= 0) return counts;
-  const scaled = new Map<number, number>();
-  for (const [value, count] of counts) {
-    scaled.set(value, applyDeadDice(state, count));
+  exclude: readonly BossModifierId[] = [],
+): BossModifierId[] {
+  const pool = BOSS_MODIFIERS.filter((b) => !exclude.includes(b.id)).map(
+    (b) => b.id,
+  );
+  const chosen: BossModifierId[] = [];
+  while (chosen.length < count && pool.length > 0) {
+    chosen.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
   }
-  return scaled;
+  return chosen;
 }
 
-// ---- Suppression views -----------------------------------------------------
-//
-// A suppressing modifier neuters a run field for the length of its trial. Both
-// scorers read these accessors instead of the raw field, so a suppression is
-// written once and applies identically in the per-die reference implementation
-// and the live histogram path — no chance of the two drifting.
-
-/** The faces that score this roll. The Silence cuts this back to 1s only. */
-export function scoringNumbersFor(state: RunState): number[] {
-  return bossSuppresses(state, "extraNumber")
-    ? ONLY_ONES
-    : state.scoringNumbers;
-}
-const ONLY_ONES = [1];
-
-export function extraPointsFor(state: RunState): number {
-  return bossSuppresses(state, "extraPoint") ? 0 : state.extraPoints;
-}
-
-export function keenEdgeFor(state: RunState): number {
-  return bossSuppresses(state, "keenEdge") ? 0 : state.keenEdge;
-}
-
-export function snakeEyesFor(state: RunState): boolean {
-  return state.hasSnakeEyes && !bossSuppresses(state, "patterns");
-}
-
-export function jackpotFor(state: RunState): number {
-  return bossSuppresses(state, "patterns") ? 0 : state.jackpot;
-}
-
-export function luckySevenFor(state: RunState): boolean {
-  return state.hasLuckySeven && !bossSuppresses(state, "patterns");
-}
-
-/** The Eclipse halves the compounded run multiplier, never below ×1. */
-export function applyBossMultiplier(state: RunState, mult: bigint): bigint {
-  if (!bossHalvesMultiplier(state)) return mult;
-  const halved = mult / 2n;
-  return halved < 1n ? 1n : halved;
-}
-
-/** The score this trial must reach, including any boss modifier that raises it.
- *  Everything that gates on "did they clear it" must go through here, not
- *  `trialGoal`, or The Hoard silently does nothing. */
-export function goalFor(state: RunState): bigint {
-  return goalForTrial(state.trial, state.bossModifier);
-}
-
-/** Preview a trial goal without moving RunState. The rank's modifier changes
- * only the Boss Trial, even though it is known from the Lesser Trial onward. */
-export function goalForTrial(
+/** Keep one previewable assignment for all three trials in a rank. A fresh set
+ *  is rolled on the Lesser Trial that opens a rank; advancing within the rank
+ *  keeps it. The defensive empty branch also repairs older/dev-created states
+ *  that entered the middle of a rank without an assignment, and re-rolls when an
+ *  affliction has since raised the count a Boss Trial should carry. */
+export function bossesForRank(
+  state: RunState,
   trial: number,
-  bossModifier: BossModifierId | null,
-): bigint {
-  const base = trialGoal(trial);
-  const boss = isBossTrial(trial) ? bossById(bossModifier) : null;
-  if (!boss?.goalMultMilli) return base;
-  return (base * BigInt(boss.goalMultMilli)) / 1000n;
+  rng: () => number = Math.random,
+  previous: readonly BossModifierId[] = [],
+): BossModifierId[] {
+  const count = bossModifierCount(state);
+  if (trialInRank(trial) === 1 || previous.length === 0) {
+    return rollBossModifiers(count, rng, previous);
+  }
+  if (previous.length >= count) return [...previous];
+  // The Long Night was bought mid-rank: keep what was previewed and roll the
+  // rest, so the shortfall is filled without moving the modifier already shown.
+  return [
+    ...previous,
+    ...rollBossModifiers(count - previous.length, rng, previous),
+  ];
 }
 
-/** Per-mille gold multiplier for clearing this trial (The Hoard pays double). */
+/** Per-mille gold multiplier for clearing this trial (The Hoard pays double).
+ *  Compounds if a trial ever carries two paying bosses. */
 export function bossGoldMultMilli(state: RunState): number {
-  return activeBoss(state)?.goldMultMilli ?? 1_000;
+  let milli = 1_000;
+  for (const boss of activeBosses(state)) {
+    if (boss.goldMultMilli)
+      milli = Math.floor((milli * boss.goldMultMilli) / 1_000);
+  }
+  return milli;
 }
 
-/** Keep one previewable modifier for all three trials in a rank. A fresh one is
- * rolled on the Lesser Trial that opens a rank; advancing within the rank keeps
- * the assignment. The defensive null branch also repairs older/dev-created
- * states which entered the middle of a rank without an assignment. */
-export function bossForRank(
-  trial: number,
-  rng: () => number = Math.random,
-  previous: BossModifierId | null = null,
-): BossModifierId {
-  if (trialInRank(trial) === 1 || previous === null) {
-    return rollBossModifier(rng, previous);
-  }
-  return previous;
+/** The score this trial must reach, including every affliction that raises it.
+ *  Everything that gates on "did they clear it" must go through here, not
+ *  `trialGoal`, or The Hoard and The Reckoning silently do nothing. */
+export function goalFor(state: RunState): bigint {
+  return scaleGoal(trialGoal(state.trial), afflictionsFor(state).goalMultMilli);
+}
+
+/** Preview a trial's goal without moving RunState. The rank's modifiers change
+ *  only the Boss Trial, even though they are known from the Lesser Trial onward;
+ *  the run's own afflictions apply to every trial. */
+export function goalForTrial(state: RunState, trial: number): bigint {
+  const ids = isBossTrial(trial)
+    ? [...state.afflictions, ...state.bossModifiers]
+    : state.afflictions;
+  return scaleGoal(trialGoal(trial), fold(ids).goalMultMilli);
+}
+
+function scaleGoal(base: bigint, multMilli: number): bigint {
+  if (multMilli === 1_000) return base;
+  return (base * BigInt(multMilli)) / 1_000n;
 }
