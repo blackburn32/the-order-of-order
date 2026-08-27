@@ -27,6 +27,7 @@ import {
 } from "../systems/Tutorial";
 import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
+import { saveActiveRun } from "../systems/ActiveRunPersistence";
 
 /** The line under the rank, in both mastheads. */
 const RANK_SUBTITLE = "Three trials stand between you and ascension";
@@ -72,6 +73,7 @@ export class TrialOverviewScene extends Phaser.Scene {
 
   create(): void {
     this.state = getRun(this.registry);
+    saveActiveRun(this.registry, { scene: "TrialOverview" });
     this.leaving = false;
     this.build();
     slideSceneIn(this, this.slideBackdrop);
@@ -409,8 +411,13 @@ export class TrialOverviewScene extends Phaser.Scene {
     if (atStage(this.registry, TutorialStage.RouteStart)) {
       advanceTutorial(this.registry);
     }
+    saveActiveRun(this.registry, { scene: "Game", unlocked: [] });
     audio.trialUp();
-    slideSceneOut(this, () => this.scene.start("Game"), this.slideBackdrop);
+    slideSceneOut(
+      this,
+      () => this.scene.start("Game", { scene: "Game", unlocked: [] }),
+      this.slideBackdrop,
+    );
   }
 }
 

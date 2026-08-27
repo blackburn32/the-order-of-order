@@ -113,7 +113,13 @@ export class MenuScene extends Phaser.Scene {
       .setDisplaySize(
         compact ? mast.width * 1.06 : Math.min(720, W * 0.8),
         compact ? 190 : 300,
-      );
+      )
+      // Alpha set here rather than left to the breathe tween's `from`: a tween
+      // added during create doesn't apply its starting value until its first
+      // update, so the halo would render at full opacity for the frame the
+      // scene is built on — a bright flash where the title is about to slide
+      // in, most visible re-entering the menu from Settings.
+      .setAlpha(0.12);
     if (fx.motion) {
       // setDisplaySize bakes the stretch into scaleX, so the breathe has to
       // swing around that baked value instead of around 1.

@@ -31,6 +31,7 @@ import {
 import type { DiceAgg } from "../systems/ScoringHistogram";
 import { evaluateAndUnlock } from "../systems/SaveData";
 import { finalizeRun } from "../systems/RunEnd";
+import { saveActiveRun } from "../systems/ActiveRunPersistence";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { DieSprite } from "../ui/DieSprite";
 import { DiceSummaryCard } from "../ui/DiceSummaryCard";
@@ -271,6 +272,10 @@ export class GameScene extends Phaser.Scene {
     super("Game");
   }
 
+  init(data?: { unlocked?: ShopItemId[] }): void {
+    this.trialUnlocks = [...(data?.unlocked ?? [])];
+  }
+
   create(): void {
     this.state = getRun(this.registry);
     this.rolling = false;
@@ -300,12 +305,17 @@ export class GameScene extends Phaser.Scene {
     this.shownScore = this.state.score;
     this.scoreTween = undefined;
     this.sealBreathe = undefined;
-    this.trialUnlocks = [];
+    this.trialUnlocks = [...this.trialUnlocks];
     this.bossCalloutHeld = true;
     this.gridContainer = this.add.container(0, 0);
     // Recreated each build: routes new banners through the overlay camera so
     // they composite above the windowed grid, just like other popups.
     this.banners = new BannerStack(this, (objs) => this.overlay(objs));
+
+    saveActiveRun(this.registry, {
+      scene: "Game",
+      unlocked: this.trialUnlocks,
+    });
 
     this.build();
     slideSceneIn(this, this.transitionBackdrop());
@@ -1710,6 +1720,14 @@ export class GameScene extends Phaser.Scene {
       culled,
       denied,
     } = resolveRoll(s);
+    // Resolve and unlock evaluation form one committed gameplay transaction.
+    // Save it before presenting any effects so a reload during the presentation
+    // returns after this roll rather than charging/scoring it again.
+    this.checkUnlocks();
+    saveActiveRun(this.registry, {
+      scene: "Game",
+      unlocked: this.trialUnlocks,
+    });
     const bossCues = [
       ...this.bossRollCues(rolledAgg, result),
       ...afflictionRollCues(broken, culled, denied),
@@ -1941,7 +1959,6 @@ export class GameScene extends Phaser.Scene {
           );
         }
       }
-      this.checkUnlocks();
       this.updateHud();
       // Surface the next tutorial step (e.g. "Viewport" after the first roll).
       this.renderTutorial();
@@ -2088,6 +2105,11 @@ export class GameScene extends Phaser.Scene {
       audio.victory();
       this.punctuate("victory");
       this.checkUnlocks();
+      saveActiveRun(this.registry, {
+        scene: "TrialResults",
+        outcome,
+        unlocked: this.trialUnlocks,
+      });
       this.time.delayedCall(700, () =>
         slideSceneOut(
           this,
@@ -2118,6 +2140,11 @@ export class GameScene extends Phaser.Scene {
     audio.trialUp();
     this.punctuate("advanced");
     this.checkUnlocks();
+    saveActiveRun(this.registry, {
+      scene: "TrialResults",
+      outcome,
+      unlocked: this.trialUnlocks,
+    });
     this.time.delayedCall(700, () => {
       this.updateHud();
       slideSceneOut(

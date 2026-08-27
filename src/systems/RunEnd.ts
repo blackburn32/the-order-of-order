@@ -3,6 +3,7 @@ import type { RunState } from "../state/RunState";
 import { globalScoresEnabled, queuePendingSubmission } from "./GlobalScores";
 import { toNumberPointMap } from "./ItemPoints";
 import { recordRunEnd } from "./SaveData";
+import { clearActiveRun } from "./ActiveRunPersistence";
 
 /** A run remains a win after the player carries it into endless mode. */
 export function runWasWon(state: RunState): boolean {
@@ -20,6 +21,9 @@ export function finalizeRun(
   personalBest: boolean;
   submissionQueued: boolean;
 } {
+  // Remove the resumable checkpoint before any non-idempotent Hall or
+  // leaderboard side effect. A crash cannot replay a finalized run.
+  clearActiveRun();
   const { personalBest } = recordRunEnd(state, won);
   const submissionQueued = personalBest && globalScoresEnabled();
 

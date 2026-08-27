@@ -1,5 +1,6 @@
 import { HALL_SIZE, rankOf, trialInRank } from "../config";
 import type { RunState } from "../state/RunState";
+import { clearActiveRun } from "./ActiveRunPersistence";
 import type { DiceStack } from "./DicePool";
 import { windfallFactor } from "./Dice";
 import { ITEMS, meetsCriterion, ShopItemId } from "./Items";
@@ -296,6 +297,7 @@ export function evaluateAndUnlock(state: RunState): ShopItemId[] {
 /** Full fresh start: wipe unlocks/counts/games-completed AND the Hall of High
  *  Scores. Audio settings are intentionally left untouched. */
 export function resetAllProgress(): void {
+  clearActiveRun();
   try {
     localStorage.removeItem(KEY_PROGRESS);
     localStorage.removeItem(KEY_SCORES);

@@ -17,6 +17,10 @@ import { takePendingSubmission } from "../systems/GlobalScores";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { finalizeRun } from "../systems/RunEnd";
 import { AmbientLayer } from "../ui/AmbientLayer";
+import {
+  createFreshShopCheckpoint,
+  saveActiveRun,
+} from "../systems/ActiveRunPersistence";
 
 /** Fixed sigil brightness for the backdrop. The other rooms sit at fixed mid
  *  values because they have no trial to report; this screen does, and the
@@ -43,6 +47,7 @@ export class VictoryScene extends Phaser.Scene {
 
   create(): void {
     this.leaving = false;
+    if (!this.runEnded) saveActiveRun(this.registry, { scene: "Victory" });
     responsive(this, () => this.build());
     slideSceneIn(this, this.slideBackdrop);
 
@@ -208,7 +213,9 @@ export class VictoryScene extends Phaser.Scene {
     // The winning Boss Trial still earned its shop and boon. Endless begins
     // only after the player has had the same post-trial shopping opportunity
     // as every other clear.
-    this.leave(() => this.scene.start("Shop"));
+    const checkpoint = createFreshShopCheckpoint(state);
+    saveActiveRun(this.registry, checkpoint);
+    this.leave(() => this.scene.start("Shop", checkpoint));
   }
 
   private leave(complete: () => void): void {

@@ -6,6 +6,7 @@ import { goalFor } from "./Boss";
 import { GOLD_PER_INTEREST, INTEREST_CAP } from "./Gold";
 import { trialRollTarget } from "./Trial";
 import { WIN_RANK } from "../config";
+import { refreshActiveRun, saveActiveRun } from "./ActiveRunPersistence";
 
 // The tutorial steps, in the order they are shown. They follow the run's own
 // loop rather than one screen: the route screen teaches the shape of a rank,
@@ -111,6 +112,7 @@ export function advanceTutorial(registry: Phaser.Data.DataManager): void {
     return;
   }
   setTutorial(registry, { active: true, stage: next });
+  refreshActiveRun(registry);
 }
 
 /** True when the tutorial is sitting on exactly this stage. */
@@ -126,6 +128,7 @@ export function atStage(
  *  from the Settings menu). */
 export function completeTutorial(registry: Phaser.Data.DataManager): void {
   setTutorial(registry, { active: false, stage: TutorialStage.Done });
+  refreshActiveRun(registry);
   const settings = loadSettings();
   if (settings.showTutorial) {
     settings.showTutorial = false;
@@ -184,5 +187,6 @@ export function beginRun(scene: Phaser.Scene): void {
   initializeRun(state);
   setRun(scene.registry, state);
   beginTutorial(scene.registry);
+  saveActiveRun(scene.registry, { scene: "TrialOverview" });
   scene.scene.start("TrialOverview");
 }

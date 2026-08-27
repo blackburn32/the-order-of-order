@@ -15,13 +15,7 @@ import {
   isCompactLandscape,
   onResizeCoalesced,
 } from "../ui/layout";
-import {
-  addFelt,
-  BannerAction,
-  bannerButton,
-  fitTextWidth,
-  stackBannerButtons,
-} from "../ui/widgets";
+import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
 
 export interface InventoryData {
   /** Scene key whose input to re-enable when the overlay closes. */
@@ -29,6 +23,7 @@ export interface InventoryData {
 }
 
 type InventoryTab = "items" | "dice";
+type InventoryNavTab = InventoryTab | "codex";
 
 type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
 type WheelHandler = (
@@ -137,7 +132,10 @@ export class InventoryScene extends Phaser.Scene {
    *  shelf fills it; the dice list is a centred block, and its scrollbar wants
    *  to sit beside the rows rather than out at the band's far margin. */
   private contentSpan = 0;
-  private tabItems: { tab: InventoryTab; text: Phaser.GameObjects.Text }[] = [];
+  private tabItems: {
+    tab: InventoryNavTab;
+    text: Phaser.GameObjects.Text;
+  }[] = [];
   private tabUnderline?: Phaser.GameObjects.Rectangle;
   private swapping = false;
   private leaving = false;
@@ -244,63 +242,44 @@ export class InventoryScene extends Phaser.Scene {
       ...(compact ? { x: columns.left.cx } : {}),
     });
 
-    const run = getRun(this.registry);
     // The tabs head the contents when stacked, and the chrome column when
     // folded — either way they are as wide as whatever they head.
     const tableW = compact ? columns.left.width : Math.min(W - 32, 1000);
     const tabsY = header.bottom + (compact ? 20 : 26);
-    this.buildTabs(
-      compact ? columns.left.cx : cx,
-      tabsY,
-      tableW,
-      this.ownedItems(run).length,
-      run.dice.length,
-    );
+    this.buildTabs(compact ? columns.left.cx : cx, tabsY, tableW);
 
     // The footer is created before the (camera-clipped) content so it is part
     // of the "everything except the track" set the grid camera ignores.
-    const actions: BannerAction[] = [
-      {
-        label: "Codex",
-        onClick: () => this.scene.launch("Items", { returnTo: "Inventory" }),
-      },
-      { label: "Close", onClick: () => this.close() },
-    ];
-
     let contentTop: number;
     let contentBottom: number;
     if (compact) {
-      // Folded there is no full-width strip along the bottom for the pair to
-      // sit in, so they stack under the tabs in the chrome column — where
-      // "Close", the one control that must never be out of reach, is beside
-      // the contents rather than below them however far they scroll.
+      // Folded there is no full-width strip along the bottom, so Close stays
+      // under the tabs in the chrome column — beside the contents rather than
+      // below them however far they scroll.
       const bandTop = tabsY + 34;
-      stackBannerButtons(
+      const bandH = columns.bottom - bandTop;
+      bannerButton(
         this,
-        columns.left,
-        { top: bandTop, height: columns.bottom - bandTop },
-        actions,
+        columns.left.cx,
+        bandTop + bandH / 2,
+        "Close",
+        () => this.close(),
+        columns.left.width,
+        bandH,
       );
       contentTop = columns.top;
       contentBottom = columns.bottom;
     } else {
       const buttonH = 70;
       const buttonY = H - 20 - buttonH / 2;
-      const footerGap = Math.max(10, Math.min(20, tableW * 0.02));
-      const footerMaxW = (Math.min(tableW, 620) - footerGap) / 2;
-      const [codex, close] = actions.map((action) =>
-        bannerButton(
-          this,
-          cx,
-          buttonY,
-          action.label,
-          action.onClick,
-          footerMaxW,
-        ),
+      bannerButton(
+        this,
+        cx,
+        buttonY,
+        "Close",
+        () => this.close(),
+        Math.min(tableW, 340),
       );
-      const footerDx = codex.width / 2 + footerGap / 2;
-      codex.setX(cx - footerDx);
-      close.setX(cx + footerDx);
       contentTop = tabsY + 32;
       contentBottom = buttonY - buttonH / 2 - 18;
     }
@@ -314,22 +293,16 @@ export class InventoryScene extends Phaser.Scene {
     this.buildContent();
   }
 
-  /** Two text tabs sharing a baseline under a sliding gold rule, each carrying
-   *  the size of what it holds. Parchment buttons were doing this job before,
-   *  which put two more slabs of chrome between the masthead and the goods. */
-  private buildTabs(
-    cx: number,
-    y: number,
-    tableW: number,
-    itemCount: number,
-    diceCount: number,
-  ): void {
+  /** Three text tabs sharing a baseline under a sliding gold rule. Codex opens
+   *  the existing gallery overlay, while Items and Dice swap this scene's
+   *  content in place. */
+  private buildTabs(cx: number, y: number, tableW: number): void {
     const size = Math.round(Phaser.Math.Clamp(tableW * 0.026, 16, 21));
     // The gap closes up as the column narrows: at the folded width the 30px
     // floor was a third of the room the labels themselves needed.
     const gap = Math.min(Math.max(30, tableW * 0.05), tableW * 0.12);
 
-    const make = (label: string, tab: InventoryTab) => {
+    const make = (label: string, tab: InventoryNavTab) => {
       const active = this.tab === tab;
       const text = this.add
         .text(0, y, label, {
@@ -351,26 +324,33 @@ export class InventoryScene extends Phaser.Scene {
       return text;
     };
 
-    const items = make(`ITEMS · ${formatScore(itemCount)}`, "items");
-    const dice = make(`DICE · ${formatScore(diceCount)}`, "dice");
+    const items = make("ITEMS", "items");
+    const dice = make("DICE", "dice");
+    const codex = make("CODEX", "codex");
 
-    // Folded, the pair heads a column barely wider than the two labels, and a
-    // long grid ("DICE · 1,024") would push them into the gutter. Give each the
-    // share of the room its own label asks for, measured before either is
-    // resized, so they shrink together rather than one crowding the other.
-    const room = Math.max(1, tableW - gap);
-    if (items.width + dice.width > room) {
-      const [itemsW, diceW] = [items.width, dice.width];
-      fitTextWidth(items, (room * itemsW) / (itemsW + diceW));
-      fitTextWidth(dice, (room * diceW) / (itemsW + diceW));
+    // Folded, the trio heads a narrow column. Share any required shrinkage in
+    // proportion to the labels' natural widths so none crowds out a neighbour.
+    const labels = [items, dice, codex];
+    const room = Math.max(1, tableW - gap * (labels.length - 1));
+    const naturalW = labels.reduce((sum, label) => sum + label.width, 0);
+    if (naturalW > room) {
+      for (const label of labels) {
+        fitTextWidth(label, (room * label.width) / naturalW);
+      }
     }
 
-    const totalW = items.width + gap + dice.width;
-    items.setX(cx - totalW / 2 + items.width / 2);
-    dice.setX(cx + totalW / 2 - dice.width / 2);
+    const totalW =
+      labels.reduce((sum, label) => sum + label.width, 0) +
+      gap * (labels.length - 1);
+    let cursor = cx - totalW / 2;
+    for (const label of labels) {
+      label.setX(cursor + label.width / 2);
+      cursor += label.width + gap;
+    }
     this.tabItems = [
       { tab: "items", text: items },
       { tab: "dice", text: dice },
+      { tab: "codex", text: codex },
     ];
 
     // One rule that travels between the tabs rather than a fresh line drawn on
@@ -383,9 +363,13 @@ export class InventoryScene extends Phaser.Scene {
       .setAlpha(0.75);
   }
 
-  private switchTab(tab: InventoryTab): void {
+  private switchTab(tab: InventoryNavTab): void {
     if (tab === this.tab || this.swapping || this.leaving) return;
     audio.click();
+    if (tab === "codex") {
+      this.scene.launch("Items", { returnTo: "Inventory" });
+      return;
+    }
     this.tab = tab;
 
     for (const entry of this.tabItems) {

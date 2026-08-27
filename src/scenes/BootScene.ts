@@ -7,6 +7,7 @@ import monasteryUrl from "../../images/monastery.png";
 import diceTwirlUrl from "../../images/dice-twirl.png";
 import volcanoUrl from "../../images/volcano.png";
 import diceEarthUrl from "../../images/dice-earth.png";
+import { restoreActiveRun } from "../systems/ActiveRunPersistence";
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -28,6 +29,12 @@ export class BootScene extends Phaser.Scene {
     // First point the live renderer is known — the config asks for WebGL, but
     // Phaser falls back to Canvas where it isn't available.
     fx.init(this.game.renderer.type, settings.visualEffects);
-    this.scene.start("Menu");
+    const restored = restoreActiveRun(this.registry);
+    if (!restored) {
+      this.scene.start("Menu");
+      return;
+    }
+    const checkpoint = restored.checkpoint;
+    this.scene.start(checkpoint.scene, checkpoint);
   }
 }

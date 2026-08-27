@@ -16,10 +16,7 @@ import {
   rerollCost,
   rerollIsFree,
   rerollShopOffers,
-  rollBoosterOffers,
-  rollShopOffers,
   ShopOffer,
-  weightsFor,
 } from "../systems/Shop";
 import { recordSelection } from "../systems/SaveData";
 import {
@@ -44,6 +41,11 @@ import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { CURSED_TINT, rarityMark } from "../ui/itemCard";
 import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
+import {
+  createFreshShopCheckpoint,
+  saveActiveRun,
+  type ShopCheckpointState,
+} from "../systems/ActiveRunPersistence";
 
 const CARD_W = 260;
 const CARD_H = 340;
@@ -187,6 +189,7 @@ export class ShopScene extends Phaser.Scene {
     wheel: WheelHandler;
   };
   private pickedIndices: number[] = []; // dice chosen so far for a multi-target offer (Grindstone)
+  private pickerOffer?: ShopOffer;
   // Screen rects of the card row and the booster pair, and the live tutorial
   // callout (first-game only). The shop's step lights both bands, since the
   // gold it is talking about buys from either.
@@ -204,40 +207,74 @@ export class ShopScene extends Phaser.Scene {
   // header note; the odds themselves were already applied by rollShopOffers).
   private boonSpent = false;
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+  private initialCheckpoint?: { scene: "Shop" } & ShopCheckpointState;
 
   constructor() {
     super("Shop");
   }
 
+  init(data?: { scene?: string } & Partial<ShopCheckpointState>): void {
+    this.initialCheckpoint =
+      data?.scene === "Shop" &&
+      data.offers &&
+      data.packs &&
+      data.visitWeights &&
+      data.pickedIndices
+        ? (data as { scene: "Shop" } & ShopCheckpointState)
+        : undefined;
+  }
+
   create(): void {
     this.state = getRun(this.registry);
-    this.purchasesMade = 0;
-    this.rerollsThisVisit = 0;
-    this.couponFreebieClaimedThisVisit = false;
+    const checkpoint =
+      this.initialCheckpoint ?? createFreshShopCheckpoint(this.state);
+    this.initialCheckpoint = undefined;
+    this.purchasesMade = checkpoint.purchasesMade;
+    this.rerollsThisVisit = checkpoint.rerollsThisVisit;
+    this.couponFreebieClaimedThisVisit =
+      checkpoint.couponFreebieClaimedThisVisit;
     this.dealt = false;
     this.pendingCarouselPan = 0;
     this.purchaseAnimating = false;
-    this.visitWeights = { ...weightsFor(this.state) };
-    // The boon a Boss Trial clear earns is spent on this one visit's rarity
-    // odds, so it is consumed the moment those odds have been rolled against.
-    this.boonSpent = this.state.boonNextShop;
-    this.offers = rollShopOffers(
-      this.state,
-      this.state.ownedLedger ? 5 : 3,
-      Math.random,
-      this.visitWeights,
-    );
-    this.packs = rollBoosterOffers(this.state, 2, this.boonSpent);
-    this.packChoices = undefined;
-    this.openingPack = undefined;
+    this.visitWeights = { ...checkpoint.visitWeights };
+    this.boonSpent = checkpoint.boonSpent;
+    this.offers = checkpoint.offers.map((offer) => ({ ...offer }));
+    this.packs = checkpoint.packs.map((pack) => ({ ...pack }));
+    this.packChoices = checkpoint.packChoices?.map((offer) => ({ ...offer }));
+    this.openingPack = checkpoint.openingPackId
+      ? this.packs.find((pack) => pack.id === checkpoint.openingPackId)
+      : undefined;
+    const pickerWasFromPack =
+      !!checkpoint.pickerOffer &&
+      !!checkpoint.packChoices?.some(
+        (offer) => offer.id === checkpoint.pickerOffer?.id,
+      );
+    this.pickerOffer = checkpoint.pickerOffer
+      ? (pickerWasFromPack ? this.packChoices : this.offers)?.find(
+          (offer) => offer.id === checkpoint.pickerOffer?.id,
+        )
+      : undefined;
+    this.pickedIndices = [...checkpoint.pickedIndices];
     this.packFan = undefined;
-    this.state.boonNextShop = false;
     // The scene instance is reused across restarts, but Phaser destroys all
     // non-main cameras on shutdown — these fields would otherwise dangle.
     this.carouselCamera = undefined;
     this.calloutCamera = undefined;
 
+    this.saveCheckpoint();
     this.build();
+    if (this.packChoices && this.openingPack) {
+      this.showBoosterChoices(false);
+    }
+    if (this.pickerOffer) {
+      this.cardGroup.setVisible(false);
+      this.track?.setVisible(false);
+      this.packGroup?.setVisible(false);
+      const carousel = this.carouselCamera as
+        Phaser.Cameras.Scene2D.Camera | undefined;
+      if (carousel) carousel.visible = false;
+      this.renderPicker(this.pickerOffer);
+    }
     slideSceneIn(this, this.slideBackdrop);
 
     const off = onResizeCoalesced(this, () => {
@@ -246,11 +283,36 @@ export class ShopScene extends Phaser.Scene {
       destroyAllChildren(this);
       this.build();
       if (this.packChoices && this.openingPack) this.showBoosterChoices(false);
+      if (this.pickerOffer) {
+        this.cardGroup.setVisible(false);
+        this.track?.setVisible(false);
+        this.packGroup?.setVisible(false);
+        const carousel = this.carouselCamera;
+        if (carousel) carousel.visible = false;
+        this.renderPicker(this.pickerOffer);
+      }
     });
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       off();
       this.teardownCarouselInput();
       this.input.setDefaultCursor("default");
+    });
+  }
+
+  private saveCheckpoint(): void {
+    saveActiveRun(this.registry, {
+      scene: "Shop",
+      offers: this.offers,
+      packs: this.packs,
+      packChoices: this.packChoices,
+      openingPackId: this.openingPack?.id,
+      visitWeights: this.visitWeights,
+      boonSpent: this.boonSpent,
+      purchasesMade: this.purchasesMade,
+      rerollsThisVisit: this.rerollsThisVisit,
+      couponFreebieClaimedThisVisit: this.couponFreebieClaimedThisVisit,
+      pickerOffer: this.pickerOffer,
+      pickedIndices: this.pickedIndices,
     });
   }
 
@@ -2089,6 +2151,7 @@ export class ShopScene extends Phaser.Scene {
     pack.sold = true;
     this.openingPack = pack;
     this.packChoices = choices;
+    this.saveCheckpoint();
     audio.buy();
     this.showBoosterChoices(true, origin);
   }
@@ -2455,8 +2518,11 @@ export class ShopScene extends Phaser.Scene {
       }
       this.packChoices = undefined;
       this.openingPack = undefined;
+      this.pickerOffer = undefined;
+      this.pickedIndices = [];
       this.packGroup = undefined;
       this.packFan = undefined;
+      this.saveCheckpoint();
       this.rebuildShop();
       return;
     }
@@ -2510,6 +2576,8 @@ export class ShopScene extends Phaser.Scene {
     this.packGroup?.setVisible(false);
     if (this.carouselCamera) this.carouselCamera.visible = false;
     this.pickedIndices = [];
+    this.pickerOffer = offer;
+    this.saveCheckpoint();
     this.renderPicker(offer);
   }
 
@@ -2558,6 +2626,9 @@ export class ShopScene extends Phaser.Scene {
         () => {
           this.pickGroup?.destroy();
           this.pickGroup = undefined;
+          this.pickerOffer = undefined;
+          this.pickedIndices = [];
+          this.saveCheckpoint();
           if (this.packChoices) {
             this.packGroup?.setVisible(true);
           } else {
@@ -2746,6 +2817,7 @@ export class ShopScene extends Phaser.Scene {
     if (offer.targetCount && offer.targetCount > 1) {
       this.pickedIndices.push(index);
       if (this.pickedIndices.length < offer.targetCount) {
+        this.saveCheckpoint();
         this.renderPicker(offer);
         return;
       }
@@ -2770,10 +2842,13 @@ export class ShopScene extends Phaser.Scene {
     this.purchasesMade += 1;
     if (offer.freeByCoupon) this.couponFreebieClaimedThisVisit = true;
     this.offers = this.offers.filter((candidate) => candidate !== offer);
+    this.pickerOffer = undefined;
+    this.pickedIndices = [];
 
     // Coupon Book affects the rest of the visit in which it is bought: one of
     // the remaining cards becomes free.
     if (offer.id === "coupon_book") applyCouponFreebie(this.state, this.offers);
+    this.saveCheckpoint();
 
     // Running the loose-card row dry no longer closes the shop: sealed packs
     // remain separate purchases and the player may still want either one.
@@ -2810,6 +2885,9 @@ export class ShopScene extends Phaser.Scene {
       this.visitWeights,
       !this.couponFreebieClaimedThisVisit,
     );
+    this.pickerOffer = undefined;
+    this.pickedIndices = [];
+    this.saveCheckpoint();
     this.rebuildShop();
   }
 
@@ -2826,6 +2904,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private exit(): void {
+    saveActiveRun(this.registry, { scene: "TrialOverview" });
     slideSceneOut(
       this,
       () => this.scene.start("TrialOverview"),

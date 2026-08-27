@@ -26,6 +26,11 @@ import {
   TutorialStage,
   TUTORIAL_TEXT,
 } from "../systems/Tutorial";
+import { getRun } from "../state/RunState";
+import {
+  createFreshShopCheckpoint,
+  saveActiveRun,
+} from "../systems/ActiveRunPersistence";
 
 /** Native size of the 'card' texture buildItemCard draws on. */
 const CARD_W = 260;
@@ -1049,9 +1054,14 @@ export class TrialResultsScene extends Phaser.Scene {
     this.leaving = true;
     const destination =
       this.dataIn.outcome.phase === "victory" ? "Victory" : "Shop";
+    const checkpoint =
+      destination === "Victory"
+        ? ({ scene: "Victory" } as const)
+        : createFreshShopCheckpoint(getRun(this.registry));
+    saveActiveRun(this.registry, checkpoint);
     slideSceneOut(
       this,
-      () => this.scene.start(destination),
+      () => this.scene.start(destination, checkpoint),
       this.slideBackdrop,
     );
   }

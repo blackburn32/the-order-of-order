@@ -22,12 +22,15 @@
     "items:check": "tsx src/sim/itemCheck.ts",
     "trials:check": "tsx src/sim/trialEndCheck.ts",
     "gold:check": "tsx src/sim/goldCheck.ts",
-    "scoring:check": "tsx src/sim/compareScoring.ts"
+    "scoring:check": "tsx src/sim/compareScoring.ts",
+    "persistence:check": "tsx src/sim/activeRunPersistenceCheck.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",
+    "@capacitor/app": "^8.1.1",
     "@capacitor/cli": "^8.5.0",
     "@capacitor/core": "^8.5.0",
+    "@capacitor/preferences": "^8.0.1",
     "phaser": "^4.2.1"
   },
   "devDependencies": {
