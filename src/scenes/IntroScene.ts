@@ -1,23 +1,15 @@
 import Phaser from "phaser";
-import { COLORS, CSS, SERIF } from "../art/palette";
+import { COLORS, CSS } from "../art/palette";
 import { loadSettings, saveSettings } from "../systems/SaveData";
 import { beginRun } from "../systems/Tutorial";
-import { addFelt, bannerButton, checkboxRow } from "../ui/widgets";
+import { bannerButton, checkboxRow } from "../ui/widgets";
 import { destroyAllChildren, responsive } from "../ui/layout";
-import { AmbientLayer } from "../ui/AmbientLayer";
+import { buildPageDots, buildStoryPage, type StoryPage } from "../ui/storyPage";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
-
-interface Page {
-  title: string;
-  blurb: string;
-  // Texture key of the page art (loaded in BootScene). Pages without one still
-  // show the placeholder 4:3 rectangle.
-  image?: string;
-}
 
 // The premise of the Order, one screen at a time. Pages without an `image` show
 // a placeholder 4:3 rectangle until real art drops in.
-const PAGES: Page[] = [
+const PAGES: StoryPage[] = [
   {
     title: "A Gathering Chaos",
     blurb:
@@ -70,105 +62,23 @@ export class IntroScene extends Phaser.Scene {
 
   private build(): void {
     const W = this.scale.width;
-    const H = this.scale.height;
     const cx = W / 2;
     const last = this.page === PAGES.length - 1;
-    const p = PAGES[this.page];
 
-    const felt = addFelt(this);
-
-    // The same living backdrop the menu and the trial screens carry, so the
-    // premise is told in the room the game is played in. Rebuilt with the rest
-    // of the display list on each page turn, which re-draws the glyph — at this
-    // brightness that reads as the room shifting between chapters.
-    const ambient = new AmbientLayer(this, { ring: true });
-    ambient.setPosition(cx, H / 2);
-    ambient.setArea(W, H);
-    ambient.setProgress(INTRO_AMBIENCE, false);
-    this.slideBackdrop = [felt, ambient];
-
-    this.add
-      .text(cx, H * 0.09, p.title, {
-        fontFamily: SERIF,
-        fontSize: `${Math.round(Phaser.Math.Clamp(W * 0.05, 26, 52))}px`,
-        color: CSS.gold,
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5)
-      .setShadow(0, 3, "#000000", 8, false, true);
-
-    // Image sized to fit both width and the vertical band left between the title
-    // and the text/controls below, keeping a 4:3 frame.
-    const maxImgW = Math.min(W - 48, 560);
-    const maxImgH = H * 0.42;
-    const imgW = Math.min(maxImgW, maxImgH * (4 / 3));
-    const imgH = imgW * (3 / 4);
-    const imgCy = H * 0.36;
-
-    if (p.image && this.textures.exists(p.image)) {
-      // Fit the art entirely within the 4:3 frame without distorting it
-      // (contain), so it never overflows the outlined region.
-      const sprite = this.add.image(cx, imgCy, p.image);
-      const scale = Math.min(imgW / sprite.width, imgH / sprite.height);
-      sprite.setScale(scale);
-      this.add
-        .rectangle(cx, imgCy, imgW, imgH)
-        .setStrokeStyle(2, COLORS.gold, 0.4);
-    } else {
-      // Placeholder 4:3 rectangle for pages without art yet.
-      const image = this.add.rectangle(
-        cx,
-        imgCy,
-        imgW,
-        imgH,
-        COLORS.feltLight,
-        0.6,
-      );
-      image.setStrokeStyle(2, COLORS.gold, 0.4);
-      this.add
-        .text(cx, imgCy, "4 : 3", {
-          fontFamily: SERIF,
-          fontSize: "18px",
-          color: CSS.dim,
-          fontStyle: "italic",
-        })
-        .setOrigin(0.5);
-    }
-
-    const blurbStyle: Phaser.Types.GameObjects.Text.TextStyle = {
-      fontFamily: SERIF,
-      fontSize: `${Math.round(Phaser.Math.Clamp(W * 0.022, 16, 22))}px`,
-      color: CSS.parchment,
-      align: "center",
-      wordWrap: { width: Math.min(W - 48, 620) },
-    };
-    const blurbTop = imgCy + imgH / 2 + 26;
-    this.add.text(cx, blurbTop, p.blurb, blurbStyle).setOrigin(0.5, 0);
-
-    // Reserve a text band as tall as the *longest* blurb so the controls below
-    // sit at the same y on every page — the button shouldn't jump as the copy
-    // changes. (Measure off-screen, then discard.)
-    const maxBlurbH = Math.max(
-      ...PAGES.map((page) => {
-        const probe = this.add
-          .text(0, 0, page.blurb, blurbStyle)
-          .setVisible(false);
-        const h = probe.height;
-        probe.destroy();
-        return h;
-      }),
+    const layout = buildStoryPage(
+      this,
+      PAGES[this.page],
+      PAGES,
+      INTRO_AMBIENCE,
     );
-
-    // The button sits just under the reserved text band with a little padding,
-    // clamped so the whole control block stays on short screens.
-    const blockTop = Math.min(blurbTop + maxBlurbH + 28, H - 150);
+    this.slideBackdrop = layout.backdrop;
 
     const label = last ? "Begin" : "Continue";
     const button = bannerButton(this, cx, 0, label, () => {
       if (last) this.leave(() => beginRun(this));
       else this.nextPage();
     });
-    button.y = blockTop + button.height / 2;
+    button.y = layout.blockTop + button.height / 2;
     let cursorY = button.y + button.height / 2 + 24;
 
     // Final page: the skip checkbox sits below the button.
@@ -195,17 +105,7 @@ export class IntroScene extends Phaser.Scene {
       cursorY += 34;
     }
 
-    // Page dots, closing out the control block.
-    const dotGap = 22;
-    PAGES.forEach((_, i) => {
-      const dot = this.add.circle(
-        cx + (i - (PAGES.length - 1) / 2) * dotGap,
-        cursorY,
-        5,
-        COLORS.gold,
-      );
-      dot.setAlpha(i === this.page ? 1 : 0.35);
-    });
+    buildPageDots(this, cx, cursorY, PAGES.length, this.page);
   }
 
   /** Send the current chapter to the right, rebuild the next one, then bring

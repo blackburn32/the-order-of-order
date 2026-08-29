@@ -5,6 +5,7 @@ import { applyDeadDice } from "../systems/Afflictions";
 import { applyTrialStart, enforceGridCap } from "../systems/Items";
 import { makeDie } from "../systems/Dice";
 import {
+  applyBoosterChoice,
   applyOffer,
   availableIds,
   offerFor,
@@ -329,6 +330,38 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   const outcome = resolveRoll(state, () => 0);
   check(outcome.spawnedCount === 0, "The Drought should spawn no dice");
   check(state.dice.length === before, "and leave the grid untouched");
+}
+
+// ...but it stops at the shop door. The ladder has already advanced onto the
+// Boss Trial by the time its shop opens, so reading the live afflictions here
+// would offer every dice-adding card and then refuse to sell it — a card that
+// does nothing when pressed. Only a permanent block (Locust Idol) closes the
+// counter on growth.
+{
+  const state = newRun();
+  state.trial = 3;
+  state.bossModifiers = ["drought"];
+  state.gold = 200;
+  const offered = availableIds(state);
+  check(
+    offered.includes("extra_die") && offered.includes("spike"),
+    "a shop before The Drought should still offer dice-adding cards",
+  );
+  const before = state.dice.length;
+  check(
+    applyOffer(state, offerFor("extra_die", state)),
+    "and should sell them",
+  );
+  // The same cards claimed free from a booster pack, which is the path that
+  // reaches applyOffer with the cost already paid.
+  check(
+    applyBoosterChoice(state, { ...offerFor("spike", state), cost: 0 }),
+    "and a pack should hand them over",
+  );
+  check(
+    state.dice.length === before + 4,
+    "with the dice actually landing on the grid",
+  );
 }
 
 // The Hoard raises the goal it has to be measured against.
@@ -726,6 +759,59 @@ function buy(
   check(
     state.dice.length === before - broken,
     "and the shattered dice should leave the grid",
+  );
+}
+
+// Betrayal bills the other half of the roll: the dice that came up with
+// nothing. Breakage and defection are billed against the SAME roll, so a run
+// carrying both must not have one of them counting the other's leftovers.
+{
+  const state = newRun();
+  state.afflictions = ["betrayal"];
+  // d1s always score, so a grid of d6s asked for 1s is mostly failure: the
+  // faces below are forced to 6, which never scores.
+  state.dice.addDice(6, 200);
+  const before = state.dice.length;
+  state.dice.roll(() => 0.99, state.scoringNumbers);
+  const nonScoring = state.dice.agg().total - state.dice.agg().scoringCount;
+  check(nonScoring > 0, "a roll of 6s against 1s should score nothing");
+  const { defected } = resolveRoll(state, () => 0);
+  check(defected > 0, "Betrayal should take dice that failed to score");
+  check(
+    state.dice.length === before - defected,
+    "and the defectors should leave the grid",
+  );
+  check(
+    state.defectors === defected,
+    "and the run should tally every one of them",
+  );
+}
+
+// Breakage and defection bill one roll between them, each taking only from its
+// own half of it. Run with both afflictions at full tilt and an rng that always
+// fires, so each pass takes everything it is entitled to and no more — the way
+// the two would collide if one were reading the other's leftovers.
+{
+  const state = newRun();
+  state.hasOuroboros = true;
+  state.afflictions = ["ouroboros", "betrayal"];
+  state.dice.addDice(1, 100); // d1s always score
+  state.dice.addDice(6, 100); // rolled to 6s below, so none of these score
+  state.dice.roll(() => 0.99, state.scoringNumbers);
+  const agg = state.dice.agg();
+  const scoring = agg.scoringCount;
+  const nonScoring = agg.total - agg.scoringCount;
+  const before = state.dice.length;
+  check(scoring > 0 && nonScoring > 0, "the roll should have both halves");
+  const { broken, defected } = resolveRoll(state, () => 0);
+  check(broken > 0 && broken <= scoring, "breakage takes only scoring dice");
+  check(
+    defected > 0 && defected <= nonScoring,
+    "and defection only dice that failed",
+  );
+  check(
+    state.dice.length === before - broken - defected,
+    "and between them they take each die at most once",
   );
 }
 

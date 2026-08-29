@@ -68,6 +68,13 @@ export class VictoryScene extends Phaser.Scene {
     this.slideBackdrop = [felt, ambient];
 
     const rankLine = `You attained rank ${WIN_RANK}`;
+    // Endless releases the King's tribute and the Betrayal — see
+    // engine.continueEndless. Worth saying on the button's own screen, because
+    // for a run carrying both it is the largest thing pressing on offers.
+    const liftLine =
+      state.kingsDemand || state.afflictions.includes("betrayal")
+        ? "Press on and the Crown's tribute and the Betrayal are lifted."
+        : null;
     const scoreLine = `Total score: ${formatScore(state.totalScore)}`;
     const gridLine = `Your grid: ${state.dice.summary()}`;
 
@@ -117,6 +124,17 @@ export class VictoryScene extends Phaser.Scene {
           { text: rankLine, size: 24, color: CSS.parchment, gapBefore: 14 },
           { text: scoreLine, size: 19, color: CSS.goldLight },
           { text: gridLine, size: 15, color: CSS.dim, gapBefore: 10 },
+          ...(liftLine
+            ? [
+                {
+                  text: liftLine,
+                  size: 14,
+                  color: CSS.goldLight,
+                  italic: true,
+                  gapBefore: 8,
+                },
+              ]
+            : []),
         ],
         actions,
       });
@@ -171,6 +189,19 @@ export class VictoryScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
+    if (liftLine) {
+      this.add
+        .text(cx, top + step * 4.8, liftLine, {
+          fontFamily: SERIF,
+          fontSize: "16px",
+          color: CSS.goldLight,
+          fontStyle: "italic",
+          align: "center",
+          wordWrap: { width: Math.min(900, W - 60) },
+        })
+        .setOrigin(0.5);
+    }
+
     const gap = Math.min(82, H * 0.12);
     let btnY = Math.min(H - gap * actions.length - 20, top + step * 5.0) + gap;
     for (const action of actions) {
@@ -179,8 +210,8 @@ export class VictoryScene extends Phaser.Scene {
     }
   }
 
-  /** Finish at rank 5. Continuing into endless deliberately skips this so the
-   * score remains live until that run fails or is abandoned. */
+  /** Finish at the final rank. Continuing into endless deliberately skips this
+   * so the score remains live until that run fails or is abandoned. */
   private endRun(): void {
     if (this.runEnded || this.leaving) return;
     this.runEnded = true;
@@ -206,7 +237,9 @@ export class VictoryScene extends Phaser.Scene {
 
   /** Carry the winning run on past the final rank. The goals grow faster than
    *  any build can from here, so this is a "how far can you get" epilogue
-   *  rather than a second game. */
+   *  rather than a second game — and since the realm the story left behind has
+   *  no King and no rival order in it, `continueEndless` lifts both of the
+   *  drawbacks they imposed on the way through. */
   private continueRun(): void {
     const state = getRun(this.registry);
     continueEndless(state);

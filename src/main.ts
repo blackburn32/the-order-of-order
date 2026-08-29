@@ -14,6 +14,8 @@ import { InitialsPromptScene } from "./scenes/InitialsPromptScene";
 import { AnalysisScene } from "./scenes/AnalysisScene";
 import { TrialOverviewScene } from "./scenes/TrialOverviewScene";
 import { TrialResultsScene } from "./scenes/TrialResultsScene";
+import { EndingScene } from "./scenes/EndingScene";
+import { TributeScene } from "./scenes/TributeScene";
 import { installDevPanel } from "./dev/DevPanel";
 import { GOLD_BORDER } from "./buildFlags";
 import { installHighResolutionText } from "./renderQuality";
@@ -59,6 +61,8 @@ function createGame(): Phaser.Game {
       TrialOverviewScene,
       GameScene,
       TrialResultsScene,
+      EndingScene,
+      TributeScene,
       ShopScene,
       GameOverScene,
       VictoryScene,

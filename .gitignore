@@ -5,3 +5,5 @@ sim-out/
 *.local
 .env
 the-order-of-order.zip
+AGENTS.md
+art-out/

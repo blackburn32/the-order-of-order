@@ -192,7 +192,7 @@ export function deniedRoll(
         id,
         name,
         points: 0n,
-        color: COLORS.cursedCard,
+        color: COLORS.denied,
         dice: [],
         bigPulse: false,
         float: "aggregate",

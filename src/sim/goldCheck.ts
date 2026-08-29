@@ -30,7 +30,7 @@ import {
   applyOffer,
   applyBoosterChoice,
   boosterPrice,
-  discountOffersForPawnbroker,
+  repriceOffers,
   openBooster,
   rollBoosterOffers,
 } from "../systems/Shop";
@@ -269,19 +269,54 @@ console.log("\nShop pricing");
 }
 
 {
+  const state = runAt(1);
   const offers = [
-    offerFor("prism", runAt(1)),
-    offerFor("pocket_change", runAt(1)),
-    { ...offerFor("extra_die", runAt(1)), freeByCoupon: true },
+    offerFor("prism", state),
+    offerFor("pocket_change", state),
+    { ...offerFor("extra_die", state), freeByCoupon: true },
   ];
   const originalCosts = offers.map((offer) => offer.cost);
-  discountOffersForPawnbroker(offers);
+  state.hasPawnbroker = true;
+  repriceOffers(state, offers);
   check(
     offers[0].cost === originalCosts[0] - 2 &&
       offers[1].cost === Math.max(1, originalCosts[1] - 2),
     "buying Pawnbroker immediately discounts the current card row",
   );
   check(offers[2].cost === 0, "Pawnbroker leaves an already-free card free");
+}
+
+{
+  const plain = runAt(1);
+  const cart = runAt(1);
+  cart.hasShoppingCart = true;
+  const row = [
+    offerFor("prism", plain),
+    offerFor("pocket_change", plain),
+    { ...offerFor("extra_die", plain), freeByCoupon: true },
+  ];
+  const before = row.map((offer) => offer.cost);
+  repriceOffers(cart, row);
+  check(
+    row[0].cost < before[0] && row[1].cost <= before[1],
+    "buying Shopping Cart immediately discounts the current card row",
+  );
+  check(row[2].cost === 0, "Shopping Cart leaves an already-free card free");
+  check(
+    row[0].cost === priceFor(byId("prism"), cart),
+    "a repriced card costs what the same card would be rolled at",
+  );
+
+  // Whichever discount card the visit takes second, the row lands on the same
+  // price as a shop entered owning both.
+  const both = runAt(1);
+  both.hasShoppingCart = true;
+  both.hasPawnbroker = true;
+  repriceOffers(both, row);
+  check(
+    row[0].cost === priceFor(byId("prism"), both),
+    "stacked discounts reprice to the same place whatever their order",
+  );
 }
 
 {

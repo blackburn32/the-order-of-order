@@ -5,11 +5,13 @@ import type Phaser from "phaser";
 import type { RarityWeights } from "../config";
 import { newRun, setRun, type RunState } from "../state/RunState";
 import type { TrialEndOutcome } from "../sim/engine";
-import { AFFLICTIONS } from "./Afflictions";
+import { AFFLICTIONS, type AfflictionId } from "./Afflictions";
 import { BOSS_MODIFIERS } from "./Boss";
+import { ENDINGS, type EndingId } from "./Endings";
 import { DIE_LADDER } from "./Dice";
 import { DicePool, type DiceStack } from "./DicePool";
 import { ITEMS, type ShopItemId } from "./Items";
+import type { RivalState } from "./Rival";
 import {
   rollBoosterOffers,
   rollShopOffers,
@@ -23,9 +25,23 @@ export const ACTIVE_RUN_STORAGE_KEY = "the-order-of-order.active-run";
 const ACTIVE_RUN_TOMBSTONE_KEY = `${ACTIVE_RUN_STORAGE_KEY}.cleared-at`;
 const SCHEMA = 1 as const;
 
+/** The mirror rival, flattened the same way the run's own grid and score are:
+ *  the pool as stacks, the score as a decimal string. */
+interface SerializedRival {
+  dice: DiceStack[];
+  score: string;
+  roll: number;
+}
+
 type SerializedRunState = Omit<
   RunState,
-  "dice" | "score" | "trialScore" | "totalScore" | "dicePoints" | "itemPoints"
+  | "dice"
+  | "score"
+  | "trialScore"
+  | "totalScore"
+  | "dicePoints"
+  | "itemPoints"
+  | "rival"
 > & {
   dice: DiceStack[];
   score: string;
@@ -33,6 +49,7 @@ type SerializedRunState = Omit<
   totalScore: string;
   dicePoints: Record<string, string>;
   itemPoints: Record<string, string>;
+  rival: SerializedRival | null;
 };
 
 type SerializedTrialEndOutcome = Omit<
@@ -66,6 +83,15 @@ export type ResumableCheckpoint =
       unlocked: ShopItemId[];
     }
   | ({ scene: "Shop" } & ShopCheckpointState)
+  // A story sequence, and the drawback screen that some of them hand off to.
+  // The Tribute's cards are carried on the checkpoint rather than re-rolled on
+  // resume, so reloading cannot deal the King a friendlier set of demands.
+  | { scene: "Ending"; id: EndingId }
+  | {
+      scene: "Tribute";
+      gift: "kingsDemands" | "betrayal";
+      choices: AfflictionId[];
+    }
   | { scene: "Victory" };
 
 type SerializedCheckpoint =
@@ -95,6 +121,7 @@ const bossIds: ReadonlySet<string> = new Set(
   BOSS_MODIFIERS.map((boss) => boss.id),
 );
 const afflictionIds: ReadonlySet<string> = new Set(Object.keys(AFFLICTIONS));
+const endingIds: ReadonlySet<string> = new Set(ENDINGS.map((e) => e.id));
 const dieSides = new Set<number>(DIE_LADDER);
 const packIds = new Set([
   "common_pack",
@@ -162,6 +189,14 @@ export function serializeRunState(state: RunState): SerializedRunState {
     wildSizes: [...state.wildSizes],
     royalSealSizes: [...state.royalSealSizes],
     afflictions: [...state.afflictions],
+    endingsSeen: [...state.endingsSeen],
+    rival: state.rival
+      ? {
+          dice: state.rival.dice.summarize().map((stack) => ({ ...stack })),
+          score: state.rival.score.toString(),
+          roll: state.rival.roll,
+        }
+      : null,
     shopUnlocks: [...state.shopUnlocks],
     ownedUnique: [...state.ownedUnique],
     purchases: { ...state.purchases },
@@ -221,7 +256,14 @@ export function hydrateRunState(value: unknown): RunState | null {
   const hydrated = { ...defaults } as RunState;
 
   for (const [key, fallback] of Object.entries(defaults)) {
-    if (key === "dice" || key.endsWith("Score") || key.endsWith("Points"))
+    // `rival` carries a pool and a bigint, so it is hydrated by hand below; the
+    // generic pass would only shallow-copy the serialized shape over it.
+    if (
+      key === "dice" ||
+      key === "rival" ||
+      key.endsWith("Score") ||
+      key.endsWith("Points")
+    )
       continue;
     const candidate = value[key];
     if (candidate === undefined) continue;
@@ -263,6 +305,9 @@ export function hydrateRunState(value: unknown): RunState | null {
     !isNonNegativeInteger(value.trialRollGold.luckyCoin) ||
     !validIdArray(value.bossModifiers ?? [], bossIds) ||
     !validIdArray(value.afflictions ?? [], afflictionIds) ||
+    !validIdArray(value.endingsSeen ?? [], endingIds) ||
+    !validNullableId(value.kingsDemand, afflictionIds) ||
+    !isNonNegativeInteger(hydrated.defectors) ||
     !validIdArray(value.shopUnlocks ?? [], itemIds) ||
     !validIdArray(value.ownedUnique ?? [], itemIds) ||
     !Array.isArray(value.scoringNumbers) ||
@@ -285,7 +330,29 @@ export function hydrateRunState(value: unknown): RunState | null {
     titheBowl: value.trialRollGold.titheBowl,
     luckyCoin: value.trialRollGold.luckyCoin,
   };
+  // A null default means the generic pass above skipped these two entirely, so
+  // both are read straight off the saved shape.
+  hydrated.kingsDemand = (value.kingsDemand as AfflictionId | null) ?? null;
+  if (value.rival !== undefined && value.rival !== null) {
+    const rival = hydrateRival(value.rival);
+    if (!rival) return null;
+    hydrated.rival = rival;
+  }
   return hydrated;
+}
+
+/** A saved id that is allowed to be absent or null, but not to be unknown. */
+function validNullableId(value: unknown, ids: ReadonlySet<string>): boolean {
+  if (value === undefined || value === null) return true;
+  return typeof value === "string" && ids.has(value);
+}
+
+function hydrateRival(value: unknown): RivalState | null {
+  if (!isRecord(value)) return null;
+  const dice = hydrateDice(value.dice);
+  const score = parseBigInt(value.score);
+  if (!dice || score === null || !isNonNegativeInteger(value.roll)) return null;
+  return { dice, score, roll: value.roll };
 }
 
 function validSidesArray(value: unknown): boolean {
@@ -310,6 +377,10 @@ function validOffer(value: unknown): value is ShopOffer {
     itemIds.has(value.id) &&
     typeof value.name === "string" &&
     isNonNegativeInteger(value.cost) &&
+    (value.listPrice === undefined ||
+      (typeof value.listPrice === "number" &&
+        Number.isFinite(value.listPrice) &&
+        value.listPrice >= 0)) &&
     ["free", "low", "standard", "strong", "build"].includes(
       value.priceBand as string,
     ) &&
@@ -411,6 +482,8 @@ function serializeCheckpoint(
   if (checkpoint.scene === "Game")
     return { ...checkpoint, unlocked: [...checkpoint.unlocked] };
   if (checkpoint.scene === "Shop") return cloneShopCheckpoint(checkpoint);
+  if (checkpoint.scene === "Tribute")
+    return { ...checkpoint, choices: [...checkpoint.choices] };
   return { ...checkpoint };
 }
 
@@ -431,6 +504,19 @@ function hydrateCheckpoint(value: unknown): ResumableCheckpoint | null {
       scene: "TrialResults",
       outcome,
       unlocked: [...value.unlocked] as ShopItemId[],
+    };
+  }
+  if (value.scene === "Ending") {
+    if (typeof value.id !== "string" || !endingIds.has(value.id)) return null;
+    return { scene: "Ending", id: value.id as EndingId };
+  }
+  if (value.scene === "Tribute") {
+    if (value.gift !== "kingsDemands" && value.gift !== "betrayal") return null;
+    if (!validIdArray(value.choices, afflictionIds)) return null;
+    return {
+      scene: "Tribute",
+      gift: value.gift,
+      choices: [...value.choices] as AfflictionId[],
     };
   }
   if (value.scene !== "Shop") return null;

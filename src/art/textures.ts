@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS, CSS, DIE_BORDER, SERIF } from "./palette";
 import { DIE_LADDER } from "../systems/Dice";
+import type { AfflictionId } from "../systems/Afflictions";
 import type { BossModifierId } from "../systems/Boss";
 
 // Square so it stretches evenly onto any viewport aspect ratio via setDisplaySize.
@@ -21,7 +22,7 @@ export function buildTextures(scene: Phaser.Scene): void {
   buildSpark(scene);
   buildShockwave(scene);
   buildSigils(scene);
-  buildBossSigils(scene);
+  buildAfflictionSigils(scene);
   buildSigilRings(scene);
 }
 
@@ -60,8 +61,94 @@ export const BOSS_SIGIL_TEXTURE_KEYS: Record<BossModifierId, string> = {
   hoard: "sigil-boss-hoard",
 };
 
+/**
+ * A mark for every affliction in the game, boss and curse alike.
+ *
+ * A boss announces itself with a sigil turning behind the dice; a cursed card
+ * is stamped with one behind its copy (see ui/itemCard). Both read from this
+ * one table, so a drawback that arrives from either direction wears the same
+ * face — which is the whole point of afflictions being one vocabulary.
+ *
+ * The eight boss ids keep their `sigil-boss-*` keys, since the ambient layer
+ * has always asked for them by that name; the drawbacks that were never a boss
+ * take `sigil-curse-*`.
+ */
+export const AFFLICTION_SIGIL_TEXTURE_KEYS: Record<AfflictionId, string> = {
+  ...BOSS_SIGIL_TEXTURE_KEYS,
+  crunchTime: "sigil-curse-crunch-time",
+  bloodPrice: "sigil-curse-blood-price",
+  ouroboros: "sigil-curse-ouroboros",
+  famishedIdol: "sigil-curse-famished-idol",
+  bloat: "sigil-curse-bloat",
+  ironDebt: "sigil-curse-iron-debt",
+  paupersVow: "sigil-curse-paupers-vow",
+  sealedDoors: "sigil-curse-sealed-doors",
+  devilsBargain: "sigil-curse-devils-bargain",
+  leadenDice: "sigil-curse-leaden-dice",
+  locustIdol: "sigil-curse-locust-idol",
+  gamblersCurse: "sigil-curse-gamblers-curse",
+  reckoning: "sigil-curse-reckoning",
+  hairTrigger: "sigil-curse-hair-trigger",
+  longNight: "sigil-curse-long-night",
+  tollkeeper: "sigil-curse-tollkeeper",
+  betrayal: "sigil-curse-betrayal",
+};
+
 export function bossSigilTexture(id: BossModifierId): string {
   return BOSS_SIGIL_TEXTURE_KEYS[id];
+}
+
+export function afflictionSigilTexture(id: AfflictionId): string {
+  return AFFLICTION_SIGIL_TEXTURE_KEYS[id];
+}
+
+/** How far the stamped copy of a sigil is blurred, in pixels of the 512-unit
+ *  texture — about one pixel once a card has scaled the seal down to its
+ *  parchment. Enough to take the mark out of the type's frequency band, not so
+ *  much that it stops being a drawing. */
+const SIGIL_BLUR_PX = 3;
+
+/**
+ * A softened copy of a sigil texture, for the seal stamped on a cursed card.
+ *
+ * A curse's mark is drawn in the two thin weights `buildAfflictionSigil` allows
+ * it, which at card size land within a pixel of the stem width of the serif the
+ * copy is set in — so the sharp texture doesn't read as a background at all. It
+ * reads as more letterforms, and its rings, running flat and horizontal where
+ * they pass a line of text, merge into the words like an underline. Blurring
+ * costs the mark none of its presence: it moves it out of the type's frequency
+ * band, so the seal reads as ink soaked into the parchment and the copy is the
+ * only sharp thing on the card.
+ *
+ * Softened here, at the card, rather than in `buildAfflictionSigil`: the
+ * `sigil-boss-*` half of the table is also the mark turning behind the dice,
+ * where the silhouette wants its edge. Blurring the consumer's copy leaves the
+ * ambient layer's untouched whichever affliction arrives on a card.
+ *
+ * The blurred copy is built once per sigil, on first use, and cached under its
+ * own key. Falls back to the sharp texture where canvas filters are missing.
+ */
+export function softenedSigilTexture(scene: Phaser.Scene, key: string): string {
+  const softKey = `${key}-soft`;
+  if (scene.textures.exists(softKey)) return softKey;
+  const source = scene.textures.get(key).getSourceImage();
+  if (!(source instanceof HTMLCanvasElement) && !(source instanceof Image))
+    return key;
+  const soft = scene.textures.createCanvas(
+    softKey,
+    source.width,
+    source.height,
+  );
+  if (!soft) return key;
+  const ctx = soft.getContext();
+  if (!("filter" in ctx)) {
+    scene.textures.remove(softKey);
+    return key;
+  }
+  ctx.filter = `blur(${SIGIL_BLUR_PX}px)`;
+  ctx.drawImage(source, 0, 0);
+  soft.refresh();
+  return softKey;
 }
 
 export function randomSigilTexture(): (typeof SIGIL_TEXTURE_KEYS)[number] {
@@ -205,35 +292,65 @@ function buildSigil(scene: Phaser.Scene, key: string, variant: number): void {
   g.destroy();
 }
 
-/** Boss marks share the ambient sigils' measured outer rings, but replace the
- * centre with a rule-specific emblem. The silhouettes stay intentionally bold:
- * they spend most of the game behind dice at very low opacity. */
-function buildBossSigils(scene: Phaser.Scene): void {
+/** Affliction marks share the ambient sigils' measured outer rings, but replace
+ * the centre with a rule-specific emblem.
+ *
+ * The two halves of the table are drawn at deliberately different weights. A
+ * boss's mark turns behind a whole room of dice at very low opacity, so its
+ * silhouette is bold or it is not there at all. A curse's is stamped on a card
+ * UNDER the copy the player has to read, where a heavy line or a filled shape
+ * reads as a smudge across the words — so every cursed mark is drawn in the two
+ * thin weights below and nothing else, with no fills anywhere. */
+function buildAfflictionSigils(scene: Phaser.Scene): void {
   (
-    Object.entries(BOSS_SIGIL_TEXTURE_KEYS) as [BossModifierId, string][]
-  ).forEach(([id, key], index) => buildBossSigil(scene, key, id, index));
+    Object.entries(AFFLICTION_SIGIL_TEXTURE_KEYS) as [AfflictionId, string][]
+  ).forEach(([id, key], index) => buildAfflictionSigil(scene, key, id, index));
 }
 
-function buildBossSigil(
+/** The only two line weights a cursed mark — frame included — is drawn in. */
+const CURSE_LINE = 2;
+const CURSE_LINE_FAINT = 1.25;
+const CURSE_ALPHA = 0.8;
+const CURSE_ALPHA_FAINT = 0.5;
+
+function buildAfflictionSigil(
   scene: Phaser.Scene,
   key: string,
-  id: BossModifierId,
+  id: AfflictionId,
   index: number,
 ): void {
   const size = 512;
   const c = size / 2;
   const g = scene.add.graphics();
+  // A boss keeps the bold frame it has always turned behind the dice in; every
+  // other affliction is a card seal, and takes the thin one.
+  const cursed = !(id in BOSS_SIGIL_TEXTURE_KEYS);
+  /** The mark's ordinary line, and the one it recedes to. */
+  const line = () =>
+    cursed
+      ? g.lineStyle(CURSE_LINE, 0xffffff, CURSE_ALPHA)
+      : g.lineStyle(4, 0xffffff, 0.72);
+  const faint = () =>
+    cursed
+      ? g.lineStyle(CURSE_LINE_FAINT, 0xffffff, CURSE_ALPHA_FAINT)
+      : g.lineStyle(3, 0xffffff, 0.5);
 
-  g.lineStyle(3, 0xffffff, 0.9);
+  g.lineStyle(cursed ? CURSE_LINE : 3, 0xffffff, cursed ? 0.6 : 0.9);
   g.strokeCircle(c, c, 248);
-  g.lineStyle(1.5, 0xffffff, 0.55);
+  g.lineStyle(cursed ? CURSE_LINE_FAINT : 1.5, 0xffffff, cursed ? 0.38 : 0.55);
   g.strokeCircle(c, c, 232);
   const ticks = 32 + (index % 3) * 8;
   for (let i = 0; i < ticks; i++) {
     const angle = (Math.PI * 2 * i) / ticks;
     const major = i % 8 === 0;
     const inner = major ? 208 : 220;
-    g.lineStyle(major ? 3 : 1.5, 0xffffff, major ? 0.85 : 0.42);
+    if (cursed)
+      g.lineStyle(
+        major ? CURSE_LINE : CURSE_LINE_FAINT,
+        0xffffff,
+        major ? 0.55 : 0.3,
+      );
+    else g.lineStyle(major ? 3 : 1.5, 0xffffff, major ? 0.85 : 0.42);
     g.lineBetween(
       c + Math.cos(angle) * inner,
       c + Math.sin(angle) * inner,
@@ -241,8 +358,17 @@ function buildBossSigil(
       c + Math.sin(angle) * 232,
     );
   }
-  strokeBrokenRing(g, c, 180, 8, Math.PI / 8, 0.1, 0.48);
-  g.lineStyle(4, 0xffffff, 0.72);
+  strokeBrokenRing(
+    g,
+    c,
+    180,
+    8,
+    Math.PI / 8,
+    0.1,
+    cursed ? 0.3 : 0.48,
+    cursed ? CURSE_LINE_FAINT : 2,
+  );
+  line();
 
   switch (id) {
     case "famine":
@@ -273,20 +399,29 @@ function buildBossSigil(
       g.lineBetween(c + 24, c + 18, c - 12, c + 88);
       break;
     case "eclipse":
-      // Offset orbits make the occluding disc read even while it turns.
-      g.strokeCircle(c, c, 104);
-      g.lineStyle(8, 0xffffff, 0.68);
-      g.strokeCircle(c + 42, c - 12, 82);
-      g.lineStyle(3, 0xffffff, 0.5);
-      for (let i = 0; i < 8; i++) {
-        const a = (Math.PI * i) / 4;
+      // A crescent held inside the sun's own disc: the light still standing,
+      // and most of it already taken. The crescent's horns point the opposite
+      // way to The Long Night's, so the two marks never read as one another.
+      g.strokeCircle(c, c, 122);
+      faint();
+      for (let i = 0; i < 12; i++) {
+        const a = (Math.PI * i) / 6;
         g.lineBetween(
-          c + Math.cos(a) * 124,
-          c + Math.sin(a) * 124,
-          c + Math.cos(a) * 148,
-          c + Math.sin(a) * 148,
+          c + Math.cos(a) * 136,
+          c + Math.sin(a) * 136,
+          c + Math.cos(a) * 166,
+          c + Math.sin(a) * 166,
         );
       }
+      line();
+      // Both arcs meet at the same two horns: the outer swings wide of centre,
+      // the inner cuts back across it.
+      g.beginPath();
+      g.arc(c, c, 84, Math.PI * 1.3, Math.PI * 0.7, false);
+      g.strokePath();
+      g.beginPath();
+      g.arc(c - 45, c, 68, Math.PI * 1.521, Math.PI * 0.479, false);
+      g.strokePath();
       break;
     case "silence":
       // A clapperless bell cut through by the boss's binding stroke.
@@ -303,13 +438,43 @@ function buildBossSigil(
       g.lineBetween(c - 112, c - 104, c + 112, c + 104);
       break;
     case "hunger":
-      // An open maw whose inward teeth consume the empty centre.
-      g.strokePoints(polygonPoints(c, c, 118, 4, 45), true, true);
-      for (const x of [c - 72, c - 24, c + 24, c + 72]) {
-        g.lineBetween(x, c - 70, x + 18, c - 28);
-        g.lineBetween(x, c + 70, x - 18, c + 28);
-      }
-      g.lineBetween(c - 104, c, c + 104, c);
+      // A candle burned down to a stub in a tall holder: the rite ends when it
+      // does, and it has almost nothing left to give.
+      g.beginPath();
+      g.moveTo(c, c - 126);
+      g.lineTo(c + 24, c - 84);
+      g.lineTo(c, c - 58);
+      g.lineTo(c - 24, c - 84);
+      g.closePath();
+      g.strokePath();
+      faint();
+      g.lineBetween(c, c - 58, c, c - 44);
+      line();
+      g.strokePoints(
+        [
+          new Phaser.Math.Vector2(c - 40, c - 44),
+          new Phaser.Math.Vector2(c + 40, c - 44),
+          new Phaser.Math.Vector2(c + 40, c + 2),
+          new Phaser.Math.Vector2(c - 40, c + 2),
+        ],
+        true,
+        true,
+      );
+      // Wax run down what is left of it.
+      faint();
+      g.lineBetween(c - 24, c - 28, c - 24, c + 2);
+      g.lineBetween(c + 18, c - 20, c + 18, c + 2);
+      // The holder, sized for the candle this once was.
+      line();
+      g.lineBetween(c - 56, c + 2, c + 56, c + 2);
+      g.lineBetween(c - 56, c + 2, c - 34, c + 34);
+      g.lineBetween(c + 56, c + 2, c + 34, c + 34);
+      g.lineBetween(c - 34, c + 34, c + 34, c + 34);
+      g.lineBetween(c - 18, c + 34, c - 18, c + 92);
+      g.lineBetween(c + 18, c + 34, c + 18, c + 92);
+      g.lineBetween(c - 18, c + 92, c - 86, c + 122);
+      g.lineBetween(c + 18, c + 92, c + 86, c + 122);
+      g.lineBetween(c - 86, c + 122, c + 86, c + 122);
       break;
     case "warden":
       // A barred gate under a peaked lintel.
@@ -343,6 +508,325 @@ function buildBossSigil(
         g.lineBetween(c + 85, y, c + 85, y + 34);
       }
       g.strokePoints(polygonPoints(c, c - 92, 46, 4, 45), true, true);
+      break;
+
+    // --- Cursed cards ------------------------------------------------------
+    case "crunchTime":
+      // An hourglass already run out, with only the last grains still falling.
+      g.strokePoints(
+        [
+          new Phaser.Math.Vector2(c - 72, c - 100),
+          new Phaser.Math.Vector2(c + 72, c - 100),
+          new Phaser.Math.Vector2(c, c),
+        ],
+        true,
+        true,
+      );
+      g.strokePoints(
+        [
+          new Phaser.Math.Vector2(c - 72, c + 100),
+          new Phaser.Math.Vector2(c + 72, c + 100),
+          new Phaser.Math.Vector2(c, c),
+        ],
+        true,
+        true,
+      );
+      g.lineBetween(c - 94, c - 116, c + 94, c - 116);
+      g.lineBetween(c - 94, c + 116, c + 94, c + 116);
+      faint();
+      g.lineBetween(c, c + 16, c, c + 40);
+      g.lineBetween(c, c + 54, c, c + 68);
+      break;
+    case "bloodPrice":
+      // A die split down its face, paying out beneath it.
+      g.strokePoints(polygonPoints(c, c - 26, 124, 4, 45), true, true);
+      g.lineBetween(c - 22, c - 114, c + 8, c - 52);
+      g.lineBetween(c + 8, c - 52, c - 14, c - 16);
+      g.lineBetween(c - 14, c - 16, c + 10, c + 62);
+      faint();
+      for (const x of [c - 52, c, c + 52]) g.strokeCircle(x, c + 104, 13);
+      break;
+    case "ouroboros":
+      // The serpent closing on its own tail — a ring that never quite shuts.
+      g.beginPath();
+      g.arc(c, c, 104, Math.PI * -0.55, Math.PI * 1.3, false);
+      g.strokePath();
+      g.strokePoints(
+        polygonPoints(
+          c + Math.cos(Math.PI * 1.3) * 104,
+          c + Math.sin(Math.PI * 1.3) * 104,
+          48,
+          3,
+          214,
+        ),
+        true,
+        true,
+      );
+      faint();
+      g.strokeCircle(
+        c + Math.cos(Math.PI * 1.3) * 104 - 6,
+        c + Math.sin(Math.PI * 1.3) * 104 - 4,
+        9,
+      );
+      break;
+    case "famishedIdol":
+      // A pen counted to its brim and shut: no room left above the line.
+      g.strokePoints(polygonPoints(c, c, 150, 4, 45), true, true);
+      g.lineBetween(c - 106, c - 44, c + 106, c - 44);
+      faint();
+      for (let row = 0; row < 3; row++)
+        for (let col = 0; col < 4; col++)
+          g.strokeCircle(c - 66 + col * 44, c - 6 + row * 42, 12);
+      break;
+    case "bloat":
+      // Three squares swelling outward, each straining at the last.
+      g.strokePoints(polygonPoints(c, c, 57, 4, 45), true, true);
+      g.strokePoints(polygonPoints(c, c, 90, 4, 45), true, true);
+      faint();
+      g.strokePoints(polygonPoints(c, c, 124, 4, 45), true, true);
+      // The arrows press outward from clear of the outermost square, so they
+      // read as a swelling rather than as edges of the same box.
+      line();
+      for (let i = 0; i < 4; i++) {
+        const a = Math.PI / 4 + (Math.PI / 2) * i;
+        const tip = 172;
+        g.lineBetween(
+          c + Math.cos(a) * 134,
+          c + Math.sin(a) * 134,
+          c + Math.cos(a) * tip,
+          c + Math.sin(a) * tip,
+        );
+        for (const spread of [-0.3, 0.3])
+          g.lineBetween(
+            c + Math.cos(a) * tip,
+            c + Math.sin(a) * tip,
+            c + Math.cos(a + spread) * (tip - 26),
+            c + Math.sin(a + spread) * (tip - 26),
+          );
+      }
+      break;
+    case "ironDebt":
+      // A coin struck from the ledger, over a coffer shut for good.
+      g.strokeCircle(c, c - 44, 78);
+      faint();
+      g.strokeCircle(c, c - 44, 60);
+      line();
+      g.lineBetween(c - 88, c + 32, c + 88, c - 120);
+      g.strokePoints(
+        [
+          new Phaser.Math.Vector2(c - 110, c + 58),
+          new Phaser.Math.Vector2(c + 110, c + 58),
+          new Phaser.Math.Vector2(c + 110, c + 122),
+          new Phaser.Math.Vector2(c - 110, c + 122),
+        ],
+        true,
+        true,
+      );
+      g.lineBetween(c - 110, c + 84, c + 110, c + 84);
+      g.strokePoints(polygonPoints(c, c + 84, 24, 4, 45), true, true);
+      break;
+    case "paupersVow":
+      // A purse cut open at the mouth, everything above the cut already gone.
+      g.strokePoints(
+        [
+          new Phaser.Math.Vector2(c - 76, c - 44),
+          new Phaser.Math.Vector2(c + 76, c - 44),
+          new Phaser.Math.Vector2(c + 58, c + 96),
+          new Phaser.Math.Vector2(c - 58, c + 96),
+        ],
+        true,
+        true,
+      );
+      g.lineBetween(c - 100, c - 44, c + 100, c - 44);
+      faint();
+      g.strokeCircle(c - 58, c - 100, 21);
+      g.strokeCircle(c + 4, c - 128, 17);
+      g.strokeCircle(c + 64, c - 88, 15);
+      break;
+    case "sealedDoors":
+      // Twin doors under an arch, barred and waxed shut.
+      g.lineBetween(c - 92, c + 104, c - 92, c - 46);
+      g.lineBetween(c + 92, c + 104, c + 92, c - 46);
+      g.beginPath();
+      g.arc(c, c - 46, 92, Math.PI, 0, false);
+      g.strokePath();
+      g.lineBetween(c - 114, c + 104, c + 114, c + 104);
+      faint();
+      g.lineBetween(c, c - 138, c, c + 104);
+      line();
+      g.lineBetween(c - 114, c + 26, c + 114, c + 26);
+      g.strokeCircle(c, c + 26, 23);
+      break;
+    case "devilsBargain":
+      // A writ signed in haste, horned at both shoulders.
+      g.strokePoints(
+        [
+          new Phaser.Math.Vector2(c - 70, c - 70),
+          new Phaser.Math.Vector2(c + 70, c - 70),
+          new Phaser.Math.Vector2(c + 70, c + 110),
+          new Phaser.Math.Vector2(c - 70, c + 110),
+        ],
+        true,
+        true,
+      );
+      // The horns the writ is signed under: out, up, and hooked back in.
+      g.lineBetween(c - 70, c - 70, c - 116, c - 118);
+      g.lineBetween(c - 116, c - 118, c - 86, c - 148);
+      g.lineBetween(c + 70, c - 70, c + 116, c - 118);
+      g.lineBetween(c + 116, c - 118, c + 86, c - 148);
+      faint();
+      for (const y of [c - 46, c - 14, c + 18])
+        g.lineBetween(c - 58, y, c + 58, y);
+      line();
+      g.lineBetween(c - 58, c + 74, c - 24, c + 50);
+      g.lineBetween(c - 24, c + 50, c + 2, c + 82);
+      g.lineBetween(c + 2, c + 82, c + 30, c + 48);
+      g.lineBetween(c + 30, c + 48, c + 60, c + 76);
+      break;
+    case "leadenDice":
+      // A die with lead sunk into one corner: it will never fall the other way.
+      g.strokePoints(polygonPoints(c, c, 148, 4, 45), true, true);
+      faint();
+      g.lineBetween(c, c - 104, c - 40, c + 52);
+      line();
+      g.strokeCircle(c - 40, c + 58, 36);
+      faint();
+      g.strokeCircle(c + 54, c - 54, 14);
+      g.strokeCircle(c + 54, c + 4, 14);
+      break;
+    case "locustIdol":
+      // A locust settled on a stripped stalk: nothing grows behind it.
+      g.strokeEllipse(c + 4, c + 12, 62, 132);
+      g.strokePoints(
+        [
+          new Phaser.Math.Vector2(c - 26, c - 40),
+          new Phaser.Math.Vector2(c - 114, c - 8),
+          new Phaser.Math.Vector2(c - 34, c + 64),
+        ],
+        true,
+        true,
+      );
+      g.strokePoints(
+        [
+          new Phaser.Math.Vector2(c + 34, c - 40),
+          new Phaser.Math.Vector2(c + 122, c - 8),
+          new Phaser.Math.Vector2(c + 42, c + 64),
+        ],
+        true,
+        true,
+      );
+      g.strokeCircle(c + 4, c - 76, 28);
+      g.lineBetween(c - 10, c - 96, c - 46, c - 138);
+      g.lineBetween(c + 18, c - 96, c + 54, c - 138);
+      faint();
+      g.lineBetween(c - 118, c + 128, c + 118, c + 128);
+      break;
+    case "gamblersCurse":
+      // A die face come up blank — every pip a hollow where one did not land.
+      g.strokePoints(polygonPoints(c, c, 148, 4, 45), true, true);
+      faint();
+      for (const [dx, dy] of [
+        [-56, -56],
+        [56, -56],
+        [0, 0],
+        [-56, 56],
+        [56, 56],
+      ])
+        g.strokeCircle(c + dx, c + dy, 19);
+      break;
+    case "reckoning":
+      // The bar as it was set, and the bar as it now stands: twice the same
+      // height, on the same line. Height carries the doubling; the standing bar
+      // takes the firmer of the two lines.
+      faint();
+      g.strokePoints(
+        [
+          new Phaser.Math.Vector2(c - 118, c + 112),
+          new Phaser.Math.Vector2(c - 22, c + 112),
+          new Phaser.Math.Vector2(c - 22, c + 16),
+          new Phaser.Math.Vector2(c - 118, c + 16),
+        ],
+        true,
+        true,
+      );
+      line();
+      g.strokePoints(
+        [
+          new Phaser.Math.Vector2(c + 22, c + 112),
+          new Phaser.Math.Vector2(c + 118, c + 112),
+          new Phaser.Math.Vector2(c + 118, c - 80),
+          new Phaser.Math.Vector2(c + 22, c - 80),
+        ],
+        true,
+        true,
+      );
+      faint();
+      g.lineBetween(c - 140, c + 112, c + 140, c + 112);
+      break;
+    case "hairTrigger":
+      // A bow loosed once, its string gone slack behind the shot.
+      g.beginPath();
+      g.arc(c + 40, c, 116, Math.PI * 0.62, Math.PI * 1.38, false);
+      g.strokePath();
+      faint();
+      g.lineBetween(c - 4, c - 108, c - 24, c - 34);
+      g.lineBetween(c - 4, c + 108, c - 28, c + 42);
+      line();
+      g.lineBetween(c - 12, c, c + 120, c);
+      g.lineBetween(c + 120, c, c + 88, c - 24);
+      g.lineBetween(c + 120, c, c + 88, c + 24);
+      break;
+    case "longNight":
+      // A crescent whose horns have not closed, over a sky with a second mark.
+      g.beginPath();
+      g.arc(c, c, 112, Math.PI * 0.3, Math.PI * 1.7, false);
+      g.strokePath();
+      g.beginPath();
+      g.arc(c + 60, c, 91, Math.PI * 0.48, Math.PI * 1.52, false);
+      g.strokePath();
+      faint();
+      for (const [x, y, r] of [
+        [c + 118, c - 116, 17],
+        [c + 94, c + 128, 13],
+      ]) {
+        g.lineBetween(x - r, y, x + r, y);
+        g.lineBetween(x, y - r, x, y + r);
+      }
+      break;
+    case "tollkeeper":
+      // A gate arm lowered across the road, and the coin it wants to lift.
+      g.lineBetween(c - 112, c + 112, c - 112, c - 96);
+      g.lineBetween(c - 134, c + 112, c - 90, c + 112);
+      g.lineBetween(c - 112, c - 66, c + 122, c - 22);
+      faint();
+      for (let i = 1; i < 5; i++) {
+        const t = i / 5;
+        const x = c - 112 + t * 234;
+        const y = c - 66 + t * 44;
+        g.lineBetween(x, y - 14, x, y + 14);
+      }
+      line();
+      g.strokeCircle(c + 34, c + 60, 48);
+      faint();
+      g.strokeCircle(c + 34, c + 60, 33);
+      break;
+
+    // --- Granted by the story ----------------------------------------------
+    case "betrayal":
+      // A dagger driven through an oath-ring that no longer closes.
+      faint();
+      g.beginPath();
+      g.arc(c, c + 6, 112, Math.PI * 1.18, Math.PI * 0.82, false);
+      g.strokePath();
+      line();
+      g.lineBetween(c - 76, c - 62, c + 76, c - 62);
+      g.lineBetween(c - 16, c - 62, c - 16, c - 126);
+      g.lineBetween(c + 16, c - 62, c + 16, c - 126);
+      g.lineBetween(c - 16, c - 126, c + 16, c - 126);
+      g.lineBetween(c - 30, c - 62, c - 14, c + 94);
+      g.lineBetween(c + 30, c - 62, c + 14, c + 94);
+      g.lineBetween(c - 14, c + 94, c, c + 132);
+      g.lineBetween(c + 14, c + 94, c, c + 132);
       break;
   }
 
@@ -452,8 +936,9 @@ function strokeBrokenRing(
   offset: number,
   gap: number,
   alpha = 0.7,
+  weight = 2,
 ): void {
-  g.lineStyle(2, 0xffffff, alpha);
+  g.lineStyle(weight, 0xffffff, alpha);
   const step = (Math.PI * 2) / segments;
   for (let i = 0; i < segments; i++) {
     g.beginPath();

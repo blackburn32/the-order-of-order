@@ -88,7 +88,7 @@ export function installDevPanel(game: Phaser.Game): void {
     </button>
     <hr style="border:none;border-top:1px solid #5a4a2e;margin:10px 0 8px;" />
     <h4 style="margin:0 0 6px;font-size:12px;color:#e6c65a;">Set Trial</h4>
-    <label style="display:block;margin-top:2px;font-size:11px;opacity:.85;">Trial number (1-15, then endless)</label>
+    <label style="display:block;margin-top:2px;font-size:11px;opacity:.85;">Trial number (1-33, then endless)</label>
     <input id="dp-round" type="number" min="1" max="1000" value="1"
       style="width:100%;box-sizing:border-box;margin-top:2px;background:#1a1526;color:#e9d8a6;
              border:1px solid #5a4a2e;border-radius:3px;padding:3px 5px;font:inherit;" />

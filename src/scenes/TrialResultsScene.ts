@@ -5,7 +5,6 @@ import type { TrialEndOutcome } from "../sim/engine";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { describeUnlockAction, ITEMS, type ShopItemId } from "../systems/Items";
-import { formatScore } from "../ui/formatScore";
 import {
   COMPACT_MARGIN,
   compactColumns,
@@ -27,9 +26,11 @@ import {
   TUTORIAL_TEXT,
 } from "../systems/Tutorial";
 import { getRun } from "../state/RunState";
+import { endingAfterTrial, type EndingDef } from "../systems/Endings";
 import {
   createFreshShopCheckpoint,
   saveActiveRun,
+  type ResumableCheckpoint,
 } from "../systems/ActiveRunPersistence";
 
 /** Native size of the 'card' texture buildItemCard draws on. */
@@ -483,7 +484,7 @@ export class TrialResultsScene extends Phaser.Scene {
 
   private trialLine(): string {
     const o = this.dataIn.outcome;
-    return `${trialName(o.completedTrial)} of rank ${rankOf(o.completedTrial)} \u00b7 ${formatScore(o.completedScore)} / ${formatScore(o.completedGoal)}`;
+    return `${trialName(o.completedTrial).replace(" Trial", " trial")}, Rank ${rankOf(o.completedTrial)}`;
   }
 
   private buildTitleGlow(
@@ -519,8 +520,13 @@ export class TrialResultsScene extends Phaser.Scene {
     y: number,
     maxWidth: number,
   ): Phaser.GameObjects.Container {
-    const label =
-      this.dataIn.outcome.phase === "victory"
+    // An act closing on this trial names its own way on ("The King's Messenger
+    // Arrives"), because the button is the last beat before the story takes
+    // over and "Enter the Shop" would give the wrong one.
+    const ending = this.endingAhead();
+    const label = ending
+      ? ending.button
+      : this.dataIn.outcome.phase === "victory"
         ? "Witness the Ascension"
         : "Enter the Shop";
     const button = bannerButton(
@@ -1049,19 +1055,32 @@ export class TrialResultsScene extends Phaser.Scene {
     this.renderTutorial();
   }
 
+  /** The story act that follows the trial just cleared, if one does and this
+   *  run has not already been told it. */
+  private endingAhead(): EndingDef | null {
+    const state = getRun(this.registry);
+    return endingAfterTrial(
+      this.dataIn.outcome.completedTrial,
+      state.endingsSeen,
+    );
+  }
+
   private continue(): void {
     if (!this.complete || this.leaving) return;
     this.leaving = true;
-    const destination =
-      this.dataIn.outcome.phase === "victory" ? "Victory" : "Shop";
-    const checkpoint =
-      destination === "Victory"
-        ? ({ scene: "Victory" } as const)
+    // An act takes precedence over both ordinary ways on: the rank-15 clear
+    // reaches Victory through its closing sequence rather than instead of it,
+    // and the rank-5 and rank-10 clears reach the shop through theirs.
+    const ending = this.endingAhead();
+    const checkpoint: ResumableCheckpoint = ending
+      ? { scene: "Ending", id: ending.id }
+      : this.dataIn.outcome.phase === "victory"
+        ? { scene: "Victory" }
         : createFreshShopCheckpoint(getRun(this.registry));
     saveActiveRun(this.registry, checkpoint);
     slideSceneOut(
       this,
-      () => this.scene.start(destination, checkpoint),
+      () => this.scene.start(checkpoint.scene, checkpoint),
       this.slideBackdrop,
     );
   }

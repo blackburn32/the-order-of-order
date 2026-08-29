@@ -16,7 +16,13 @@
 // `Scoring.scoreRoll` (the reference implementation). `npx tsx
 // src/sim/compareScoring.ts` fails loudly if they drift.
 
-import { isBossTrial, trialGoal, trialInRank } from "../config";
+import {
+  TRIALS_PER_RANK,
+  isBossTrial,
+  isMirrorTrial,
+  trialGoal,
+  trialInRank,
+} from "../config";
 import type { RunState } from "../state/RunState";
 import {
   afflictionsFor,
@@ -111,6 +117,13 @@ export function bossById(id: BossModifierId | null): BossModifier | null {
   return id ? (BY_ID.get(id) ?? null) : null;
 }
 
+/** True for every trial of the rank whose Boss Trial is the duel, so the rank
+ *  previews no curse it is never going to bring. */
+function rankHoldsDuel(trial: number): boolean {
+  const bossTrial = trial + (TRIALS_PER_RANK - trialInRank(trial));
+  return isMirrorTrial(bossTrial);
+}
+
 /** The modifiers in force right now — empty outside a Boss Trial. */
 export function activeBosses(state: RunState): BossModifier[] {
   if (!isBossTrial(state.trial)) return [];
@@ -169,6 +182,10 @@ export function bossesForRank(
   rng: () => number = Math.random,
   previous: readonly BossModifierId[] = [],
 ): BossModifierId[] {
+  // The final rank rolls nothing. Its Boss Trial is a duel against a copy of the
+  // player's own grid, and a modifier would fall on one side of that mirror
+  // only — which is the one thing the duel cannot survive.
+  if (rankHoldsDuel(trial)) return [];
   const count = bossModifierCount(state);
   if (trialInRank(trial) === 1 || previous.length === 0) {
     return rollBossModifiers(count, rng, previous);

@@ -3,12 +3,14 @@ import { makeDie, DieSides } from "../systems/Dice";
 import { DicePool } from "../systems/DicePool";
 import type { BossModifierId } from "../systems/Boss";
 import type { AfflictionId } from "../systems/Afflictions";
+import type { EndingId } from "../systems/Endings";
+import type { RivalState } from "../systems/Rival";
 import { STARTING_GOLD } from "../systems/Gold";
 import type { ShopItemId } from "../systems/Items";
 
 export interface RunState {
-  // Ladder position. `trial` runs straight through the whole run (1..15 for the
-  // five ranks, then 16+ in endless); rank and trial-within-rank are derived
+  // Ladder position. `trial` runs straight through the whole run (1..33 for the
+  // eleven ranks, then 34+ in endless); rank and trial-within-rank are derived
   // from it by config's rankOf/trialInRank rather than stored.
   trial: number; // 1-based
   endless: boolean; // set when the player continues past the final rank
@@ -82,6 +84,20 @@ export interface RunState {
   // cards push theirs here on purchase; a Boss Trial's modifiers are folded in
   // on top for its own trial only (see systems/Afflictions.afflictionsFor).
   afflictions: AfflictionId[];
+  // The story acts already played this run (see systems/Endings). A sequence
+  // fires off the trial it is pinned to, so this is what stops a resumed
+  // checkpoint — or the trial the ending sits in front of — from replaying it.
+  endingsSeen: EndingId[];
+  // The drawback taken from the King's Demands at rank 5. Held by id as well as
+  // on `afflictions` because endless lifts this one specifically, and by then
+  // the list no longer records where any of it came from.
+  kingsDemand: AfflictionId | null;
+  // Dice lost to Betrayal across the whole run. Never spent — it is the tally
+  // the story quotes back at the player.
+  defectors: number;
+  // The Order of Disorder's mirror of the grid, alive only during the final
+  // Boss Trial (see systems/Rival).
+  rival: RivalState | null;
   hasCouponBook: boolean; // one card free in every shop
   hasDealersBell: boolean; // first reroll each shop is free
   hasShoppingCart: boolean; // every card costs less
@@ -189,6 +205,10 @@ export function newRun(shopUnlocks: readonly ShopItemId[] = []): RunState {
     hasReckoning: false,
     hasHairTrigger: false,
     afflictions: [],
+    endingsSeen: [],
+    kingsDemand: null,
+    defectors: 0,
+    rival: null,
     hasCouponBook: false,
     hasDealersBell: false,
     hasShoppingCart: false,

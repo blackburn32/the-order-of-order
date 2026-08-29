@@ -5,10 +5,17 @@
 // drives them in a tight loop. Keeping the rules here (rather than inline in
 // GameScene) is what stops the simulation from drifting from the live game.
 
-import { WIN_TRIAL, isBossTrial } from "../config";
+import { WIN_TRIAL, isBossTrial, isMirrorTrial } from "../config";
 import { RunState } from "../state/RunState";
-import { afflictionsFor, blocksGrowth } from "../systems/Afflictions";
+import {
+  afflictionsFor,
+  blocksGrowth,
+  type ActiveAfflictions,
+  type AfflictionId,
+} from "../systems/Afflictions";
 import { bossesForRank, goalFor } from "../systems/Boss";
+import type { DicePool } from "../systems/DicePool";
+import { createRival, playerLeadsDuel, rollRival } from "../systems/Rival";
 import {
   applyGoldCeiling,
   EMPTY_BREAKDOWN,
@@ -50,7 +57,7 @@ export function clearedEarly(state: RunState): boolean {
 // Sim-only escape hatch for the goal-curve designer (src/sim/designTargets.ts).
 //
 // To design a curve you need to know how much a build COULD score in each
-// trial, which means every run has to play all 15 trials to the end of their
+// trial, which means every run has to play every trial to the end of their
 // roll budgets. That cannot be measured with a low goal — the trial would end
 // on its first scoring roll, and the "peak" would be 1 — nor with a high one,
 // since every run would then die on trial 1. So the designer sets an
@@ -109,10 +116,14 @@ export function resolveRoll(
   goldGained: number;
   /** Dice destroyed by a breakage affliction after this roll scored. */
   broken: number;
+  /** Dice that defected to the Order of Disorder after failing to score. */
+  defected: number;
   /** Dice culled by a grid-cap affliction after this roll's growth. */
   culled: number;
   /** The affliction that took this roll, if one did. */
   denied: "tollkeeper" | "gamblersCurse" | null;
+  /** Points the mirror rival scored on its matching roll (0 outside the duel). */
+  rivalPoints: bigint;
 } {
   const finalRoll = state.roll + 1 >= trialRollTarget(state);
   const scoreBefore = state.score;
@@ -160,14 +171,87 @@ export function resolveRoll(
 
   // Last Call unlock: this roll crossed the trial's goal as its final roll.
   const goal = goalFor(state);
-  if (finalRoll && scoreBefore < goal && state.score >= goal) {
+  const duel = isMirrorTrial(state.trial);
+  if (!duel && finalRoll && scoreBefore < goal && state.score >= goal) {
     state.clutchClear = true;
   }
 
   // Reaching the goal ends the trial here — the remaining rolls are forfeit,
   // but they are paid out as gold. Latched on state so nothing later can take
-  // the clear back.
-  if (state.score >= goal) state.trialCleared = true;
+  // the clear back. The duel has no goal to cross: it is decided by which side
+  // is ahead when the rolls run out, so it must never end early.
+  if (!duel && state.score >= goal) state.trialCleared = true;
+
+  const passives = applyGridPassives(
+    state,
+    state.dice,
+    afflictions,
+    denied !== null,
+    rng,
+  );
+  state.defectors += passives.defected;
+
+  // The rival takes its matching roll last, so the grid it grows from is the one
+  // the player's own rules just produced for its mirror. Everything the player's
+  // roll suffered, this roll suffers too.
+  let rivalPoints = 0n;
+  if (duel && state.rival) {
+    rollRival(state, state.rival, rng);
+    const rivalResult = scoreRollHistogram(state, state.rival.dice.agg(), {
+      finalRoll,
+    });
+    rivalPoints = rivalResult.points;
+    state.rival.score += rivalPoints;
+    state.rival.roll += 1;
+    applyGridPassives(state, state.rival.dice, afflictions, false, rng);
+  }
+
+  return {
+    result,
+    spawnedCount: passives.spawnedCount,
+    spawnedBySource: passives.spawnedBySource,
+    shrunk: passives.shrunk,
+    goldGained,
+    broken: passives.broken,
+    defected: passives.defected,
+    culled: passives.culled,
+    denied,
+    rivalPoints,
+  };
+}
+
+/**
+ * Everything that happens to a grid after a roll has been scored: the growth
+ * passives, the two destruction afflictions, the grid cap, and Whetstone.
+ *
+ * Split out of `resolveRoll` because the mirror duel runs it twice — once over
+ * the player's grid and once over the rival's — and a passive that grew only one
+ * of them would pull the two apart on the first roll of a Genesis build. Sharing
+ * the body is what makes "an identical grid" a fact about the code rather than a
+ * promise about two implementations.
+ */
+export function applyGridPassives(
+  state: RunState,
+  pool: DicePool,
+  afflictions: ActiveAfflictions,
+  denied: boolean,
+  rng: () => number,
+): {
+  spawnedCount: number;
+  spawnedBySource: {
+    genesis: number;
+    molds: { id: ShopItemId; count: number }[];
+  };
+  shrunk: number[];
+  broken: number;
+  defected: number;
+  culled: number;
+} {
+  // Read the roll's own tallies before anything destroys dice, so breakage and
+  // defection bill the same roll rather than the grid the other one left behind.
+  const agg = pool.agg();
+  const scoringCount = agg.scoringCount;
+  const nonScoringCount = agg.total - agg.scoringCount;
 
   // Grid-growing passives, applied after scoring so the new copies don't score
   // the roll they were born on. The pool computes these from the cached roll and
@@ -176,12 +260,10 @@ export function resolveRoll(
   // switches all of it off for its trial.
   const growthBlocked = blocksGrowth(state);
   const doubleTheFunCount =
-    state.hasDoubleTheFun && !growthBlocked ? state.dice.doubleTheFun() : 0;
+    state.hasDoubleTheFun && !growthBlocked ? pool.doubleTheFun() : 0;
   const genesisCount =
-    state.genesis > 0 && !growthBlocked
-      ? state.dice.genesis(20 * state.genesis)
-      : 0;
-  const molds = growthBlocked ? [] : applyMolds(state);
+    state.genesis > 0 && !growthBlocked ? pool.genesis(20 * state.genesis) : 0;
+  const molds = growthBlocked ? [] : applyMolds(state, pool);
   const moldCount = molds.reduce((n, mold) => n + mold.count, 0);
   const spawnedCount = doubleTheFunCount + genesisCount + moldCount;
 
@@ -190,17 +272,24 @@ export function resolveRoll(
   // which is the whole of the Ouroboros/Genesis engine. A denied roll scored
   // nothing, so nothing shatters on it.
   const broken =
-    denied === null && afflictions.dieBreakChance > 0
-      ? state.dice.breakScoring(
-          breakCount(
-            state.dice.agg().scoringCount,
-            afflictions.dieBreakChance,
-            rng,
-          ),
+    !denied && afflictions.dieBreakChance > 0
+      ? pool.breakScoring(
+          breakCount(scoringCount, afflictions.dieBreakChance, rng),
         )
       : 0;
+
+  // Defection bills the other half of the same roll: the dice that came up with
+  // nothing are the ones the Order of Disorder can talk to. A denied roll is not
+  // a failure the traitors can point at, so nothing defects on it either.
+  const defected =
+    !denied && afflictions.defectChance > 0
+      ? pool.breakNonScoring(
+          breakCount(nonScoringCount, afflictions.defectChance, rng),
+        )
+      : 0;
+
   // Whatever the grid grew to this roll, the cap has the last word.
-  const culled = enforceGridCap(state);
+  const culled = enforceGridCap(state, pool);
 
   // Whetstone: each copy owned has a 10% chance this roll to shrink one random
   // die a step. Applied after scoring so it only helps future rolls. Below the
@@ -208,23 +297,18 @@ export function resolveRoll(
   const shrunk: number[] = [];
   for (let c = 0; c < state.whetstone; c++) {
     if (rng() >= 0.1) continue;
-    const idx = state.dice.whetstoneShrink(rng);
+    const idx = pool.whetstoneShrink(rng);
     if (idx === null) break;
     if (idx >= 0) shrunk.push(idx);
   }
 
   return {
-    result,
     spawnedCount,
-    spawnedBySource: {
-      genesis: genesisCount,
-      molds,
-    },
+    spawnedBySource: { genesis: genesisCount, molds },
     shrunk,
-    goldGained,
     broken,
+    defected,
     culled,
-    denied,
   };
 }
 
@@ -274,9 +358,20 @@ export function resolveTrialEnd(
     ...state.trialRollGold,
     total: state.trialRollGold.titheBowl + state.trialRollGold.luckyCoin,
   };
-  const cleared = state.trialCleared || state.score >= goal;
+  // The duel is not scored against a goal at all — it is won by being ahead of
+  // the Order of Disorder when the rolls run out, and a tie is not ahead.
+  const duel = isMirrorTrial(completedTrial);
+  const cleared = duel
+    ? playerLeadsDuel(state)
+    : state.trialCleared || state.score >= goal;
+  // Insurance buys a trial that came within 75% of its goal. The duel has no
+  // goal to come within, and nothing in the policy covers being outrolled by
+  // yourself, so the last trial is the one it cannot save.
   const insuranceUsed =
-    !cleared && state.hasInsurancePolicy && state.score * 4n >= goal * 3n;
+    !duel &&
+    !cleared &&
+    state.hasInsurancePolicy &&
+    state.score * 4n >= goal * 3n;
   if (!cleared && !insuranceUsed && cullingEnabled) {
     return {
       phase: "gameOver",
@@ -362,6 +457,7 @@ export function resolveTrialEnd(
     state.bossModifiers,
   );
   const diceAdded = applyTrialStart(state);
+  prepareDuel(state);
   return {
     phase: "advanced",
     completedTrial,
@@ -378,6 +474,23 @@ export function resolveTrialEnd(
   };
 }
 
+/**
+ * Stand the Order of Disorder up opposite the player, if the trial about to be
+ * played is the duel. Called as the ladder lands on a trial rather than as the
+ * trial opens, so the mirror is taken of the grid the player finished shopping
+ * with — the same grid the Trial Overview shows them.
+ *
+ * Idempotent: a mirror already standing is left alone, so a state restored onto
+ * the duel keeps the rival it was saved with rather than starting the fight over.
+ */
+export function prepareDuel(state: RunState): void {
+  if (!isMirrorTrial(state.trial)) {
+    state.rival = null;
+    return;
+  }
+  if (!state.rival) state.rival = createRival(state);
+}
+
 /** Start the ladder: roll a boss modifier if trial 1 somehow is one, and run
  *  the trial-start passives. Called once when a run begins. */
 export function beginRun(
@@ -385,6 +498,7 @@ export function beginRun(
   rng: () => number = Math.random,
 ): void {
   state.bossModifiers = bossesForRank(state, state.trial, rng);
+  prepareDuel(state);
 }
 
 /** Continue a won run into endless without ending or recording it. This
@@ -398,6 +512,7 @@ export function continueEndless(
   // endless rather than being dropped at the finish line. Counted before the
   // ladder moves, while the budget still belongs to the trial just won.
   const carriedRolls = Math.min(state.rainCheck, unusedRolls(state));
+  liftStoryDebuffs(state);
   state.endless = true;
   state.trial += 1;
   state.roll = 0;
@@ -413,4 +528,20 @@ export function continueEndless(
     state.bossModifiers,
   );
   applyTrialStart(state);
+  prepareDuel(state);
+}
+
+/**
+ * Release the two drawbacks the story imposed — the King's tribute and the
+ * Betrayal. Both were the price of a realm that no longer exists by the time
+ * endless begins: the Crown has yielded and the Order of Disorder is dissolved,
+ * so neither writ still runs. Every curse the player CHOSE to buy stays, because
+ * they were paid for with a boon that also stays.
+ */
+function liftStoryDebuffs(state: RunState): void {
+  const lifted = new Set<AfflictionId>(["betrayal"]);
+  if (state.kingsDemand) lifted.add(state.kingsDemand);
+  state.afflictions = state.afflictions.filter((id) => !lifted.has(id));
+  state.kingsDemand = null;
+  state.rival = null;
 }

@@ -1,5 +1,9 @@
 import { RunState } from "../state/RunState";
-import { afflictionsFor, permanentAfflictions } from "../systems/Afflictions";
+import {
+  afflictionsFor,
+  blocksGrowthPermanently,
+  type AfflictionId,
+} from "../systems/Afflictions";
 import {
   BOON_RARITY_WEIGHTS,
   RARITY_WEIGHTS,
@@ -16,6 +20,7 @@ import {
   SHOPPING_CART_DISCOUNT_PERCENT,
   ShopItemId,
   StackPricing,
+  afflictionOf,
   itemGrowsGrid,
   itemsInTheme,
 } from "./Items";
@@ -31,7 +36,13 @@ const BY_ID = new Map<ShopItemId, ItemDef>(ITEMS.map((it) => [it.id, it]));
 export interface ShopOffer {
   id: ShopItemId;
   name: string;
-  cost: number; // gold
+  cost: number; // gold, after the run's discount items
+  /** What the card would cost with no discount item owned — its band, the
+   *  copies already bought and this appearance's market roll, unrounded. Kept
+   *  on the offer so a discount card bought mid-visit can reprice the row it is
+   *  standing in without rerolling anyone's market price. Absent only on offers
+   *  restored from a checkpoint written before it existed. */
+  listPrice?: number;
   priceBand: PriceBand;
   desc: string;
   rarity: Rarity;
@@ -39,6 +50,11 @@ export interface ShopOffer {
   targetsSize: boolean; // that pick only names a die size, not one specific die
   targetCount?: number; // >1 for multi-pick items (grindstone)
   cursed: boolean; // carries a standing drawback — marked on the card
+  /** The drawback itself, when there is one. The card is stamped with its seal,
+   *  so the offer carries the id rather than making the shop look the item up
+   *  again. Null on every ordinary card, and on the rare cursed card that
+   *  inflicts its cost some way other than an affliction. */
+  affliction: AfflictionId | null;
   freeByCoupon?: boolean;
 }
 
@@ -95,15 +111,13 @@ export function rerollIsFree(
   return state.hasDealersBell && rerollsThisVisit === 0;
 }
 
-/** Resolve an item's concrete gold price for this exact shop visit: its band,
- *  the copies already bought, that visit's market adjustment, and the two
- *  discount items. Never drops below 1 gold for a non-free item — a card the
- *  player can take for nothing should be a Coupon Book moment, not a rounding
- *  artefact. */
-export function priceFor(
+/** An item's price for this exact shop visit before any discount card: its
+ *  band, the copies already bought, and that appearance's market adjustment.
+ *  Left unrounded so the discount pass rounds exactly once. */
+function listPriceFor(
   def: ItemDef,
   state: RunState,
-  marketFactor = 1,
+  marketFactor: number,
 ): number {
   if (def.priceBand === "free") return 0;
 
@@ -114,12 +128,32 @@ export function priceFor(
   const copies = state.purchases[def.id] ?? 0;
   const stack = Math.pow(STACK_FACTOR[def.stackPricing ?? "none"], copies);
 
-  let price = PRICE_BANDS[def.priceBand] * stack * market;
+  return PRICE_BANDS[def.priceBand] * stack * market;
+}
+
+/** Take the run's discount cards off a list price. Never drops below 1 gold —
+ *  a card the player can take for nothing should be a Coupon Book moment, not a
+ *  rounding artefact. A card that was already free stays free. */
+export function discountedPrice(state: RunState, listPrice: number): number {
+  if (listPrice <= 0) return 0;
+
+  let price = listPrice;
   if (state.hasShoppingCart) price *= 1 - SHOPPING_CART_DISCOUNT;
   price = Math.ceil(price);
   if (state.hasPawnbroker) price -= PAWNBROKER_DISCOUNT;
 
   return Math.max(1, price);
+}
+
+/** Resolve an item's concrete gold price for this exact shop visit: its band,
+ *  the copies already bought, that visit's market adjustment, and the two
+ *  discount items. */
+export function priceFor(
+  def: ItemDef,
+  state: RunState,
+  marketFactor = 1,
+): number {
+  return discountedPrice(state, listPriceFor(def, state, marketFactor));
 }
 
 /** A concrete, state-resolved offer for one item (its dynamic description
@@ -130,10 +164,12 @@ export function offerFor(
   marketFactor = 1,
 ): ShopOffer {
   const def = BY_ID.get(id)!;
+  const listPrice = listPriceFor(def, state, marketFactor);
   return {
     id: def.id,
     name: def.name,
-    cost: priceFor(def, state, marketFactor),
+    cost: discountedPrice(state, listPrice),
+    listPrice,
     priceBand: def.priceBand,
     desc: typeof def.desc === "function" ? def.desc(state) : def.desc,
     rarity: def.rarity,
@@ -141,6 +177,7 @@ export function offerFor(
     targetsSize: def.targetsSize ?? false,
     targetCount: def.targetCount,
     cursed: def.cursed ?? false,
+    affliction: afflictionOf(def),
     freeByCoupon: false,
   };
 }
@@ -154,10 +191,11 @@ function rollMarketFactor(rng: () => number): number {
 export function availableIds(state: RunState): ShopItemId[] {
   const unlocked = new Set(state.shopUnlocks);
   // A run that has frozen its grid for good (Locust Idol) is never offered a
-  // card that only adds dice. Read off the PERMANENT afflictions, not the live
-  // ones: a boss that blocks growth for its own trial should not also reshape
-  // the shop the player visits before it.
-  const frozen = permanentAfflictions(state).blocksGrowth;
+  // card that only adds dice. Permanent, not live: a boss that blocks growth for
+  // its own trial should not also reshape the shop the player visits before it.
+  // Items.applyEffect gates the purchase itself on the same question, so what is
+  // offered here is always what can actually be bought.
+  const frozen = blocksGrowthPermanently(state);
   return (
     ITEMS.filter((it) => !frozen || !itemGrowsGrid(it))
       // Criterion-gated items stay out of the pool unless they were unlocked
@@ -368,11 +406,7 @@ export const BOOSTER_PACKS: readonly BoosterPackDef[] = [
 ];
 
 export function boosterPrice(state: RunState, pack: BoosterPackDef): number {
-  let discounted = state.hasShoppingCart
-    ? Math.ceil(pack.cost * (1 - SHOPPING_CART_DISCOUNT))
-    : pack.cost;
-  if (state.hasPawnbroker) discounted -= PAWNBROKER_DISCOUNT;
-  return Math.max(1, discounted);
+  return discountedPrice(state, pack.cost);
 }
 
 function idsForPack(state: RunState, pack: BoosterPackDef): ShopItemId[] {
@@ -497,13 +531,33 @@ export function applyCouponFreebie(
   chosen.freeByCoupon = true;
 }
 
-/** Apply Pawnbroker to cards that were priced before it was purchased. Newly
- *  rolled offers already receive the discount through `priceFor`; this keeps
- *  the rest of the current row in sync without rerolling its market prices. */
-export function discountOffersForPawnbroker(offers: ShopOffer[]): void {
+/** Cards that change what everything else on the shelf costs. Buying one of
+ *  these reprices the row it was taken from. */
+const DISCOUNT_ITEM_IDS: ReadonlySet<ShopItemId> = new Set<ShopItemId>([
+  "shopping_cart",
+  "pawnbroker",
+]);
+
+/** Whether buying this card changes the price of the cards beside it. */
+export function discountsShopPrices(id: ShopItemId): boolean {
+  return DISCOUNT_ITEM_IDS.has(id);
+}
+
+/** Re-apply the run's discount cards to a row that was priced before one of
+ *  them was bought. Newly rolled offers already receive the discount through
+ *  `priceFor`; this keeps the rest of the current row in sync without rerolling
+ *  its market prices. Recomputing from each card's list price rather than
+ *  shaving the shown cost makes the call idempotent and order-independent: a
+ *  Pawnbroker bought after a Shopping Cart lands on the same price as the other
+ *  way round. A card that is already free — a free band, a Coupon Book freebie
+ *  — stays free. */
+export function repriceOffers(state: RunState, offers: ShopOffer[]): void {
   for (const offer of offers) {
     if (offer.cost === 0) continue;
-    offer.cost = Math.max(1, offer.cost - PAWNBROKER_DISCOUNT);
+    // A checkpoint written before offers carried a list price only has the
+    // discounted cost to go on; treating it as the list price re-charges an
+    // already-applied discount, which is the cheap end of being wrong.
+    offer.cost = discountedPrice(state, offer.listPrice ?? offer.cost);
   }
 }
 

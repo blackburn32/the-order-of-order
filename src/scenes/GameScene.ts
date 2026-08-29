@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { rankOf, trialInRank } from "../config";
+import { isMirrorTrial, rankOf, trialInRank } from "../config";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { bossSigilTexture } from "../art/textures";
 import { getRun, type RunState } from "../state/RunState";
@@ -21,6 +21,7 @@ import {
 } from "../sim/engine";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
+import { rivalScore } from "../systems/Rival";
 import {
   JACKPOT_DICE,
   JACKPOT_POINTS,
@@ -43,6 +44,7 @@ import {
   BannerStack,
 } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
+import { DuelShowdown } from "../ui/duelShowdown";
 import {
   advanceTutorial,
   getTutorial,
@@ -85,9 +87,26 @@ const HUD_STATS = [
 type HudStatKey = (typeof HUD_STATS)[number]["key"];
 const SEAL_RADIUS = 85; // half of the 170x170 seal texture
 
+/** Gap between the boss pills — horizontal along a ribbon, vertical when they
+ *  stack down the compact seal rail. */
+const BOSS_PILL_GAP = 4;
+
 /** Pixels the felt bleeds past the viewport, so a camera shake never drags a
  *  bare edge into frame. */
 const FELT_OVERSCAN = 16;
+
+/**
+ * The duel's lead, as the felt reads it: 0.5 while the two sides are level,
+ * climbing toward 1 as the player pulls ahead and falling toward 0 as the Order
+ * of Disorder does. An ordinary trial can measure its progress against a fixed
+ * goal; a duel has only the gap, so the scale is centred on the tie rather than
+ * on zero.
+ */
+function duelProgress(score: bigint, rival: bigint): number {
+  const total = score + rival;
+  if (total <= 0n) return 0.5;
+  return Number((score * 1000n) / total) / 1000;
+}
 
 /** A roll worth this fraction of the trial's goal is a "big" one: it earns a
  *  shake and a spark burst rather than passing quietly. */
@@ -121,12 +140,14 @@ interface BossRollCue {
 
 /**
  * What a standing affliction did to this roll, in the same red notices the Boss
- * Trials use — a roll taken outright, dice shattered by breakage, dice culled by
- * a grid cap. Written here rather than in `bossRollCues` because none of it
- * depends on which boss (if any) is presiding: these are the run's own curses.
+ * Trials use — a roll taken outright, dice shattered by breakage, dice lost to
+ * defection, dice culled by a grid cap. Written here rather than in
+ * `bossRollCues` because none of it depends on which boss (if any) is
+ * presiding: these are the run's own curses.
  */
 function afflictionRollCues(
   broken: number,
+  defected: number,
   culled: number,
   denied: "tollkeeper" | "gamblersCurse" | null,
 ): BossRollCue[] {
@@ -139,6 +160,11 @@ function afflictionRollCues(
     cues.push({
       kind: "penalty",
       message: `${broken.toLocaleString()} DICE SHATTERED`,
+    });
+  if (defected > 0)
+    cues.push({
+      kind: "penalty",
+      message: `${defected.toLocaleString()} DICE DEFECTED`,
     });
   if (culled > 0)
     cues.push({
@@ -267,6 +293,9 @@ export class GameScene extends Phaser.Scene {
   // Unlocks still persist at the moment their criterion is met, but their
   // presentation waits for TrialResults so the roll itself stays readable.
   private trialUnlocks: ShopItemId[] = [];
+  // The duel's closing tally, alive only between the last roll of the final
+  // Boss Trial and the player leaving it.
+  private showdown?: DuelShowdown;
 
   constructor() {
     super("Game");
@@ -302,6 +331,9 @@ export class GameScene extends Phaser.Scene {
     // Phaser destroyed the previous run's display list on shutdown; drop the
     // stale handle before buildAmbient() would try to destroy it a second time.
     this.ambient = undefined;
+    // Same story: a showdown from the previous run's last trial is gone with
+    // the display list, and only its handle would survive a restart.
+    this.showdown = undefined;
     this.shownScore = this.state.score;
     this.scoreTween = undefined;
     this.sealBreathe = undefined;
@@ -377,6 +409,9 @@ export class GameScene extends Phaser.Scene {
     // Extra cameras don't track the Scale Manager — keep the full-screen
     // overlay camera matched to the new size so popups stay centered.
     this.overlayCamera?.setSize(this.scale.width, this.scale.height);
+    // The showdown owns its own layout — it re-lays in place rather than being
+    // rebuilt, so a rotation mid-sequence doesn't restart the verdict.
+    this.showdown?.layout();
     // The HUD objects were just destroyed+recreated — re-anchor any callout.
     this.renderTutorial();
   }
@@ -481,7 +516,7 @@ export class GameScene extends Phaser.Scene {
     const W = this.scale.width;
     const H = this.scale.height;
     const margin = 16;
-    const boss = activeBoss(this.state);
+    const bosses = activeBosses(this.state);
     const portrait = isPortrait(this);
     // Too short to stack the grid above the seal: the two sit side by side
     // instead, seal on the right. See the compact branch below.
@@ -531,8 +566,12 @@ export class GameScene extends Phaser.Scene {
       const railBottom = H - footerH - 28;
       // On a short landscape screen the boss ribbon occupies the seal rail,
       // not a strip across the playfield. The grid keeps its pre-boss bounds.
-      const ribbonH = boss ? Phaser.Math.Clamp(H * 0.075, 24, 30) : 0;
-      const bossRibbon = boss
+      // Each modifier gets its own pill, so the rail grows a row per boss.
+      const rowH = Phaser.Math.Clamp(H * 0.075, 24, 30);
+      const ribbonH = bosses.length
+        ? rowH * bosses.length + BOSS_PILL_GAP * (bosses.length - 1)
+        : 0;
+      const bossRibbon = bosses.length
         ? {
             x: railLeft + railW / 2,
             y: gridTop + ribbonH / 2,
@@ -568,10 +607,12 @@ export class GameScene extends Phaser.Scene {
     // In portrait and roomy landscape, one shallow line sits under the HUD.
     // Its height is capped aggressively; a Boss Trial spends only ~20px more
     // vertical space than the normal HUD-to-grid gap.
-    const ribbonH = boss
+    // Roomy layouts sit the pills side by side, so the strip stays one row
+    // tall however many modifiers preside.
+    const ribbonH = bosses.length
       ? Phaser.Math.Clamp(Math.min(W * 0.075, H * 0.05), 26, 34)
       : 0;
-    const bossRibbon = boss
+    const bossRibbon = bosses.length
       ? {
           x: W / 2,
           y: hudBottom + 5 + ribbonH / 2,
@@ -643,11 +684,15 @@ export class GameScene extends Phaser.Scene {
     const W = this.scale.width;
     const items: Phaser.GameObjects.GameObject[] = [];
 
+    // The duel has no goal — the number in that cell is the Order of Disorder's
+    // running score, so the cell is relabelled rather than a sixth one added to
+    // a strip that has no room for it.
+    const duel = isMirrorTrial(this.state.trial);
     const plaques = HUD_STATS.map((stat) => {
       const plaque = this.makePlaque(
         layout.hud[stat.key],
-        stat.label,
-        stat.color,
+        duel && stat.key === "target" ? "DISORDER" : stat.label,
+        duel && stat.key === "target" ? CSS.cursed : stat.color,
       );
       items.push(plaque.container);
       return [stat.key, plaque] as const;
@@ -686,86 +731,143 @@ export class GameScene extends Phaser.Scene {
     return items;
   }
 
-  /** Persistent Boss Trial identity. Roomy layouts use one thin horizontal
-   * line; compact landscape uses two tiny lines in the seal rail. */
+  /** Persistent Boss Trial identity: one pill per modifier. Roomy layouts lay
+   *  them along a thin horizontal strip; compact landscape stacks them down
+   *  the seal rail, each pill splitting its name and rule over two tiny
+   *  lines. */
   private buildBossRibbon(
     layout: Layout,
   ): Phaser.GameObjects.Container | undefined {
-    // A trial can preside under more than one modifier (The Long Night), so the
-    // ribbon names every one of them and the sigil shows the first. The label
-    // already scales itself down to the rail, which is what keeps a two-boss
-    // ribbon legible without a second row.
+    // A trial can preside under more than one modifier (The Long Night), and
+    // telling them apart matters more than reading them fast — so each gets
+    // its own framed pill rather than sharing one ribbon's punctuation.
     const bosses = activeBosses(this.state);
-    const boss = bosses[0];
     const cell = layout.bossRibbon;
-    if (!boss || !cell) return undefined;
-    const bossName = bosses.map((b) => b.name).join(" · ");
-    const bossRule = bosses.map((b) => b.shortDesc).join(" · ");
+    if (!bosses.length || !cell) return undefined;
 
     const container = this.add.container(cell.x, cell.y);
-    const background = this.add.graphics();
-    background.fillStyle(COLORS.feltDark, 0.96);
-    background.fillRoundedRect(
-      -cell.w / 2,
-      -cell.h / 2,
-      cell.w,
-      cell.h,
-      cell.h / 2,
+    const rowH = cell.compact
+      ? (cell.h - BOSS_PILL_GAP * (bosses.length - 1)) / bosses.length
+      : cell.h;
+    const pills = bosses.map((boss) =>
+      this.buildBossPill(boss, rowH, cell.compact),
     );
-    background.lineStyle(1.5, COLORS.waxRed, 0.95);
-    background.strokeRoundedRect(
-      -cell.w / 2 + 1,
-      -cell.h / 2 + 1,
-      cell.w - 2,
-      cell.h - 2,
-      cell.h / 2 - 1,
-    );
-
-    const iconSize = cell.h - 6;
-    const iconX = -cell.w / 2 + iconSize / 2 + 4;
-    const icon = this.add
-      .image(iconX, 0, bossSigilTexture(boss.id))
-      .setDisplaySize(iconSize, iconSize)
-      .setTint(COLORS.waxRed)
-      .setAlpha(0.95);
-    const textLeft = iconX + iconSize / 2 + 5;
-    const textWidth = cell.w / 2 - textLeft - 7;
 
     if (cell.compact) {
-      const title = this.add
-        .text(textLeft, -cell.h * 0.2, bossName.toUpperCase(), {
-          fontFamily: SERIF,
-          fontSize: "10px",
-          color: CSS.parchment,
-          fontStyle: "bold",
-        })
-        .setOrigin(0, 0.5);
-      const rule = this.add
-        .text(textLeft, cell.h * 0.22, bossRule, {
-          fontFamily: SERIF,
-          fontSize: "8px",
-          color: CSS.red,
-          fontStyle: "bold",
-        })
-        .setOrigin(0, 0.5);
-      for (const text of [title, rule]) {
-        if (text.width > textWidth) text.setScale(textWidth / text.width);
-      }
-      container.add([background, icon, title, rule]);
+      pills.forEach((pill, index) => {
+        pill.place(Math.min(cell.w, pill.fixedWidth + pill.textWidth));
+        pill.container.setY(
+          -cell.h / 2 + rowH / 2 + index * (rowH + BOSS_PILL_GAP),
+        );
+      });
     } else {
-      const label = this.add
-        .text(textLeft, 0, `${bossName.toUpperCase()}  ·  ${bossRule}`, {
-          fontFamily: SERIF,
-          fontSize: `${Phaser.Math.Clamp(cell.h * 0.4, 11, 14)}px`,
-          color: CSS.parchment,
-          fontStyle: "bold",
-          letterSpacing: 1,
-        })
-        .setOrigin(0, 0.5);
-      if (label.width > textWidth) label.setScale(textWidth / label.width);
-      container.add([background, icon, label]);
+      // Share the strip out: every pill keeps its frame and sigil at full
+      // size, and the copy inside them all shrinks by the same factor until
+      // the row fits.
+      const gap = BOSS_PILL_GAP * 2;
+      const available = cell.w - gap * (pills.length - 1);
+      const fixed = pills.reduce((sum, pill) => sum + pill.fixedWidth, 0);
+      const wanted = pills.reduce((sum, pill) => sum + pill.textWidth, 0);
+      const scale = wanted
+        ? Phaser.Math.Clamp((available - fixed) / wanted, 0.35, 1)
+        : 1;
+      const widths = pills.map(
+        (pill) => pill.fixedWidth + pill.textWidth * scale,
+      );
+      const row =
+        widths.reduce((sum, width) => sum + width, 0) +
+        gap * (pills.length - 1);
+      let left = -row / 2;
+      pills.forEach((pill, index) => {
+        pill.place(widths[index]);
+        pill.container.setX(left + widths[index] / 2);
+        left += widths[index] + gap;
+      });
     }
+
+    container.add(pills.map((pill) => pill.container));
     return container;
+  }
+
+  /** One modifier's pill. Built in two steps, because a row of them has to
+   *  share a fixed width: the copy is laid out at full size first so the
+   *  caller can measure it, then `place` frames it at the width it was
+   *  granted and shrinks the copy into that. */
+  private buildBossPill(
+    boss: BossModifier,
+    h: number,
+    compact: boolean,
+  ): {
+    container: Phaser.GameObjects.Container;
+    /** What the frame and its padding need, whatever the copy does. */
+    fixedWidth: number;
+    /** What the copy wants at full size. */
+    textWidth: number;
+    place: (width: number) => void;
+  } {
+    // One inset, spent at the head of the pill and again at its tail, so it
+    // reads as evenly padded at both ends. No sigil: at ribbon size the mark
+    // was too small to identify, and the name already does that job.
+    const padX = Math.max(9, Math.round(h * 0.42));
+
+    const background = this.add.graphics();
+    const lines = compact
+      ? [
+          this.add.text(0, -h * 0.2, boss.name.toUpperCase(), {
+            fontFamily: SERIF,
+            fontSize: "10px",
+            color: CSS.parchment,
+            fontStyle: "bold",
+          }),
+          this.add.text(0, h * 0.22, boss.shortDesc, {
+            fontFamily: SERIF,
+            fontSize: "8px",
+            color: CSS.red,
+            fontStyle: "bold",
+          }),
+        ]
+      : [
+          this.add.text(
+            0,
+            0,
+            `${boss.name.toUpperCase()}  ·  ${boss.shortDesc}`,
+            {
+              fontFamily: SERIF,
+              fontSize: `${Phaser.Math.Clamp(h * 0.4, 11, 14)}px`,
+              color: CSS.parchment,
+              fontStyle: "bold",
+              letterSpacing: 1,
+            },
+          ),
+        ];
+    for (const line of lines) line.setOrigin(0, 0.5);
+
+    return {
+      container: this.add.container(0, 0, [background, ...lines]),
+      fixedWidth: padX * 2,
+      textWidth: Math.max(...lines.map((line) => line.width)),
+      place: (width: number) => {
+        background.clear();
+        background.fillStyle(COLORS.feltDark, 0.96);
+        background.fillRoundedRect(-width / 2, -h / 2, width, h, h / 2);
+        background.lineStyle(1.5, COLORS.waxRed, 0.95);
+        background.strokeRoundedRect(
+          -width / 2 + 1,
+          -h / 2 + 1,
+          width - 2,
+          h - 2,
+          h / 2 - 1,
+        );
+        const textLeft = -width / 2 + padX;
+        const room = width - padX * 2;
+        // The copy's origin is its left edge, so it scales towards the head of
+        // the pill and the trailing inset stays equal to the leading one.
+        for (const line of lines) {
+          line.setScale(line.width > room ? room / line.width : 1);
+          line.setX(textLeft);
+        }
+      },
+    };
   }
 
   private makePlaque(
@@ -848,7 +950,10 @@ export class GameScene extends Phaser.Scene {
     );
     this.setHudValue(this.hudRoll, `${s.roll}/${trialRollTarget(s)}`);
     this.setScoreDisplay(s.score);
-    this.setHudValue(this.hudTarget, formatScore(goalFor(s)));
+    this.setHudValue(
+      this.hudTarget,
+      formatScore(isMirrorTrial(s.trial) ? rivalScore(s) : goalFor(s)),
+    );
     this.setHudValue(this.hudGold, String(s.gold));
 
     // The Silence cuts the scoring numbers back to 1s, so the footer has to read
@@ -896,9 +1001,19 @@ export class GameScene extends Phaser.Scene {
   private updateTension(): void {
     if (!fx.on) return;
     const s = this.state;
-    const goal = goalFor(s);
-    const progress = goal > 0n ? Number(s.score) / Number(goal) : 0;
-    const danger = trialRollTarget(s) - s.roll <= 1 && s.score < goal;
+    // In the duel the felt reads the lead instead of a goal: even at the
+    // halfway mark while the two are level, warm while ahead, and cold and
+    // bloody on the last roll from behind.
+    const duel = isMirrorTrial(s.trial);
+    const goal = duel ? rivalScore(s) : goalFor(s);
+    const progress = duel
+      ? duelProgress(s.score, goal)
+      : goal > 0n
+        ? Number(s.score) / Number(goal)
+        : 0;
+    const danger =
+      trialRollTarget(s) - s.roll <= 1 &&
+      (duel ? s.score <= goal : s.score < goal);
     const t = Phaser.Math.Clamp(progress, 0, 1);
 
     this.ambient?.setProgress(t, danger);
@@ -1717,6 +1832,7 @@ export class GameScene extends Phaser.Scene {
       spawnedBySource,
       shrunk,
       broken,
+      defected,
       culled,
       denied,
     } = resolveRoll(s);
@@ -1730,9 +1846,9 @@ export class GameScene extends Phaser.Scene {
     });
     const bossCues = [
       ...this.bossRollCues(rolledAgg, result),
-      ...afflictionRollCues(broken, culled, denied),
+      ...afflictionRollCues(broken, defected, culled, denied),
     ];
-    if (shrunk.length > 0 || broken > 0 || culled > 0)
+    if (shrunk.length > 0 || broken > 0 || defected > 0 || culled > 0)
       this.cardDataDirty = true;
 
     // The engine already appended any spawned dice to s.dice and may have shrunk
@@ -2074,15 +2190,25 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Announce the Boss Trial's modifier as the trial opens, so the player knows
-   *  what they are fighting before they spend a roll finding out. */
+   *  what they are fighting before they spend a roll finding out. The final
+   *  Boss Trial has no modifier to name — it has an opponent — so it announces
+   *  that instead. */
   private announceBoss(): void {
+    const duel = isMirrorTrial(this.state.trial);
     const bosses = activeBosses(this.state);
-    if (bosses.length === 0) return;
+    if (!duel && bosses.length === 0) return;
     const holdMs = 1600;
-    this.banners.push(
-      `${bosses.map((b) => b.name).join(" and ")} preside${bosses.length > 1 ? "" : "s"}`,
-      { holdMs, detail: bosses.map((b) => b.desc).join(" ") },
-    );
+    if (duel) {
+      this.banners.push("The Order of Disorder stands opposite you", {
+        holdMs,
+        detail:
+          "An exact copy of your grid, in their hands. Outscore it before the rolls run out.",
+      });
+    } else
+      this.banners.push(
+        `${bosses.map((b) => b.name).join(" and ")} preside${bosses.length > 1 ? "" : "s"}`,
+        { holdMs, detail: bosses.map((b) => b.desc).join(" ") },
+      );
     // The Boss tutorial step waits for the banner it would otherwise dim.
     if (getTutorial(this.registry).active) {
       this.time.delayedCall(holdMs + 500, () => {
@@ -2097,20 +2223,25 @@ export class GameScene extends Phaser.Scene {
    *  `trialComplete(state)`. */
   private resolveEndOfTrial(): void {
     const s = this.state;
+    // The duel's two totals, read before the engine touches anything. The last
+    // trial ends by comparing them, and the showdown is that comparison drawn —
+    // so it wants the numbers as the last roll left them, not as whatever the
+    // resolution does to the ladder next.
+    const duel = isMirrorTrial(s.trial);
+    const finalScore = s.score;
+    const finalRivalScore = rivalScore(s);
     // The engine decides win/lose/advance, pays out the gold and runs the
     // trial-start passives on advance; the scene handles audio, banners, and
     // scene transitions around it.
     const outcome = resolveTrialEnd(s);
     if (outcome.phase === "victory") {
-      audio.victory();
-      this.punctuate("victory");
       this.checkUnlocks();
       saveActiveRun(this.registry, {
         scene: "TrialResults",
         outcome,
         unlocked: this.trialUnlocks,
       });
-      this.time.delayedCall(700, () =>
+      const onward = () =>
         slideSceneOut(
           this,
           () =>
@@ -2119,21 +2250,34 @@ export class GameScene extends Phaser.Scene {
               unlocked: this.trialUnlocks,
             }),
           this.transitionBackdrop(),
-        ),
-      );
+        );
+      // The duel hands its punctuation to the showdown, which plays the same
+      // fanfare against the two totals rather than against an empty table, and
+      // then waits for the player instead of timing out into the next screen.
+      if (duel) {
+        this.openShowdown(finalScore, finalRivalScore, true, onward);
+        return;
+      }
+      audio.victory();
+      this.punctuate("victory");
+      this.time.delayedCall(700, onward);
       return;
     }
     if (outcome.phase === "gameOver") {
-      audio.gameOver();
-      this.punctuate("gameOver");
       finalizeRun(s);
-      this.time.delayedCall(900, () =>
+      const onward = () =>
         slideSceneOut(
           this,
           () => this.scene.start("GameOver", { unlocked: this.trialUnlocks }),
           this.transitionBackdrop(),
-        ),
-      );
+        );
+      if (duel) {
+        this.openShowdown(finalScore, finalRivalScore, false, onward);
+        return;
+      }
+      audio.gameOver();
+      this.punctuate("gameOver");
+      this.time.delayedCall(900, onward);
       return;
     }
 
@@ -2159,12 +2303,42 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * Draw the duel's closing tally over the table and hold there until the
+   * player leaves it.
+   *
+   * This is the only trial ending that is not on a timer. Every other one is a
+   * beat of punctuation before a results screen that says the same thing again;
+   * this one IS the result — the two totals are never set beside each other
+   * anywhere else — so it ends on a press rather than after a delay.
+   */
+  private openShowdown(
+    playerScore: bigint,
+    rival: bigint,
+    won: boolean,
+    onward: () => void,
+  ): void {
+    this.showdown?.destroy();
+    this.showdown = new DuelShowdown(this, {
+      playerScore,
+      rivalScore: rival,
+      won,
+      continueLabel: "Rise from the Table",
+      onContinue: onward,
+      register: (objs) => this.overlay(objs),
+    });
+  }
+
   private transitionBackdrop(): Phaser.GameObjects.GameObject[] {
     const background: Phaser.GameObjects.GameObject[] = [
       this.feltImage,
       ...this.runFooterLinks,
     ];
     if (this.ambient) background.push(this.ambient);
+    // The showdown's scrim is the room the verdict was read in — it stays put
+    // while the interface slides off it, rather than sliding away to reveal a
+    // table the run has already finished with.
+    if (this.showdown) background.push(...this.showdown.backdrop);
     return background;
   }
 }

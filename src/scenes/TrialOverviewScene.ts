@@ -27,7 +27,11 @@ import {
 } from "../systems/Tutorial";
 import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
-import { saveActiveRun } from "../systems/ActiveRunPersistence";
+import {
+  saveActiveRun,
+  type ResumableCheckpoint,
+} from "../systems/ActiveRunPersistence";
+import { endingBeforeTrial } from "../systems/Endings";
 
 /** The line under the rank, in both mastheads. */
 const RANK_SUBTITLE = "Three trials stand between you and ascension";
@@ -411,11 +415,19 @@ export class TrialOverviewScene extends Phaser.Scene {
     if (atStage(this.registry, TutorialStage.RouteStart)) {
       advanceTutorial(this.registry);
     }
-    saveActiveRun(this.registry, { scene: "Game", unlocked: [] });
+    // One act stands in FRONT of its trial rather than after it: the Order of
+    // Disorder has to be introduced before the player sits down opposite it.
+    // The sequence hands off to the Game itself, so this is a detour rather
+    // than a fork.
+    const ending = endingBeforeTrial(this.state.trial, this.state.endingsSeen);
+    const checkpoint: ResumableCheckpoint = ending
+      ? { scene: "Ending", id: ending.id }
+      : { scene: "Game", unlocked: [] };
+    saveActiveRun(this.registry, checkpoint);
     audio.trialUp();
     slideSceneOut(
       this,
-      () => this.scene.start("Game", { scene: "Game", unlocked: [] }),
+      () => this.scene.start(checkpoint.scene, checkpoint),
       this.slideBackdrop,
     );
   }

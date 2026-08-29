@@ -5,10 +5,12 @@ import {
   afflict,
   afflictionsFor,
   blocksGrowth,
+  blocksGrowthPermanently,
   type AfflictionId,
 } from "./Afflictions";
 import { goalFor } from "./Boss";
 import { DIE_LADDER, DieOpts, DieSides } from "./Dice";
+import type { DicePool } from "./DicePool";
 import { grantGold, RELIQUARY_BONUS_PERCENT } from "./Gold";
 import {
   DOWNBEAT_INTERVAL,
@@ -319,18 +321,25 @@ export interface ItemDef {
 const STARTER_GRID_CAP = 75;
 const smallGrid = (s: RunState) => s.dice.length < STARTER_GRID_CAP;
 
+/** Face marks for card copy. Each switches the face of everything that follows
+ *  it until the next mark; they are control characters, so nothing a card
+ *  actually prints can collide with them. A Phaser Text is one face all the way
+ *  through, so marked copy is wrapped and set by ui/richCopy instead. */
+export const MARK_STRUCK = "\u0011";
+export const MARK_STRONG = "\u0012";
+export const MARK_PLAIN = "\u0013";
+
 /** The figure a card gives now, then the one it would give with another copy —
  *  so "what does one more of these buy me?" is answered on the card itself.
  *
- *  Written as an arrow rather than with the old value struck out: a Phaser Text
- *  has no rich text of its own, and the combining stroke overlay (U+0336) draws
- *  as a spacing dash in the card's serif, which reads as part of the arrow
- *  rather than as a line through the figure. */
+ *  The figure you have now is struck through and the one another copy buys
+ *  follows it in bold. No arrow between them: the strike already says which of
+ *  the two is the old value, and the arrow only crowded the line. */
 export function upgrade(
   current: string | number,
   next: string | number,
 ): string {
-  return `${current} → ${next}`;
+  return `${MARK_STRUCK}${current}${MARK_PLAIN} ${MARK_STRONG}${next}${MARK_PLAIN}`;
 }
 
 /**
@@ -338,7 +347,7 @@ export function upgrade(
  * turns a copy count into the figure the card advertises, and `line` prints it
  * (given the figure and whether the value it is selling is plural). With nothing
  * owned the card reads as a plain sentence; from the first copy on, the figure
- * becomes old → new.
+ * becomes the old value struck through followed by the new one in bold.
  */
 function stacking(
   owned: (s: RunState) => number,
@@ -1129,9 +1138,12 @@ export const ITEMS: ItemDef[] = [
     rarity: "common",
     desc: stacking(
       (s) => s.momentum,
-      (copies) => 2 * copies,
+      // The sign travels with the figure rather than sitting in the sentence:
+      // an upgrade prints two figures, and a "+" outside them belongs to
+      // neither (see `upgrade`).
+      (copies) => `+${2 * copies}`,
       (points) =>
-        `Each consecutive roll that scores adds +${points} to points earned; a scoreless roll resets it to 0.`,
+        `Each consecutive roll that scores adds ${points} to points earned; a scoreless roll resets it to 0.`,
     ),
     unlock: { kind: "scoreStreak", count: 12 },
     effects: [incCounter("momentum")],
@@ -1211,9 +1223,10 @@ export const ITEMS: ItemDef[] = [
     rarity: "rare",
     desc: stacking(
       (s) => s.genesis,
-      (copies) => 20 * copies,
+      // As with Momentum, the sign is part of the figure it signs.
+      (copies) => `+${20 * copies}`,
       (cap) =>
-        `Whenever a die scores, add a copy of that die to the grid (max +${cap} dice per roll).`,
+        `Whenever a die scores, add a copy of that die to the grid (max ${cap} dice per roll).`,
     ),
     unlock: { kind: "reachRank", rank: 4 },
     effects: [incCounter("genesis")],
@@ -1460,11 +1473,19 @@ export function applyEffect(
   effect: Effect,
   ctx: EffectContext,
 ): boolean {
-  // A growth-blocking affliction (Locust Idol for the rest of the run, The
-  // Drought for its trial) means exactly what it says: no effect may put dice on
-  // the grid. Refusing here rather than silently doing nothing aborts the sale,
-  // so the player is never charged for a card that could not act.
-  if (GROWTH_EFFECTS.has(effect.kind) && blocksGrowth(state)) return false;
+  // A permanently growth-blocking affliction (Locust Idol) means exactly what it
+  // says: no effect may put dice on the grid, ever again. Refusing here rather
+  // than silently doing nothing aborts the sale, so the player is never charged
+  // for a card that could not act.
+  //
+  // Read off the PERMANENT afflictions, matching the pool Shop.availableIds
+  // builds from. This is the purchase path and nothing else, and a purchase is
+  // made between trials — so a boss that blocks growth for the trial ahead
+  // (The Drought) does not reach back and void a card bought before it. The
+  // Drought is enforced where it acts instead: the roll loop's growth passives
+  // and applyTrialStart, both of which read the live `blocksGrowth`.
+  if (GROWTH_EFFECTS.has(effect.kind) && blocksGrowthPermanently(state))
+    return false;
 
   switch (effect.kind) {
     case "addDice":
@@ -1603,6 +1624,16 @@ export function itemGrowsGrid(def: ItemDef): boolean {
   );
 }
 
+/** The standing drawback a card inflicts, read off the effects that actually
+ *  inflict it rather than from a second table that could drift from them. Null
+ *  for the ordinary cards, which inflict nothing. A cursed card's face is
+ *  stamped with this affliction's seal (see ui/itemCard). */
+export function afflictionOf(def: ItemDef): AfflictionId | null {
+  for (const effect of def.effects)
+    if (effect.kind === "afflict") return effect.id;
+  return null;
+}
+
 const GROWTH_COUNTERS = new Set<RunCounter>([
   "chipMold",
   "spikeMold",
@@ -1632,20 +1663,19 @@ export function moldDiceCount(state: RunState): number {
 
 /** Pour every owned mold into the grid, newest dice carrying the mold's own item
  *  id as their source. Returns what each mold added, so the scene can label the
- *  new dice with the card that made them. */
+ *  new dice with the card that made them.
+ *
+ *  `pool` defaults to the run's own grid; the final Boss Trial passes the mirror
+ *  rival's, so the same molds pour into both sides of the duel. */
 export function applyMolds(
   state: RunState,
+  pool: DicePool = state.dice,
 ): { id: ShopItemId; count: number }[] {
   const poured: { id: ShopItemId; count: number }[] = [];
   for (const mold of MOLDS) {
     const count = state[mold.counter];
     if (count <= 0) continue;
-    state.dice.addDice(
-      mold.sides,
-      count,
-      withSizeAuras(state, mold.sides),
-      mold.id,
-    );
+    pool.addDice(mold.sides, count, withSizeAuras(state, mold.sides), mold.id);
     poured.push({ id: mold.id, count });
   }
   return poured;
@@ -1680,11 +1710,16 @@ export function applyTrialStart(state: RunState): number {
 
 /** Cull the grid back to whatever ceiling is in force (Famished Idol's hundred).
  *  Returns how many dice were culled. Called wherever the grid can have grown:
- *  as a trial starts, and after every roll's growth passives. */
-export function enforceGridCap(state: RunState): number {
+ *  as a trial starts, and after every roll's growth passives. `pool` defaults to
+ *  the run's own grid; the mirror duel passes the rival's, so one ceiling holds
+ *  both sides. */
+export function enforceGridCap(
+  state: RunState,
+  pool: DicePool = state.dice,
+): number {
   const cap = afflictionsFor(state).gridCap;
-  if (!Number.isFinite(cap) || state.dice.length <= cap) return 0;
-  return state.dice.cull(cap);
+  if (!Number.isFinite(cap) || pool.length <= cap) return 0;
+  return pool.cull(cap);
 }
 
 /**

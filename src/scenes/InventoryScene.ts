@@ -51,8 +51,9 @@ interface ContentArea {
  *  looks (see MenuScene). */
 const INVENTORY_AMBIENCE = 0.5;
 
-// Native card box with the caption dropped (the inventory shows a copy-count
-// badge instead), used for grid spacing and for scaling a card to its cell.
+// Native card box with the caption dropped (the inventory prints its copy
+// tally on the card's face), used for grid spacing and for scaling a card to
+// its cell.
 const CARD_W = 260;
 const CARD_H = 340;
 const COL_GAP = 12;
@@ -607,47 +608,16 @@ export class InventoryScene extends Phaser.Scene {
         locked: false,
         showCaption: false,
         displayScale: cardScale,
+        copies: owned[def.id] ?? 0,
       });
-      const count = owned[def.id] ?? 0;
-      if (count > 1) this.attachBadge(card, count, cardScale);
       const row = Math.floor(i / cols);
-      const inRow = Math.min(cols, entries.length - row * cols);
-      // A short last row centres itself under the ones above rather than
-      // hanging off the left edge.
-      const rowOffset = ((cols - inRow) * cellW) / 2;
-      card.setPosition(
-        rowOffset + (i % cols) * cellW + cellW / 2,
-        row * cellH + cellH / 2,
-      );
+      // A short last row stays left-aligned with the columns above it rather
+      // than centring itself and breaking the shelf's left edge.
+      card.setPosition((i % cols) * cellW + cellW / 2, row * cellH + cellH / 2);
       track.add(this.stagger(card, i));
     });
 
     return rows * cellH;
-  }
-
-  /** A gold count badge pinned to the card's top-right corner, added as a child
-   *  of the card container so it travels with the card. */
-  private attachBadge(
-    card: Phaser.GameObjects.Container,
-    count: number,
-    scale: number,
-  ): void {
-    // The 'card' box is 260x340 at origin centre, so its corner sits at
-    // (130, -170) before scaling; the badge tucks just inside that.
-    const bx = 112 * scale;
-    const by = -150 * scale;
-    const circle = this.add
-      .circle(bx, by, Math.max(11, 26 * scale), COLORS.gold)
-      .setStrokeStyle(Math.max(1.5, 3 * scale), COLORS.ink, 0.9);
-    const label = this.add
-      .text(bx, by, `${count}`, {
-        fontFamily: SERIF,
-        fontSize: `${Math.max(12, Math.round(28 * scale))}px`,
-        color: CSS.ink,
-        fontStyle: "bold",
-      })
-      .setOrigin(0.5);
-    card.add([circle, label]);
   }
 
   // --- Dice -----------------------------------------------------------------

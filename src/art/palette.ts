@@ -20,9 +20,14 @@ export const COLORS = {
   rarityCommon: 0xd4b83c,
   rarityUncommon: 0x4a7fc9,
   rarityRare: 0x9a4fc9,
-  // Wash laid over a cursed card's parchment, so a card that carries a
-  // drawback reads as a different kind of card before its copy is read.
-  cursedCard: 0xc98d86,
+  // The ink a cursed card's seal is stamped in — the same red the card's CURSED
+  // line is set in, laid on the parchment behind the copy so a card carrying a
+  // drawback reads as a different kind of card before any of it is read.
+  cursedSeal: 0x6b1220,
+  // A roll an affliction took away, floated over the table. Washed-out rather
+  // than wax red: it names a thing that did not happen, so it must not read as
+  // loudly as the points that did.
+  denied: 0xc98d86,
 };
 
 export const CSS = {

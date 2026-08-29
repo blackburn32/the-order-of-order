@@ -39,7 +39,11 @@ export function getBucketThreshold(): number {
 
 /** A group of identical dice. `lastFaces[v-1]` holds how many of this bucket's
  *  dice showed face value `v` on the most recent roll (undefined before any roll);
- *  `lastScoring` caches how many of them scored, for Genesis. */
+ *  `lastScoring` caches how many of them scored, for Genesis, and
+ *  `lastNonScoring` how many did not, for defection. The two halves are cached
+ *  separately rather than derived from each other because each is spent by its
+ *  own destruction pass, and a pass that has spent its half must not make the
+ *  other half look larger. */
 interface Bucket {
   sides: DieSides;
   maxFaceBonus: number;
@@ -49,6 +53,7 @@ interface Bucket {
   count: number;
   lastFaces?: number[];
   lastScoring?: number;
+  lastNonScoring?: number;
   shuffleSeed?: number;
 }
 
@@ -373,6 +378,7 @@ export class DicePool {
           if (windfallHit) windfallFactors.add(b.maxFaceBonus);
         }
         b.lastScoring = bucketScoring;
+        b.lastNonScoring = b.count - bucketScoring;
         scoringCount += bucketScoring;
         if (bucketScoring > 0)
           scoringBySource.set(
@@ -736,6 +742,47 @@ export class DicePool {
   /** Destroy `count` dice from among those that scored on the most recent roll
    *  (the breakage afflictions). Returns how many were actually destroyed. */
   breakScoring(count: number): number {
+    return this.destroyRolled(
+      count,
+      (d) => this.dieScored(d),
+      (b) => b.lastScoring ?? 0,
+      (b) => {
+        b.lastScoring = 0;
+      },
+    );
+  }
+
+  /** Destroy `count` dice from among those that did NOT score on the most recent
+   *  roll — Betrayal's defectors, who leave to join the Order of Disorder.
+   *  Returns how many were actually destroyed. */
+  breakNonScoring(count: number): number {
+    return this.destroyRolled(
+      count,
+      (d) => !this.dieScored(d),
+      (b) => b.lastNonScoring ?? 0,
+      (b) => {
+        b.lastNonScoring = 0;
+      },
+    );
+  }
+
+  /**
+   * Destroy `count` of the dice that were present for the most recent roll and
+   * that `eligible`/`weight` select — the shared body of breakage and defection,
+   * which differ only in which half of the roll they bill.
+   *
+   * Both halves can be billed after one roll, so each pass spends its own tally:
+   * the dice it took are gone, and `spend` zeroes the cache that named them so a
+   * later pass cannot bill them again. In list mode the same is done by shrinking
+   * `rolledCount`, since every die removed here came out of the rolled prefix and
+   * the growth passives' copies sit beyond it.
+   */
+  private destroyRolled(
+    count: number,
+    eligible: (d: Die) => boolean,
+    weight: (b: Bucket) => number,
+    spend: (b: Bucket) => void,
+  ): number {
     if (count <= 0 || this._count === 0) return 0;
     if (this.mode === "list") {
       // Walk only the dice that were present for the roll, newest first, so the
@@ -746,16 +793,16 @@ export class DicePool {
         k >= 0 && removed < count;
         k--
       ) {
-        if (!this.dieScored(this.list[k])) continue;
+        if (!eligible(this.list[k])) continue;
         this.list.splice(k, 1);
         removed += 1;
       }
       this._count -= removed;
+      this.rolledCount -= removed;
       return removed;
     }
-    const removed = this.removeSpread(count, (b) => b.lastScoring ?? 0);
-    // The dice are gone, so they cannot be billed again by a later pass.
-    for (const b of this.buckets) if (b.lastScoring) b.lastScoring = 0;
+    const removed = this.removeSpread(count, weight);
+    for (const b of this.buckets) spend(b);
     return removed;
   }
 

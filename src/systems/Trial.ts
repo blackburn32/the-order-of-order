@@ -4,7 +4,7 @@
 // needs to know which rolls are the first and last two) and the gold payout
 // (unused rolls) need it, and neither can import the engine without a cycle.
 
-import { rollsForTrial } from "../config";
+import { MIRROR_TRIAL_ROLLS, isMirrorTrial, rollsForTrial } from "../config";
 import type { RunState } from "../state/RunState";
 import { afflictionsForTrial } from "./Afflictions";
 
@@ -21,6 +21,11 @@ export function trialRollTarget(s: RunState): number {
  * only to the active trial; permanent Metronome and the rank boss are visible
  * ahead of time. */
 export function trialRollTargetFor(s: RunState, trial: number): number {
+  // The duel is a flat ten rolls and nothing moves it — not Metronome, not
+  // Overtime, not a carried Rain Check, not an affliction. Rolls are the one
+  // thing the mirror cannot copy, so the only way both sides of it get the same
+  // budget is for that budget to be a constant. See MIRROR_TRIAL_ROLLS.
+  if (isMirrorTrial(trial)) return MIRROR_TRIAL_ROLLS;
   return Math.max(
     1,
     rollsForTrial(trial) +

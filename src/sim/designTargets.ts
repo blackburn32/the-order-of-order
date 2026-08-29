@@ -1,7 +1,7 @@
-// Goal-curve designer for the 15-trial, 5-rank game (throwaway balancing tooling).
+// Goal-curve designer for the full ladder (throwaway balancing tooling).
 //
 // Captures each run's per-trial PEAK score once against trivial goals (so nobody
-// is culled and every run reaches trial 15), then designs a goal curve
+// is culled and every run reaches the last trial), then designs a goal curve
 // analytically from an explicit ABSOLUTE survivor schedule: S[r] = the fraction
 // of the ORIGINAL field still alive after rank r. That matches how the balancing
 // intent is actually stated ("~85% survive rank 1", "rank 5 is the ~23% win").
@@ -34,7 +34,7 @@ function collect(): Peaks {
     console.log(`(loaded cached trajectories from ${CACHE})`);
     return JSON.parse(readFileSync(CACHE, "utf8"));
   }
-  // Unreachable goals + no culling: every run plays all 15 trials to the end of
+  // Unreachable goals + no culling: every run plays every trial to the end of
   // their roll budgets, so `trialScore` is the true capacity of that build at
   // that point on the ladder. A LOW goal would not do — the trial would end on
   // its first scoring roll and every peak would be 1.

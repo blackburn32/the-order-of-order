@@ -12,22 +12,51 @@
 // the player to a Lesser Trial with all three goals raised.
 //
 // `RunState.trial` is a single 1-based counter that runs straight through the
-// whole ladder (1..15 for ranks 1-5, then 16+ in endless). Rank and
+// whole ladder (1..33 for ranks 1-11, then 34+ in endless). Rank and
 // trial-within-rank are derived from it rather than stored, so every consumer
 // that just wants "how far did they get" — the Hall, the leaderboard, unlock
 // criteria, the sim's trajectories — keeps working off one number.
+//
+// The ladder is told in three acts, each closing on a Boss Trial that ends in a
+// story sequence (see systems/Endings): the King's tribute at rank 5, the
+// Betrayal at rank 8, and the duel against the Order of Disorder at rank 11.
+// Only the last of those is the finish line; the first two hand the player a
+// standing drawback and send them on. The acts are not evenly spaced: the first
+// runs five ranks because it is also the tutorial, and the two after it run
+// three each, so a run that has already been asked to start over twice does not
+// also have to be long.
 
 export const TRIALS_PER_RANK = 3;
 
 /** Clearing this rank's Boss Trial wins the game. Past it the run only
  *  continues if the player chose to go endless. */
-export const WIN_RANK = 5;
-export const WIN_TRIAL = WIN_RANK * TRIALS_PER_RANK; // 15
+export const WIN_RANK = 11;
+export const WIN_TRIAL = WIN_RANK * TRIALS_PER_RANK; // 33
 
 /** Rolls granted by each trial in a rank, indexed by `trialInRank() - 1`. The
  *  Lesser Trial is deliberately the shortest: it is a sprint against a small
  *  goal, not a gentler version of the same thing. */
 export const ROLLS_PER_TRIAL = [7, 15, 20] as const;
+
+/**
+ * The duel's roll budget, fixed.
+ *
+ * The final Boss Trial is not a score to reach but a race against a copy of the
+ * player's own grid, and a race that runs twenty rolls is decided long before it
+ * ends: two identical engines compounding side by side settle into their gap
+ * early and then simply widen it. Ten rolls keeps the lead inside the range a
+ * single roll can overturn, so the last trial of a run stays live to its last
+ * throw.
+ *
+ * It is a flat count rather than a base, and `Trial.trialRollTargetFor` returns
+ * it without consulting anything else: Metronome, Overtime, Rain Check and every
+ * affliction that moves a roll budget are all ignored here. That is deliberate.
+ * The duel is the one trial whose fairness is a property of construction (see
+ * systems/Rival), and rolls are the one resource the mirror cannot copy — a
+ * player walking in with five bought rolls would be handed five rolls the Order
+ * of Disorder never gets.
+ */
+export const MIRROR_TRIAL_ROLLS = 10;
 
 /**
  * Dice a run opens with.
@@ -58,6 +87,14 @@ export function isBossTrial(trial: number): boolean {
   return trialInRank(trial) === TRIALS_PER_RANK;
 }
 
+/** The final Boss Trial, which is not a goal at all but a duel against an exact
+ *  copy of the player's own grid (see systems/Rival). Everything that gates on
+ *  "did they clear it" has to ask this first, because on this trial the answer
+ *  is a comparison rather than a threshold. */
+export function isMirrorTrial(trial: number): boolean {
+  return trial === WIN_TRIAL;
+}
+
 export function trialName(trial: number): string {
   return TRIAL_NAMES[trialInRank(trial) - 1];
 }
@@ -69,10 +106,11 @@ export function rollsForTrial(trial: number): number {
 
 // ---- Goal curve ------------------------------------------------------------
 //
-// Score goals for the 15 trials of the 5-rank game (index = trial - 1),
-// hand-authored against the balance simulation (src/sim) to a deliberate
-// attrition curve rather than a single geometric ratio, because shopping
-// creates a highly skewed score distribution that diverges across builds.
+// Score goals for the first five ranks (index = trial - 1), hand-authored
+// against the balance simulation (src/sim) to a deliberate attrition curve
+// rather than a single geometric ratio, because shopping creates a highly
+// skewed score distribution that diverges across builds. Ranks 6-11 continue
+// the same shape by formula — see buildGoals below.
 //
 // Attrition intent (measured on the pooled bot field; a thinking player does
 // better) — fraction of the whole field still alive after each rank:
@@ -80,7 +118,7 @@ export function rollsForTrial(trial: number): number {
 //   rank 2 — 88%
 //   rank 3 — 70%
 //   rank 4 — 47%
-//   rank 5 — 25%   the win rate
+//   rank 5 — 25%   the first act's close, no longer the finish line
 // Early goals remain small integers, but the single starting die deliberately
 // allows bad luck to end some runs in the first rank.
 // Within a rank most of the cull lands on the Boss Trial, whose modifier is
@@ -93,7 +131,7 @@ export function rollsForTrial(trial: number): number {
 //
 // See src/sim/designTargets.ts to redesign the curve and src/sim/validate.ts to
 // re-test it against the real survival gate.
-export const TRIAL_GOALS: bigint[] = [
+const AUTHORED_GOALS: bigint[] = [
   // rank 1
   1n,
   3n,
@@ -115,6 +153,40 @@ export const TRIAL_GOALS: bigint[] = [
   10_000n,
   50_000n,
 ];
+
+// Ranks 6-11 continue the authored curve rather than restating it. Two numbers
+// describe the shape the first five ranks were written to, and both are read
+// straight off them:
+//
+//   RANK_RATIO — how much a rank's Boss Trial asks over the last one's. The
+//     authored table grew its Boss Trials by 9.66x (rank 3 to 4) and 8.93x
+//     (rank 4 to 5), so the curve continues at 9.
+//   SLOT_SHARE — each trial's goal as a fraction of its OWN rank's Boss Trial.
+//     Rank 5 is exactly 4_000 / 10_000 / 50_000, so 0.08 / 0.2 / 1.
+//
+// Taking the shares off the rank's own boss is what preserves the sawtooth the
+// authored table is deliberately cut with: a rank opens on a seven-roll Lesser
+// Trial asking for a twelfth of what its twenty-roll Boss Trial will, so the
+// Lesser Trial of rank 8 asks less than the Boss Trial of rank 7. What rises
+// from rank to rank is each slot against the same slot.
+const RANK_RATIO = 9n;
+const SLOT_SHARE_MILLI = [80n, 200n, 1_000n] as const;
+
+/** The authored ranks, extended by formula to WIN_RANK. */
+function buildGoals(): bigint[] {
+  const goals = [...AUTHORED_GOALS];
+  const authoredRanks = AUTHORED_GOALS.length / TRIALS_PER_RANK;
+  let boss = AUTHORED_GOALS[AUTHORED_GOALS.length - 1];
+  for (let rank = authoredRanks + 1; rank <= WIN_RANK; rank++) {
+    boss *= RANK_RATIO;
+    for (const share of SLOT_SHARE_MILLI) {
+      goals.push((boss * share) / 1_000n);
+    }
+  }
+  return goals;
+}
+
+export const TRIAL_GOALS: bigint[] = buildGoals();
 
 // Endless growth past WIN_TRIAL. A flat geometric ratio can be outrun forever,
 // because builds themselves grow geometrically (3^prism, 4^lastCall compound

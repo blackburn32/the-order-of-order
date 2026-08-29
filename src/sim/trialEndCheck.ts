@@ -56,9 +56,9 @@ function runAt(trial: number): RunState {
 // ---------------------------------------------------------------------------
 console.log("\nLadder shape");
 
-check(WIN_TRIAL === 15, "the ladder is 15 trials long");
+check(WIN_TRIAL === 33, "the ladder is 33 trials long");
 check(
-  rankOf(1) === 1 && rankOf(3) === 1 && rankOf(4) === 2 && rankOf(15) === 5,
+  rankOf(1) === 1 && rankOf(3) === 1 && rankOf(4) === 2 && rankOf(33) === 11,
   "ranks group trials in threes",
 );
 check(
@@ -66,7 +66,7 @@ check(
   "trial-within-rank cycles 1,2,3",
 );
 check(
-  !isBossTrial(1) && !isBossTrial(2) && isBossTrial(3) && isBossTrial(15),
+  !isBossTrial(1) && !isBossTrial(2) && isBossTrial(3) && isBossTrial(33),
   "every third trial is a Boss Trial",
 );
 check(
@@ -191,19 +191,13 @@ console.log("\nAdvancing");
   state.trialCleared = true;
   resolveTrialEnd(state);
   check(state.trial === 3, "advanced into the Boss Trial");
-  check(
-    state.bossModifiers.length > 0,
-    "a boss modifier is armed for trial 3",
-  );
+  check(state.bossModifiers.length > 0, "a boss modifier is armed for trial 3");
   const firstBoss = state.bossModifiers[0];
 
   state.trialCleared = true;
   resolveTrialEnd(state);
   check(state.trial === 4, "advanced out of the Boss Trial");
-  check(
-    state.bossModifiers.length > 0,
-    "the next rank has a previewable boss",
-  );
+  check(state.bossModifiers.length > 0, "the next rank has a previewable boss");
   check(
     state.bossModifiers[0] !== firstBoss,
     "consecutive ranks avoid repeats",

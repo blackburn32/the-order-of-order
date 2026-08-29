@@ -11,7 +11,8 @@ import {
   type BoosterOffer,
   canAfford,
   shopClosed,
-  discountOffersForPawnbroker,
+  discountsShopPrices,
+  repriceOffers,
   openBooster,
   rerollCost,
   rerollIsFree,
@@ -39,16 +40,23 @@ import {
 } from "../ui/layout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
-import { CURSED_TINT, rarityMark } from "../ui/itemCard";
+import { buildCursedSeal, rarityMark } from "../ui/itemCard";
+import { buildRichCopy, isMarked } from "../ui/richCopy";
 import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
 import {
   createFreshShopCheckpoint,
   saveActiveRun,
   type ShopCheckpointState,
 } from "../systems/ActiveRunPersistence";
+import {
+  CARD_H,
+  CARD_W,
+  FAN_ARC_MAX,
+  FAN_MAX_TILT_DEG,
+  planChoiceLayout,
+  READABLE_CARD_SCALE,
+} from "../ui/choiceLayout";
 
-const CARD_W = 260;
-const CARD_H = 340;
 /** Top edge of a card's title, in the 'card' texture's own coordinates. See
  *  `buildCard` for why the title is hung from its top rather than centred. */
 const NAME_TOP = -124;
@@ -67,37 +75,21 @@ const FOCUS_SCALE = 1.05;
  *  and the longest of them run off the parchment. A pack's choices close into a
  *  fan rather than shrink past this — the same trade the loose cards make when
  *  they drop into the compact carousel. */
-const READABLE_CARD_SCALE = 0.62;
 /** Largest a pack's choices are ever drawn, however much room there is. */
-const MAX_CHOICE_SCALE = 0.78;
 /** How little of a fanned card its neighbour may leave showing. Half a card is
  *  enough to read its title and see its face; past that the fan stops
  *  tightening and the cards give up size again. */
-const MIN_FAN_STEP = 0.5;
 /** Air, in px, kept either side of a fan for the corners its outermost cards
  *  throw out as they tilt. */
-const FAN_BULGE = 36;
 /** How much larger a fan must draw the cards before it is worth hiding half of
  *  each one. Every choice legible at once is what the screen is for, so a grid
  *  that is only a little smaller keeps the screen. */
-const MIN_FAN_GAIN = 1.25;
+/** How close two arrangements' card sizes have to be before the shape of the
+ *  screen, rather than a hair of size, decides between them. */
 /** Tilt of the outermost card in a fan, and the drop of the lower corners. */
-const FAN_MAX_TILT_DEG = 6;
-const FAN_ARC_MAX = 4;
 /** The pose a fanned choice takes when it is brought forward to be read. */
 const FAN_FOCUS_LIFT = 12;
 const FAN_FOCUS_SCALE = 1.06;
-
-/** How a pack's choices are arranged. `step` is a fraction of a card's width:
- *  1 means the cards in a row stand clear of one another, less means each
- *  slides under the one beside it. */
-interface ChoiceLayout {
-  cols: number;
-  rows: number;
-  scale: number;
-  fanned: boolean;
-  step: number;
-}
 
 /** The live fan of pack choices, kept so a covered card can be brought out
  *  from under its neighbour and put back again. */
@@ -1938,12 +1930,12 @@ export class ShopScene extends Phaser.Scene {
       Math.min(240 * scale, (native * px) / nativePx);
     const img = this.add.image(0, 0, "card");
     img.setDisplaySize(CARD_W * scale, CARD_H * scale);
-    // A cursed card's parchment carries a red wash, so it reads as a different
-    // kind of card across the row before any of its copy has been. It is the
-    // card's resting tint: hovering brightens it and the pointer leaving puts
-    // it back, where an ordinary card simply clears.
-    const restTint = offer.cursed ? CURSED_TINT : undefined;
-    if (restTint !== undefined) img.setTint(restTint);
+    // A cursed card's parchment is stamped with the seal of the drawback it
+    // carries, so it reads as a different kind of card across the row before any
+    // of its copy has been. Laid straight on the parchment, under every line.
+    const seal = offer.affliction
+      ? buildCursedSeal(this, offer.affliction, scale)
+      : undefined;
     const mark = rarityMark(offer.rarity, offer.cursed);
     const rarityLabel = this.add
       .text(0, -148 * scale, mark.text, {
@@ -1970,15 +1962,26 @@ export class ShopScene extends Phaser.Scene {
       })
       .setOrigin(0.5, 0);
     const descPx = sizePx(19, 12);
-    const desc = this.add
-      .text(0, -10 * scale, offer.desc, {
-        fontFamily: SERIF,
-        fontSize: `${descPx}px`,
-        color: CSS.inkSoft,
-        align: "center",
-        wordWrap: { width: wrapWidth(214, descPx, 19) },
-      })
-      .setOrigin(0.5);
+    const descWrap = wrapWidth(214, descPx, 19);
+    // A description carrying an upgrade figure is set in more than one face, so
+    // it is laid out by richCopy rather than as a Text — see ui/itemCard, which
+    // prints the same copy on the same card art.
+    const desc = isMarked(offer.desc)
+      ? buildRichCopy(this, offer.desc, {
+          fontFamily: SERIF,
+          fontSizePx: descPx,
+          color: CSS.inkSoft,
+          wrapWidth: descWrap,
+        }).setY(-10 * scale)
+      : this.add
+          .text(0, -10 * scale, offer.desc, {
+            fontFamily: SERIF,
+            fontSize: `${descPx}px`,
+            color: CSS.inkSoft,
+            align: "center",
+            wordWrap: { width: descWrap },
+          })
+          .setOrigin(0.5);
     const costLabel = offer.freeByCoupon
       ? "Coupon Book: Free"
       : offer.cost === 0
@@ -1994,7 +1997,14 @@ export class ShopScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     const card = this.add
-      .container(x, y, [img, rarityLabel, name, desc, cost])
+      .container(x, y, [
+        img,
+        ...(seal ? [seal] : []),
+        rarityLabel,
+        name,
+        desc,
+        cost,
+      ])
       .setRotation(rotation);
     card.setSize(img.displayWidth, img.displayHeight);
     this.offerCards.set(offer, card);
@@ -2019,10 +2029,7 @@ export class ShopScene extends Phaser.Scene {
         if (!compact && !pointer.wasTouch) this.focusPackCard(offer, index);
       });
       card.on("pointerout", () => {
-        if (affordable) {
-          if (restTint !== undefined) img.setTint(restTint);
-          else img.clearTint();
-        }
+        if (affordable) img.clearTint();
         pressedHere = false;
         if (compact && !this.carouselDragging) {
           if (this.selectedCarouselIndex !== undefined) {
@@ -2156,61 +2163,6 @@ export class ShopScene extends Phaser.Scene {
     this.showBoosterChoices(true, origin);
   }
 
-  /** Pick the arrangement that draws a pack's choices largest.
-   *
-   *  Every column count is measured as a plain grid first. Where that would
-   *  drive the cards below the size their copy is written for, the same grid is
-   *  measured again with each row's cards sliding under one another: an
-   *  overlapping row spends none of its width on gaps or on the covered edges,
-   *  which at phone widths buys back enough to draw the cards half again as
-   *  large. A fan is only ever tightened as far as it takes to climb back to a
-   *  readable card, and a fan that would not have to overlap at all is just a
-   *  row, so it stays one.
-   *
-   *  A fan hides half of every card it draws, which on this screen is half of
-   *  every choice on offer — so it has to win by a margin, not by a hair. */
-  private planChoiceLayout(
-    n: number,
-    availW: number,
-    availH: number,
-    gap: number,
-  ): ChoiceLayout {
-    let grid: ChoiceLayout | undefined;
-    let fan: ChoiceLayout | undefined;
-    for (let cols = 1; cols <= n; cols++) {
-      const rows = Math.ceil(n / cols);
-      const heightScale = (availH - (rows - 1) * gap) / (rows * CARD_H);
-      const gridScale = Math.min(
-        MAX_CHOICE_SCALE,
-        heightScale,
-        (availW - (cols - 1) * gap) / (cols * CARD_W),
-      );
-      if (!grid || gridScale > grid.scale) {
-        grid = { cols, rows, scale: gridScale, fanned: false, step: 1 };
-      }
-      // Overlap buys width and nothing else, so it is worth measuring only
-      // where the width is what is holding the cards down.
-      if (cols === 1 || gridScale >= READABLE_CARD_SCALE) continue;
-      const step = Phaser.Math.Clamp(
-        ((availW - FAN_BULGE) / (READABLE_CARD_SCALE * CARD_W) - 1) /
-          (cols - 1),
-        MIN_FAN_STEP,
-        1,
-      );
-      if (step >= 1) continue;
-      const fanScale = Math.min(
-        MAX_CHOICE_SCALE,
-        heightScale,
-        (availW - FAN_BULGE) / (CARD_W * (1 + (cols - 1) * step)),
-      );
-      if (!fan || fanScale > fan.scale) {
-        fan = { cols, rows, scale: fanScale, fanned: true, step };
-      }
-    }
-    const best = grid as ChoiceLayout;
-    return fan && fan.scale > best.scale * MIN_FAN_GAIN ? fan : best;
-  }
-
   /** Bring a fanned choice out from under its neighbour so it can be read.
    *
    *  Returns whether the card was already at the front — that is, whether a
@@ -2299,7 +2251,7 @@ export class ShopScene extends Phaser.Scene {
     const gap = 14;
     const top = Math.max(78, H * 0.13);
     const bottom = H - 25;
-    const plan = this.planChoiceLayout(n, W - 34, bottom - top, gap);
+    const plan = planChoiceLayout(n, W - 34, bottom - top, gap);
     const { cols, rows, scale, fanned } = plan;
     const cw = CARD_W * scale;
     const ch = CARD_H * scale;
@@ -2504,10 +2456,12 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private completeChosenOffer(offer: ShopOffer): void {
-    // These cards were priced when the visit opened. Pawnbroker takes effect
-    // on the current row immediately, including when claimed from a pack.
-    if (offer.id === "pawnbroker") {
-      discountOffersForPawnbroker(this.offers);
+    // These cards were priced when the visit opened. A discount card takes
+    // effect on the current row immediately — the shelf a player is standing at
+    // is exactly where they expect to see their new discount — including when
+    // the card was claimed from a pack.
+    if (discountsShopPrices(offer.id)) {
+      repriceOffers(this.state, this.offers);
     }
 
     if (this.packChoices?.includes(offer)) {

@@ -25,7 +25,8 @@ import {
   boosterPrice,
   BoosterOffer,
   canAfford,
-  discountOffersForPawnbroker,
+  discountsShopPrices,
+  repriceOffers,
   openBooster,
   PRICE_BANDS,
   rerollCost,
@@ -208,8 +209,8 @@ function spendDown(
 ): void {
   for (const offer of ordered) {
     if (state.gold - offer.cost < floor) continue;
-    if (attemptBuy(state, offer, rng) && offer.id === "pawnbroker") {
-      discountOffersForPawnbroker(ordered);
+    if (attemptBuy(state, offer, rng) && discountsShopPrices(offer.id)) {
+      repriceOffers(state, ordered);
     }
   }
 }
@@ -222,11 +223,10 @@ function themedVisit(theme: ItemTheme, floor: number) {
   return (state: RunState, offers: ShopOffer[], rng: () => number): void => {
     const inTheme = offers.filter((o) => ITEM_THEMES[o.id].includes(theme));
     const rest = offers.filter((o) => !ITEM_THEMES[o.id].includes(theme));
-    const hadPawnbroker = state.hasPawnbroker;
     spendDown(state, byCostAscending(inTheme), floor, rng);
-    if (!hadPawnbroker && state.hasPawnbroker) {
-      discountOffersForPawnbroker(rest);
-    }
+    // The in-theme spend may have bought a discount card; repricing is a no-op
+    // when it did not.
+    repriceOffers(state, rest);
     spendDown(state, byCostAscending(rest), floor, rng);
   };
 }
@@ -306,11 +306,9 @@ function visitShop(
     offers = rerollShopOffers(state, cardCount, rng, visitWeights);
   }
 
-  const hadPawnbroker = state.hasPawnbroker;
   visitBoosters(state, strategy, packs, visitWeights, rng);
-  if (!hadPawnbroker && state.hasPawnbroker) {
-    discountOffersForPawnbroker(offers);
-  }
+  // A discount card claimed from a pack applies to the row it was opened at.
+  repriceOffers(state, offers);
   if (state.hasCouponBook && !offers.some((offer) => offer.freeByCoupon)) {
     applyCouponFreebie(state, offers, rng);
   }
