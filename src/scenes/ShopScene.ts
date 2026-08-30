@@ -19,6 +19,7 @@ import {
   rerollShopOffers,
   ShopOffer,
 } from "../systems/Shop";
+import { addCamera, setCameraViewport } from "../ui/camera";
 import { recordSelection } from "../systems/SaveData";
 import {
   advanceTutorial,
@@ -387,7 +388,7 @@ export class ShopScene extends Phaser.Scene {
    *  via endShopTutorial or rebuildShop — before any new sub-screen opens. */
   private ensureCalloutCamera(): Phaser.Cameras.Scene2D.Camera {
     this.removeCalloutCamera();
-    const cam = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+    const cam = addCamera(this, 0, 0, this.scale.width, this.scale.height);
     cam.setBackgroundColor();
     this.ignoreDeep(cam, this.children.list);
     this.calloutCamera = cam;
@@ -437,7 +438,7 @@ export class ShopScene extends Phaser.Scene {
     if (this.carouselCamera) {
       this.cameras.remove(this.carouselCamera, true);
     }
-    const cam = this.cameras.add(0, 0, 1, 1);
+    const cam = addCamera(this, 0, 0, 1, 1);
     cam.setBackgroundColor();
     this.carouselCamera = cam;
     return cam;
@@ -1309,7 +1310,7 @@ export class ShopScene extends Phaser.Scene {
     let pan = Phaser.Math.Clamp(this.pendingCarouselPan, 0, overflow);
     this.pendingCarouselPan = 0;
     const cam = this.ensureCarouselCamera();
-    cam.setViewport(viewportX, viewportTop, viewportW, viewportH);
+    setCameraViewport(cam, viewportX, viewportTop, viewportW, viewportH);
     cam.setScroll(viewportX + pan, viewportTop);
     this.cameras.main.ignore(track);
 
@@ -1807,10 +1808,10 @@ export class ShopScene extends Phaser.Scene {
     });
     this.track = track;
 
-    // At zoom 1 the camera is a pure passthrough when its scroll matches the
-    // viewport's screen position; adding `pan` to scrollY moves content up.
+    // The camera is a pure passthrough when its scroll matches the viewport's
+    // screen position; adding `pan` to scrollY moves content up.
     const cam = this.ensureCarouselCamera();
-    cam.setViewport(viewportX, areaTop, availW, availH);
+    setCameraViewport(cam, viewportX, areaTop, availW, availH);
     cam.setScroll(viewportX, areaTop);
     this.cameras.main.ignore(track);
 

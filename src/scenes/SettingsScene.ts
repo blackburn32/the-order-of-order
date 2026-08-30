@@ -19,6 +19,7 @@ import {
   stackBannerButtons,
   toggleRow,
 } from "../ui/widgets";
+import { addCamera } from "../ui/camera";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import {
@@ -420,7 +421,7 @@ export class SettingsScene extends Phaser.Scene {
     // it scrolls in — so the camera spans the full width. That lets the scene
     // slide carry the rows clear off the screen rather than having them wink
     // out at the band's edge partway across.
-    const cam = this.cameras.add(0, viewportTop, this.scale.width, viewportH);
+    const cam = addCamera(this, 0, viewportTop, this.scale.width, viewportH);
     cam.setScroll(0, viewportTop);
     this.scrollCamera = cam;
     this.cameras.main.ignore(content);

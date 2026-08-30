@@ -18,7 +18,7 @@ import { EndingScene } from "./scenes/EndingScene";
 import { TributeScene } from "./scenes/TributeScene";
 import { installDevPanel } from "./dev/DevPanel";
 import { GOLD_BORDER } from "./buildFlags";
-import { installHighResolutionText } from "./renderQuality";
+import { installHiDpi, installHighResolutionText } from "./renderQuality";
 import {
   initializeActiveRunStorage,
   installActiveRunLifecycle,
@@ -50,6 +50,10 @@ function createGame(): Phaser.Game {
       // The canvas is resized (not letterboxed) to fill the page, in whatever
       // orientation the player is in; every scene lays itself out from
       // `scene.scale.width/height` rather than the fixed design size.
+      //
+      // These stay CSS pixels. Drawing at the screen's real pixel density is
+      // `installHiDpi`'s job, and it deliberately leaves the Scale Manager
+      // alone so that layout and input keep one unit throughout.
       mode: Phaser.Scale.RESIZE,
       width: window.innerWidth,
       height: window.innerHeight,
@@ -76,6 +80,7 @@ function createGame(): Phaser.Game {
   });
 
   window.__game = game;
+  installHiDpi(game);
   installDevPanel(game);
   installActiveRunLifecycle();
   return game;

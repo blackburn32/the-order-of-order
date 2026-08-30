@@ -5,7 +5,7 @@ import { AmbientLayer } from "./AmbientLayer";
 const SLIDE_MS = 360;
 const OVERLAY_FADE_MS = 240;
 
-type SlideObject = Phaser.GameObjects.GameObject &
+export type SlideObject = Phaser.GameObjects.GameObject &
   Phaser.GameObjects.Components.Transform;
 
 function containsStationaryObject(
@@ -43,23 +43,22 @@ function slideTargets(
   return targets;
 }
 
-/** Bring only a scene's interface in from the left. Felt, sigils, motes, and
- * lighting passed in `stationary` remain fixed, making successive scenes feel
- * like different arrangements in the same room.
+/** Move an explicit set of objects in from off the left edge, restoring the
+ * scene's input lock once they arrive. The whole-scene entrance is one caller;
+ * a story sequence turning a page is the other, where the set is just the page.
  *
- * `arrived` runs once the interface has come to rest — and immediately when
- * there is no slide to wait for — so a scene can hold deferred work (see the
- * Codex's card top-up) until the frames the entrance needs are its own. */
-export function slideSceneIn(
+ * `arrived` runs once they have come to rest — and immediately when there is no
+ * slide to wait for — so a caller can hold deferred work (see the Codex's card
+ * top-up) until the frames the entrance needs are its own. */
+export function slideObjectsIn(
   scene: Phaser.Scene,
-  stationary: Phaser.GameObjects.GameObject[] = [],
+  targets: readonly SlideObject[],
   arrived?: () => void,
 ): void {
   if (!fx.motion) {
     arrived?.();
     return;
   }
-  const targets = slideTargets(scene, stationary);
   const distance = scene.scale.width;
   const inputWasEnabled = scene.input.enabled;
   scene.input.enabled = false;
@@ -89,28 +88,21 @@ export function slideSceneIn(
   }
 }
 
-/** Send only the current interface to the right, leaving the room behind it
- * completely still until the next scene's interface arrives. */
-export function slideSceneOut(
+/** Send an explicit set of objects off the right edge, holding input closed
+ * behind them: whatever replaces them owns re-arming it. */
+export function slideObjectsOut(
   scene: Phaser.Scene,
+  targets: readonly SlideObject[],
   complete: () => void,
-  stationary: Phaser.GameObjects.GameObject[] = [],
 ): void {
   if (!fx.motion) {
     complete();
     return;
   }
   scene.input.enabled = false;
-  const handoffAmbient = () => {
-    for (const object of stationary) {
-      if (object instanceof AmbientLayer) object.queueMorphHandoff();
-    }
-  };
-  const targets = slideTargets(scene, stationary);
   const distance = scene.scale.width;
   let remaining = targets.length;
   if (remaining === 0) {
-    handoffAmbient();
     complete();
     return;
   }
@@ -122,13 +114,44 @@ export function slideSceneOut(
       ease: "Cubic.easeIn",
       onComplete: () => {
         remaining -= 1;
-        if (remaining === 0) {
-          handoffAmbient();
-          complete();
-        }
+        if (remaining === 0) complete();
       },
     });
   }
+}
+
+/** Bring only a scene's interface in from the left. Felt, sigils, motes, and
+ * lighting passed in `stationary` remain fixed, making successive scenes feel
+ * like different arrangements in the same room. */
+export function slideSceneIn(
+  scene: Phaser.Scene,
+  stationary: Phaser.GameObjects.GameObject[] = [],
+  arrived?: () => void,
+): void {
+  if (!fx.motion) {
+    arrived?.();
+    return;
+  }
+  slideObjectsIn(scene, slideTargets(scene, stationary), arrived);
+}
+
+/** Send only the current interface to the right, leaving the room behind it
+ * completely still until the next scene's interface arrives. */
+export function slideSceneOut(
+  scene: Phaser.Scene,
+  complete: () => void,
+  stationary: Phaser.GameObjects.GameObject[] = [],
+): void {
+  if (!fx.motion) {
+    complete();
+    return;
+  }
+  slideObjectsOut(scene, slideTargets(scene, stationary), () => {
+    for (const object of stationary) {
+      if (object instanceof AmbientLayer) object.queueMorphHandoff();
+    }
+    complete();
+  });
 }
 
 /** Bring an overlay's room over the live scene beneath it. The felt crossfades

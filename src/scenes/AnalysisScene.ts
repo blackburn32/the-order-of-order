@@ -10,6 +10,7 @@ import {
   isCompactLandscape,
   onResizeCoalesced,
 } from "../ui/layout";
+import { addCamera } from "../ui/camera";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import { slideOverlayIn, slideOverlayOut } from "../ui/sceneSlide";
@@ -583,7 +584,7 @@ export class AnalysisScene extends Phaser.Scene {
     // vertically, so the camera spans the full width — that lets the scene
     // slide carry the rows clear off the screen rather than having them wink
     // out at the band's edge partway across.
-    const cam = this.cameras.add(0, viewTop, this.scale.width, viewH);
+    const cam = addCamera(this, 0, viewTop, this.scale.width, viewH);
     cam.setScroll(0, viewTop);
     this.scrollCamera = cam;
     this.cameras.main.ignore(content);

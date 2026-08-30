@@ -12,9 +12,18 @@ import {
   saveActiveRun,
   type ResumableCheckpoint,
 } from "../systems/ActiveRunPersistence";
-import { destroyAllChildren, responsive } from "../ui/layout";
-import { buildPageDots, buildStoryPage } from "../ui/storyPage";
-import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
+import { responsive } from "../ui/layout";
+import {
+  buildPageDots,
+  buildStoryFrame,
+  type StoryFrame,
+} from "../ui/storyPage";
+import {
+  slideObjectsIn,
+  slideObjectsOut,
+  slideSceneIn,
+  slideSceneOut,
+} from "../ui/sceneSlide";
 import { bannerButton } from "../ui/widgets";
 
 /** Fixed sigil brightness for the backdrop. Set at the top of the range rather
@@ -41,6 +50,10 @@ export class EndingScene extends Phaser.Scene {
   private page = 0;
   private transitioning = false;
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+  private frame!: StoryFrame;
+  private act!: Phaser.GameObjects.Container;
+  /** The button and the dots — the block that holds its place as pages turn. */
+  private controls: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super("Ending");
@@ -64,53 +77,59 @@ export class EndingScene extends Phaser.Scene {
   }
 
   private build(): void {
+    this.frame = buildStoryFrame(this, this.def.pages, ENDING_AMBIENCE);
+    this.slideBackdrop = this.frame.backdrop;
+    this.act = this.frame.page(this.def.pages[this.page]);
+    this.buildControls();
+  }
+
+  /** The block under the act. Drawn outside the page's container and redrawn
+   *  where it stands as the page turns, so only the story travels. */
+  private buildControls(): void {
+    for (const control of this.controls) control.destroy();
+    this.controls = [];
+
     const cx = this.scale.width / 2;
     const last = this.page === this.def.pages.length - 1;
-
-    const layout = buildStoryPage(
-      this,
-      this.def.pages[this.page],
-      this.def.pages,
-      ENDING_AMBIENCE,
-    );
-    this.slideBackdrop = layout.backdrop;
 
     const label = last ? this.def.button : "Continue";
     const button = bannerButton(this, cx, 0, label, () => {
       if (last) this.finish();
       else this.nextPage();
     });
-    button.y = layout.blockTop + button.height / 2;
+    button.y = this.frame.blockTop + button.height / 2;
+    this.controls.push(button);
 
-    buildPageDots(
-      this,
-      cx,
-      button.y + button.height / 2 + 24,
-      this.def.pages.length,
-      this.page,
+    this.controls.push(
+      ...buildPageDots(
+        this,
+        cx,
+        button.y + button.height / 2 + 24,
+        this.def.pages.length,
+        this.page,
+      ),
     );
   }
 
-  /** Send the current page to the right, rebuild the next one, then bring it in
-   *  from the left — the intro's page turn, for the same reason. */
+  /** Send the current page to the right and bring the next one in from the
+   *  left — the intro's page turn, for the same reason: the room and the
+   *  controls stay put, and only the act itself moves. */
   private nextPage(): void {
     if (this.transitioning) return;
     this.transitioning = true;
-    slideSceneOut(
-      this,
-      () => {
-        this.page += 1;
-        destroyAllChildren(this);
-        this.build();
-        // slideSceneOut disables input before invoking its completion. Re-arm it
-        // so slideSceneIn can own the incoming panel's input lock and restore it.
-        this.input.enabled = true;
-        slideSceneIn(this, this.slideBackdrop, () => {
-          this.transitioning = false;
-        });
-      },
-      this.slideBackdrop,
-    );
+    const outgoing = this.act;
+    slideObjectsOut(this, [outgoing], () => {
+      outgoing.destroy();
+      this.page += 1;
+      this.act = this.frame.page(this.def.pages[this.page]);
+      this.buildControls();
+      // slideObjectsOut disables input before invoking its completion. Re-arm
+      // it so slideObjectsIn can own the incoming page's lock and restore it.
+      this.input.enabled = true;
+      slideObjectsIn(this, [this.act], () => {
+        this.transitioning = false;
+      });
+    });
   }
 
   /** Hand off to whatever the act leads to, saving that as the checkpoint first

@@ -5,6 +5,7 @@ import { DIE_LADDER, DieSides } from "../systems/Dice";
 import { ITEMS, ItemDef } from "../systems/Items";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
+import { addCamera } from "../ui/camera";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildItemCard } from "../ui/itemCard";
 import { buildSceneHeader } from "../ui/sceneHeader";
@@ -897,7 +898,7 @@ export class InventoryScene extends Phaser.Scene {
     // width — so the camera spans the full screen. That lets the entrance and
     // the tab swap carry the content clear off the edge rather than having it
     // wink out at the band's margin partway across.
-    const cam = this.cameras.add(0, area.y, this.scale.width, height);
+    const cam = addCamera(this, 0, area.y, this.scale.width, height);
     cam.setScroll(0, area.y);
     this.gridCamera = cam;
     cam.ignore(this.children.list.filter((obj) => obj !== track));

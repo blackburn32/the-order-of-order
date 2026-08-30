@@ -3,6 +3,7 @@ import { CSS, SERIF } from "../art/palette";
 import { loadProgress } from "../systems/SaveData";
 import { ITEMS } from "../systems/Items";
 import { addFelt, bannerButton } from "../ui/widgets";
+import { addCamera, setCameraViewport } from "../ui/camera";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import {
@@ -332,7 +333,7 @@ export class ItemsScene extends Phaser.Scene {
     // lets the scene slide carry the cards clear off the edge rather than
     // having them wink out at the grid's left margin partway across.
     const cam = this.ensureGridCamera();
-    cam.setViewport(0, grid.y, this.scale.width, grid.height);
+    setCameraViewport(cam, 0, grid.y, this.scale.width, grid.height);
     cam.setScroll(0, grid.y);
     cam.ignore(this.children.list.filter((obj) => obj !== track));
     this.cameras.main.ignore(track);
@@ -507,7 +508,7 @@ export class ItemsScene extends Phaser.Scene {
 
   private ensureGridCamera(): Phaser.Cameras.Scene2D.Camera {
     if (this.gridCamera) this.cameras.remove(this.gridCamera, true);
-    const cam = this.cameras.add(0, 0, 1, 1);
+    const cam = addCamera(this, 0, 0, 1, 1);
     cam.setBackgroundColor();
     this.gridCamera = cam;
     return cam;

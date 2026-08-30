@@ -19,6 +19,12 @@ import {
   trialComplete,
   trialRollTarget,
 } from "../sim/engine";
+import {
+  addCamera,
+  setCameraSize,
+  setCameraViewport,
+  setCameraZoom,
+} from "../ui/camera";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { rivalScore } from "../systems/Rival";
@@ -408,7 +414,9 @@ export class GameScene extends Phaser.Scene {
     this.syncGrid(layout);
     // Extra cameras don't track the Scale Manager — keep the full-screen
     // overlay camera matched to the new size so popups stay centered.
-    this.overlayCamera?.setSize(this.scale.width, this.scale.height);
+    if (this.overlayCamera) {
+      setCameraSize(this.overlayCamera, this.scale.width, this.scale.height);
+    }
     // The showdown owns its own layout — it re-lays in place rather than being
     // rebuilt, so a rotation mid-sequence doesn't restart the verdict.
     this.showdown?.layout();
@@ -1084,24 +1092,21 @@ export class GameScene extends Phaser.Scene {
     this.gridDetail = gridDetailLevel(view.equivalentDice, this.gridDetail);
 
     const cam = this.ensureGridCamera();
-    cam.setViewport(
+    setCameraViewport(
+      cam,
       layout.grid.x,
       layout.grid.y,
       layout.grid.width,
       layout.grid.height,
     );
-    cam.setZoom(view.zoom);
-    // Phaser's Camera.scrollX/Y is the world position at the viewport's
-    // CENTER, offset by half the *unzoomed* viewport size — not the world
-    // position at its top-left edge (which is what `view.scrollX/Y`
-    // means, and what the edge-clamping in computeWindowedView is written
-    // against). The two only coincide at zoom=1; convert here.
-    const halfW = layout.grid.width / 2;
-    const halfH = layout.grid.height / 2;
-    cam.setScroll(
-      view.scrollX + halfW * (1 / view.zoom - 1),
-      view.scrollY + halfH * (1 / view.zoom - 1),
-    );
+    setCameraZoom(cam, view.zoom);
+    // `view.scrollX/Y` is the world position at the viewport's top-left edge,
+    // which is what the edge-clamping in computeWindowedView is written
+    // against. That is only what Camera.scrollX means because every camera in
+    // the game is pinned to an origin of (0, 0) — see `ui/camera`. At Phaser's
+    // default origin of 0.5 this would need a half-viewport correction that
+    // grew with the zoom.
+    cam.setScroll(view.scrollX, view.scrollY);
 
     if (this.gridDetail === "cards") {
       for (const sprite of this.sprites.values()) sprite.destroy();
@@ -1195,7 +1200,7 @@ export class GameScene extends Phaser.Scene {
    *  native clipping, while its scroll/zoom drive pan and zoom. */
   private ensureGridCamera(): Phaser.Cameras.Scene2D.Camera {
     if (this.gridCamera) return this.gridCamera;
-    this.gridCamera = this.cameras.add(0, 0, 1, 1);
+    this.gridCamera = addCamera(this, 0, 0, 1, 1);
     // The viewport clips and transforms dice only; the full-scene felt and
     // sigil remain visible through it as one continuous room.
     this.gridCamera.setBackgroundColor("rgba(0,0,0,0)");
@@ -1209,7 +1214,7 @@ export class GameScene extends Phaser.Scene {
    *  the wrong scroll/zoom. */
   private ensureOverlayCamera(): Phaser.Cameras.Scene2D.Camera {
     if (this.overlayCamera) return this.overlayCamera;
-    const cam = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+    const cam = addCamera(this, 0, 0, this.scale.width, this.scale.height);
     cam.ignore(this.chrome);
     cam.ignore(this.gridContainer);
     this.overlayCamera = cam;

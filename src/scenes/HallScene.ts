@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { HallEntry, loadHall } from "../systems/SaveData";
 import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
+import { addCamera, setCameraViewport } from "../ui/camera";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import { destroyAllChildren, onResizeCoalesced } from "../ui/layout";
@@ -647,7 +648,7 @@ export class HallScene extends Phaser.Scene {
     // which lets the scene slide carry the list clear off the screen instead of
     // having it wink out at the table's left edge partway across.
     const cam = this.ensureGridCamera();
-    cam.setViewport(0, grid.y, this.scale.width, grid.height);
+    setCameraViewport(cam, 0, grid.y, this.scale.width, grid.height);
     cam.setScroll(0, grid.y);
     cam.ignore(this.children.list.filter((o) => o !== track));
     this.cameras.main.ignore(track);
@@ -755,7 +756,7 @@ export class HallScene extends Phaser.Scene {
 
   private ensureGridCamera(): Phaser.Cameras.Scene2D.Camera {
     if (this.gridCamera) this.cameras.remove(this.gridCamera, true);
-    const cam = this.cameras.add(0, 0, 1, 1);
+    const cam = addCamera(this, 0, 0, 1, 1);
     cam.setBackgroundColor();
     this.gridCamera = cam;
     return cam;
