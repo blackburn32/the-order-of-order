@@ -21,6 +21,7 @@
 
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
+import { artImage } from "../art/textures";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { formatScore } from "./formatScore";
@@ -187,7 +188,10 @@ export class DuelShowdown {
     flareColor: number;
   }): Side {
     const scene = this.scene;
-    const plaque = scene.add.image(0, 0, "plaque");
+    // Laid out by `layoutSide` a moment later, but not before this side has
+    // been measured — so it starts at the size the plaque is designed at rather
+    // than at whatever resolution it happens to be baked at.
+    const plaque = artImage(scene, 0, 0, "plaque");
     const house = scene.add
       .text(0, 0, spec.house, {
         fontFamily: SERIF,

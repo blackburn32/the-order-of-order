@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
+import { setArtScale } from "../art/textures";
 import type { Die } from "../systems/Dice";
 import type { DiceRegionSummary } from "../systems/DicePool";
 
@@ -198,9 +199,14 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
       const scale = iconSize / 96;
 
       row.container.setPosition(x, y);
-      row.body.setPosition(iconX, 0).setScale(scale);
-      row.face.setPosition(iconX, -4 * scale).setScale(scale);
-      row.marker.setPosition(iconX + 34 * scale, -34 * scale).setScale(scale);
+      // `scale` is in the die's 96-unit design space; `setArtScale` converts it
+      // to the object scale each texture's own bake resolution asks for.
+      setArtScale(row.body.setPosition(iconX, 0), scale);
+      setArtScale(row.face.setPosition(iconX, -4 * scale), scale);
+      setArtScale(
+        row.marker.setPosition(iconX + 34 * scale, -34 * scale),
+        scale,
+      );
       if (row.label.style.fontSize !== `${labelSize}px`)
         row.label.setFontSize(labelSize);
       row.label.setPosition(iconX + iconSize / 2 + 4, 0);

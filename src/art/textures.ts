@@ -1,11 +1,149 @@
 import Phaser from "phaser";
 import { COLORS, CSS, DIE_BORDER, SERIF } from "./palette";
+import { DPR } from "../renderQuality";
 import { DIE_LADDER } from "../systems/Dice";
 import type { AfflictionId } from "../systems/Afflictions";
 import type { BossModifierId } from "../systems/Boss";
 
 // Square so it stretches evenly onto any viewport aspect ratio via setDisplaySize.
 const FELT_SIZE = 1024;
+
+/**
+ * Texture pixels baked per *designed* pixel — the unit every builder in this
+ * file draws in, and the unit every scene lays out in.
+ *
+ * Scenes lay out in CSS pixels and every camera magnifies by `DPR` (see
+ * `renderQuality`), so art baked one texture pixel to the designed pixel is a
+ * `DPR`x upscale by the time it reaches the glass. With the canvas and the text
+ * both at device resolution, that made the baked art the softest layer on the
+ * table; baking at `DPR` instead puts it back at 1:1.
+ *
+ * Rounded *up* to a whole number rather than taken as `DPR` itself, for two
+ * reasons. The dice atlas packs its frames on a grid of `FACE_CELL * ART_SCALE`
+ * and registers integer frame rects, so a fractional cell would sit every face
+ * on a half pixel and bleed its neighbours into it. And a whole scale keeps a
+ * baked size exactly divisible again, so `artScale` below hands a consumer a
+ * display size that is exactly the designed one rather than nearly it. `DPR` is
+ * already capped at 3, so this is too.
+ */
+const ART_SCALE = Math.ceil(DPR);
+
+/**
+ * What each texture is baked at, and the whole of the decision about which ones
+ * are worth the memory — the cost is quadratic, and it only buys anything where
+ * the art is drawn at or near its designed size.
+ *
+ * Listed here: the small, crisp-edged pieces, where a soft edge is the whole
+ * problem. Absent, and so baked at 1:
+ *
+ * - `panel` is 1100x580 and `Callout` is its only consumer, which caps it at
+ *   360 layout px wide — 1080 device pixels at DPR 3, against 1100 baked. It
+ *   is already at 1:1 and a bump would be 23MB for nothing.
+ * - `felt` is 1024² of speckle and vignette stretched over the whole viewport,
+ *   and `spark` and `shockwave` are gradients blown up many times their own
+ *   size. All three are soft by design; there is no edge in them to sharpen.
+ * - The sigils are 512² (and their rings 1024²) across 28 marks and 3 rings —
+ *   some 41MB at 1x already. They are drawn at alpha 0.05-0.2 behind everything
+ *   else, which is the one place a soft line genuinely does not read.
+ */
+const BAKE_SCALE: Record<string, number> = {
+  card: ART_SCALE,
+  plaque: ART_SCALE,
+  seal: ART_SCALE,
+  btn: ART_SCALE,
+  banner: ART_SCALE,
+  "pip-gold": ART_SCALE,
+  "die-atlas": ART_SCALE,
+  ...Object.fromEntries(DIE_LADDER.map((sides) => [`die-${sides}`, ART_SCALE])),
+};
+
+function bakeScale(key: string): number {
+  return BAKE_SCALE[key] ?? 1;
+}
+
+/**
+ * The scale the dice atlas can actually be baked at on this device.
+ *
+ * It is the one texture here big enough to meet a hardware limit: at
+ * `ART_SCALE` 3 it is a single 2964px square, against a `MAX_TEXTURE_SIZE`
+ * that WebGL2 only guarantees to be 2048. Every GPU that would also report
+ * more than four cores (see `DPR`, which is capped at 2 below that) reports
+ * 4096 or more in practice — but "in practice" is not something to hand a
+ * render target, and overshooting the limit is a blank atlas, not a soft one.
+ *
+ * Written back into `BAKE_SCALE` so that consumers normalising against the
+ * atlas read the scale it was really baked at. Called from `buildDiceAtlas`,
+ * which runs at boot before anything displays a face.
+ */
+function fitAtlasScale(scene: Phaser.Scene, span: number): number {
+  const renderer = scene.game.renderer;
+  const gl =
+    renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer
+      ? renderer.gl
+      : undefined;
+  const max = gl ? gl.getParameter(gl.MAX_TEXTURE_SIZE) : Infinity;
+  let scale = bakeScale("die-atlas");
+  while (scale > 1 && span * scale > max) scale--;
+  BAKE_SCALE["die-atlas"] = scale;
+  return scale;
+}
+
+/**
+ * The object scale that draws `key` at `scale` designed pixels per designed
+ * pixel — i.e. the normalisation a consumer owes a texture baked above 1.
+ *
+ * Phaser 4.2 cannot do this for us. `TextureSource.resolution` exists but is
+ * initialised to 1 and read by nothing — `Frame` never consults it — so there
+ * is no way to declare "this texture is 3x and its natural size is a third of
+ * its pixels". Every consumer that sizes an image off its *native* pixels has
+ * to come through here (or size it explicitly with `setDisplaySize`, which is
+ * self-normalising and needs nothing).
+ */
+export function artScale(key: string, scale = 1): number {
+  return scale / bakeScale(key);
+}
+
+/** `scene.add.image`, drawn at the size the texture was designed at whatever
+ *  scale it was baked at. The normalised counterpart of `scene.add.image` for
+ *  every consumer that does not go on to call `setDisplaySize`. */
+export function artImage(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  key: string,
+  frame?: string,
+): Phaser.GameObjects.Image {
+  return scene.add.image(x, y, key, frame).setScale(artScale(key));
+}
+
+/** `Image.setScale`, taking the magnification relative to the texture's
+ *  designed size rather than its baked pixels. */
+export function setArtScale(
+  image: Phaser.GameObjects.Image,
+  scale: number,
+): Phaser.GameObjects.Image {
+  return image.setScale(artScale(image.texture.key, scale));
+}
+
+/**
+ * Bake a Graphics object into its texture.
+ *
+ * The drawing above is all in designed pixels; this scales it to the pixels the
+ * texture is actually baked at. `generateTexture` renders the object through
+ * its own transform, so one scale on the Graphics carries the geometry and
+ * every line width with it and no drawing code has to know the scale exists.
+ */
+function bakeGraphics(
+  g: Phaser.GameObjects.Graphics,
+  key: string,
+  width: number,
+  height: number,
+): void {
+  const scale = bakeScale(key);
+  g.setScale(scale);
+  g.generateTexture(key, width * scale, height * scale);
+  g.destroy();
+}
 
 /** Build every texture the game uses. Called once from BootScene. */
 export function buildTextures(scene: Phaser.Scene): void {
@@ -197,8 +335,7 @@ function buildShockwave(scene: Phaser.Scene): void {
   g.strokeCircle(128, 128, 118);
   g.lineStyle(2, 0xffffff, 0.45);
   g.strokeCircle(128, 128, 106);
-  g.generateTexture("shockwave", 256, 256);
-  g.destroy();
+  bakeGraphics(g, "shockwave", 256, 256);
 }
 
 /**
@@ -288,8 +425,7 @@ function buildSigil(scene: Phaser.Scene, key: string, variant: number): void {
     g.strokeCircle(c, c, 42);
   }
 
-  g.generateTexture(key, size, size);
-  g.destroy();
+  bakeGraphics(g, key, size, size);
 }
 
 /** Affliction marks share the ambient sigils' measured outer rings, but replace
@@ -830,8 +966,7 @@ function buildAfflictionSigil(
       break;
   }
 
-  g.generateTexture(key, size, size);
-  g.destroy();
+  bakeGraphics(g, key, size, size);
 }
 
 /**
@@ -923,8 +1058,7 @@ function buildSigilRing(
   g.lineStyle(1.5, 0xffffff, 0.3);
   g.strokeCircle(c, c, inner);
 
-  g.generateTexture(key, size, size);
-  g.destroy();
+  bakeGraphics(g, key, size, size);
 }
 
 /** Stroke equal arc segments separated by small gates. */
@@ -1065,8 +1199,7 @@ function buildDice(scene: Phaser.Scene): void {
       g.strokePoints(pts, true, true);
     }
 
-    g.generateTexture(`die-${sides}`, 96, 96);
-    g.destroy();
+    bakeGraphics(g, `die-${sides}`, 96, 96);
   }
 }
 
@@ -1074,11 +1207,15 @@ function buildPips(scene: Phaser.Scene): void {
   const g = scene.add.graphics();
   g.fillStyle(COLORS.gold, 1);
   g.fillCircle(6, 6, 5);
-  g.generateTexture("pip-gold", 12, 12);
-  g.destroy();
+  bakeGraphics(g, "pip-gold", 12, 12);
 }
 
+/** The cell one baked face or type label occupies, in designed pixels. */
 const FACE_CELL = 76;
+
+/** Type sizes the atlas is designed at, in designed pixels. */
+const FACE_NUMERAL_PX = 34;
+const FACE_LABEL_PX = 13;
 
 /**
  * Phaser sizes a Text object's canvas from a fixed reference string
@@ -1145,36 +1282,51 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
   const cols = Math.ceil(Math.sqrt(total));
   const rows = Math.ceil(total / cols);
 
-  const rt = scene.add.renderTexture(0, 0, cols * FACE_CELL, rows * FACE_CELL);
+  // The render target, the placement grid, the frame rects and the type all
+  // move together: `cell` is the one number carrying the bake scale, and every
+  // position below is measured in the atlas's own pixels.
+  const scale = fitAtlasScale(scene, Math.max(cols, rows) * FACE_CELL);
+  const cell = FACE_CELL * scale;
+
+  const rt = scene.add.renderTexture(0, 0, cols * cell, rows * cell);
   rt.setVisible(false);
 
   const regions: { name: string; x: number; y: number }[] = [];
   const placeAt = (name: string) => {
     const col = regions.length % cols;
     const row = Math.floor(regions.length / cols);
-    const x = col * FACE_CELL;
-    const y = row * FACE_CELL;
+    const x = col * cell;
+    const y = row * cell;
     regions.push({ name, x, y });
-    return { cx: x + FACE_CELL / 2, cy: y + FACE_CELL / 2 };
+    return { cx: x + cell / 2, cy: y + cell / 2 };
   };
 
   // draw() only queues a command referencing the object — it isn't rasterized
   // until render() runs, so every throwaway Text must survive until then.
   const throwaways: Phaser.GameObjects.Text[] = [];
 
-  const numeralOffset = numeralYOffset(34, true, 0.15);
-  const numeralOffsetD6 = numeralYOffset(34, true, 0);
+  // `resolution: 1`, against `installHighResolutionText`'s default of `DPR`.
+  // That default is for text drawn straight to the screen, where the camera
+  // magnifies it; here the glyph is already being rendered at `scale` times its
+  // designed size into a target that is one atlas pixel to one texture pixel.
+  // Asking for `DPR` on top of that would rasterize each Text at another factor
+  // of three and then minify it back down, and a 3:1 bilinear minification with
+  // no mipmap samples 4 of every 9 texels — a *worse* face than drawing it 1:1.
+  const numeralStyle = {
+    fontFamily: SERIF,
+    fontSize: `${FACE_NUMERAL_PX * scale}px`,
+    color: CSS.ink,
+    fontStyle: "bold",
+    resolution: 1,
+  };
+  const numeralOffset = numeralYOffset(FACE_NUMERAL_PX * scale, true, 0.15);
+  const numeralOffsetD6 = numeralYOffset(FACE_NUMERAL_PX * scale, true, 0);
 
   for (const face of faces) {
     const { cx, cy } = placeAt(face.name);
     const offset = face.sides === 6 ? numeralOffsetD6 : numeralOffset;
     const numeral = scene.add
-      .text(0, 0, String(face.value), {
-        fontFamily: SERIF,
-        fontSize: "34px",
-        color: CSS.ink,
-        fontStyle: "bold",
-      })
+      .text(0, 0, String(face.value), numeralStyle)
       .setOrigin(0.5);
     rt.draw(numeral, cx, cy + offset);
     throwaways.push(numeral);
@@ -1189,8 +1341,9 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
     const text = scene.add
       .text(0, 0, `d${label.sides}`, {
         fontFamily: SERIF,
-        fontSize: "13px",
+        fontSize: `${FACE_LABEL_PX * scale}px`,
         color,
+        resolution: 1,
       })
       .setOrigin(0.5);
     rt.draw(text, cx, cy);
@@ -1199,7 +1352,7 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
 
   rt.render();
   const tex = rt.saveTexture("die-atlas");
-  for (const r of regions) tex.add(r.name, 0, r.x, r.y, FACE_CELL, FACE_CELL);
+  for (const r of regions) tex.add(r.name, 0, r.x, r.y, cell, cell);
   for (const t of throwaways) t.destroy();
   rt.destroy();
 }
@@ -1213,8 +1366,7 @@ function buildCard(scene: Phaser.Scene): void {
   g.strokeRoundedRect(2, 2, 256, 336, 12);
   g.lineStyle(2, COLORS.inkSoft, 0.6);
   g.strokeRoundedRect(10, 10, 240, 320, 8);
-  g.generateTexture("card", 260, 340);
-  g.destroy();
+  bakeGraphics(g, "card", 260, 340);
 }
 
 /** Small dark plaque for HUD stats. */
@@ -1228,8 +1380,7 @@ function buildPlaque(scene: Phaser.Scene): void {
   g.fillRoundedRect(3, 1, 244, 53, 8);
   g.lineStyle(2, COLORS.gold, 0.75);
   g.strokeRoundedRect(5, 3, 240, 49, 7);
-  g.generateTexture("plaque", 250, 58);
-  g.destroy();
+  bakeGraphics(g, "plaque", 250, 58);
 }
 
 /** Wax-seal roll button. */
@@ -1243,19 +1394,23 @@ function buildSeal(scene: Phaser.Scene): void {
   g.strokeCircle(85, 82, 58);
   g.fillStyle(0xffffff, 0.12);
   g.fillEllipse(65, 52, 62, 30);
-  g.generateTexture("seal", 170, 170);
-  g.destroy();
+  bakeGraphics(g, "seal", 170, 170);
 }
+
+/** The parchment button's designed size, in layout pixels. Exported because a
+ *  caller decorating a button has to measure against the size it was drawn at,
+ *  which is no longer the size of its pixels. */
+export const BUTTON_WIDTH = 340;
+export const BUTTON_HEIGHT = 70;
 
 /** Parchment banner button. */
 function buildButton(scene: Phaser.Scene): void {
   const g = scene.add.graphics();
   g.fillStyle(COLORS.parchment, 1);
-  g.fillRoundedRect(0, 0, 340, 70, 10);
+  g.fillRoundedRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, 10);
   g.lineStyle(3, COLORS.ink, 0.85);
   g.strokeRoundedRect(4, 4, 332, 62, 8);
-  g.generateTexture("btn", 340, 70);
-  g.destroy();
+  bakeGraphics(g, "btn", BUTTON_WIDTH, BUTTON_HEIGHT);
 }
 
 /** Large parchment panel (shop, hall, settings). */
@@ -1267,8 +1422,7 @@ function buildPanel(scene: Phaser.Scene): void {
   g.strokeRoundedRect(3, 3, 1094, 574, 15);
   g.lineStyle(2, COLORS.inkSoft, 0.5);
   g.strokeRoundedRect(14, 14, 1072, 552, 10);
-  g.generateTexture("panel", 1100, 580);
-  g.destroy();
+  bakeGraphics(g, "panel", 1100, 580);
 }
 
 /** Announcement banner strip. */
@@ -1279,6 +1433,5 @@ function buildBanner(scene: Phaser.Scene): void {
   g.lineStyle(2, COLORS.gold, 1);
   g.lineBetween(0, 3, 720, 3);
   g.lineBetween(0, 89, 720, 89);
-  g.generateTexture("banner", 720, 92);
-  g.destroy();
+  bakeGraphics(g, "banner", 720, 92);
 }

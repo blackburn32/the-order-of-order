@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { artImage } from "../art/textures";
 import { Die } from "../systems/Dice";
 
 const BORDER_WIDTH = 5;
@@ -68,14 +69,16 @@ export class DieSprite extends Phaser.GameObjects.Container {
     super(scene, x, y);
     this.die = die;
 
-    this.bodyImage = scene.add.image(0, 0, `die-${die.sides}`);
-    this.typeImage = scene.add.image(0, 36, "die-atlas", `label-d${die.sides}`);
+    // The offsets are in the die's own 96-unit design space, which is also
+    // what `artImage` draws these at whatever resolution they were baked at.
+    this.bodyImage = artImage(scene, 0, 0, `die-${die.sides}`);
+    this.typeImage = artImage(scene, 0, 36, "die-atlas", `label-d${die.sides}`);
     // Placeholder frame; showFace() below sets the real one immediately.
-    this.faceImage = scene.add.image(0, -4, "die-atlas", `face-${die.sides}-1`);
+    this.faceImage = artImage(scene, 0, -4, "die-atlas", `face-${die.sides}-1`);
     this.add([this.bodyImage, this.typeImage, this.faceImage]);
 
     if (die.maxFaceBonus) {
-      this.marker = scene.add.image(34, -34, "pip-gold");
+      this.marker = artImage(scene, 34, -34, "pip-gold");
       this.add(this.marker);
     }
 

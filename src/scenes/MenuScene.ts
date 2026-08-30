@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
+import { BUTTON_HEIGHT } from "../art/textures";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { loadProgress, loadSettings } from "../systems/SaveData";
@@ -276,7 +277,13 @@ export class MenuScene extends Phaser.Scene {
       // viewport, and a fixed 24px lock would end up taller than the parchment
       // it sits on and far enough in to collide with the label.
       const img = itemsBtn.getAt(0) as Phaser.GameObjects.Image;
-      const lockSize = Math.max(12, Math.round(24 * img.scaleY));
+      // Off the parchment's *displayed* height, not its object scale: the
+      // texture is baked above layout resolution (see art/textures), so a
+      // full-size button already carries a fractional `scaleY`.
+      const lockSize = Math.max(
+        12,
+        Math.round((24 * img.displayHeight) / BUTTON_HEIGHT),
+      );
       const lock = this.add
         .text(-img.displayWidth / 2 + lockSize, 0, "\u{1F512}", {
           fontFamily: SERIF,

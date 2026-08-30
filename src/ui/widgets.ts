@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
+import { artImage } from "../art/textures";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 
@@ -73,20 +74,26 @@ export function bannerButton(
   maxWidth?: number,
   maxHeight?: number,
 ): Phaser.GameObjects.Container {
-  const img = scene.add.image(0, 0, "btn");
+  // `artImage`, not `scene.add.image`: the parchment is baked above layout
+  // resolution, and every measurement below — the button's own width, the
+  // height budget, the label's font size — is taken off the image, so it has to
+  // be the size the art was designed at rather than the pixels it is stored in.
+  const img = artImage(scene, 0, 0, "btn");
   const text = scene.add
     .text(0, 0, label, { fontFamily: SERIF, fontSize: "26px", color: CSS.ink })
     .setOrigin(0.5);
   const container = scene.add.container(x, y, [img, text]);
-  const contentW = Math.max(img.width, text.width + BUTTON_LABEL_PAD);
+  const contentW = Math.max(img.displayWidth, text.width + BUTTON_LABEL_PAD);
   const limit = maxWidth ?? scene.scale.width - BUTTON_SCREEN_MARGIN;
   // Whichever axis runs out first sets the scale, so the label shrinks with
   // the parchment instead of being sized off a width that was never the
   // binding constraint.
-  const heightScale = maxHeight ? Math.max(0, maxHeight) / img.height : 1;
+  const heightScale = maxHeight
+    ? Math.max(0, maxHeight) / img.displayHeight
+    : 1;
   const displayScale = Math.min(1, limit / contentW, heightScale);
-  const displayW = img.width * displayScale;
-  const displayH = img.height * displayScale;
+  const displayW = img.displayWidth * displayScale;
+  const displayH = img.displayHeight * displayScale;
   const labelPad = Math.max(12, BUTTON_LABEL_PAD * displayScale);
 
   img.setDisplaySize(displayW, displayH);
@@ -453,7 +460,7 @@ export function showBanner(
 ): Phaser.GameObjects.GameObject[] {
   const cx = scene.scale.width / 2;
   const cy = scene.scale.height / 2;
-  const img = scene.add.image(cx, cy, "banner").setDepth(90).setAlpha(0);
+  const img = artImage(scene, cx, cy, "banner").setDepth(90).setAlpha(0);
   const text = scene.add
     .text(cx, cy, message, {
       fontFamily: SERIF,
@@ -518,7 +525,7 @@ export class BannerStack {
     const holdMs = opts.holdMs ?? 1100;
     const hasDetail = !!opts.detail;
 
-    const img = scene.add.image(0, 0, "banner");
+    const img = artImage(scene, 0, 0, "banner");
     const title = scene.add
       .text(0, hasDetail ? -13 : 0, message, {
         fontFamily: SERIF,
@@ -546,12 +553,12 @@ export class BannerStack {
     // Shrink uniformly to fit narrow (portrait/mobile) viewports rather than
     // overflow the sides — driven by whichever is widest, the parchment strip
     // or a long text line, since the text isn't confined to the strip.
-    const contentW = Math.max(img.width, title.width, detailW);
+    const contentW = Math.max(img.displayWidth, title.width, detailW);
     const maxW = scene.scale.width - 40;
     const scale = contentW > maxW ? maxW / contentW : 1;
     container.setScale(scale).setDepth(90).setAlpha(0);
 
-    const entry = { container, slotH: img.height * scale + BANNER_GAP };
+    const entry = { container, slotH: img.displayHeight * scale + BANNER_GAP };
     this.entries.push(entry);
     this.register([container]);
     this.layout();

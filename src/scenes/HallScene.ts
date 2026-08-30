@@ -457,9 +457,11 @@ export class HallScene extends Phaser.Scene {
     let listX = 0;
 
     diceTypes.forEach(([sides, count]) => {
+      // Sized rather than scaled: the die body is baked above layout
+      // resolution, and a display size is the one form that normalises itself.
       const icon = this.add
         .image(listX + iconSize / 2, 0, `die-${sides}`)
-        .setScale(iconSize / 96);
+        .setDisplaySize(iconSize, iconSize);
       const label = this.add
         .text(listX + iconSize + 3, 0, `×${formatScore(count)}`, {
           fontFamily: SERIF,

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { isMirrorTrial, rankOf, trialInRank } from "../config";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { bossSigilTexture } from "../art/textures";
+import { artImage, artScale, bossSigilTexture } from "../art/textures";
 import { getRun, type RunState } from "../state/RunState";
 import type { Die } from "../systems/Dice";
 import { moldDiceCount, type ShopItemId } from "../systems/Items";
@@ -91,7 +91,11 @@ const HUD_STATS = [
   { key: "gold", label: "GOLD", weight: 0.75, color: CSS.gold },
 ] as const;
 type HudStatKey = (typeof HUD_STATS)[number]["key"];
-const SEAL_RADIUS = 85; // half of the 170x170 seal texture
+/** The seal's radius in layout pixels — half the size the wax is *designed* at,
+ *  which is what the rail geometry below is measured against. Deliberately not
+ *  derived from the texture: that is baked above layout resolution (see
+ *  art/textures), so its pixel size and this number are no longer the same. */
+const SEAL_RADIUS = 85;
 
 /** Gap between the boss pills — horizontal along a ribbon, vertical when they
  *  stack down the compact seal rail. */
@@ -1480,7 +1484,8 @@ export class GameScene extends Phaser.Scene {
       items.push(this.sealHalo);
     }
 
-    this.sealImage = this.add.image(x, y, "seal").setScale(scale);
+    this.sealImage = artImage(this, x, y, "seal");
+    this.setSealScale(scale);
     const label = this.add
       .text(x, y - 3 * scale, "ROLL", {
         fontFamily: SERIF,
@@ -1498,11 +1503,11 @@ export class GameScene extends Phaser.Scene {
       // Hover owns the seal's scale for as long as it lasts, so the idle pulse
       // has to let go of it rather than fight for the same property.
       this.stopSealBreathe();
-      this.sealImage.setScale(this.sealScale * 1.06);
+      this.setSealScale(this.sealScale * 1.06);
       this.setHaloAlpha(SEAL_HALO_HOVER);
     });
     this.sealImage.on("pointerout", () => {
-      this.sealImage.setScale(this.sealScale);
+      this.setSealScale(this.sealScale);
       this.setHaloAlpha(SEAL_HALO_IDLE);
       this.startSealBreathe();
     });
@@ -1514,16 +1519,24 @@ export class GameScene extends Phaser.Scene {
     return items;
   }
 
+  /** Set the seal's size as a multiple of `SEAL_RADIUS`, whatever resolution
+   *  the wax happens to be baked at. Every scale the seal takes — the layout's,
+   *  the hover, the press, the idle breath — is a magnification of the art's
+   *  designed size, never of its pixels. */
+  private setSealScale(scale: number): void {
+    this.sealImage.setScale(artScale("seal", scale));
+  }
+
   /** Slow pulse on the seal while it waits to be pressed — the only thing on
    *  the screen that moves when the game is idle, which is the point. */
   private startSealBreathe(): void {
     if (!fx.motion) return;
     this.sealBreathe?.remove();
-    this.sealImage.setScale(this.sealScale);
+    this.setSealScale(this.sealScale);
     this.sealBreathe = this.tweens.add({
       targets: this.sealImage,
-      scaleX: this.sealScale * 1.035,
-      scaleY: this.sealScale * 1.035,
+      scaleX: artScale("seal", this.sealScale * 1.035),
+      scaleY: artScale("seal", this.sealScale * 1.035),
       duration: 1400,
       yoyo: true,
       repeat: -1,
@@ -1546,9 +1559,9 @@ export class GameScene extends Phaser.Scene {
 
   private onRoll(): void {
     this.stopSealBreathe();
-    this.sealImage.setScale(this.sealScale * 0.96);
+    this.setSealScale(this.sealScale * 0.96);
     this.time.delayedCall(120, () => {
-      this.sealImage.setScale(this.sealScale);
+      this.setSealScale(this.sealScale);
       this.startSealBreathe();
     });
     const press = fx.shockwave(

@@ -815,8 +815,12 @@ export class InventoryScene extends Phaser.Scene {
       // The die body alone, with neither a face nor its baked type label: a row
       // is a size held in the grid rather than a die mid-roll, and at this size
       // the baked label is illegible beside the one the row already carries.
+      // Sized rather than scaled: the die body is baked above layout
+      // resolution, and a display size is the one form that normalises itself.
       container.add(
-        this.add.image(iconX, 0, `die-${row.sides}`).setScale(iconSize / 96),
+        this.add
+          .image(iconX, 0, `die-${row.sides}`)
+          .setDisplaySize(iconSize, iconSize),
       );
 
       container.add(names[i].setPosition(nameX, 0));
