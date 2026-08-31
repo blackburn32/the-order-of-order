@@ -77,3 +77,29 @@ export function setCameraZoom(
 ): void {
   camera.setZoom(zoom * DPR);
 }
+
+/**
+ * The reverse trip: a camera's viewport origin and its game-level magnification,
+ * back in the layout pixels the caller passed in.
+ *
+ * Needed wherever a scene converts a world position into a *screen* position —
+ * to hand it to another camera, or to a scene-level object — because that
+ * arithmetic reads `camera.x` and `camera.zoom` back out, and those are the two
+ * properties holding device pixels.
+ *
+ * Note that `camera.worldView` is not a usable substitute for `scrollX/Y` here.
+ * Phaser derives it assuming the default origin of 0.5, mixing the device-pixel
+ * viewport size into a layout-pixel scroll; at an origin of (0, 0) `scrollX/Y`
+ * already names the world point at the viewport's top-left.
+ */
+export function cameraOrigin(camera: Phaser.Cameras.Scene2D.Camera): {
+  x: number;
+  y: number;
+} {
+  return { x: camera.x / DPR, y: camera.y / DPR };
+}
+
+/** The magnification the *game* asked for, without the device-resolution one. */
+export function cameraZoom(camera: Phaser.Cameras.Scene2D.Camera): number {
+  return camera.zoomX / DPR;
+}

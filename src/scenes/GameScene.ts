@@ -21,6 +21,8 @@ import {
 } from "../sim/engine";
 import {
   addCamera,
+  cameraOrigin,
+  cameraZoom,
   setCameraSize,
   setCameraViewport,
   setCameraZoom,
@@ -216,7 +218,17 @@ interface Layout {
   hud: Record<HudStatKey, HudCell>;
   bossRibbon?: { x: number; y: number; w: number; h: number; compact: boolean };
   footer: { numbersY: number; settingsY: number };
+  /** The dice camera's viewport: the whole playfield between the HUD and the
+   *  footer, seal included. Dice are clipped to it, and pan/zoom may carry
+   *  them anywhere inside it — behind the seal, which the interface camera
+   *  draws over the top of them. */
   grid: GridArea;
+  /** The part of that viewport a fit-to-grid zoom actually frames the block
+   *  into: the same playfield with the seal (and, in compact landscape, its
+   *  rail) cut away. A round therefore opens with every die in clear space,
+   *  and the room beyond it is somewhere the player can go rather than
+   *  somewhere dice are left sitting. */
+  gridFrame: GridArea;
   /** Seal centre, plus the scale the seal art is drawn at — the compact
    *  landscape rail is narrower than the 170px texture. */
   button: { x: number; y: number; scale: number };
@@ -236,9 +248,9 @@ export class GameScene extends Phaser.Scene {
   // scroll/zoom drives pan/zoom, instead of a GameObject mask — Phaser 4's
   // WebGL renderer doesn't reliably support masking a container this deep.
   private gridCamera?: Phaser.Cameras.Scene2D.Camera;
-  // Only created alongside the grid camera: a transparent full-screen camera
-  // stacked above it, so popups (banners, float-ups) land on top of dice drawn
-  // by the grid camera's later render pass. See overlay().
+  // A transparent full-screen camera stacked above the grid camera, so the
+  // interface and popups (banners, float-ups) land on top of dice drawn by the
+  // grid camera's later render pass. See overlay().
   private overlayCamera?: Phaser.Cameras.Scene2D.Camera;
   // Vertically-stacked announcement banners (unlocks, boss, trial end) so that
   // several firing at once never overlap — see BannerStack.
@@ -256,10 +268,18 @@ export class GameScene extends Phaser.Scene {
   // the old layout. A zoomed-in player owns their scroll, so it stays unset.
   private recenterOnSigil = false;
   private layout!: Layout;
-  // Everything that ISN'T a die sprite (felt, HUD, roll button): cheap to
-  // destroy and rebuild wholesale on resize, unlike the (potentially huge)
-  // dice grid, which is repositioned in place instead — see handleResize().
+  // The interface — HUD, boss ribbon, seal, footer links: cheap to destroy and
+  // rebuild wholesale on resize, unlike the (potentially huge) dice grid,
+  // which is repositioned in place instead — see handleResize().
+  //
+  // Split from `room` purely for draw order. The dice camera renders between
+  // the two, so the felt and sigil lie under the dice while the seal and HUD
+  // cover them — which is what lets the dice viewport run past the seal
+  // instead of stopping above it.
   private chrome!: Phaser.GameObjects.Container;
+  // The room the dice sit in: felt and the ambient sigil, drawn by the main
+  // camera below everything else. Rebuilt alongside `chrome`.
+  private room!: Phaser.GameObjects.Container;
   private rolling = false;
   private tumbling = false;
   private tumbleEvent?: Phaser.Time.TimerEvent;
@@ -474,10 +494,10 @@ export class GameScene extends Phaser.Scene {
       }
       case TutorialStage.Viewport:
         anchor = new Phaser.Geom.Rectangle(
-          this.layout.grid.x,
-          this.layout.grid.y,
-          this.layout.grid.width,
-          this.layout.grid.height,
+          this.layout.gridFrame.x,
+          this.layout.gridFrame.y,
+          this.layout.gridFrame.width,
+          this.layout.gridFrame.height,
         );
         onContinue = advance;
         break;
@@ -518,6 +538,12 @@ export class GameScene extends Phaser.Scene {
 
   private build(): void {
     const layout = this.computeLayout();
+    // Camera order is draw order, and a camera can only be stacked on top of
+    // the ones already added — so both extra cameras are created before the
+    // objects they draw. Main takes the room, the grid camera the dice above
+    // it, the overlay camera the interface and popups above those.
+    this.ensureGridCamera();
+    this.ensureOverlayCamera();
     this.buildChrome(layout);
     this.syncGrid(layout);
   }
@@ -603,6 +629,12 @@ export class GameScene extends Phaser.Scene {
         bossRibbon,
         footer,
         grid: {
+          x: 0,
+          y: gridTop,
+          width: W,
+          height: Math.max(60, gridBottom - gridTop),
+        },
+        gridFrame: {
           x: margin,
           y: gridTop,
           width: Math.max(80, railLeft - 12 - margin),
@@ -643,7 +675,16 @@ export class GameScene extends Phaser.Scene {
       hud,
       bossRibbon,
       footer,
+      // The playfield runs to the footer, past the seal: a phone screen has
+      // little enough of it that stopping the dice short of the button would
+      // waste the tallest part of the room.
       grid: {
+        x: 0,
+        y: gridTop,
+        width: W,
+        height: Math.max(60, H - footerH - gridTop),
+      },
+      gridFrame: {
         x: portrait ? margin : W * 0.06,
         y: gridTop,
         width: portrait ? W - margin * 2 : W * 0.88,
@@ -664,32 +705,40 @@ export class GameScene extends Phaser.Scene {
     this.shownScore = this.state.score;
     this.stopSealBreathe();
 
-    // Ambient is part of chrome for draw order, but survives HUD rebuilds so
+    // Ambient belongs to the room for draw order, but survives HUD rebuilds so
     // its rotation and any transition morph remain continuous across resize.
-    if (this.ambient && this.chrome) this.chrome.remove(this.ambient);
+    if (this.ambient && this.room) this.room.remove(this.ambient);
+    this.room?.destroy();
     this.chrome?.destroy();
 
-    const items: Phaser.GameObjects.GameObject[] = [];
+    const floor: Phaser.GameObjects.GameObject[] = [];
     this.feltImage = addFelt(this, fx.on ? FELT_OVERSCAN : 0);
-    items.push(this.feltImage);
+    floor.push(this.feltImage);
     if (!this.ambient) this.buildAmbient();
     if (this.ambient) {
       this.ambient.setPosition(this.scale.width / 2, this.scale.height / 2);
       this.ambient.setScale(1);
       this.ambient.setArea(this.scale.width, this.scale.height);
-      items.push(this.ambient);
+      floor.push(this.ambient);
     }
+
+    const items: Phaser.GameObjects.GameObject[] = [];
     items.push(...this.buildHud(layout));
     items.push(...this.buildRollButton(layout));
 
+    this.room = this.add.container(0, 0, floor);
     this.chrome = this.add.container(0, 0, items);
-    // A fresh container always lands on top of the display list — but the
-    // felt background inside it needs to stay behind the (untouched) dice.
-    this.children.sendToBack(this.chrome);
-    // The grid and overlay cameras (if any) never draw chrome — the previous
-    // chrome reference they were ignoring is gone, so point them at the new one.
+    // A fresh container always lands on top of the display list — but the felt
+    // and sigil need to stay behind the (untouched) dice.
+    this.children.sendToBack(this.room);
+    // Each camera draws exactly one of the two layers; the previous containers
+    // they were ignoring are gone, so point them at the new ones. Camera.ignore
+    // snapshots a container's current children, which is why this runs after
+    // both are fully populated.
+    this.cameras.main.ignore(this.chrome);
+    this.gridCamera?.ignore(this.room);
     this.gridCamera?.ignore(this.chrome);
-    this.overlayCamera?.ignore(this.chrome);
+    this.overlayCamera?.ignore(this.room);
   }
 
   private buildHud(layout: Layout): Phaser.GameObjects.GameObject[] {
@@ -1073,11 +1122,19 @@ export class GameScene extends Phaser.Scene {
     const firstLayout = this.gridCount < 0;
     const countChanged = n !== this.gridCount;
     const focus = this.gridFocus();
-    const fitZoom = fitGridZoom(n, layout.grid, focus);
+    // The framed, seal-free box — not the pannable viewport the dice are drawn
+    // through — is what shapes the block and sizes the fit.
+    const fitZoom = fitGridZoom(n, layout.gridFrame);
     if (firstLayout || this.followsFitZoom) this.viewport.zoom = fitZoom;
     this.lastFitZoom = fitZoom;
 
-    let view = computeWindowedView(n, layout.grid, this.viewport, focus);
+    let view = computeWindowedView(
+      n,
+      layout.grid,
+      layout.gridFrame,
+      this.viewport,
+      focus,
+    );
     const recenter =
       firstLayout ||
       this.recenterOnSigil ||
@@ -1086,7 +1143,13 @@ export class GameScene extends Phaser.Scene {
     if (recenter) {
       this.viewport.scrollX = view.homeScrollX;
       this.viewport.scrollY = view.homeScrollY;
-      view = computeWindowedView(n, layout.grid, this.viewport, focus);
+      view = computeWindowedView(
+        n,
+        layout.grid,
+        layout.gridFrame,
+        this.viewport,
+        focus,
+      );
     }
     if (countChanged) this.gridCount = n;
     this.viewport.scrollX = view.scrollX;
@@ -1208,21 +1271,33 @@ export class GameScene extends Phaser.Scene {
     // The viewport clips and transforms dice only; the full-scene felt and
     // sigil remain visible through it as one continuous room.
     this.gridCamera.setBackgroundColor("rgba(0,0,0,0)");
-    this.gridCamera.ignore(this.chrome);
+    if (this.room) this.gridCamera.ignore(this.room);
+    if (this.chrome) this.gridCamera.ignore(this.chrome);
     return this.gridCamera;
   }
 
-  /** Lazily creates the transparent overlay camera the first time a popup is
-   *  shown while windowed. It's added after the grid camera so loose popup
-   *  children render above the dice without redrawing chrome or the grid at
-   *  the wrong scroll/zoom. */
+  /** The transparent overlay camera: added after the grid camera, so the
+   *  interface and any loose popup children render above the dice without
+   *  redrawing the room or the grid at the wrong scroll/zoom. It draws
+   *  `chrome`, so it is created eagerly with the grid camera rather than on
+   *  the first popup. */
   private ensureOverlayCamera(): Phaser.Cameras.Scene2D.Camera {
     if (this.overlayCamera) return this.overlayCamera;
     const cam = addCamera(this, 0, 0, this.scale.width, this.scale.height);
-    cam.ignore(this.chrome);
+    if (this.room) cam.ignore(this.room);
     cam.ignore(this.gridContainer);
     this.overlayCamera = cam;
     return cam;
+  }
+
+  /** Lurch the table. The room and the interface hang off two different
+   *  cameras now, so a shake that only moved the main one would slide the felt
+   *  out from under a motionless HUD. */
+  private shakeScreen(duration: number, intensity: number): void {
+    fx.shakeCamera(this.cameras.main, duration, intensity);
+    if (this.overlayCamera) {
+      fx.shakeCamera(this.overlayCamera, duration, intensity);
+    }
   }
 
   /** Popups (score float-ups, trial banners) are loose scene children, not
@@ -1243,9 +1318,14 @@ export class GameScene extends Phaser.Scene {
   private dieScreenPosition(sprite: DieSprite): { x: number; y: number } {
     const cam = this.gridCamera;
     if (!cam) return { x: sprite.x, y: sprite.y };
+    // The overlay camera is a plain layout-pixel one, so the grid camera has to
+    // be read back in layout pixels rather than in the device pixels its
+    // viewport and zoom are stored in — see `ui/camera`.
+    const origin = cameraOrigin(cam);
+    const zoom = cameraZoom(cam);
     return {
-      x: cam.x + (sprite.x - cam.worldView.x) * cam.zoom,
-      y: cam.y + (sprite.y - cam.worldView.y) * cam.zoom,
+      x: origin.x + (sprite.x - cam.scrollX) * zoom,
+      y: origin.y + (sprite.y - cam.scrollY) * zoom,
     };
   }
 
@@ -1309,6 +1389,16 @@ export class GameScene extends Phaser.Scene {
 
     const inBounds = (p: Phaser.Input.Pointer) => {
       const a = this.layout.grid;
+      // The seal sits inside the pannable playfield now. A press that lands on
+      // it is a roll, never the start of a drag — otherwise the grid would
+      // twitch under every slightly-moved press of the one button in the game.
+      const seal = this.layout.button;
+      const sealRadius = SEAL_RADIUS * seal.scale;
+      if (
+        Phaser.Math.Distance.Between(p.x, p.y, seal.x, seal.y) <= sealRadius
+      ) {
+        return false;
+      }
       return (
         p.x >= a.x &&
         p.x <= a.x + a.width &&
@@ -2130,7 +2220,7 @@ export class GameScene extends Phaser.Scene {
 
     const strength = Math.min(1, share);
     const duration = 140 + 180 * strength;
-    fx.shakeCamera(this.cameras.main, duration, 0.002 + 0.006 * strength);
+    this.shakeScreen(duration, 0.002 + 0.006 * strength);
     // The dice are drawn by a camera whose scroll is recomputed on every
     // relayout, so they're displaced by their container instead — see
     // Effects.shakeObject.
@@ -2164,7 +2254,7 @@ export class GameScene extends Phaser.Scene {
     const cy = this.scale.height / 2;
 
     if (outcome === "gameOver") {
-      fx.shakeCamera(this.cameras.main, 460, 0.012);
+      this.shakeScreen(460, 0.012);
       fx.shakeObject(this, this.gridContainer, 460, 16);
       return;
     }

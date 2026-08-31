@@ -19,7 +19,7 @@ import {
   rerollShopOffers,
   ShopOffer,
 } from "../systems/Shop";
-import { addCamera, setCameraViewport } from "../ui/camera";
+import { addCamera, cameraOrigin, setCameraViewport } from "../ui/camera";
 import { recordSelection } from "../systems/SaveData";
 import {
   advanceTutorial,
@@ -1694,13 +1694,17 @@ export class ShopScene extends Phaser.Scene {
 
     const world = card.getWorldTransformMatrix().transformPoint(0, 0);
     const cam = this.carouselCamera;
+    // The burst is a scene-level particle emitter, laid out in layout pixels,
+    // so the carousel camera's viewport origin has to come back out of device
+    // pixels before it can be added to one — see `ui/camera`.
+    const origin = cam ? cameraOrigin(cam) : { x: 0, y: 0 };
     const burstX =
       cam && this.carouselCards.some((entry) => entry.offer === offer)
-        ? world.x - cam.scrollX + cam.x
+        ? world.x - cam.scrollX + origin.x
         : world.x;
     const burstY =
       cam && this.carouselCards.some((entry) => entry.offer === offer)
-        ? world.y - cam.scrollY + cam.y
+        ? world.y - cam.scrollY + origin.y
         : world.y;
     const burst = fx.burst(this, burstX, burstY, {
       count: 22,

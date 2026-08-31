@@ -123,6 +123,8 @@ export function installHighResolutionText(): void {
  * had, drawn at full device resolution.
  */
 export function installHiDpi(game: Phaser.Game): void {
+  installPointerToCameraScaling();
+
   // Sizes drift back out of step on their own — Phaser's RESIZE mode rewrites
   // `canvas.width` to CSS pixels on every refresh, `CameraManager` recreates a
   // CSS-sized main camera whenever a scene starts or restarts, and a lost WebGL
@@ -176,4 +178,64 @@ function syncMainCamera(
   camera.setSize(width, height);
   camera.setOrigin(0, 0);
   camera.setZoom(DPR);
+}
+
+/**
+ * Teach Phaser's input pipeline the unit split the comment above describes.
+ *
+ * Pointer positions arrive in layout pixels — the Scale Manager is deliberately
+ * left in CSS pixels so that they do. But the two places where Phaser compares
+ * a pointer against a camera assume both are measured the same way, and since
+ * `ui/camera` puts every viewport in device pixels and magnifies by `DPR`, they
+ * are not. Scaling the pointer on the way in is the whole correction:
+ *
+ * - `CameraManager.getCamerasBelowPointer` tests the pointer against each
+ *   camera's viewport rectangle. A scrolling pane's camera sits `DPR` times
+ *   further down the screen than the layout says, so the pane it belongs to
+ *   would take input for a band near the top of the screen instead of its own.
+ * - `Camera.getWorldPoint` is the single conversion behind `InputManager`'s
+ *   hit test, `Pointer.worldX/worldY` and `positionToCamera`. Given layout
+ *   pixels against a `DPR`-zoomed camera it returns a world point `DPR` times
+ *   closer to the camera's top-left than the finger actually was — a press
+ *   landing up and to the left of itself, by more the further down the screen
+ *   it goes, and by different amounts across a portrait and a landscape layout
+ *   because the same control sits at a different distance from the origin.
+ *
+ * Both keep layout-pixel signatures afterwards, so `pointer.worldX` and every
+ * `setInteractive` hit area stay in the units the scenes lay themselves out in.
+ */
+let pointerScalingInstalled = false;
+
+function installPointerToCameraScaling(): void {
+  if (pointerScalingInstalled) return;
+  pointerScalingInstalled = true;
+
+  const cameraManager = Phaser.Cameras.Scene2D.CameraManager.prototype;
+  const getCamerasBelowPointer = cameraManager.getCamerasBelowPointer;
+  // Only `x` and `y` are read off the pointer, so a scaled stand-in is enough
+  // to reuse Phaser's own visible/inputEnabled/viewport tests unchanged.
+  const scaled = { x: 0, y: 0 } as unknown as Phaser.Input.Pointer;
+
+  cameraManager.getCamerasBelowPointer = function (
+    this: Phaser.Cameras.Scene2D.CameraManager,
+    pointer: Phaser.Input.Pointer,
+  ): Phaser.Cameras.Scene2D.Camera[] {
+    scaled.x = pointer.x * DPR;
+    scaled.y = pointer.y * DPR;
+    return getCamerasBelowPointer.call(this, scaled);
+  };
+
+  // Declared on BaseCamera and not overridden by Camera, so the one patch
+  // covers every camera in the game.
+  const baseCamera = Phaser.Cameras.Scene2D.BaseCamera.prototype;
+  const getWorldPoint = baseCamera.getWorldPoint;
+
+  baseCamera.getWorldPoint = function <O extends Phaser.Math.Vector2>(
+    this: Phaser.Cameras.Scene2D.BaseCamera,
+    x: number,
+    y: number,
+    output?: O,
+  ): O {
+    return getWorldPoint.call(this, x * DPR, y * DPR, output) as O;
+  };
 }

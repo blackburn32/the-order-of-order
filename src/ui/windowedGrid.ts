@@ -8,10 +8,19 @@ const WINDOWED_CELL = 60;
 // How far in the player may zoom. Deliberately well above FIT_MAX_ZOOM: a
 // handful of dice already fits the area at the fit cap, so without extra
 // headroom a small grid would open fully zoomed in with nowhere to go.
-const MAX_ZOOM = 4;
+const MAX_ZOOM = 6;
 // Cap on the *automatic* fit-to-grid zoom, so a one-die grid opens at a sane
-// die size rather than filling the whole area with a single face.
-const FIT_MAX_ZOOM = 1.5;
+// die size rather than filling the whole area with a single face. A cell at
+// this zoom is ~150 screen px, which is about as large as a die should read on
+// a phone; every count that packs tighter than that is bounded by the area
+// instead.
+const FIT_MAX_ZOOM = 2.5;
+// Breathing room the fit-to-grid zoom keeps outside the dice block, in world
+// units. Kept far smaller than EDGE_MARGIN (which is about how far the *pan*
+// may travel, not how tightly the grid is framed): a half-cell on each edge is
+// a third of a three-column block, and spending it on emptiness is most of why
+// a young grid used to open marooned in the middle of the room.
+const FIT_PADDING = 8;
 // Summary cards keep render cost bounded below this zoom. This is a numerical
 // guard rather than a rendering limit: realistic grids can still fit in full.
 const MIN_ZOOM = 0.0001;
@@ -63,7 +72,8 @@ export interface VisibleDie {
 }
 
 /** A screen-space point the dice block centres itself on, instead of the
- *  middle of the grid viewport. */
+ *  middle of the grid viewport — as far as staying inside the frame allows;
+ *  see `axisWindow`. */
 export interface GridFocus {
   x: number;
   y: number;
@@ -76,7 +86,7 @@ export interface WindowedView {
   virtualH: number;
   scrollX: number; // clamped to the virtual grid's bounds
   scrollY: number; // clamped to the virtual grid's bounds
-  homeScrollX: number; // scroll that centres the dice on the focus point
+  homeScrollX: number; // scroll that rests the dice on the focus point, within the frame
   homeScrollY: number;
   cols: number;
   rows: number;
@@ -138,53 +148,71 @@ export function gridDetailLevel(
   return DETAIL_LEVELS[current];
 }
 
-/** Columns the dice pack into. Deliberately independent of the viewport's
- *  aspect: the block grows outward from the sigil at the centre of the room,
- *  so it stays square rather than stretching into whatever letterbox shape the
- *  grid viewport happens to be. */
-function gridColumns(n: number): number {
-  return Math.max(1, Math.ceil(Math.sqrt(Math.max(1, n))));
+/** Columns the dice pack into: a block shaped like the frame it has to fill,
+ *  so a wide landscape table lays the dice out wide and a phone stacks them
+ *  tall, and either way the block runs out of space on both axes at once
+ *  instead of leaving a letterbox of felt on one of them.
+ *
+ *  Derived from the frame inside both `fitGridZoom` and `computeWindowedView`
+ *  rather than passed in: they are handed different rectangles — the frame and
+ *  the camera viewport — and a block laid out to one shape but zoomed to fit
+ *  another would not fit. */
+function gridColumns(n: number, frame: GridArea): number {
+  const dice = Math.max(1, n);
+  const aspect = Math.max(1, frame.width) / Math.max(1, frame.height);
+  // Never wider than there are dice to fill it. A wide frame asks for more
+  // columns than a young grid has — and since a short row is laid out from the
+  // left, the first die would sit in the left cell of a block centred on the
+  // sigil rather than in the middle of the ring itself.
+  return clamp(Math.ceil(Math.sqrt(dice * aspect)), 1, dice);
 }
 
-/**
- * The largest box centred on `focus` that still fits inside `area`, plus where
- * `focus` falls across the area as a fraction of each axis.
- *
- * Because the dice block centres on the focus point rather than on the
- * viewport, this box — not the whole area — is the room a fit-to-grid zoom
- * actually has: each half of it is only as wide as the *nearer* edge allows.
- */
-function focusedExtent(
+/** Where `focus` falls across `area`, as a fraction of each axis. */
+function focusFractions(
   area: GridArea,
   focus?: GridFocus,
-): { width: number; height: number; fracX: number; fracY: number } {
+): { x: number; y: number } {
+  if (!focus) return { x: 0.5, y: 0.5 };
   const width = Math.max(1, area.width);
   const height = Math.max(1, area.height);
-  if (!focus) return { width, height, fracX: 0.5, fracY: 0.5 };
-  const x = clamp(focus.x, area.x, area.x + width);
-  const y = clamp(focus.y, area.y, area.y + height);
   return {
-    width: Math.max(1, 2 * Math.min(x - area.x, area.x + width - x)),
-    height: Math.max(1, 2 * Math.min(y - area.y, area.y + height - y)),
-    fracX: (x - area.x) / width,
-    fracY: (y - area.y) / height,
+    x: (clamp(focus.x, area.x, area.x + width) - area.x) / width,
+    y: (clamp(focus.y, area.y, area.y + height) - area.y) / height,
   };
 }
 
-/** Zoom that keeps the complete, tightly-packed grid in view when possible. */
-export function fitGridZoom(
-  n: number,
-  area: GridArea,
-  focus?: GridFocus,
-): number {
-  const cols = gridColumns(n);
+/** The span `frame` occupies within `area`, as fractions of one of its axes. */
+function frameSpan(
+  areaStart: number,
+  areaSpan: number,
+  frameStart: number,
+  frameSpanSize: number,
+): { start: number; end: number } {
+  const span = Math.max(1, areaSpan);
+  return {
+    start: clamp((frameStart - areaStart) / span, 0, 1),
+    end: clamp((frameStart + frameSpanSize - areaStart) / span, 0, 1),
+  };
+}
+
+/**
+ * Zoom that keeps the complete, tightly-packed grid in view when possible.
+ *
+ * Sized against the whole frame, not against the part of it the sigil sits
+ * centred in. The block prefers to centre on the sigil but gives that up
+ * before it gives up room (see `axisWindow`) — and on a narrow phone, where
+ * the seal pushes the frame's lower edge up close to the sigil, insisting on a
+ * sigil-centred box would collapse the usable height to almost nothing and
+ * leave the dice as a thin band under a screenful of empty felt.
+ */
+export function fitGridZoom(n: number, frame: GridArea): number {
+  const cols = gridColumns(n, frame);
   const rows = Math.max(1, Math.ceil(n / cols));
-  const width = cols * WINDOWED_CELL + EDGE_MARGIN * 2;
-  const height = rows * WINDOWED_CELL + EDGE_MARGIN * 2;
-  const extent = focusedExtent(area, focus);
+  const width = cols * WINDOWED_CELL + FIT_PADDING * 2;
+  const height = rows * WINDOWED_CELL + FIT_PADDING * 2;
   return clampZoom(
-    Math.min(extent.width / width, extent.height / height, FIT_MAX_ZOOM),
-    area,
+    Math.min(frame.width / width, frame.height / height, FIT_MAX_ZOOM),
+    frame,
   );
 }
 
@@ -193,7 +221,8 @@ interface AxisWindow {
   origin: number;
   /** Total pannable span; scroll is clamped to [0, virtual - viewSpan]. */
   virtual: number;
-  /** Scroll that puts the content block's centre on the focus point. */
+  /** Scroll that puts the content block's centre on the focus point, or as
+   *  near to it as keeping the block inside the frame allows. */
   home: number;
   /** The requested scroll, clamped into the pannable span. */
   scroll: number;
@@ -205,6 +234,13 @@ interface AxisWindow {
  * span then stretches to cover the content (plus its edge margin), that home
  * position, and the drag slack beyond whichever of the two is outermost.
  *
+ * `home` gives way to the frame when the two disagree. The fit zoom sizes the
+ * block against the whole frame, so a block that fills a tall frame would hang
+ * out of it — under the seal, or off the top of the room — if it insisted on
+ * centring on a sigil sitting low in that frame. So the sigil-centred position
+ * is clamped to keep the block inside the framed box, which leaves it dead on
+ * the sigil whenever it is small enough to sit there.
+ *
  * Everything is worked out with the content block starting at 0 and then
  * shifted so the lowest reachable scroll becomes 0 — the contract callers
  * clamp against. With the focus at the middle of the view this reduces exactly
@@ -214,9 +250,19 @@ function axisWindow(
   content: number,
   viewSpan: number,
   focusFraction: number,
+  frame: { start: number; end: number },
   requested: number,
 ): AxisWindow {
-  const home = content / 2 - focusFraction * viewSpan;
+  const centred = content / 2 - focusFraction * viewSpan;
+  // Scrolls that put the block's leading edge at the frame's leading edge, and
+  // its trailing edge at the frame's trailing one. A block that fits the frame
+  // has a range between them; one that outgrew it has none, and centres.
+  const latest = -frame.start * viewSpan;
+  const earliest = content - frame.end * viewSpan;
+  const home =
+    earliest <= latest
+      ? clamp(centred, earliest, latest)
+      : (earliest + latest) / 2;
   const slack = (viewSpan * PAN_SLACK_FRACTION) / 2;
   const min = Math.min(home, -EDGE_MARGIN) - slack;
   const max = Math.max(home, content + EDGE_MARGIN - viewSpan) + slack;
@@ -246,10 +292,11 @@ function axisWindow(
 export function computeWindowedView(
   n: number,
   area: GridArea,
+  frame: GridArea,
   view: Viewport,
   focus?: GridFocus,
 ): WindowedView {
-  const cols = gridColumns(n);
+  const cols = gridColumns(n, frame);
   const rows = Math.ceil(n / cols);
   const cell = WINDOWED_CELL; // fixed; the camera's zoom provides the visual zoom
   const zoom = clampZoom(view.zoom, area);
@@ -261,9 +308,21 @@ export function computeWindowedView(
   // The pannable bounds are the dice content plus a margin on every edge —
   // scrollX/Y of 0 is the *outer edge of the margin*, not the first die —
   // stretched to reach the focus point and the drag slack beyond both.
-  const extent = focusedExtent(area, focus);
-  const axisX = axisWindow(contentW, viewW, extent.fracX, view.scrollX);
-  const axisY = axisWindow(contentH, viewH, extent.fracY, view.scrollY);
+  const fractions = focusFractions(area, focus);
+  const axisX = axisWindow(
+    contentW,
+    viewW,
+    fractions.x,
+    frameSpan(area.x, area.width, frame.x, frame.width),
+    view.scrollX,
+  );
+  const axisY = axisWindow(
+    contentH,
+    viewH,
+    fractions.y,
+    frameSpan(area.y, area.height, frame.y, frame.height),
+    view.scrollY,
+  );
   const { virtual: virtualW, origin: originX, scroll: scrollX } = axisX;
   const { virtual: virtualH, origin: originY, scroll: scrollY } = axisY;
 
@@ -276,14 +335,6 @@ export function computeWindowedView(
   );
 
   const cullBuffer = 1; // extra ring of cells around the viewport, so nothing pops in at the edge
-  const colStart = Math.max(
-    0,
-    Math.floor((scrollX - originX) / cell) - cullBuffer,
-  );
-  const colEnd = Math.min(
-    cols - 1,
-    Math.ceil((scrollX - originX + viewW) / cell) + cullBuffer,
-  );
   const rowStart = Math.max(
     0,
     Math.floor((scrollY - originY) / cell) - cullBuffer,
@@ -293,9 +344,19 @@ export function computeWindowedView(
     Math.ceil((scrollY - originY + viewH) / cell) + cullBuffer,
   );
 
+  const colStart = Math.max(
+    0,
+    Math.floor((scrollX - originX) / cell) - cullBuffer,
+  );
+  const colEnd = Math.min(
+    cols - 1,
+    Math.ceil((scrollX - originX + viewW) / cell) + cullBuffer,
+  );
+
   const visible: VisibleDie[] = [];
   // Never enumerate a raw view which the caller will immediately replace with
   // cards. This is the key bound that makes arbitrarily deep zoom-out cheap.
+  // A short last row stays left-aligned under the row above it.
   if (equivalentDice < GRID_LOD_THRESHOLDS.cards) {
     for (let row = rowStart; row <= rowEnd; row++) {
       for (let col = colStart; col <= colEnd; col++) {
