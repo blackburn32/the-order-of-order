@@ -1,9 +1,10 @@
 # Balance simulation
 
 A headless bot that plays full runs of The Order of Order to gather balance
-statistics — win rates, where runs die, what gets bought, how gold is earned and
-spent, how often each Boss Trial modifier is beaten, and how likely each gated
-item is to unlock during play — and writes a self-contained HTML report.
+statistics — win rates, where runs die, how long each trial takes to clear, what
+gets bought, how gold is earned and spent, how often each Boss Trial modifier is
+beaten, and how likely each gated item is to unlock during play — and writes a
+self-contained HTML report.
 
 The bot reuses the game's real economy end to end (`scoreRollHistogram`,
 `applyOffer`, booster generation/selection, `applyTrialStart`, the shop) through a shared trial-loop engine
@@ -29,6 +30,23 @@ npm run sim -- --out=sim-out/base-only.html
 ```
 
 Open the resulting `sim-out/report.html` in any browser (no server needed).
+
+### Reading the report
+
+Most of it is self-explanatory, with one section worth calling out. **Rolls spent
+per trial** answers a question attrition cannot: not whether a goal kills the
+right share of runs, but whether the survivors had to play the trial to get past
+it. It plots, for each trial, the share of the roll budget spent before the goal
+was crossed — cleared trials only, since a trial a run died on always burned its
+whole budget — against a 70% design target, and the table beneath it pools the
+same numbers across strategies alongside the share of clears that landed on the
+opening roll. A flat line along the bottom of that chart is a trial whose roll
+budget is decoration, and it is the shape the goal curve is tuned to avoid. Each
+strategy tile also carries `rolls per clear` and `cleared on roll 1`.
+
+Per-trial roll traces are what the goal tuner designs from; they are recorded
+only when `SimConfig.traceRolls` is set, since a number per roll per trial per
+run is far too much memory for a full batch to carry by default.
 
 ## Strategies compared
 
@@ -64,30 +82,62 @@ compile error.
 
 ## Designing the goal curve
 
-`tuneCurve.ts` is the one to use. It is a fixed-point iteration against REAL
-culling: simulate the whole field under the current curve, re-pick every goal as
-the quantile of the peak scores of the runs that actually entered that trial,
-repeat. Survivors get richer each pass, so the curve tightens until the win rate
-settles on the intended one.
+`pacingCurve.ts` is the one to use. It designs each goal from what the field
+**could** score rather than from what the old goal let it score, and it reports
+the roll tempo the goal buys.
+
+The distinction is the whole point. A trial ends the instant its goal is met, so
+the peak scores a run records are capped by the goal being replaced: measure
+those and an easy curve looks like a correct one, because every peak reads as "a
+hair over the goal". So the tuner replays the field one trial at a time with that
+trial — and only that trial — playing its whole roll budget out (the engine's
+`setFullBudgetTrial`), and takes the goal as the quantile of THAT distribution
+which leaves `CLEAR` of the entrants able to reach it. One trial rather than all
+of them, because the grid grows per roll and never resets between trials: a pass
+that played every trial out would hand trial 20 a grid no real run could arrive
+with. Trials are designed front to back, so each rank is measured against the
+shops the ranks before it could actually afford.
 
 ```bash
-npx tsx src/sim/tuneCurve.ts                # RUNS / ITERATIONS via env
-CURVE="TUNED (real culling)" npx tsx src/sim/validate.ts
-npx tsx src/sim/endlessCurve.ts
+node node_modules/tsx/dist/cli.mjs src/sim/pacingCurve.ts
+RUNS=800 CLEAR=0.90 FROM=4 node node_modules/tsx/dist/cli.mjs src/sim/pacingCurve.ts
+CURVE=PACED node node_modules/tsx/dist/cli.mjs src/sim/validate.ts
 ```
 
-`designTargets.ts` is the older approach and is kept for reference: it designs
-from one non-culling pass, where an unreachable goal and `setCulling(false)` let
-every run play all fifteen trials to the end of its roll budget. That measures
+| env               | default | what it does                                                 |
+| ----------------- | ------- | ------------------------------------------------------------ |
+| `CLEAR`           | 0.90    | share of a trial's entrants that should be able to clear it  |
+| `BOSS_CULL_SCALE` | 1.5     | how much harder a Boss Trial culls than the two before it    |
+| `FROM`            | 7       | first trial to redesign; earlier ones keep their goals       |
+| `MIN_SAMPLE`      | 250     | stop measuring below this many entrants, continue by formula |
+| `RUNS`            | 400     | runs per series per trial                                    |
+
+**`CLEAR` is the only real control, and tempo is a readout, not a second knob.**
+A goal is one number, so its attrition fixes it, and the tempo it produces is
+whatever the field's spread makes it. A trial's full-budget capacity runs about a
+thousandfold from the field's tenth percentile to its ninetieth, so any goal the
+weakest tenth survives is met on the opening roll by the strongest tenth.
+`pacingSweep.ts` prints that trade-off directly — for a given trial, what every
+attrition target costs in rolls — and is the thing to read before moving `CLEAR`:
+
+```bash
+TRIALS=5,11,17,23 node node_modules/tsx/dist/cli.mjs src/sim/pacingSweep.ts
+```
+
+`validate.ts` re-tests a curve with real culling and prints the per-trial
+attrition, the roll pacing, and the per-modifier Boss Trial clear rates, then
+regenerates the report. `CURVE=LIVE` re-tests the curve `src/config.ts` actually
+ships, which is how a hand-edited `TRIAL_GOALS` is measured without a round trip
+through `candidate.json`. `endlessCurve.ts` projects the strongest builds forward
+to confirm the endless ladder eventually outruns all of them.
+
+`tuneCurve.ts` and `designTargets.ts` are the older approaches, superseded and
+kept for reference. `tuneCurve` iterates against real culling but reads the
+censored peaks described above, so it cannot raise a goal past the goal it is
+replacing. `designTargets` designs from one non-culling pass, which measures
 capacity honestly but income dishonestly — with no clears, no trial pays for
 rolls left in hand and no Boss Trial pays its bonus — so its builds are poorer
-than real ones and its curve lands far too easy. Its first pass designed a 23%
-win rate that measured 65% under real culling.
-
-`validate.ts` re-tests a named curve from `sim-out/candidate.json` with real
-culling, prints the per-trial attrition and the per-modifier Boss Trial clear
-rates, and regenerates the report. `endlessCurve.ts` projects the strongest
-builds forward to confirm the endless ladder eventually outruns all of them.
+than real ones and its curve lands far too easy.
 
 ## Assertion suites
 
@@ -138,9 +188,11 @@ crosses the bucket threshold.
 | `series.ts`           | The nine series, their seed offsets, and `seriesConfig`.                                         |
 | `localStorageShim.ts` | In-memory `localStorage` + seeded `Math.random` for Node/reproducibility.                        |
 | `runBatch.ts`         | CLI entry (`npm run sim`).                                                                       |
-| `tuneCurve.ts`        | Fixed-point goal-curve tuner against real culling.                                               |
-| `designTargets.ts`    | Older single-pass curve designer, kept for reference.                                            |
-| `validate.ts`         | Re-test a candidate curve with real culling; prints boss clear rates.                            |
+| `pacingCurve.ts`      | The goal-curve tuner: designs from uncensored capacity, reports roll tempo.                      |
+| `pacingSweep.ts`      | What every attrition target costs in rolls, for one trial. Read before moving `CLEAR`.           |
+| `tuneCurve.ts`        | Superseded. Fixed-point tuner against censored peaks.                                            |
+| `designTargets.ts`    | Superseded. Single-pass curve designer.                                                          |
+| `validate.ts`         | Re-test a curve with real culling; prints attrition, roll pacing and boss clear rates.           |
 | `endlessCurve.ts`     | Confirms the endless ladder terminates.                                                          |
 | `itemCheck.ts`        | Item + boss-modifier assertions.                                                                 |
 | `trialEndCheck.ts`    | Trial-loop assertions.                                                                           |

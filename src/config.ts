@@ -12,26 +12,25 @@
 // the player to a Lesser Trial with all three goals raised.
 //
 // `RunState.trial` is a single 1-based counter that runs straight through the
-// whole ladder (1..33 for ranks 1-11, then 34+ in endless). Rank and
+// whole ladder (1..30 for ranks 1-10, then 31+ in endless). Rank and
 // trial-within-rank are derived from it rather than stored, so every consumer
 // that just wants "how far did they get" — the Hall, the leaderboard, unlock
 // criteria, the sim's trajectories — keeps working off one number.
 //
-// The ladder is told in three acts, each closing on a Boss Trial that ends in a
-// story sequence (see systems/Endings): the King's tribute at rank 5, the
-// Betrayal at rank 8, and the duel against the Order of Disorder at rank 11.
-// Only the last of those is the finish line; the first two hand the player a
-// standing drawback and send them on. The acts are not evenly spaced: the first
-// runs five ranks because it is also the tutorial, and the two after it run
-// three each, so a run that has already been asked to start over twice does not
-// also have to be long.
+// The ladder is told in four acts, each pinned to a Boss Trial that ends in a
+// story sequence (see systems/Endings): the King's messenger at rank 3, the
+// Betrayal at rank 6, the summons at rank 9, and the duel against the Order of
+// Disorder at rank 10. The acts fall every three ranks, so the story arrives on
+// a fixed beat rather than whenever the ladder happens to allow it. Only the
+// last of them is the finish line; the first two hand the player a standing
+// drawback and send them on, and the third only sets the table for the duel.
 
 export const TRIALS_PER_RANK = 3;
 
 /** Clearing this rank's Boss Trial wins the game. Past it the run only
  *  continues if the player chose to go endless. */
-export const WIN_RANK = 11;
-export const WIN_TRIAL = WIN_RANK * TRIALS_PER_RANK; // 33
+export const WIN_RANK = 10;
+export const WIN_TRIAL = WIN_RANK * TRIALS_PER_RANK; // 30
 
 /** Rolls granted by each trial in a rank, indexed by `trialInRank() - 1`. The
  *  Lesser Trial is deliberately the shortest: it is a sprint against a small
@@ -106,73 +105,110 @@ export function rollsForTrial(trial: number): number {
 
 // ---- Goal curve ------------------------------------------------------------
 //
-// Score goals for the first five ranks (index = trial - 1), hand-authored
-// against the balance simulation (src/sim) to a deliberate attrition curve
-// rather than a single geometric ratio, because shopping creates a highly
-// skewed score distribution that diverges across builds. Ranks 6-11 continue
-// the same shape by formula — see buildGoals below.
+// Score goals for every trial of the ladder (index = trial - 1), designed
+// against the balance simulation (src/sim/pacingCurve.ts) rather than by a
+// single geometric ratio, because shopping creates a wildly skewed score
+// distribution that diverges across builds.
 //
-// Attrition intent (measured on the pooled bot field; a thinking player does
+// The tuner designs each goal from UNCENSORED capacity: it replays the field one
+// trial at a time with that trial playing its whole roll budget out, so what it
+// samples is what each build COULD have scored rather than what the previous
+// goal let it stop at. The goal is then the quantile of that distribution that
+// leaves ~90% of a trial's entrants able to reach it (~85% on a Boss Trial,
+// whose modifier is already doing work). Front to back, so each rank is designed
+// against the shops the ranks before it could actually afford.
+//
+// Attrition that buys, on the pooled bot field (a thinking player does much
 // better) — fraction of the whole field still alive after each rank:
-//   rank 1 — 97%   a free on-ramp
-//   rank 2 — 88%
-//   rank 3 — 70%
-//   rank 4 — 47%
-//   rank 5 — 25%   the first act's close, no longer the finish line
-// Early goals remain small integers, but the single starting die deliberately
-// allows bad luck to end some runs in the first rank.
-// Within a rank most of the cull lands on the Boss Trial, whose modifier is
-// already doing work.
+//   rank 1 — 36%   the on-ramp, and the only rank NOT designed by the tuner:
+//                  a lone d6 whiffs all seven rolls of the Lesser Trial 28% of
+//                  the time, and that early variance is the intent, not a bug
+//   rank 3 — 21%   the King's messenger
+//   rank 6 — 11%   the Betrayal
+//   rank 9 —  5%   the summons
+//   rank 10 —  2%  the duel
 //
 // The curve SAWTOOTHS, and that is deliberate: a rank opens with a seven-roll
 // Lesser Trial and closes with a twenty-roll Boss Trial, so the Lesser Trial of
-// rank 3 asks for less than the Boss Trial of rank 2. What always rises is the
-// same slot generally rises from one rank to the next.
+// rank 3 asks for less than the Boss Trial of rank 2. What rises from rank to
+// rank is each slot against the same slot.
 //
-// See src/sim/designTargets.ts to redesign the curve and src/sim/validate.ts to
-// re-test it against the real survival gate.
+// A note on what this curve can and cannot buy. It was retuned to stop trials
+// ending on their opening roll, and it roughly halved that: across the ladder
+// the field now spends about a quarter of a trial's budget reaching its goal,
+// against a tenth before. It cannot do much better, and the reason is not the
+// curve. A trial's full-budget capacity runs about a thousandfold from the
+// field's tenth percentile to its ninetieth, so ANY goal the weakest tenth can
+// survive is met on the first roll by the strongest tenth. Tempo past this point
+// has to be bought somewhere other than the goal — a shorter roll budget, or
+// items whose per-roll spread is narrower.
+//
+// See src/sim/pacingCurve.ts to redesign the curve, src/sim/pacingSweep.ts to
+// see what any other attrition target would cost, and src/sim/validate.ts to
+// re-test a candidate against the real survival gate.
 const AUTHORED_GOALS: bigint[] = [
-  // rank 1
+  // rank 1 — hand-authored; the tutorial ramp, left exactly as it was
   1n,
   3n,
   5n,
   // rank 2
-  2n,
-  7n,
-  10n,
-  // rank 3
-  48n,
-  100n,
-  580n,
+  6n,
+  45n,
+  140n,
+  // rank 3 — closes on the King's messenger
+  150n,
+  660n,
+  1_700n,
   // rank 4
-  590n,
-  1_000n,
-  5_600n,
+  1_900n,
+  6_900n,
+  14_000n,
   // rank 5
-  4_000n,
-  10_000n,
-  50_000n,
+  20_000n,
+  87_000n,
+  200_000n,
+  // rank 6 — closes on the Betrayal
+  310_000n,
+  1_300_000n,
+  2_600_000n,
+  // rank 7
+  6_100_000n,
+  26_000_000n,
+  37_000_000n,
+  // rank 8
+  86_000_000n,
+  340_000_000n,
+  740_000_000n,
+  // rank 9 — closes on the summons
+  1_300_000_000n,
+  5_300_000_000n,
+  11_000_000_000n,
+  // rank 10 — the last rank; its Boss Trial is the duel, which has no goal at
+  // all (see isMirrorTrial). The entry is still a real number because the
+  // endless ladder walks out from it.
+  21_000_000_000n,
+  81_000_000_000n,
+  170_000_000_000n,
 ];
 
-// Ranks 6-11 continue the authored curve rather than restating it. Two numbers
-// describe the shape the first five ranks were written to, and both are read
-// straight off them:
+// The authored table covers the whole ladder, so the formula below is only
+// reached if WIN_RANK is raised past it. Both numbers are read straight off the
+// measured curve so that an eleventh rank would continue the shape rather than
+// restart it:
 //
 //   RANK_RATIO — how much a rank's Boss Trial asks over the last one's. The
-//     authored table grew its Boss Trials by 9.66x (rank 3 to 4) and 8.93x
-//     (rank 4 to 5), so the curve continues at 9.
+//     tuner measured 15.5x across ranks 5-8, so the curve continues at 15.
 //   SLOT_SHARE — each trial's goal as a fraction of its OWN rank's Boss Trial.
-//     Rank 5 is exactly 4_000 / 10_000 / 50_000, so 0.08 / 0.2 / 1.
+//     The measured ranks settle near 0.12 / 0.46 / 1.
 //
-// Taking the shares off the rank's own boss is what preserves the sawtooth the
-// authored table is deliberately cut with: a rank opens on a seven-roll Lesser
-// Trial asking for a twelfth of what its twenty-roll Boss Trial will, so the
-// Lesser Trial of rank 8 asks less than the Boss Trial of rank 7. What rises
-// from rank to rank is each slot against the same slot.
-const RANK_RATIO = 9n;
-const SLOT_SHARE_MILLI = [80n, 200n, 1_000n] as const;
+// Taking the shares off the rank's own boss is what preserves the sawtooth: a
+// rank opens on a seven-roll Lesser Trial asking for an eighth of what its
+// twenty-roll Boss Trial will, so the Lesser Trial of rank 8 asks less than the
+// Boss Trial of rank 7.
+const RANK_RATIO = 15n;
+const SLOT_SHARE_MILLI = [120n, 460n, 1_000n] as const;
 
-/** The authored ranks, extended by formula to WIN_RANK. */
+/** The authored ranks, extended by formula if WIN_RANK ever outruns them. */
 function buildGoals(): bigint[] {
   const goals = [...AUTHORED_GOALS];
   const authoredRanks = AUTHORED_GOALS.length / TRIALS_PER_RANK;
@@ -195,7 +231,12 @@ export const TRIAL_GOALS: bigint[] = buildGoals();
 // guarantees the goal eventually outpaces any build and the run ends.
 //
 //   goal(t) = goal(t-1) × ENDLESS_BASE^(1 + (t - 1 - WIN_TRIAL) × ENDLESS_ACCEL)
-export const ENDLESS_BASE = 2.1;
+//
+// The base is the ladder's own growth carried forward: the tuned curve grows
+// 15.5x per rank, which is 2.5x per trial, so endless opens at the rate the run
+// was already climbing rather than handing the player three easy trials as a
+// reward for finishing.
+export const ENDLESS_BASE = 2.5;
 export const ENDLESS_ACCEL = 0.05;
 
 // Optional per-trial override table for the goals (index = trial - 1). The

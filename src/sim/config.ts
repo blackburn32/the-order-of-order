@@ -47,6 +47,20 @@ export interface SimConfig {
 
   /** Safety cap on total rolls per run, in case a build could loop forever. */
   maxRollsPerRun: number;
+
+  /**
+   * Record every trial's per-roll cumulative score into its `TrialPoint`.
+   *
+   * Only the roll-pacing tuner needs it — it is how "how far into its budget
+   * would this build have got" is measured — and it costs a number per roll per
+   * trial per run, which a 9,000-run batch does not want to carry.
+   */
+  traceRolls?: boolean;
+
+  /** End the run once this trial has been resolved, whatever the outcome. The
+   *  roll-pacing tuner calibrates one trial at a time and has no use for the
+   *  ladder past the trial it is measuring. */
+  stopAfterTrial?: number;
 }
 
 export const DEFAULT_CONFIG: SimConfig = {

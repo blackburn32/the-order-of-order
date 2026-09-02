@@ -49,15 +49,16 @@ export const INTRO_PAGES: readonly StoryPage[] = [
  * The acts, in the order a run meets them.
  *
  * `tribute` and `betrayal` each close a chapter and hand the player a standing
- * drawback; `disorder` stands in front of the final Boss Trial; `peace` is the
- * only one that is a finish line.
+ * drawback; `summons` closes the third and takes nothing, existing only to put
+ * the duel on the horizon a rank before it arrives; `disorder` stands in front
+ * of the final Boss Trial; `peace` is the only one that is a finish line.
  */
 export const ENDING_PAGES: Record<EndingId, readonly StoryPage[]> = {
   tribute: [
     {
       title: "A Quieter Realm",
       blurb:
-        "Five ranks of discipline, and the churn is bound. Numbers fall as they are asked to. The harvests come in, the roads are safe, and for the first time in living memory the realm knows what tomorrow will look like.",
+        "Three ranks of discipline, and the churn is bound. Numbers fall as they are asked to. The harvests come in, the roads are safe, and for the first time in living memory the realm knows what tomorrow will look like.",
       image: "ending-tribute-1",
     },
     {
@@ -92,6 +93,27 @@ export const ENDING_PAGES: Record<EndingId, readonly StoryPage[]> = {
       blurb:
         "Its first recruits were yours. They are still yours, in a sense: every die you roll now knows there is somewhere else to go, and any die that fails you may yet be persuaded to walk.",
       image: "ending-betrayal-3",
+    },
+  ],
+
+  summons: [
+    {
+      title: "The Quiet Season",
+      blurb:
+        "Three ranks since the first of your novices walked, and the raids have stopped. No dice go missing from the vaults. No monastery reports a rite come undone. The Order of Disorder has simply gone still, and stillness is not a thing chaos does by accident.",
+      image: "ending-summons-1",
+    },
+    {
+      title: "The Summons",
+      blurb:
+        "It arrives folded, unsigned, in a hand half the monastery still recognises. One contest. One table. Both orders, and everything either of them has ever rolled for, staked on the outcome.",
+      image: "ending-summons-2",
+    },
+    {
+      title: "One Rank Remains",
+      blurb:
+        "There is time for a single rank before the date they have set. Whatever the grid is when it ends is what sits down at that table — so make it something worth being copied.",
+      image: "ending-summons-3",
     },
   ],
 

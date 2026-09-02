@@ -275,6 +275,8 @@ function summaryTiles(stats: StrategyStats[]): string {
         `<div><span class="big">${int(s.finalDice.median)}</span><span class="cap">median dice</span></div>` +
         `<div><span class="big">${int(s.gold.earned)}</span><span class="cap">gold earned</span></div>` +
         `<div><span class="big">${int(s.gold.medianHeld)}</span><span class="cap">gold held</span></div>` +
+        `<div><span class="big">${n1(s.rolls.meanUsed)}</span><span class="cap">rolls per clear</span></div>` +
+        `<div><span class="big">${pct(s.rolls.firstRollClearRate)}</span><span class="cap">cleared on roll 1</span></div>` +
         `</div></div>`,
     )
     .join("")}</div>`;
@@ -370,6 +372,108 @@ function trialGoalFrom(stats: StrategyStats[], trial: number): number {
     if (p) return p.goal;
   }
   return 0;
+}
+
+/**
+ * How much of a trial the field actually plays.
+ *
+ * A goal curve can be correct about attrition and still wrong about tempo: if
+ * the trial ends on the opening roll, the twenty rolls it granted were never a
+ * resource and the trial was never a decision. This is the section that says so.
+ *
+ * Cleared trials only, and counted at the roll the goal was CROSSED, so a run
+ * that died having burned its whole budget cannot read as good pacing.
+ */
+
+/** The reference line on the chart: half a trial's budget. Not a promise — the
+ *  field does not reach it and cannot be made to by the goal curve alone (see
+ *  the note the section prints) — but a legible benchmark to read the curve
+ *  against, which a line nothing comes near would not be. */
+const PACING_TARGET = 0.5;
+
+/** Above this share of clears landing on the opening roll, the trial is being
+ *  decided before it is played. This is the failure this section exists to
+ *  surface, so it is the column that gets flagged. */
+const FIRST_ROLL_ALARM = 0.45;
+
+function rollPacingSection(stats: StrategyStats[]): string {
+  const maxTrial = Math.max(
+    ...stats.flatMap((s) => s.trialCurve.map((p) => p.trial)),
+    1,
+  );
+  const xs = Array.from({ length: maxTrial }, (_, i) => i + 1);
+  const series = [
+    ...stats.map((s, i) => ({
+      name: strategyLabel(s.name),
+      color: seriesVar(i),
+      points: s.trialCurve
+        .filter((p) => p.clearRate > 0)
+        .map((p) => ({ x: p.trial, y: p.rollShare })),
+    })),
+    {
+      name: "Half the budget",
+      color: "var(--muted)",
+      dashed: true,
+      points: xs.map((x) => ({ x, y: PACING_TARGET })),
+    },
+  ];
+
+  return (
+    `<section><h2>Rolls spent per trial</h2>` +
+    `<p class="note">Share of a trial's roll budget spent before its goal was crossed, over the runs that cleared it, against a dashed line at half the budget. Lines along the bottom of the chart are trials being won before they are played, where the roll budget is decoration rather than a resource to spend.</p>` +
+    `<p class="note">The goal curve alone cannot lift this much further, and the ceiling is worth knowing: a trial's full-budget capacity runs about a thousandfold from the field's tenth percentile to its ninetieth, so any goal the weakest tenth can survive is met on the opening roll by the strongest tenth. A goal is one number, so its attrition fixes it and the tempo follows — <code>src/sim/pacingSweep.ts</code> prints what every other attrition target would cost. Tempo past that has to be bought somewhere other than the goal: a shorter roll budget, or items whose per-roll spread is narrower.</p>` +
+    `<p class="note">The last trial reads 100% because it is the duel, which has no goal to cross and is decided when the rolls run out. A trial flagged ! has more than ${pct(FIRST_ROLL_ALARM)} of its clears landing on the opening roll.</p>` +
+    legend(stats) +
+    lineChart(xs, series, { fmt: (v) => pct(v) }) +
+    pacingTable(stats, maxTrial) +
+    `</section>`
+  );
+}
+
+/** The same numbers as the chart, pooled across strategies and weighted by
+ *  clears, because a goal is authored per trial and this is the column to read
+ *  while authoring it. */
+function pacingTable(stats: StrategyStats[], maxTrial: number): string {
+  const rows: string[] = [];
+  for (let trial = 1; trial <= maxTrial; trial++) {
+    let clears = 0;
+    let used = 0;
+    let budget = 0;
+    let firstRoll = 0;
+    let entered = 0;
+    let goal = 0;
+    for (const s of stats) {
+      const p = s.trialCurve.find((c) => c.trial === trial);
+      if (!p) continue;
+      goal = p.goal;
+      entered += p.runsReached;
+      const n = p.runsReached * p.clearRate;
+      clears += n;
+      used += p.meanRollsUsed * n;
+      budget += p.meanRollBudget * n;
+      firstRoll += p.firstRollClearRate * n;
+    }
+    if (entered === 0) continue;
+    const share = budget > 0 ? used / budget : 0;
+    const firstRollRate = clears > 0 ? firstRoll / clears : 0;
+    const flag = firstRollRate > FIRST_ROLL_ALARM ? " !" : "";
+    rows.push(
+      `<tr><td class="num">${trial}</td><td class="num">${int(goal)}</td>` +
+        `<td class="num">${clears > 0 ? n1(used / clears) : "—"}</td>` +
+        `<td class="num">${clears > 0 ? n1(budget / clears) : "—"}</td>` +
+        `<td class="num">${clears > 0 ? pct(share) : "—"}</td>` +
+        `<td class="num">${clears > 0 ? pct(firstRollRate) + flag : "—"}</td>` +
+        `<td class="num">${clears > 0 ? pct(clears / entered) : "0.0%"}</td></tr>`,
+    );
+  }
+  return (
+    `<div class="tablewrap"><table>` +
+    `<tr><th>Trial</th><th class="num">Goal</th><th class="num">Rolls used</th>` +
+    `<th class="num">Budget</th><th class="num">Share</th>` +
+    `<th class="num">1-roll clears</th><th class="num">Clear rate</th></tr>` +
+    rows.join("") +
+    `</table></div>`
+  );
 }
 
 function itemTableSection(stats: StrategyStats[]): string {
@@ -501,12 +605,14 @@ export function buildReport(stats: BatchStats): string {
   --plane:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
   --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
   --series-1:#77736b; --series-2:#2a78d6; --series-3:#72a9e6;
-  --series-4:#008300; --series-5:#70b96b;}
+  --series-4:#008300; --series-5:#70b96b; --series-6:#b8791f;
+  --series-7:#c2410c; --series-8:#7c3aed; --series-9:#be185d;}
 @media (prefers-color-scheme:dark){:root{color-scheme:dark;
   --plane:#0d0d0d; --surface:#1a1a19; --ink:#fff; --ink2:#c3c2b7; --muted:#898781;
   --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
   --series-1:#a29e95; --series-2:#3987e5; --series-3:#86b9ef;
-  --series-4:#26a641; --series-5:#78c876;}}
+  --series-4:#26a641; --series-5:#78c876; --series-6:#d99b3d;
+  --series-7:#f0714a; --series-8:#a78bfa; --series-9:#f472b6;}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--plane);color:var(--ink);
   font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5;padding:32px 20px 80px}
@@ -551,6 +657,7 @@ ${summaryTiles(ordered)}</section>
 ${histogramSection(ordered, stats.trialsPerRank)}
 ${survivalSection(ordered)}
 ${curveSection(ordered)}
+${rollPacingSection(ordered)}
 ${bossSection(ordered)}
 ${goldSection(ordered)}
 ${itemPointsSection(ordered)}

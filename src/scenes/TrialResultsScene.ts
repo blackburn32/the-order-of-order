@@ -1068,9 +1068,9 @@ export class TrialResultsScene extends Phaser.Scene {
   private continue(): void {
     if (!this.complete || this.leaving) return;
     this.leaving = true;
-    // An act takes precedence over both ordinary ways on: the rank-15 clear
+    // An act takes precedence over both ordinary ways on: the final clear
     // reaches Victory through its closing sequence rather than instead of it,
-    // and the rank-5 and rank-10 clears reach the shop through theirs.
+    // and the rank 3, 6 and 9 clears reach the shop through theirs.
     const ending = this.endingAhead();
     const checkpoint: ResumableCheckpoint = ending
       ? { scene: "Ending", id: ending.id }

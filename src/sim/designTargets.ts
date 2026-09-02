@@ -1,5 +1,9 @@
 // Goal-curve designer for the full ladder (throwaway balancing tooling).
 //
+// SUPERSEDED by pacingCurve.ts, which designs from uncensored capacity rather
+// than from censored peaks and reports the roll tempo each goal buys. Kept for
+// the attrition-schedule framing, which pacingCurve does not restate.
+//
 // Captures each run's per-trial PEAK score once against trivial goals (so nobody
 // is culled and every run reaches the last trial), then designs a goal curve
 // analytically from an explicit ABSOLUTE survivor schedule: S[r] = the fraction
@@ -178,12 +182,19 @@ function report(label: string, pool: number[][], T: number[]): void {
 
 // ---- design intent ---------------------------------------------------------
 // Absolute survivors after each RANK (fraction of the whole field):
+// One entry per rank, so this table has to be as long as the ladder — an
+// undefined entry past its end silently poisons every goal it touches with NaN.
 const SURVIVE = [
-  0.97, // rank 1 — a free on-ramp: peaks here are small integers, so any goal
-  0.88, // rank 2   that culls at all culls almost everyone. The early ranks
-  0.7, //  rank 3   teach the loop; they are not where runs are supposed to end.
-  0.47, // rank 4
-  0.25, // rank 5 — the win rate
+  0.36, // rank 1 — the on-ramp, and the deadliest rank there is: a lone d6
+  0.27, // rank 2   whiffs all seven rolls of the Lesser Trial 28% of the time.
+  0.19, // rank 3   Its shape is hand-authored, not designed from here.
+  0.14, // rank 4
+  0.1, //  rank 5
+  0.073, // rank 6
+  0.05, // rank 7
+  0.037, // rank 8
+  0.025, // rank 9
+  0.01, // rank 10 — the win rate
 ];
 
 const peaks = collect();

@@ -60,6 +60,20 @@ export interface TrialCurvePoint {
   medianTrialScore: number;
   goal: number;
   runsReached: number; // runs that played this trial
+  /** How long the trial took to clear, over the runs that cleared it. A trial
+   *  whose mean sits at 1 is being won on the opening roll — the goal is beneath
+   *  what the field walks in with, and the roll budget is decoration. */
+  meanRollsUsed: number;
+  medianRollsUsed: number;
+  /** Mean roll budget the trial granted (Metronome/Overtime/afflictions move
+   *  it, so it is not simply ROLLS_PER_TRIAL). */
+  meanRollBudget: number;
+  /** meanRollsUsed / meanRollBudget — the share of the trial actually played. */
+  rollShare: number;
+  /** Share of clears that landed on the very first roll. */
+  firstRollClearRate: number;
+  /** Share of entrants that cleared at all. */
+  clearRate: number;
 }
 
 /** How a single boss modifier fared: how often runs met it, and how often they
@@ -96,6 +110,14 @@ export interface StrategyStats {
   /** The purse over a run: what it earned, what it spent, and what it was
    *  holding at each trial clear. */
   gold: { earned: number; spent: number; medianHeld: number };
+  /** Roll pacing across every trial the strategy cleared: how much of a trial's
+   *  budget it spent, and how often it needed only the opening roll. */
+  rolls: {
+    meanUsed: number;
+    meanBudget: number;
+    meanShare: number;
+    firstRollClearRate: number;
+  };
   bosses: BossStat[];
   finalDice: { mean: number; median: number; max: number };
   trialCurve: TrialCurvePoint[];
@@ -199,6 +221,31 @@ function itemPointRanking(records: RunRecord[]): {
   return { winningRuns: n, ranking };
 }
 
+/** Roll pacing over the whole ladder, weighted by how many clears each trial
+ *  contributed — otherwise the deep trials only a handful of runs reach would
+ *  count as much as the opening ones every run plays. */
+function rollSummary(curve: TrialCurvePoint[]): StrategyStats["rolls"] {
+  let clears = 0;
+  let used = 0;
+  let budget = 0;
+  let firstRoll = 0;
+  for (const p of curve) {
+    const n = p.runsReached * p.clearRate;
+    clears += n;
+    used += p.meanRollsUsed * n;
+    budget += p.meanRollBudget * n;
+    firstRoll += p.firstRollClearRate * n;
+  }
+  if (clears === 0)
+    return { meanUsed: 0, meanBudget: 0, meanShare: 0, firstRollClearRate: 0 };
+  return {
+    meanUsed: used / clears,
+    meanBudget: budget / clears,
+    meanShare: budget > 0 ? used / budget : 0,
+    firstRollClearRate: firstRoll / clears,
+  };
+}
+
 function strategyStats(name: string, records: RunRecord[]): StrategyStats {
   const runs = records.length;
   const wins = records.filter((r) => r.won).length;
@@ -213,8 +260,12 @@ function strategyStats(name: string, records: RunRecord[]): StrategyStats {
     histogram[Math.min(WIN_TRIAL, Math.max(1, t)) - 1] += 1;
 
   // Achieved-vs-goal curve: peak score reached per trial, across runs that
-  // played that trial.
+  // played that trial. Roll pacing rides along on the same walk, but counts only
+  // CLEARED trials — a trial a run died on always spent its whole budget, so
+  // folding failures in would report the deadliest goals as the best paced.
   const byTrial = new Map<number, number[]>();
+  const rollsByTrial = new Map<number, { used: number[]; budget: number[] }>();
+  const clearsByTrial = new Map<number, { entered: number; cleared: number }>();
   const goldHeld: number[] = [];
   for (const rec of records) {
     for (const p of rec.trajectory) {
@@ -223,18 +274,40 @@ function strategyStats(name: string, records: RunRecord[]): StrategyStats {
       arr.push(p.trialScore);
       byTrial.set(p.trial, arr);
       goldHeld.push(p.goldAfter);
+
+      const tally = clearsByTrial.get(p.trial) ?? { entered: 0, cleared: 0 };
+      tally.entered += 1;
+      if (p.cleared) tally.cleared += 1;
+      clearsByTrial.set(p.trial, tally);
+      if (!p.cleared) continue;
+      const pace = rollsByTrial.get(p.trial) ?? { used: [], budget: [] };
+      pace.used.push(p.clearedOnRoll ?? p.rollsUsed);
+      pace.budget.push(p.rollBudget);
+      rollsByTrial.set(p.trial, pace);
     }
   }
   const trialCurve: TrialCurvePoint[] = [...byTrial.keys()]
     .sort((a, b) => a - b)
     .map((trial) => {
       const peaks = byTrial.get(trial)!;
+      const pace = rollsByTrial.get(trial) ?? { used: [], budget: [] };
+      const tally = clearsByTrial.get(trial) ?? { entered: 0, cleared: 0 };
+      const meanUsed = mean(pace.used);
+      const meanBudget = mean(pace.budget);
       return {
         trial,
         meanTrialScore: mean(peaks),
         medianTrialScore: median(peaks),
         goal: Number(trialGoal(trial)), // sim reporting is Number
         runsReached: peaks.length,
+        meanRollsUsed: meanUsed,
+        medianRollsUsed: median(pace.used),
+        meanRollBudget: meanBudget,
+        rollShare: meanBudget > 0 ? meanUsed / meanBudget : 0,
+        firstRollClearRate: pace.used.length
+          ? pace.used.filter((r) => r <= 1).length / pace.used.length
+          : 0,
+        clearRate: tally.entered ? tally.cleared / tally.entered : 0,
       };
     });
 
@@ -283,6 +356,7 @@ function strategyStats(name: string, records: RunRecord[]): StrategyStats {
       spent: mean(records.map((r) => r.goldSpent)),
       medianHeld: median(goldHeld),
     },
+    rolls: rollSummary(trialCurve),
     bosses,
     finalDice: {
       mean: mean(dice),

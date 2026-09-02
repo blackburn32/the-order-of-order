@@ -42,8 +42,9 @@ import {
   resolveRoll,
   resolveTrialEnd,
   trialComplete,
+  trialRollTarget,
 } from "./engine";
-import { rankOf, trialInRank } from "../config";
+import { isMirrorTrial, rankOf, trialInRank } from "../config";
 import { mulberry32 } from "./localStorageShim";
 import { SimConfig } from "./config";
 
@@ -67,6 +68,21 @@ export interface TrialPoint {
   trialScore: number;
   goal: number;
   goldAfter: number;
+  /** Whether the goal was met (the duel: whether the player led). */
+  cleared: boolean;
+  /** Rolls the trial actually consumed, and the budget it was given. A trial
+   *  that clears on its first roll spends 1 of them — the pacing signal the
+   *  goal curve is tuned against. */
+  rollsUsed: number;
+  rollBudget: number;
+  /** The roll the goal was first crossed on, or null if it never was. Equal to
+   *  `rollsUsed` in ordinary play; the two part company only under the tuner's
+   *  full-budget mode (`setEarlyClear(false)`), where the trial plays on. */
+  clearedOnRoll: number | null;
+  /** Cumulative trial score after each roll, recorded only when
+   *  `SimConfig.traceRolls` is on — it is what the roll-pacing tuner reads
+   *  capacity from, and it is far too much memory to carry by default. */
+  rollScores?: number[];
 }
 
 export interface RunRecord {
@@ -404,10 +420,16 @@ export function simulateRun(
 
   let rolls = 0;
   let goldSpent = 0;
+  // Reset per trial, below, as the ladder advances.
+  let clearedOnRoll: number | null = null;
+  let rollScores: number[] | undefined = cfg.traceRolls ? [] : undefined;
   for (;;) {
     state.dice.roll(rng, scoringNumbersFor(state), state.royalSealSizes);
     resolveRoll(state, rng);
     rolls += 1;
+    rollScores?.push(Number(state.score));
+    if (clearedOnRoll === null && state.trialCleared)
+      clearedOnRoll = state.roll;
     trackUnlocks(state, record.unlocksAchieved);
 
     if (trialComplete(state)) {
@@ -424,9 +446,23 @@ export function simulateRun(
         trialScore: Number(state.trialScore),
         goal: Number(goalFor(state)),
         goldAfter: state.gold,
+        cleared: false, // settled from the outcome below
+        rollsUsed: state.roll,
+        rollBudget: trialRollTarget(state),
+        clearedOnRoll,
+        rollScores,
       });
+      const point = record.trajectory[record.trajectory.length - 1];
 
       const end = resolveTrialEnd(state, rng);
+      // Every trial but the last is cleared by crossing its goal, which is what
+      // the latch records. The duel has no goal to cross — it is won by leading
+      // when the rolls run out — so there the engine's own answer is the answer.
+      point.cleared = isMirrorTrial(point.trial)
+        ? end.bossCleared
+        : clearedOnRoll !== null;
+      clearedOnRoll = null;
+      rollScores = cfg.traceRolls ? [] : undefined;
       for (const id of bosses) {
         const tally = (record.bossesFaced[id] ??= { faced: 0, cleared: 0 });
         tally.faced += 1;
@@ -440,6 +476,8 @@ export function simulateRun(
         record.outcome = "gameOver";
         break;
       }
+      if (cfg.stopAfterTrial !== undefined && point.trial >= cfg.stopAfterTrial)
+        break;
 
       // Every cleared trial is followed by a shop — the only shop there is.
       goldSpent += visitShop(state, strategy, rng);

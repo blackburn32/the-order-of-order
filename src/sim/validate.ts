@@ -26,21 +26,28 @@ import {
   WIN_TRIAL,
 } from "../config";
 
-const curves = JSON.parse(
-  readFileSync("sim-out/candidate.json", "utf8"),
-) as Record<string, number[]>;
+// CURVE=LIVE re-tests the curve the game actually ships (src/config.ts) rather
+// than a candidate, which is how a hand-edited TRIAL_GOALS gets measured without
+// a round trip through candidate.json. RUNS overrides the batch size.
 const label = process.env.CURVE ?? "DESIGNED (5-rank intent)";
-const curve = curves[label];
-if (!curve)
-  throw new Error(
-    `No curve "${label}" in candidate.json. Have: ${Object.keys(curves).join(" | ")}`,
-  );
+const runs = Number(process.env.RUNS ?? DEFAULT_CONFIG.runs);
+let curve: number[];
+if (label === "LIVE") {
+  curve = Array.from({ length: WIN_TRIAL }, (_, i) => Number(trialGoal(i + 1)));
+} else {
+  const curves = JSON.parse(
+    readFileSync("sim-out/candidate.json", "utf8"),
+  ) as Record<string, number[]>;
+  const found = curves[label];
+  if (!found)
+    throw new Error(
+      `No curve "${label}" in candidate.json. Have: ${Object.keys(curves).join(" | ")}`,
+    );
+  curve = found;
+  setTrialGoals(curve); // <-- the real survival gate now uses the candidate curve
+}
 
-setTrialGoals(curve); // <-- the real survival gate now uses the candidate curve
-
-console.log(
-  `Validating "${label}" with REAL culling - ${DEFAULT_CONFIG.runs} runs/series`,
-);
+console.log(`Validating "${label}" with REAL culling - ${runs} runs/series`);
 console.log("curve = [" + curve.join(", ") + "]\n");
 
 const byStrategy: Record<string, RunRecord[]> = {};
@@ -48,7 +55,7 @@ for (const series of SIM_SERIES) {
   seedGlobalRandom(DEFAULT_CONFIG.seed + series.seedOffset);
   installStorage([...series.unlockedAtStart]);
   const records: RunRecord[] = [];
-  for (let i = 0; i < DEFAULT_CONFIG.runs; i++) {
+  for (let i = 0; i < runs; i++) {
     records.push(
       simulateRun(
         series.strategy,
@@ -92,6 +99,8 @@ for (let trial = 1; trial <= WIN_TRIAL; trial++) {
   alive = survivors;
 }
 
+printPacing(pooled);
+
 // Per-boss clear rates: the signal for whether any one modifier is unfair. A
 // modifier far outside the average is doing more (or less) than its peers.
 const bossTally = new Map<string, { faced: number; cleared: number }>();
@@ -118,6 +127,42 @@ if (bossTally.size > 0) {
     const flag = ratio < 0.6 || ratio > 1.4 ? "  <-- out of band" : "";
     console.log(
       `  ${r.id.padEnd(11)} ${(r.rate * 100).toFixed(1).padStart(5)}%  (${r.faced} faced, ${ratio.toFixed(2)}x mean)${flag}`,
+    );
+  }
+}
+
+/**
+ * Pooled roll pacing: how much of each trial's budget the field spent before
+ * crossing its goal. The companion to the attrition table — attrition says
+ * whether a goal kills the right number of runs, this says whether the survivors
+ * had to play the trial to get past it. Cleared trials only, since a trial a run
+ * died on always burned its whole budget.
+ */
+function printPacing(pooled: RunRecord[]): void {
+  console.log("\nRoll pacing (cleared trials only):");
+  console.log(
+    "trial | rank | rolls used | budget | share | 1-roll clears | clears",
+  );
+  for (let trial = 1; trial <= WIN_TRIAL; trial++) {
+    let used = 0;
+    let budget = 0;
+    let firstRoll = 0;
+    let clears = 0;
+    for (const record of pooled) {
+      const point = record.trajectory.find((p) => p.trial === trial);
+      if (!point || !point.cleared) continue;
+      const at = point.clearedOnRoll ?? point.rollsUsed;
+      clears += 1;
+      used += at;
+      budget += point.rollBudget;
+      if (at <= 1) firstRoll += 1;
+    }
+    if (clears === 0) continue;
+    console.log(
+      `${String(trial).padStart(5)} | ${String(Math.ceil(trial / TRIALS_PER_RANK)).padStart(4)} | ` +
+        `${(used / clears).toFixed(1).padStart(10)} | ${(budget / clears).toFixed(1).padStart(6)} | ` +
+        `${((used / budget) * 100).toFixed(0).padStart(4)}% | ` +
+        `${((firstRoll / clears) * 100).toFixed(0).padStart(12)}% | ${String(clears).padStart(6)}`,
     );
   }
 }

@@ -9,8 +9,8 @@ import { STARTING_GOLD } from "../systems/Gold";
 import type { ShopItemId } from "../systems/Items";
 
 export interface RunState {
-  // Ladder position. `trial` runs straight through the whole run (1..33 for the
-  // eleven ranks, then 34+ in endless); rank and trial-within-rank are derived
+  // Ladder position. `trial` runs straight through the whole run (1..30 for the
+  // ten ranks, then 31+ in endless); rank and trial-within-rank are derived
   // from it by config's rankOf/trialInRank rather than stored.
   trial: number; // 1-based
   endless: boolean; // set when the player continues past the final rank
@@ -88,7 +88,7 @@ export interface RunState {
   // fires off the trial it is pinned to, so this is what stops a resumed
   // checkpoint — or the trial the ending sits in front of — from replaying it.
   endingsSeen: EndingId[];
-  // The drawback taken from the King's Demands at rank 5. Held by id as well as
+  // The drawback taken from the King's Demands at rank 3. Held by id as well as
   // on `afflictions` because endless lifts this one specifically, and by then
   // the list no longer records where any of it came from.
   kingsDemand: AfflictionId | null;

@@ -56,9 +56,9 @@ function runAt(trial: number): RunState {
 // ---------------------------------------------------------------------------
 console.log("\nLadder shape");
 
-check(WIN_TRIAL === 33, "the ladder is 33 trials long");
+check(WIN_TRIAL === 30, "the ladder is 30 trials long");
 check(
-  rankOf(1) === 1 && rankOf(3) === 1 && rankOf(4) === 2 && rankOf(33) === 11,
+  rankOf(1) === 1 && rankOf(3) === 1 && rankOf(4) === 2 && rankOf(30) === 10,
   "ranks group trials in threes",
 );
 check(
@@ -66,7 +66,7 @@ check(
   "trial-within-rank cycles 1,2,3",
 );
 check(
-  !isBossTrial(1) && !isBossTrial(2) && isBossTrial(3) && isBossTrial(33),
+  !isBossTrial(1) && !isBossTrial(2) && isBossTrial(3) && isBossTrial(30),
   "every third trial is a Boss Trial",
 );
 check(
@@ -298,7 +298,7 @@ console.log("\nStarting state");
     STARTING_DICE === 1 && state.dice.length === 1,
     "with one starting die",
   );
-  check(trialGoal(1) === 2n, "with a starting goal of 2");
+  check(trialGoal(1) === 1n, "with a starting goal of 1");
   check(trialGoal(2) === 3n, "with a second-trial goal of 3");
   check(state.gold === STARTING_GOLD, "with a starting purse");
   check(state.score === 0n, "and no score");

@@ -4,11 +4,13 @@
 // `src/story.ts`, and this file only says when each act is told and what it
 // leads to.
 //
-// The run used to have one ending, at rank 5. It now has three — rank 5, rank
-// 8, rank 11 — and only the last of them is a finish line — the first two close an act, hand the player a
-// standing drawback, and send them back up the ladder under it. That shape is
-// the whole design: the reward for winning is a harder game, twice, and the
-// player agrees to it because the story is the thing being unlocked.
+// The acts fall on a fixed beat: one every three ranks, on the Boss Trial that
+// closes them — the messenger at rank 3, the Betrayal at rank 6, the summons at
+// rank 9, and the duel at rank 10. Only the last is a finish line. The first two
+// close an act, hand the player a standing drawback, and send them back up the
+// ladder under it; the third takes nothing and only names what is coming. That
+// shape is the whole design: the reward for winning is a harder game, twice, and
+// the player agrees to it because the story is the thing being unlocked.
 //
 // An act is pinned to a trial and to a side of it. Two screens do the asking —
 // TrialResults for the acts that follow a clear, TrialOverview for the one that
@@ -20,7 +22,8 @@ import { ENDING_PAGES } from "../story";
 import type { StoryPage } from "../ui/storyPage";
 import { AFFLICTIONS, type AfflictionId } from "./Afflictions";
 
-export type EndingId = "tribute" | "betrayal" | "disorder" | "peace";
+export type EndingId =
+  "tribute" | "betrayal" | "summons" | "disorder" | "peace";
 
 export interface EndingDef {
   id: EndingId;
@@ -42,7 +45,7 @@ export interface EndingDef {
 export const ENDINGS: readonly EndingDef[] = [
   {
     id: "tribute",
-    trial: 15,
+    trial: 9, // rank 3's Boss Trial
     when: "afterClear",
     button: "Read the Demands",
     next: "Tribute",
@@ -51,7 +54,7 @@ export const ENDINGS: readonly EndingDef[] = [
   },
   {
     id: "betrayal",
-    trial: 24,
+    trial: 18, // rank 6's Boss Trial
     when: "afterClear",
     button: "Hear the King's Answer",
     next: "Tribute",
@@ -59,8 +62,19 @@ export const ENDINGS: readonly EndingDef[] = [
     pages: ENDING_PAGES.betrayal,
   },
   {
+    // The only act that costs the player nothing. It exists to put the duel on
+    // the horizon a whole rank before it arrives, so the last rank is played
+    // toward something rather than into a surprise.
+    id: "summons",
+    trial: 27, // rank 9's Boss Trial
+    when: "afterClear",
+    button: "Prepare",
+    next: "Shop",
+    pages: ENDING_PAGES.summons,
+  },
+  {
     id: "disorder",
-    trial: 33,
+    trial: 30, // rank 10's Boss Trial — the duel
     when: "beforeTrial",
     button: "Take Your Seat",
     next: "Game",
@@ -68,7 +82,7 @@ export const ENDINGS: readonly EndingDef[] = [
   },
   {
     id: "peace",
-    trial: 33,
+    trial: 30,
     when: "afterClear",
     button: "Witness the Ascension",
     next: "Victory",

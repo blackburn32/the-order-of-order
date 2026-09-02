@@ -561,8 +561,13 @@ export class DicePool {
       (m, b) => (b.sides < m ? b.sides : m),
       this.buckets[0].sides,
     );
-    // Snapshot first: addBucket may append the Foundry copies as new buckets.
-    const targets = this.buckets.filter((b) => b.sides === smallestSides);
+    // Snapshot the COUNTS, not just the bucket objects. `addBucket` merges into
+    // whichever bucket already carries the same size, flags and source, and the
+    // Foundry copies it adds carry a size this loop is still walking — so a
+    // bucket read after its own copies had landed in it would be doubled twice.
+    const targets = this.buckets
+      .filter((b) => b.sides === smallestSides)
+      .map((b) => ({ ...b }));
     let added = 0;
     for (const b of targets) {
       const extra = b.count * extraPerDie;
@@ -689,7 +694,14 @@ export class DicePool {
       return;
     }
     this.convert();
-    const snapshot = [...this.buckets];
+    // The copies are added under `source`, so a grid multiplied twice from the
+    // same card has a bucket whose key the second pass will merge into — one
+    // still ahead of the loop. Snapshotting the objects is not enough: their
+    // counts have to be read before any of the copies land, or that bucket is
+    // multiplied off a count that already includes them, the grid grows past
+    // what `_count` is about to be set to, and every later removal takes the
+    // difference out of `_count` until it goes negative and the pool corrupts.
+    const snapshot = this.buckets.map((b) => ({ ...b }));
     for (const b of snapshot)
       this.addBucket(
         b.sides,

@@ -45,7 +45,10 @@ export { trialRollTarget };
  *  latched by resolveRoll) or its rolls have run out. The caller should then run
  *  `resolveTrialEnd`. */
 export function trialComplete(state: RunState): boolean {
-  return state.trialCleared || state.roll >= trialRollTarget(state);
+  return (
+    (state.trialCleared && state.trial !== fullBudgetTrial) ||
+    state.roll >= trialRollTarget(state)
+  );
 }
 
 /** True when the trial ended by meeting its goal with rolls still in hand.
@@ -70,6 +73,29 @@ let cullingEnabled = true;
 /** Sim-only. `false` makes a failed trial advance instead of ending the run. */
 export function setCulling(enabled: boolean): void {
   cullingEnabled = enabled;
+}
+
+// Sim-only escape hatch for the roll-pacing tuner (src/sim/pacingCurve.ts).
+//
+// A trial normally ends the instant its goal is met, which censors the one
+// measurement pacing is designed from: how much a build WOULD have scored had it
+// kept rolling. Under a curve that is too easy every trial ends on roll one and
+// every capacity reading is "just above the goal" — the distribution the tuner
+// samples is the curve it is trying to replace.
+//
+// So the tuner names ONE trial to play its rolls out. That trial's clear is
+// still latched by `resolveRoll` the moment the goal is crossed, so culling,
+// the ladder and the boss tallies are unchanged; only the roll counter runs on.
+// It is one trial rather than all of them because the grid grows per roll and
+// never resets between trials — playing every trial to its budget would hand the
+// deep trials a grid no real run could have arrived with, and the tuner would
+// then design the whole back half of the ladder against a fiction.
+let fullBudgetTrial: number | null = null;
+
+/** Sim-only. Names the one trial that plays out its whole roll budget even after
+ *  its goal is met, so capacity can be read past the goal. */
+export function setFullBudgetTrial(trial: number | null): void {
+  fullBudgetTrial = trial;
 }
 
 export interface TrialEndOutcome {
