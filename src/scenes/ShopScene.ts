@@ -574,7 +574,15 @@ export class ShopScene extends Phaser.Scene {
       availH,
     );
 
-    const grid = this.buildCardGrid(W / 2, areaTop, availW, availH, narrow);
+    // A narrow panel has no room to scroll sideways *and* stack — its
+    // overflow goes through the fan carousel; roomier ones scroll down.
+    const grid = this.buildCardGrid(
+      W / 2,
+      areaTop,
+      availW,
+      availH,
+      narrow ? "horizontal" : "vertical",
+    );
     items.push(...grid.decor);
     items.push(...this.buildSecondRow(W, secondTop, availW, secondH, narrow));
 
@@ -682,7 +690,6 @@ export class ShopScene extends Phaser.Scene {
       contentTop,
       cardsW,
       cardsH,
-      false,
       "horizontal",
     );
     items.push(...grid.decor);
@@ -863,7 +870,12 @@ export class ShopScene extends Phaser.Scene {
     return tile;
   }
 
-  /** Upright wrapper: name, promise and price centred down the pack face. */
+  /** Upright wrapper: name over promise down the pack face, price held above
+   *  the bottom crimp. Stacked from measured text heights rather than
+   *  fractions of `h`, for the same reason the banner is: the type sizes have
+   *  floors the tile's height does not, so on a small pack a two-line name and
+   *  a three-line promise both grow past the slots fixed fractions gave them
+   *  and print through one another. */
   private buildPackCardText(
     pack: BoosterOffer,
     price: number,
@@ -871,10 +883,12 @@ export class ShopScene extends Phaser.Scene {
     w: number,
     h: number,
   ): Phaser.GameObjects.GameObject[] {
+    let nameSize = Phaser.Math.Clamp(Math.min(w * 0.09, h * 0.18), 12, 21);
+    let descSize = Phaser.Math.Clamp(Math.min(w * 0.066, h * 0.12), 10, 15);
     const name = this.add
-      .text(0, -h * 0.22, pack.sold ? "OPENED" : pack.name, {
+      .text(0, 0, pack.sold ? "OPENED" : pack.name, {
         fontFamily: SERIF,
-        fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.09, h * 0.18), 12, 21)}px`,
+        fontSize: `${nameSize}px`,
         color: CSS.ivory,
         fontStyle: "bold",
         align: "center",
@@ -882,22 +896,56 @@ export class ShopScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
     const desc = this.add
-      .text(0, h * 0.05, pack.sold ? "One card claimed" : pack.desc, {
+      .text(0, 0, pack.sold ? "One card claimed" : pack.desc, {
         fontFamily: SERIF,
-        fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.066, h * 0.12), 10, 15)}px`,
+        fontSize: `${descSize}px`,
         color: CSS.parchment,
         align: "center",
         wordWrap: { width: w * 0.86 },
       })
       .setOrigin(0.5);
     const cost = this.add
-      .text(0, h * 0.34, pack.sold ? "SOLD" : `${price} gold`, {
+      .text(0, 0, pack.sold ? "SOLD" : `${price} gold`, {
         fontFamily: SERIF,
         fontSize: `${Phaser.Math.Clamp(Math.min(w * 0.075, h * 0.14), 11, 17)}px`,
         color: affordable ? CSS.goldLight : CSS.red,
         fontStyle: "bold",
       })
       .setOrigin(0.5);
+
+    // The price sits just inside the bottom crimp, and the name and promise
+    // share whatever is left above it.
+    const crimp = Phaser.Math.Clamp(h * 0.12, 10, 22);
+    const lineGap = Math.max(4, h * 0.03);
+    cost.setY(h / 2 - crimp / 2 - cost.height / 2 + crimp * 0.1);
+    const blockTop = -h / 2 + crimp;
+    const blockBottom = cost.y - cost.height / 2 - lineGap;
+    const room = Math.max(0, blockBottom - blockTop);
+
+    // Step the type down until the pair fits: each step also pulls a wrapped
+    // line back up, so one or two are usually enough.
+    for (
+      let step = 0;
+      step < 5 && name.height + lineGap + desc.height > room;
+      step++
+    ) {
+      nameSize = Math.max(10, nameSize * 0.86);
+      descSize = Math.max(8, descSize * 0.9);
+      name.setFontSize(nameSize);
+      desc.setFontSize(descSize);
+    }
+    // Nothing legible fits both lines — the name and price alone still tell
+    // the player what the pack is and what it costs.
+    if (name.height + lineGap + desc.height > room) {
+      desc.destroy();
+      name.setY((blockTop + blockBottom) / 2);
+      return [name, cost];
+    }
+
+    const top =
+      (blockTop + blockBottom) / 2 - (name.height + lineGap + desc.height) / 2;
+    name.setY(top + name.height / 2);
+    desc.setY(top + name.height + lineGap + desc.height / 2);
     return [name, desc, cost];
   }
 
@@ -1097,18 +1145,23 @@ export class ShopScene extends Phaser.Scene {
   }
 
   /**
-   * Lay the offer cards out in the available area. Narrow screens always use a
-   * single horizontal carousel. Wider screens use the largest fitting grid,
-   * and fall back to scrolling when even that would be unreadable: down the
+   * Lay the offer cards out in the available area: the largest fitting grid,
+   * falling back to scrolling when even that would be unreadable — down the
    * page by default, or sideways through the fan carousel when `overflow` is
-   * "horizontal" — a short, wide card column has room to scroll one way only.
+   * "horizontal", for a card area with room to scroll one way only.
+   *
+   * The fan is a last resort rather than a property of narrow screens. It
+   * hides part of every card and only pays for itself where the cards would
+   * otherwise be too small to read; a panel narrow enough to stack the packs
+   * below the controls can still be wide enough to stand three cards side by
+   * side, and on those viewports the flat row draws them half again as large
+   * as the fan does.
    */
   private buildCardGrid(
     centerX: number,
     areaTop: number,
     availW: number,
     availH: number,
-    narrow: boolean,
     overflow: "vertical" | "horizontal" = "vertical",
   ): { decor: Phaser.GameObjects.GameObject[] } {
     const n = this.offers.length;
@@ -1134,12 +1187,6 @@ export class ShopScene extends Phaser.Scene {
             )
             .setOrigin(0.5),
         ],
-      };
-    }
-
-    if (narrow) {
-      return {
-        decor: this.buildHorizontalCarousel(centerX, areaTop, availW, availH),
       };
     }
 
@@ -1251,7 +1298,12 @@ export class ShopScene extends Phaser.Scene {
     // old edge-to-edge row.
     const scale = Math.min(contentH / CARD_H, contentW / (CARD_W * 2.5), 0.68);
     const cw = CARD_W * scale;
-    const step = (contentW - cw) / 2;
+    // Spread the hand across the viewport, but never past a plain row's gap:
+    // where the height is what is holding the cards down, three of them can
+    // be far narrower than the width on offer, and a step measured from the
+    // viewport alone would strand them at opposite edges of an empty band —
+    // a fan drawn so wide that nothing about it fans.
+    const step = Math.min((contentW - cw) / 2, cw + CARD_GAP * scale);
     const trackW = cw + (this.offers.length - 1) * step;
     const overflow = trackW > contentW + 0.5 ? trackW - contentW : 0;
 
@@ -1259,7 +1311,12 @@ export class ShopScene extends Phaser.Scene {
     const track = this.add.container(trackX, 0);
     const fanCenter = (this.offers.length - 1) / 2;
     const centerY = viewportTop + paddingY + contentH / 2;
-    const arcStep = Math.min(5, contentH * 0.018);
+    // Tilt and arc are what make an overlapping stack read as a hand of
+    // cards. Cards standing clear of one another are a row, and a row of
+    // leaning cards just looks crooked, so the pose is spent only where the
+    // cards actually cover one another.
+    const fanned = step < cw;
+    const arcStep = fanned ? Math.min(5, contentH * 0.018) : 0;
     this.carouselLayout = {
       viewportX,
       contentX,
@@ -1272,9 +1329,11 @@ export class ShopScene extends Phaser.Scene {
     };
     this.offers.forEach((offer, idx) => {
       const distanceFromCenter = idx - fanCenter;
-      const angle = Phaser.Math.DegToRad(
-        Phaser.Math.Clamp(distanceFromCenter * 5, -10, 10),
-      );
+      const angle = fanned
+        ? Phaser.Math.DegToRad(
+            Phaser.Math.Clamp(distanceFromCenter * 5, -10, 10),
+          )
+        : 0;
       const arcY = Math.abs(distanceFromCenter) * arcStep;
       const depth = this.offers.length - Math.abs(distanceFromCenter);
       // The resting pose, recorded up front: on the shop's first build

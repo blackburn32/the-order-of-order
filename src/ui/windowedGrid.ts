@@ -21,10 +21,15 @@ const FIT_MAX_ZOOM = 2.5;
 // a third of a three-column block, and spending it on emptiness is most of why
 // a young grid used to open marooned in the middle of the room.
 const FIT_PADDING = 8;
-// Summary cards keep render cost bounded below this zoom. This is a numerical
-// guard rather than a rendering limit: realistic grids can still fit in full.
-const MIN_ZOOM = 0.0001;
+// The absolute numerical guard on zoom. The floor the player actually meets is
+// `minGridZoom`, which is derived from the grid in front of them; this only
+// keeps the arithmetic sane for absurd inputs.
+const MIN_ZOOM = 1e-12;
 const CARD_TARGET_SCREEN_SIZE = 112;
+// Zoom-out headroom past the point where the grid becomes one card, as a
+// factor on that zoom. One halving: enough that the last merge happens with
+// room to spare rather than exactly at the limit.
+const ONE_CARD_HEADROOM = 2;
 const LOD_HYSTERESIS = 0.9;
 
 export const GRID_LOD_THRESHOLDS = {
@@ -114,9 +119,28 @@ export interface VisibleDiceCard {
   };
 }
 
-export function clampZoom(zoom: number, area: GridArea): number {
-  void area;
-  return clamp(zoom, MIN_ZOOM, MAX_ZOOM);
+/**
+ * How far out the player may zoom: far enough that the whole grid has
+ * condensed into a single summary card, plus one halving of headroom.
+ *
+ * Card regions double in size as the camera pulls back (see
+ * `computeVisibleDiceCards`), so every grid — a handful of dice or a hundred
+ * million — ends its zoom-out as one card. That is the point where there is
+ * nothing further to see, and stopping there keeps a pull-back from carrying
+ * on into empty felt with the whole run a speck in the middle of it.
+ */
+export function minGridZoom(n: number, frame: GridArea): number {
+  const cols = gridColumns(n, frame);
+  const rows = Math.max(1, Math.ceil(Math.max(1, n) / cols));
+  const span = Math.max(cols, rows);
+  return Math.max(
+    MIN_ZOOM,
+    CARD_TARGET_SCREEN_SIZE / (span * WINDOWED_CELL * ONE_CARD_HEADROOM),
+  );
+}
+
+export function clampZoom(zoom: number, n: number, frame: GridArea): number {
+  return clamp(zoom, minGridZoom(n, frame), MAX_ZOOM);
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -212,6 +236,7 @@ export function fitGridZoom(n: number, frame: GridArea): number {
   const height = rows * WINDOWED_CELL + FIT_PADDING * 2;
   return clampZoom(
     Math.min(frame.width / width, frame.height / height, FIT_MAX_ZOOM),
+    n,
     frame,
   );
 }
@@ -299,7 +324,7 @@ export function computeWindowedView(
   const cols = gridColumns(n, frame);
   const rows = Math.ceil(n / cols);
   const cell = WINDOWED_CELL; // fixed; the camera's zoom provides the visual zoom
-  const zoom = clampZoom(view.zoom, area);
+  const zoom = clampZoom(view.zoom, n, frame);
   const contentW = cols * cell;
   const contentH = rows * cell;
   // How much virtual space is visible through the camera at this zoom.

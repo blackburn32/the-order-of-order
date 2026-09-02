@@ -31,11 +31,13 @@ import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { rivalScore } from "../systems/Rival";
 import {
+  countSevens,
   JACKPOT_DICE,
   JACKPOT_POINTS,
   LUCKY_SEVEN_MULT,
   showsASeven,
   type RollResult,
+  type ScoreModifier,
 } from "../systems/Scoring";
 import type { DiceAgg } from "../systems/ScoringHistogram";
 import { evaluateAndUnlock } from "../systems/SaveData";
@@ -43,7 +45,7 @@ import { finalizeRun } from "../systems/RunEnd";
 import { saveActiveRun } from "../systems/ActiveRunPersistence";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { DieSprite } from "../ui/DieSprite";
-import { DiceSummaryCard } from "../ui/DiceSummaryCard";
+import { DiceSummaryCard, type CardEffectChance } from "../ui/DiceSummaryCard";
 import { formatScore } from "../ui/formatScore";
 import {
   addFelt,
@@ -79,6 +81,7 @@ import {
   GridDetailLevel,
   VisibleDiceCard,
   Viewport,
+  WindowedView,
 } from "../ui/windowedGrid";
 
 // The HUD strip. Adding an entry here is all it takes: computeLayout sizes the
@@ -141,9 +144,54 @@ const SEAL_HALO_HOVER = 0.32;
 /** How far apart the top and bottom rows of dice land, in ms. */
 const SETTLE_RIPPLE_MS = 140;
 
+/** How long the grid takes to open up around dice it has just won: the camera
+ *  easing out to the new fit zoom while the dice already on the table slide
+ *  into their new cells. Short enough to be over before the roll it belongs to
+ *  hands back to the player. */
+const GRID_GROWTH_MS = 320;
+/** How far into that reflow the first new die starts arriving. The block has
+ *  visibly begun making room by then, so the dice drop into a space rather
+ *  than into the dice that are still moving out of it. */
+const GRID_SPAWN_DELAY_MS = 110;
+/** Total spread of arrival times across one batch of new dice. */
+const GRID_SPAWN_RIPPLE_MS = 140;
+
 /** Keep roll feedback bounded even when a modifier hits the whole grid. */
 const MAX_PULSED_DICE = 64;
+// Ceiling on how often a summary-card icon flashes any one effect. Above the
+// card threshold most rules catch nearly every die, and an outline on every
+// icon every roll reads as a static border rather than as an effect firing.
+const MAX_CARD_EFFECT_CHANCE = 0.55;
 const MAX_INDIVIDUAL_SETTLE_DICE = 100;
+
+/**
+ * Whether dice at this detail level can be moved one at a time.
+ *
+ * Past `noCallouts` the viewport holds thousands of sprites, each of which
+ * would need its own tween through a reflow — well past the hundred dice that
+ * is already this scene's line for animating dice individually rather than
+ * with one shared cue (see MAX_INDIVIDUAL_SETTLE_DICE).
+ */
+function glidesIndividually(detail: GridDetailLevel): boolean {
+  return detail === "full" || detail === "noCallouts";
+}
+
+/** Where the dice grid is *drawn* at one instant: the camera pose plus every
+ *  live sprite's position. Taken before a growth relayout so the new one can
+ *  be animated into from here — see syncGrid. */
+interface GridPose {
+  zoom: number;
+  scrollX: number;
+  scrollY: number;
+  /** How many dice the grid held. Everything at or past this index is a die
+   *  the player has just won — see the note in `cueCreatedDice` for what that
+   *  means once the pool is bucketed. */
+  count: number;
+  /** What the grid was drawing then. A growth that changes this is changing
+   *  representation, not just shape, and is not animated at all. */
+  detail: GridDetailLevel;
+  positions: Map<number, { x: number; y: number }>;
+}
 
 interface BossRollCue {
   kind: "struck" | "penalty";
@@ -218,6 +266,11 @@ interface Layout {
   hud: Record<HudStatKey, HudCell>;
   bossRibbon?: { x: number; y: number; w: number; h: number; compact: boolean };
   footer: { numbersY: number; settingsY: number };
+  /** The gold rule closing the interface strip off from the playfield. It sits
+   *  in the air between the last piece of top chrome — the HUD, or the boss
+   *  ribbon when one presides — and the top of the grid, so the stats read as
+   *  a header band rather than as counters floating over the table. */
+  divider: { x: number; y: number; w: number };
   /** The dice camera's viewport: the whole playfield between the HUD and the
    *  footer, seal included. Dice are clipped to it, and pan/zoom may carry
    *  them anywhere inside it — behind the seal, which the interface camera
@@ -267,6 +320,14 @@ export class GameScene extends Phaser.Scene {
   // is re-centred on the sigil instead of keeping a scroll measured against
   // the old layout. A zoomed-in player owns their scroll, so it stays unset.
   private recenterOnSigil = false;
+  // The camera half of the growth animation, with the pose it is heading for.
+  // Held so the next layout — a pan, a resize, the next handful of dice — can
+  // take the camera back, and so popups can be placed against the destination
+  // rather than against a camera still on its way there.
+  private gridGlide?: {
+    tween: Phaser.Tweens.Tween;
+    to: { zoom: number; scrollX: number; scrollY: number };
+  };
   private layout!: Layout;
   // The interface — HUD, boss ribbon, seal, footer links: cheap to destroy and
   // rebuild wholesale on resize, unlike the (potentially huge) dice grid,
@@ -354,6 +415,8 @@ export class GameScene extends Phaser.Scene {
     this.followsFitZoom = true;
     this.lastFitZoom = 1;
     this.recenterOnSigil = false;
+    // Phaser destroyed the tween along with the previous run's display list.
+    this.gridGlide = undefined;
     // The scene instance is reused across restarts, but Phaser destroys all
     // non-main cameras on shutdown — these fields would otherwise dangle.
     this.gridCamera = undefined;
@@ -415,6 +478,9 @@ export class GameScene extends Phaser.Scene {
     if (!this.tumbling || !fx.motion) return;
     const elapsed = (time - this.tumbleStartedAt) / 1000;
     for (const sprite of this.sprites.values()) sprite.tumbleTo(elapsed);
+    // Only one of the two collections is ever populated (cards replace sprites
+    // at the `cards` detail level), so this is the same per-frame cost.
+    for (const card of this.cards.values()) card.tumbleTo(elapsed);
   }
 
   /** A resize mid-tumble would leave the flicker loop pointing at stale
@@ -509,10 +575,6 @@ export class GameScene extends Phaser.Scene {
         anchor = plaqueRect("roll");
         onContinue = advance;
         break;
-      case TutorialStage.Rank:
-        anchor = plaqueRect("rank");
-        onContinue = advance;
-        break;
       case TutorialStage.Boss:
         // Nothing to point at until a Boss Trial is actually running, and
         // nothing to read while its banner is still on screen.
@@ -521,7 +583,7 @@ export class GameScene extends Phaser.Scene {
         onContinue = advance;
         break;
       default:
-        // Route, Results and Shop steps belong to their own scenes.
+        // Route, rank, Results and Shop steps belong to their own scenes.
         return;
     }
 
@@ -583,6 +645,11 @@ export class GameScene extends Phaser.Scene {
       cursorX += w + gapX;
     }
     const hudBottom = hudMargin + cellH;
+    // The closing rule tracks the strip rather than the screen: on a wide
+    // monitor a full-bleed line would float away from the 600px-capped stats
+    // it belongs to. A small outset keeps it reading as their underline.
+    const dividerX = W / 2;
+    const dividerW = Math.min(W - hudMargin * 2, hudWidth + 24);
 
     // Sacred numbers stay bottom-left, Inventory/Settings bottom-right, in
     // every orientation — portrait just reserves a taller footer so the
@@ -593,7 +660,9 @@ export class GameScene extends Phaser.Scene {
     };
 
     if (compact) {
-      const gridTop = hudBottom + 10;
+      // A few px more than the bare gap the strip used to need: the rule sits
+      // in the middle of it and wants air on both sides.
+      const gridTop = hudBottom + 14;
       // Seal in a rail down the right edge, dice filling everything left of
       // it. Stacking them would leave the grid a band a couple of dice tall.
       const railW = Phaser.Math.Clamp(W * 0.2, 132, 200);
@@ -628,6 +697,9 @@ export class GameScene extends Phaser.Scene {
         hud,
         bossRibbon,
         footer,
+        // Compact landscape hangs the boss ribbon off the seal rail, so the
+        // HUD is the only thing above the rule.
+        divider: { x: dividerX, y: (hudBottom + gridTop) / 2, w: dividerW },
         grid: {
           x: 0,
           y: gridTop,
@@ -665,9 +737,10 @@ export class GameScene extends Phaser.Scene {
           compact: false,
         }
       : undefined;
-    const gridTop = bossRibbon
-      ? bossRibbon.y + bossRibbon.h / 2 + 7
-      : hudBottom + 16;
+    const chromeBottom = bossRibbon
+      ? bossRibbon.y + bossRibbon.h / 2
+      : hudBottom;
+    const gridTop = chromeBottom + (bossRibbon ? 12 : 16);
     const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14, scale: 1 };
     const gridBottom = button.y - SEAL_RADIUS - 16;
 
@@ -675,6 +748,9 @@ export class GameScene extends Phaser.Scene {
       hud,
       bossRibbon,
       footer,
+      // A Boss Trial pushes the rule below the ribbon: the modifiers presiding
+      // over the round are part of the header, not of the table.
+      divider: { x: dividerX, y: (chromeBottom + gridTop) / 2, w: dividerW },
       // The playfield runs to the footer, past the seal: a phone screen has
       // little enough of it that stopping the dice short of the button would
       // waste the tallest part of the room.
@@ -772,6 +848,8 @@ export class GameScene extends Phaser.Scene {
     const bossRibbon = this.buildBossRibbon(layout);
     if (bossRibbon) items.push(bossRibbon);
 
+    items.push(this.buildHudDivider(layout));
+
     const { numbersY } = layout.footer;
     // Sacred numbers pinned bottom-left; Inventory (upper) and Settings (lower)
     // pinned bottom-right. The left text wraps within the half-width gap so it
@@ -790,6 +868,44 @@ export class GameScene extends Phaser.Scene {
 
     this.updateHud();
     return items;
+  }
+
+  /** The gold rule under the interface strip. Both ends fade into the felt
+   *  rather than stopping dead, so the line reads as an edge of the header
+   *  band and not as a bar drawn across the table. */
+  private buildHudDivider(layout: Layout): Phaser.GameObjects.GameObject {
+    const { x, y, w } = layout.divider;
+    const g = this.add.graphics().setPosition(x, y);
+    // Solid through the middle third, fading over each outer third. A single
+    // gradient rect can only fade one way, so the ends are drawn as their own
+    // quads with the outer corners at zero alpha.
+    const third = w / 3;
+    const left = -w / 2;
+    g.fillGradientStyle(
+      COLORS.gold,
+      COLORS.gold,
+      COLORS.gold,
+      COLORS.gold,
+      0,
+      0.85,
+      0,
+      0.85,
+    );
+    g.fillRect(left, -1, third, 2);
+    g.fillStyle(COLORS.gold, 0.85);
+    g.fillRect(left + third, -1, third, 2);
+    g.fillGradientStyle(
+      COLORS.gold,
+      COLORS.gold,
+      COLORS.gold,
+      COLORS.gold,
+      0.85,
+      0,
+      0.85,
+      0,
+    );
+    g.fillRect(left + third * 2, -1, third, 2);
+    return g;
   }
 
   /** Persistent Boss Trial identity: one pill per modifier. Roomy layouts lay
@@ -945,9 +1061,10 @@ export class GameScene extends Phaser.Scene {
     const widthScale = Phaser.Math.Clamp(w / 92, 0.68, 1);
     const fontScale = Math.min(heightScale, widthScale);
     const container = this.add.container(x, y);
-    const image = this.add.image(0, 0, "plaque").setDisplaySize(w, h);
-    // Derive the badge position from its bottom inset. This guarantees the
-    // outer plaque contains it even at the minimum phone-sized HUD height.
+    // No frame around the stat: the strip is closed off by the gold rule under
+    // it instead, so each cell is just its label and the badge holding the
+    // number. The cell box still sizes both, which is why the badge is still
+    // derived from a bottom inset rather than from the felt it now sits on.
     const valuePillHeight = h * 0.5 - 4;
     const valuePillBottomPadding = Math.max(14, h * 0.18);
     const valuePillY = h / 2 - valuePillBottomPadding - valuePillHeight / 2;
@@ -975,7 +1092,7 @@ export class GameScene extends Phaser.Scene {
       .setData("hudPill", valuePill)
       .setData("hudPillHeight", valuePillHeight)
       .setData("hudPillWidth", Math.max(28, w - 18));
-    container.add([image, valuePill, labelText, value]);
+    container.add([valuePill, labelText, value]);
     return { container, label: labelText, value };
   }
 
@@ -1121,6 +1238,24 @@ export class GameScene extends Phaser.Scene {
     const n = this.state.dice.length;
     const firstLayout = this.gridCount < 0;
     const countChanged = n !== this.gridCount;
+    const cam = this.ensureGridCamera();
+    // Dice won mid-trial reshape the whole block — more columns, a lower fit
+    // zoom, every die already on the table in a new cell — so snapshot where
+    // the grid is *drawn* right now and glide the new layout in from there
+    // instead of cutting to it.
+    //
+    // Growth only. A shrink lands on a *tighter* camera than the one it would
+    // start from, and the culling window below is computed for the
+    // destination: gliding one would sweep the camera across ground that
+    // window does not cover and show bare felt at the edges.
+    const from =
+      !firstLayout && n > this.gridCount && fx.motion
+        ? this.captureGridPose(cam)
+        : undefined;
+    // Every relayout is the camera's new owner — a pan, a pinch, a resize, the
+    // next handful of dice — so whatever is left of the last glide gives way
+    // to the pose about to be computed here.
+    this.stopGridGlide();
     const focus = this.gridFocus();
     // The framed, seal-free box — not the pannable viewport the dice are drawn
     // through — is what shapes the block and sizes the fit.
@@ -1158,7 +1293,6 @@ export class GameScene extends Phaser.Scene {
     const scale = view.scale;
     this.gridDetail = gridDetailLevel(view.equivalentDice, this.gridDetail);
 
-    const cam = this.ensureGridCamera();
     setCameraViewport(
       cam,
       layout.grid.x,
@@ -1175,50 +1309,22 @@ export class GameScene extends Phaser.Scene {
     // grew with the zoom.
     cam.setScroll(view.scrollX, view.scrollY);
 
+    // Whether the card grid is about to be animated rather than cut to. Both
+    // ends have to be cards: a growth that changes representation is a change
+    // of what the player is looking at, not of how it is framed.
+    const easingCards = from?.detail === "cards" && this.gridDetail === "cards";
+
     if (this.gridDetail === "cards") {
       for (const sprite of this.sprites.values()) sprite.destroy();
       this.sprites.clear();
-
-      const regions = computeVisibleDiceCards(n, view);
-      const refreshCardData = countChanged || this.cardDataDirty;
-      const visibleKeys = new Set(regions.map((region) => region.key));
-      for (const [key, card] of this.cards) {
-        if (!visibleKeys.has(key)) {
-          card.destroy();
-          this.cards.delete(key);
-          this.cardRegions.delete(key);
-        }
-      }
-      for (const region of regions) {
-        let card = this.cards.get(region.key);
-        if (!card) {
-          const summary = this.state.dice.summarizeRegion(region.region);
-          card = new DiceSummaryCard(
-            this,
-            region.x,
-            region.y,
-            summary,
-            region.width,
-            region.height,
-            view.zoom,
-          );
-          this.gridContainer.add(card);
-          this.cards.set(region.key, card);
-          this.cameras.main.ignore(card);
-          this.overlayCamera?.ignore(card);
-        } else {
-          if (refreshCardData) {
-            card.setSummary(this.state.dice.summarizeRegion(region.region));
-            // Camera.ignore snapshots a container's current descendants. A
-            // composition change can add a new die-type row, so refresh those
-            // snapshots only when card data actually changed.
-            this.cameras.main.ignore(card);
-            this.overlayCamera?.ignore(card);
-          }
-          card.setLayout(region.width, region.height, view.zoom);
-        }
-        card.setPosition(region.x, region.y);
-        this.cardRegions.set(region.key, region);
+      // The animation rebuilds the card grid at every pose the camera moves
+      // through, beginning with the one it is on right now — so laying out the
+      // destination partition here would be building a card set that the same
+      // frame throws away, and card construction is the expensive part of a
+      // card relayout. `easeGridCards` does this job instead, refreshing on
+      // its opening pass.
+      if (!easingCards) {
+        this.syncDiceCards(n, view, countChanged || this.cardDataDirty);
       }
       this.cardDataDirty = false;
     } else {
@@ -1235,8 +1341,19 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
+      // Dice that were already on the table, and the ones that have just
+      // joined it, for the growth animation below. `from` is only set on a
+      // growth relayout.
+      const animate =
+        from !== undefined &&
+        glidesIndividually(from.detail) &&
+        glidesIndividually(this.gridDetail);
+      const moved: { sprite: DieSprite; from: { x: number; y: number } }[] = [];
+      const arrived: DieSprite[] = [];
+
       for (const { index, x, y } of visible) {
         let sprite = this.sprites.get(index);
+        const priorPosition = from?.positions.get(index);
         if (!sprite) {
           const die = this.state.dice.dieAt(index);
           if (!die) continue;
@@ -1259,8 +1376,298 @@ export class GameScene extends Phaser.Scene {
         }
         sprite.setPosition(x, y);
         sprite.setScale(scale);
+        if (!animate || !from) continue;
+        // Three kinds of die end up here: one that was already on screen and
+        // has to slide to its new cell, one the player has just won, and one
+        // that was merely scrolled out of view and is uncovered by the camera
+        // pulling back. Only the second is an arrival; the third is left where
+        // the layout put it, so the reveal doesn't read as a win.
+        if (priorPosition) moved.push({ sprite, from: priorPosition });
+        else if (index >= from.count) arrived.push(sprite);
+      }
+
+      if (animate) this.animateGridGrowth(moved, arrived, scale);
+    }
+
+    // Two ways to play the reflow, because the two representations answer to
+    // the camera differently. Loose dice hold their size in *world* units, so
+    // the layout can be built once and the sprites rewound under a camera that
+    // eases over them. A summary card counter-scales against the zoom to hold
+    // its size on *screen* (see DiceSummaryCard.setLayout), so a card grid
+    // built for the destination and shown through any other pose is drawn at
+    // the wrong size — it has to be rebuilt at each pose the camera passes
+    // through instead, which is exactly what a pinch-zoom already does.
+    //
+    // Everything else cuts, and deliberately: a growth that crosses between
+    // the two representations has changed what the player is looking at rather
+    // than how it is framed, and one that lands among dice too numerous to
+    // move individually would jump them into their new cells and only then
+    // slide the camera over them — a lurch followed by a drift, which reads
+    // worse than the honest cut this has always been.
+    if (!from) return;
+    if (easingCards) {
+      this.easeGridCards(cam, n, from, view, recenter);
+    } else if (
+      glidesIndividually(from.detail) &&
+      glidesIndividually(this.gridDetail)
+    ) {
+      this.glideGridCamera(cam, view, from);
+    }
+  }
+
+  /**
+   * Reconcile the summary cards against one camera pose: drop the regions that
+   * have scrolled out, build the ones that have scrolled in, and re-lay the
+   * survivors. Split out of `syncGrid` because a growth reflow replays it
+   * every frame at an intermediate pose — see `easeGridCards`.
+   *
+   * `refreshData` re-reads each surviving card's summary. It is the expensive
+   * half (one region summary per card), and is only worth paying when the pool
+   * itself changed under the cards rather than the camera over them.
+   */
+  private syncDiceCards(
+    n: number,
+    view: WindowedView,
+    refreshData: boolean,
+  ): void {
+    const regions = computeVisibleDiceCards(n, view);
+    const visibleKeys = new Set(regions.map((region) => region.key));
+    for (const [key, card] of this.cards) {
+      if (!visibleKeys.has(key)) {
+        card.destroy();
+        this.cards.delete(key);
+        this.cardRegions.delete(key);
       }
     }
+    for (const region of regions) {
+      let card = this.cards.get(region.key);
+      if (!card) {
+        const summary = this.state.dice.summarizeRegion(region.region);
+        card = new DiceSummaryCard(
+          this,
+          region.x,
+          region.y,
+          summary,
+          region.width,
+          region.height,
+          view.zoom,
+        );
+        this.gridContainer.add(card);
+        this.cards.set(region.key, card);
+        this.cameras.main.ignore(card);
+        this.overlayCamera?.ignore(card);
+      } else {
+        if (refreshData) {
+          card.setSummary(this.state.dice.summarizeRegion(region.region));
+          // Camera.ignore snapshots a container's current descendants. A
+          // composition change can add a new die-type row, so refresh those
+          // snapshots only when card data actually changed.
+          this.cameras.main.ignore(card);
+          this.overlayCamera?.ignore(card);
+        }
+        card.setLayout(region.width, region.height, view.zoom);
+      }
+      card.setPosition(region.x, region.y);
+      this.cardRegions.set(region.key, region);
+    }
+  }
+
+  /** The pose the grid is drawn at this instant — mid-glide included, so a
+   *  second win landing during the first one's reflow continues from where the
+   *  table actually is rather than from where it was going. */
+  private captureGridPose(cam: Phaser.Cameras.Scene2D.Camera): GridPose {
+    const positions = new Map<number, { x: number; y: number }>();
+    for (const [index, sprite] of this.sprites) {
+      positions.set(index, { x: sprite.x, y: sprite.y });
+    }
+    return {
+      zoom: cameraZoom(cam),
+      scrollX: cam.scrollX,
+      scrollY: cam.scrollY,
+      count: this.gridCount,
+      detail: this.gridDetail,
+      positions,
+    };
+  }
+
+  /** Rewind the freshly laid-out dice to where they were drawn a moment ago
+   *  and let them slide back, with the new arrivals growing into the space
+   *  that opens up. Everything here is a *visual* rewind: the layout in
+   *  `this.viewport` and the sprite pool are already final, so a pan or
+   *  another roll can cut the animation short at any point without leaving the
+   *  grid in a half-built state. */
+  private animateGridGrowth(
+    moved: { sprite: DieSprite; from: { x: number; y: number } }[],
+    arrived: DieSprite[],
+    scale: number,
+  ): void {
+    for (const { sprite, from } of moved) {
+      if (from.x === sprite.x && from.y === sprite.y) continue;
+      const to = { x: sprite.x, y: sprite.y };
+      sprite.setPosition(from.x, from.y);
+      this.tweens.add({
+        targets: sprite,
+        x: to.x,
+        y: to.y,
+        duration: GRID_GROWTH_MS,
+        ease: "Cubic.easeOut",
+      });
+    }
+
+    // Spread over a fixed window rather than a fixed step per die, so two new
+    // dice and two hundred take the same time to finish arriving.
+    const step =
+      arrived.length > 1 ? GRID_SPAWN_RIPPLE_MS / (arrived.length - 1) : 0;
+    arrived.forEach((sprite, i) => {
+      sprite.spawnIn(scale, GRID_SPAWN_DELAY_MS + i * step);
+    });
+  }
+
+  /** Ease the camera from the pose it was drawing to the one the new layout
+   *  asks for. Driven through a proxy object because a camera's zoom is held
+   *  in device pixels — see `ui/camera`. */
+  private glideGridCamera(
+    cam: Phaser.Cameras.Scene2D.Camera,
+    view: WindowedView,
+    from: GridPose,
+  ): void {
+    const to = {
+      zoom: view.zoom,
+      scrollX: view.scrollX,
+      scrollY: view.scrollY,
+    };
+    if (
+      from.zoom === to.zoom &&
+      from.scrollX === to.scrollX &&
+      from.scrollY === to.scrollY
+    )
+      return;
+
+    const pose = {
+      zoom: from.zoom,
+      scrollX: from.scrollX,
+      scrollY: from.scrollY,
+    };
+    const draw = () => {
+      setCameraZoom(cam, pose.zoom);
+      cam.setScroll(pose.scrollX, pose.scrollY);
+    };
+    draw();
+    const tween = this.tweens.add({
+      targets: pose,
+      ...to,
+      duration: GRID_GROWTH_MS,
+      ease: "Cubic.easeOut",
+      onUpdate: draw,
+      onComplete: () => {
+        this.gridGlide = undefined;
+      },
+    });
+    this.gridGlide = { tween, to };
+  }
+
+  /**
+   * The card grid's half of the growth animation: walk the camera back to the
+   * new fit zoom, rebuilding the card partition at every pose on the way.
+   *
+   * Costs one card reconciliation per frame — the same work a pinch-zoom over
+   * a card grid already does, and bounded by the handful of cards a viewport
+   * holds rather than by the dice behind them. The opening pass stands in for
+   * the destination layout `syncGrid` skipped, so it is the one that re-reads
+   * the summaries; after it, a card either predates the growth by nothing or
+   * was born during it, and both are already current.
+   *
+   * `home` says the destination is the sigil-centred rest position, which is
+   * where the *starting* pose comes from too: the block that just grew is
+   * re-centred, so holding the old camera's scroll would slide every card
+   * sideways by half the growth on the opening frame. Starting from the new
+   * block centred at the old zoom instead leaves the sigil where it was and
+   * lets the block simply swell past the frame, which the camera then pulls
+   * back to take in. A player who owns their scroll keeps it.
+   */
+  private easeGridCards(
+    cam: Phaser.Cameras.Scene2D.Camera,
+    n: number,
+    from: GridPose,
+    destination: WindowedView,
+    home: boolean,
+  ): void {
+    const to = {
+      zoom: destination.zoom,
+      scrollX: destination.scrollX,
+      scrollY: destination.scrollY,
+    };
+    const pose = {
+      zoom: from.zoom,
+      scrollX: from.scrollX,
+      scrollY: from.scrollY,
+    };
+    if (home) {
+      const opening = computeWindowedView(
+        n,
+        this.layout.grid,
+        this.layout.gridFrame,
+        pose,
+        this.gridFocus(),
+      );
+      pose.scrollX = opening.homeScrollX;
+      pose.scrollY = opening.homeScrollY;
+    }
+    let refresh = true;
+    const draw = () => {
+      const view = computeWindowedView(
+        n,
+        this.layout.grid,
+        this.layout.gridFrame,
+        pose,
+        this.gridFocus(),
+      );
+      setCameraZoom(cam, view.zoom);
+      cam.setScroll(view.scrollX, view.scrollY);
+      this.syncDiceCards(n, view, refresh);
+      refresh = false;
+    };
+    // Unconditional: this is the layout pass for the new pool, and a grid the
+    // player has zoomed into is already at its destination pose — it grows
+    // more dice into the same frame rather than being re-framed around them.
+    draw();
+    if (
+      pose.zoom === to.zoom &&
+      pose.scrollX === to.scrollX &&
+      pose.scrollY === to.scrollY
+    )
+      return;
+
+    const tween = this.tweens.add({
+      targets: pose,
+      ...to,
+      duration: GRID_GROWTH_MS,
+      ease: "Cubic.easeOut",
+      onUpdate: draw,
+      onComplete: () => {
+        this.gridGlide = undefined;
+      },
+    });
+    this.gridGlide = { tween, to };
+  }
+
+  /** Hand the camera back to whatever is laying the grid out now. The caller
+   *  writes the final pose itself, so the glide is simply dropped. */
+  private stopGridGlide(): void {
+    this.gridGlide?.tween.remove();
+    this.gridGlide = undefined;
+  }
+
+  /** Land the growth animation where it was heading, now. A gesture that
+   *  begins mid-reflow measures itself against `this.viewport` — the pose the
+   *  grid is *going* to — so the grid has to already be there, or the first
+   *  pixel of the drag would jump the rest of the reflow through in one frame.
+   *  A plain relayout is what lands it: the pool and the viewport have held
+   *  the destination since the reflow began, and only the drawing was behind. */
+  private finishGridGlide(): void {
+    if (!this.gridGlide) return;
+    this.stopGridGlide();
+    this.syncGrid(this.layout);
   }
 
   /** Creates the dedicated grid camera on first layout. Its viewport provides
@@ -1322,10 +1729,18 @@ export class GameScene extends Phaser.Scene {
     // be read back in layout pixels rather than in the device pixels its
     // viewport and zoom are stored in — see `ui/camera`.
     const origin = cameraOrigin(cam);
-    const zoom = cameraZoom(cam);
+    // Mid-growth the camera is still easing toward the pose the sprites were
+    // just laid out for, so popups are placed against where the grid is going:
+    // a label on a die that has only just arrived would otherwise start life a
+    // whole reflow away from it.
+    const pose = this.gridGlide?.to ?? {
+      zoom: cameraZoom(cam),
+      scrollX: cam.scrollX,
+      scrollY: cam.scrollY,
+    };
     return {
-      x: origin.x + (sprite.x - cam.scrollX) * zoom,
-      y: origin.y + (sprite.y - cam.scrollY) * zoom,
+      x: origin.x + (sprite.x - pose.scrollX) * pose.zoom,
+      y: origin.y + (sprite.y - pose.scrollY) * pose.zoom,
     };
   }
 
@@ -1423,16 +1838,36 @@ export class GameScene extends Phaser.Scene {
       world: { x: number; y: number },
     ) => {
       const area = this.layout.grid;
-      this.viewport.zoom = clampZoom(zoom, area);
+      this.viewport.zoom = clampZoom(
+        zoom,
+        this.state.dice.length,
+        this.layout.gridFrame,
+      );
       // Re-enable auto-fit only when the player has returned to the current
       // fully zoomed-out position. Any zoomed-in position is user-owned and
       // must survive later dice additions/removals.
+      //
+      // Relative, because the fit zoom for a grid of a billion dice is a couple
+      // of ten-thousandths: an absolute epsilon there calls every zoom level
+      // the player can reach "the fit position", and syncGrid snaps them back
+      // to it on the same frame — the grid simply refuses to zoom out.
       this.followsFitZoom =
-        Math.abs(this.viewport.zoom - this.lastFitZoom) < 0.0001;
-      this.viewport.scrollX =
-        world.x - (anchor.x - area.x) / this.viewport.zoom;
-      this.viewport.scrollY =
-        world.y - (anchor.y - area.y) / this.viewport.zoom;
+        Math.abs(this.viewport.zoom - this.lastFitZoom) <=
+        this.lastFitZoom * 1e-3;
+      if (this.viewport.zoom <= this.lastFitZoom * (1 + 1e-3)) {
+        // Zoomed out far enough that the whole grid is in view: there is
+        // nothing left to hold under the cursor, so it re-homes rather than
+        // drifting. The pannable area is measured from the visible span, so
+        // every step out here moves the world's origin under the point the
+        // gesture is trying to pin — which otherwise walks the block into the
+        // corner of its pan slack on the way down to a single card.
+        this.recenterOnSigil = true;
+      } else {
+        this.viewport.scrollX =
+          world.x - (anchor.x - area.x) / this.viewport.zoom;
+        this.viewport.scrollY =
+          world.y - (anchor.y - area.y) / this.viewport.zoom;
+      }
       this.syncGrid(this.layout);
     };
 
@@ -1459,6 +1894,7 @@ export class GameScene extends Phaser.Scene {
 
     const onDown = (p: Phaser.Input.Pointer) => {
       if (!inBounds(p)) return;
+      this.finishGridGlide();
       // Extra fingers beyond the two driving the pinch are ignored rather than
       // allowed to redefine the gesture mid-flight.
       if (p.wasTouch && touches.size < 2) {
@@ -1522,6 +1958,7 @@ export class GameScene extends Phaser.Scene {
       dy: number,
     ) => {
       if (!inBounds(p)) return;
+      this.finishGridGlide();
       const area = this.layout.grid;
 
       // Keep the same point of the grid centered through the zoom change.
@@ -1711,6 +2148,7 @@ export class GameScene extends Phaser.Scene {
     this.tumbleStartedAt = this.time.now;
     if (fx.motion) {
       for (const sprite of this.sprites.values()) sprite.beginTumble();
+      for (const card of this.cards.values()) card.beginTumble();
     }
 
     audio.roll(this.state.dice.length);
@@ -1908,9 +2346,23 @@ export class GameScene extends Phaser.Scene {
       // at this scale. One restrained grid impact keeps the cue at constant cost.
       fx.shakeObject(this, this.gridContainer, 180, 2);
     }
+    // Cards land as the same top-to-bottom ripple the loose dice do; there is
+    // never more than a viewport's worth of them, so each one settles for real.
+    let cardTopY = Infinity;
+    let cardBottomY = -Infinity;
+    for (const card of this.cards.values()) {
+      cardTopY = Math.min(cardTopY, card.y);
+      cardBottomY = Math.max(cardBottomY, card.y);
+    }
+    const cardRipple = Math.max(1, cardBottomY - cardTopY);
     for (const [key, card] of this.cards) {
       const region = this.cardRegions.get(key);
       if (region) card.setSummary(s.dice.summarizeRegion(region.region));
+      if (fx.motion) {
+        card.settle(((card.y - cardTopY) / cardRipple) * SETTLE_RIPPLE_MS);
+      } else {
+        card.snapSettled();
+      }
     }
 
     // Keep the settled visible faces independent of post-score growth/shrinking.
@@ -1964,6 +2416,14 @@ export class GameScene extends Phaser.Scene {
     // land on the refreshed, correctly-sized sprites rather than being wiped by
     // the relayout's clearPulse. This also flips to windowed rendering once the
     // count changes.
+
+    // At card detail there are no per-die sprites left to flash, so the cards
+    // scatter the same outlines across their own icons at the density each
+    // effect actually hit the pool with.
+    if (fx.on && this.cards.size > 0) {
+      const chances = this.cardEffectChances(rolledAgg, result, shrunk.length);
+      for (const card of this.cards.values()) card.showEffects(chances);
+    }
 
     // Collect every modifier that fired on each die so its border can flash
     // them together, split into equal arcs (e.g. half gold / half green). The
@@ -2200,6 +2660,98 @@ export class GameScene extends Phaser.Scene {
       this.finishEffects = finishRoll;
       this.effectTimer = this.time.delayedCall(420, () => finishRoll(false));
     } else finishRoll(false);
+  }
+
+  /**
+   * How likely each of this roll's effects was to have hit any one die, for the
+   * summary cards to scatter their outlines by.
+   *
+   * A card row stands for thousands of dice, so `mod.dice` is empty and there
+   * is no index to flash. What the aggregate does know is how much of the pool
+   * each rule caught, and that fraction is exactly the right odds for a single
+   * representative icon: across the cards on screen the outlines then land at
+   * the density they would have had in the real grid. The per-modifier cases
+   * mirror `visibleHits` above, counted over the histogram instead of over
+   * individual dice.
+   */
+  private cardEffectChances(
+    agg: DiceAgg,
+    result: RollResult,
+    shrunkCount: number,
+  ): CardEffectChance[] {
+    const total = Math.max(1, agg.total);
+    const share = (dice: number): number =>
+      Phaser.Math.Clamp(dice / total, 0, 1);
+    const valuesWhere = (
+      predicate: (value: number, count: number) => boolean,
+    ): number => {
+      let hit = 0;
+      for (const [value, count] of agg.valueCounts)
+        if (predicate(value, count)) hit += count;
+      return hit;
+    };
+    const hitFraction = (mod: ScoreModifier): number => {
+      switch (mod.id) {
+        case "scoring":
+        case "extraPoint":
+          return share(agg.scoringCount);
+        case "keenEdge":
+          return share(agg.scoringD1Count);
+        case "snakeEyes":
+          return share(valuesWhere((_, count) => count >= 2));
+        case "jackpot":
+          return share(valuesWhere((_, count) => count >= JACKPOT_DICE));
+        case "windfall":
+          return share(agg.windfallScoringCount);
+        case "royalSeal":
+          return share(agg.royalSealScoringCount);
+        case "luckySeven":
+          return share(valuesWhere((value) => countSevens(value) > 0));
+        default:
+          // Aggregate-only modifiers (multipliers, Momentum) flash no dice in
+          // the sprite path either, so they flash none of the icons here.
+          return share(mod.dice.length);
+      }
+    };
+
+    const raw: CardEffectChance[] = result.modifiers.map((mod) => ({
+      color: mod.color,
+      chance: hitFraction(mod),
+      bigPulse: mod.bigPulse,
+    }));
+    if (this.state.hasDoubleTheFun) {
+      raw.push({
+        color: COLORS.rarityUncommon,
+        chance: share(valuesWhere((value) => value === 5 || value === 6)),
+        bigPulse: true,
+      });
+    }
+    if (shrunkCount > 0) {
+      raw.push({
+        color: COLORS.glowSteel,
+        chance: share(shrunkCount),
+        bigPulse: false,
+      });
+    }
+
+    // Most scoring bonuses flash the same gold, and an icon only ever shows one
+    // arc per colour. Combining them into a single independent chance first is
+    // what makes the ceiling below mean anything: three separate gold rolls at
+    // 0.55 would still light nine icons in ten.
+    const byColor = new Map<number, CardEffectChance>();
+    for (const chance of raw) {
+      if (chance.chance <= 0) continue;
+      const merged = byColor.get(chance.color);
+      if (!merged) {
+        byColor.set(chance.color, { ...chance });
+        continue;
+      }
+      merged.chance = 1 - (1 - merged.chance) * (1 - chance.chance);
+      merged.bigPulse ||= chance.bigPulse;
+    }
+    for (const chance of byColor.values())
+      chance.chance = Math.min(chance.chance, MAX_CARD_EFFECT_CHANCE);
+    return [...byColor.values()];
   }
 
   /**

@@ -42,3 +42,38 @@ export function formatScore(value: bigint | number): string {
   const coefficient = `${coefficientDigits[0]}.${coefficientDigits.slice(1)}`;
   return `${negative ? "-" : ""}${coefficient}e${exponent}`;
 }
+
+const COMPACT_UNITS = ["K", "M", "B", "T"];
+/** Below this a separated count is short enough to print in full. */
+const COMPACT_THRESHOLD = 10_000;
+
+/**
+ * A count for somewhere with a hard width budget — a dice summary card's row
+ * label, which has to share its column with a die icon. Small counts stay
+ * exact; larger ones drop to three significant digits and a magnitude suffix,
+ * and anything past a trillion falls back to `formatScore`'s scientific form.
+ */
+export function formatCompactCount(value: number): string {
+  if (!Number.isFinite(value)) return String(value);
+  const rounded = Math.round(value);
+  if (Math.abs(rounded) < COMPACT_THRESHOLD) return rounded.toLocaleString();
+
+  let scaled = rounded / 1000;
+  let unit = 0;
+  while (Math.abs(scaled) >= 1000 && unit < COMPACT_UNITS.length - 1) {
+    scaled /= 1000;
+    unit++;
+  }
+  if (Math.abs(scaled) >= 1000) return formatScore(rounded);
+
+  const digits = (value: number) =>
+    Math.abs(value) >= 100 ? 0 : Math.abs(value) >= 10 ? 1 : 2;
+  // Rounding can carry into the next magnitude — 999,999 is 1000K, not 999.999K.
+  if (Math.abs(Number(scaled.toFixed(digits(scaled)))) >= 1000) {
+    if (unit === COMPACT_UNITS.length - 1) return formatScore(rounded);
+    scaled /= 1000;
+    unit++;
+  }
+  // parseFloat drops a trailing zero, so 4.10K reads as 4.1K.
+  return `${parseFloat(scaled.toFixed(digits(scaled)))}${COMPACT_UNITS[unit]}`;
+}

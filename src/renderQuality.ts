@@ -141,22 +141,62 @@ export function installHiDpi(game: Phaser.Game): void {
 
 function syncCanvas(game: Phaser.Game, width: number, height: number): void {
   const canvas = game.canvas;
-  if (canvas.width === width && canvas.height === height) return;
-
-  // Assigning either of these reallocates the drawing buffer, so it happens
-  // only on a real change, never as a per-frame refresh.
-  canvas.width = width;
-  canvas.height = height;
   // RESIZE mode leaves the canvas with no CSS size at all, letting it default
   // to its (now device-pixel) attribute size. Pin it back to the CSS pixels the
   // Scale Manager laid out for.
-  canvas.style.width = `${game.scale.width}px`;
-  canvas.style.height = `${game.scale.height}px`;
+  const styleWidth = `${game.scale.width}px`;
+  const styleHeight = `${game.scale.height}px`;
 
-  const renderer = game.renderer;
-  if (renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
-    renderer.resize(width, height);
+  const resized = canvas.width !== width || canvas.height !== height;
+  const restyled =
+    canvas.style.width !== styleWidth || canvas.style.height !== styleHeight;
+  if (!resized && !restyled) return;
+
+  if (resized) {
+    // Assigning either of these reallocates the drawing buffer, so it happens
+    // only on a real change, never as a per-frame refresh.
+    canvas.width = width;
+    canvas.height = height;
+
+    const renderer = game.renderer;
+    if (renderer instanceof Phaser.Renderer.WebGL.WebGLRenderer) {
+      renderer.resize(width, height);
+    }
   }
+
+  canvas.style.width = styleWidth;
+  canvas.style.height = styleHeight;
+  syncInputBounds(game);
+}
+
+/**
+ * Re-measure the canvas rectangle the Scale Manager converts DOM events
+ * against, because the line above just invalidated it.
+ *
+ * `updateScale` writes `canvas.width/height` and nothing else: in stock Phaser
+ * the attribute size *is* the layout size, so measuring straight afterwards in
+ * `refresh` is sound. Pinning an explicit CSS size takes that over — the
+ * measurement `refresh` already took this frame describes the canvas as it was
+ * before the resize, leaving `canvasBounds` and `displayScale` a frame behind
+ * every time the window changes shape.
+ *
+ * A stale box is wrong in two ways at once, because the canvas is centred in
+ * its parent: presses are both offset by half the size change and scaled by the
+ * ratio between the two sizes. Growing a phone viewport by the height of the
+ * browser chrome lands a press a little off its control, which is why this
+ * surfaces as a bug in the Fullscreen setting; a rotate lands it nowhere near.
+ *
+ * `refresh` would re-measure, but it also re-emits RESIZE to every scene, and
+ * this runs from inside the render step. Redoing just the two lines that depend
+ * on the canvas box is enough, and Phaser recomputes both the same way.
+ */
+function syncInputBounds(game: Phaser.Game): void {
+  const scale = game.scale;
+  scale.updateBounds();
+  scale.displayScale.set(
+    scale.baseSize.width / scale.canvasBounds.width,
+    scale.baseSize.height / scale.canvasBounds.height,
+  );
 }
 
 function syncMainCamera(

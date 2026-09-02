@@ -1,52 +1,14 @@
 import Phaser from "phaser";
 import { artImage } from "../art/textures";
+import { drawEffectBorder } from "./dieBorder";
 import { Die } from "../systems/Dice";
 
-const BORDER_WIDTH = 5;
-
-/** Points tracing the die's rounded-rect outline, clockwise from the top-left,
- *  sampled finely enough that a color split lands close to its exact fraction. */
-const BORDER_PATH = buildBorderPath();
-const BORDER_LENGTH = pathLength(BORDER_PATH);
-
-function buildBorderPath(): { x: number; y: number }[] {
-  const hw = 47;
-  const hh = 47;
-  const r = 15;
-  const pts: { x: number; y: number }[] = [];
-  const line = (x0: number, y0: number, x1: number, y1: number) => {
-    const n = Math.max(1, Math.round(Math.hypot(x1 - x0, y1 - y0) / 4));
-    for (let i = 0; i < n; i++) {
-      const t = i / n;
-      pts.push({ x: x0 + (x1 - x0) * t, y: y0 + (y1 - y0) * t });
-    }
-  };
-  const arc = (cx: number, cy: number, a0: number, a1: number) => {
-    const steps = 8;
-    for (let i = 0; i < steps; i++) {
-      const a = a0 + ((a1 - a0) * i) / steps;
-      pts.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
-    }
-  };
-  line(-hw + r, -hh, hw - r, -hh);
-  arc(hw - r, -hh + r, -Math.PI / 2, 0);
-  line(hw, -hh + r, hw, hh - r);
-  arc(hw - r, hh - r, 0, Math.PI / 2);
-  line(hw - r, hh, -hw + r, hh);
-  arc(-hw + r, hh - r, Math.PI / 2, Math.PI);
-  line(-hw, hh - r, -hw, -hh + r);
-  arc(-hw + r, -hh + r, Math.PI, Math.PI * 1.5);
-  pts.push({ x: -hw + r, y: -hh }); // close the loop
-  return pts;
-}
-
-function pathLength(pts: { x: number; y: number }[]): number {
-  let len = 0;
-  for (let i = 1; i < pts.length; i++) {
-    len += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-  }
-  return len;
-}
+/** How long a newly won die takes to reach its full size in the grid. */
+const SPAWN_MS = 260;
+/** The fraction of its final size a die starts at when it pops in. Small
+ *  enough to read as arriving rather than as a die that was already there
+ *  twitching, large enough that the face is legible the whole way up. */
+const SPAWN_START_SCALE = 0.3;
 
 /** A die in the grid: ivory body, baked face (pips/numeral), type label. */
 export class DieSprite extends Phaser.GameObjects.Container {
@@ -64,6 +26,13 @@ export class DieSprite extends Phaser.GameObjects.Container {
   private wobbleAmplitude = 0;
   private wobbleRate = 0;
   private wobblePhase = 0;
+  // The pop-in, while it lasts — see spawnIn. Held because the grid relays out
+  // under a spawning die (every pan frame does), and because an effect pulse
+  // landing on one has to wait it out rather than bounce from a half-grown
+  // scale it would then yoyo back to.
+  private spawnTween?: Phaser.Tweens.Tween;
+  private spawnScale = 1;
+  private spawnEndsAt = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number, die: Die) {
     super(scene, x, y);
@@ -107,6 +76,41 @@ export class DieSprite extends Phaser.GameObjects.Container {
     this.faceImage.setVisible(true).setFrame(`face-${this.die.sides}-${value}`);
   }
 
+  /**
+   * Grow a newly won die into its cell instead of having it appear at full
+   * size. `scale` is the layout scale the grid wants it at — the same value a
+   * reposition would have set — and `delay` staggers a batch so a handful of
+   * dice arrives as a ripple rather than as one flash.
+   *
+   * Alpha and scale start applied immediately, before any delay, so a die
+   * waiting its turn in the ripple is not visible sitting at full size.
+   */
+  spawnIn(scale: number, delay = 0): void {
+    this.spawnTween?.remove();
+    this.spawnScale = scale;
+    this.spawnEndsAt = this.scene.time.now + delay + SPAWN_MS;
+    this.setScale(scale * SPAWN_START_SCALE);
+    this.setAlpha(0);
+    this.spawnTween = this.scene.tweens.add({
+      targets: this,
+      scaleX: scale,
+      scaleY: scale,
+      alpha: 1,
+      duration: SPAWN_MS,
+      delay,
+      ease: "Back.easeOut",
+      onComplete: () => {
+        this.spawnTween = undefined;
+      },
+    });
+  }
+
+  /** How much of the pop-in is still to come, in ms. */
+  private spawnRemaining(): number {
+    if (!this.spawnTween) return 0;
+    return Math.max(0, this.spawnEndsAt - this.scene.time.now);
+  }
+
   /** Flash the die's border to signal one or more triggered effects, plus a
    *  scale bounce. With multiple effects the border is split into equal-length
    *  arcs — one color each — so a die that both scores and matches on Snake Eyes
@@ -114,48 +118,32 @@ export class DieSprite extends Phaser.GameObjects.Container {
   pulseEffects(colors: number[], big = false): void {
     if (colors.length === 0) return;
 
+    // A die still popping in bounces once it has finished growing: a yoyo
+    // started now would return it to the half-grown scale it happened to be
+    // at, and leave it stranded there.
+    const delay = this.spawnRemaining();
+    const base = this.spawnTween ? this.spawnScale : this.scaleX;
+
     const g = this.effectBorder;
     this.scene.tweens.killTweensOf(g);
-    g.clear();
-    g.setAlpha(1);
-
-    const segment = BORDER_LENGTH / colors.length;
-    let colorIndex = 0;
-    let travelled = 0;
-    g.lineStyle(BORDER_WIDTH, colors[0], 1);
-    g.beginPath();
-    g.moveTo(BORDER_PATH[0].x, BORDER_PATH[0].y);
-    for (let i = 1; i < BORDER_PATH.length; i++) {
-      const prev = BORDER_PATH[i - 1];
-      const cur = BORDER_PATH[i];
-      travelled += Math.hypot(cur.x - prev.x, cur.y - prev.y);
-      g.lineTo(cur.x, cur.y);
-      if (
-        colorIndex < colors.length - 1 &&
-        travelled >= segment * (colorIndex + 1)
-      ) {
-        g.strokePath();
-        colorIndex++;
-        g.lineStyle(BORDER_WIDTH, colors[colorIndex], 1);
-        g.beginPath();
-        g.moveTo(cur.x, cur.y);
-      }
-    }
-    g.strokePath();
+    g.setAlpha(0);
+    drawEffectBorder(g, colors);
 
     const scale = big ? 1.25 : 1.12;
     this.scene.tweens.add({
       targets: this,
-      scaleX: this.scaleX * scale,
-      scaleY: this.scaleY * scale,
+      scaleX: base * scale,
+      scaleY: base * scale,
       duration: 130,
+      delay,
       yoyo: true,
       ease: "Quad.easeOut",
     });
     this.scene.tweens.add({
       targets: g,
-      alpha: 0,
+      alpha: { from: 1, to: 0 },
       duration: 420,
+      delay,
       ease: "Quad.easeIn",
     });
   }
@@ -223,6 +211,11 @@ export class DieSprite extends Phaser.GameObjects.Container {
     this.scene.tweens.killTweensOf(this.effectBorder);
     this.effectBorder.clear();
     this.effectBorder.setAlpha(0);
+    // The kill above takes any pop-in with it, which would leave the die
+    // stranded small and invisible. The caller owns the scale (it sets it
+    // right after), so only the fade has to be undone here.
+    this.spawnTween = undefined;
+    this.setAlpha(1);
     this.snapSettled();
   }
 }

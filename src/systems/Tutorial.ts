@@ -3,8 +3,8 @@ import { newRun, setRun, type RunState } from "../state/RunState";
 import { loadProgress, loadSettings, saveSettings } from "./SaveData";
 import { beginRun as initializeRun } from "../sim/engine";
 import { goalFor } from "./Boss";
-import { GOLD_PER_INTEREST, INTEREST_CAP } from "./Gold";
 import { trialRollTarget } from "./Trial";
+import { PHONE_BUILD } from "../buildFlags";
 import { WIN_RANK } from "../config";
 import { refreshActiveRun, saveActiveRun } from "./ActiveRunPersistence";
 
@@ -16,22 +16,24 @@ import { refreshActiveRun, saveActiveRun } from "./ActiveRunPersistence";
 // Every step belongs to exactly one scene, which is what lets each scene render
 // the current stage (and only it) without coordinating with the others.
 //
-// Boss is deliberately last and fires on the first Boss Trial rather than in
-// sequence, because it has nothing to point at until one arrives.
+// Boss fires on the first Boss Trial rather than in sequence, because it has
+// nothing to point at until one arrives — and the two steps after it wait on
+// that same trial being cleared, which is the earliest the ladder ahead is
+// something the player can be shown rather than told.
 export enum TutorialStage {
   Route, // TrialOverview: the three trials of a rank
-  RouteBoss, // TrialOverview: the boss card waiting at the end of it
   RouteStart, // TrialOverview: the button that begins the first one
   Score, // Game
   Roll,
   Viewport,
   Goal,
   Rolls,
-  Rank,
   Results, // TrialResults: what a clear paid
   Interest, // TrialResults: and what the purse pays on itself
   Shop, // Shop: spending it
   Boss, // Game, once a Boss Trial is actually in force
+  RankReset, // TrialOverview: the rank after that boss, and its steeper goals
+  RankGoal, // TrialOverview: how far the ladder runs
   Done,
 }
 
@@ -47,23 +49,34 @@ export const TUTORIAL_TEXT: Record<
 > = {
   [TutorialStage.Route]:
     "You will face three trials each rank. Complete all three to advance to the next rank.",
-  [TutorialStage.RouteBoss]:
-    "The final trial has it's own quirks, make note of them.",
+
   [TutorialStage.RouteStart]: "Press here to begin your first trial",
-  [TutorialStage.Score]:
-    "This is your score, roll a one on any die to score a point.",
+  [TutorialStage.Score]: "This is your score, roll a one to score a point.",
   [TutorialStage.Roll]: "Press the seal to roll.",
-  [TutorialStage.Viewport]: "Drag and scroll / pinch to move around your dice.",
+
+  // The grid pans the same way everywhere; only the second gesture differs, so
+  // the phone build is told to pinch and every other build to scroll.
+  [TutorialStage.Viewport]: PHONE_BUILD
+    ? "Drag to move around your dice. Pinch to zoom."
+    : "Drag to move around your dice. Scroll to zoom.",
+
   [TutorialStage.Goal]:
-    "Here is the trial's goal, reach it and the trial ends.",
+    "This is the trial's goal, score this many points to proceed. Fail and your run ends.",
+
   [TutorialStage.Rolls]:
-    "Here are your remaining rolls, each one left when the round end rewards one gold.",
-  [TutorialStage.Rank]: `This is your current rank. Complete rank ${WIN_RANK} to win.`,
-  [TutorialStage.Results]: "Clearing a trial pays gold. Spend it in the shop.",
-  [TutorialStage.Interest]: `Gold you hold pays interest: 1 more for every ${GOLD_PER_INTEREST} in your purse at each clear, up to ${INTEREST_CAP}. Saving earns.`,
-  [TutorialStage.Shop]: "Spend your gold. A pack reveals three; you keep one.",
+    "Here are your remaining rolls. Score extra gold by completing the trial early!",
+
+  [TutorialStage.Results]:
+    "Clearing a trial pays gold. You'll spend it in the shop for new dice and upgrades.",
+  [TutorialStage.Interest]: `Gold you hold at at a trial's end pays interest. Saving earns!`,
+  [TutorialStage.Shop]:
+    "Welcome to the shop. Purchase cards or booster packs to improve your odds.",
   [TutorialStage.Boss]:
     "Be careful, the boss effect is active and will make your task harder. Defeat the boss to advance a rank!",
+
+  [TutorialStage.RankReset]:
+    "The rank is yours. Three fresh trials await, and each rank asks for far more points than the last.",
+  [TutorialStage.RankGoal]: `This is your rank. Clear rank ${WIN_RANK} to win the game.`,
 };
 
 export interface TutorialState {

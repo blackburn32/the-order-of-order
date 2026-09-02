@@ -19,7 +19,7 @@ import {
   type ShopOffer,
   weightsFor,
 } from "./Shop";
-import type { TutorialState } from "./Tutorial";
+import { TutorialStage, type TutorialState } from "./Tutorial";
 
 export const ACTIVE_RUN_STORAGE_KEY = "the-order-of-order.active-run";
 const ACTIVE_RUN_TOMBSTONE_KEY = `${ACTIVE_RUN_STORAGE_KEY}.cleared-at`;
@@ -604,7 +604,7 @@ function parseEnvelope(
       !isRecord(tutorial) ||
       typeof tutorial.active !== "boolean" ||
       !isNonNegativeInteger(tutorial.stage) ||
-      tutorial.stage > 14
+      tutorial.stage > TutorialStage.Done
     )
       return null;
     return {

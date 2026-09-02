@@ -7,6 +7,12 @@
 // Targeted builds opt in through mode-specific files such as `.env.itch` and
 // `.env.phone`; plain web builds leave the flags at their defaults below.
 
+// Vite defines `import.meta.env`; the node-run simulations, which reach this
+// file transitively, do not. Reading the vars off a defaulted object is what
+// lets a simulation import the game's modules and see every flag at its
+// default rather than crash on the access.
+const env: Partial<ImportMetaEnv> = import.meta.env ?? {};
+
 /** Env vars are strings; anything but an explicit truthy value reads as off. */
 function flag(value: string | undefined): boolean {
   return value === "true" || value === "1";
@@ -18,7 +24,7 @@ function flag(value: string | undefined): boolean {
  *  where the game sits on the page's own background. Anywhere the game owns
  *  the whole viewport — a Pages deploy, the Android app — the frame just reads
  *  as a stray line at the screen edge, so it is off by default. */
-export const GOLD_BORDER = flag(import.meta.env.VITE_GOLD_BORDER);
+export const GOLD_BORDER = flag(env.VITE_GOLD_BORDER);
 
 /** Whether this bundle is intended for the Capacitor phone app. */
-export const PHONE_BUILD = flag(import.meta.env.VITE_PHONE_BUILD);
+export const PHONE_BUILD = flag(env.VITE_PHONE_BUILD);

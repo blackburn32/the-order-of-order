@@ -69,6 +69,9 @@ export class TrialOverviewScene extends Phaser.Scene {
   // before the entrance tween offsets the button, so it describes where the
   // button comes to rest rather than where it starts.
   private startRect?: Phaser.Geom.Rectangle;
+  // Screen rect of the RANK line in whichever masthead was built, for the step
+  // that points at how far the ladder runs.
+  private rankRect?: Phaser.Geom.Rectangle;
   private tutorialCallout?: CalloutHandle;
 
   constructor() {
@@ -86,6 +89,7 @@ export class TrialOverviewScene extends Phaser.Scene {
       // stale handle before build() anchors a fresh one.
       this.tutorialCallout = undefined;
       this.startRect = undefined;
+      this.rankRect = undefined;
       destroyAllChildren(this);
       this.build();
     });
@@ -266,6 +270,8 @@ export class TrialOverviewScene extends Phaser.Scene {
       .setOrigin(0.5)
       .setDepth(2);
 
+    this.rankRect = title.getBounds();
+
     const ruleY = (title.getBounds().bottom + subtitle.getBounds().top) / 2;
     const ruleDice = new RuleDice(this, W / 2, ruleY, 11).setDepth(2);
     const ruleGap = ruleDice.width / 2 + 11;
@@ -321,6 +327,8 @@ export class TrialOverviewScene extends Phaser.Scene {
       .setDepth(2);
     fitTextWidth(subtitle, Math.max(60, right - left - title.width - 18));
 
+    this.rankRect = title.getBounds();
+
     const ruleY = Math.round(headerTop + title.height + 6);
     const rule = this.add.graphics().setDepth(2);
     rule.lineStyle(1, COLORS.gold, 0.32);
@@ -362,10 +370,11 @@ export class TrialOverviewScene extends Phaser.Scene {
     return glow;
   }
 
-  /** The route's three tutorial steps: what a rank is, what waits at the end of
-   *  it, and the button that starts the first one. The first two point at the
-   *  cards themselves, which is the whole reason they live here rather than on
-   *  the HUD. */
+  /** The route's tutorial steps: what a rank is and the button that starts the
+   *  first one, then — a rank later, once the first boss is down — that the
+   *  three trials come round again with steeper goals, and how far the ladder
+   *  runs. They point at the cards and the masthead themselves, which is the
+   *  whole reason they live here rather than on the HUD. */
   private renderTutorial(): void {
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
@@ -381,15 +390,22 @@ export class TrialOverviewScene extends Phaser.Scene {
     // The start step is dismissed by the press it asks for, not by Continue.
     let onContinue: (() => void) | undefined = advance;
     let interactiveAnchor = false;
-    if (t.stage === TutorialStage.Route) {
-      anchor = this.cardRects.reduce(
+    // The two steps that speak about the rank as a whole point at the whole
+    // route; the one about the ladder points at the masthead that names it.
+    const allCards = () =>
+      this.cardRects.reduce(
         (all, rect) => Phaser.Geom.Rectangle.Union(all, rect),
         this.cardRects[0],
       );
+    if (t.stage === TutorialStage.Route) {
+      anchor = allCards();
       text = TUTORIAL_TEXT[TutorialStage.Route];
-    } else if (t.stage === TutorialStage.RouteBoss) {
-      anchor = this.cardRects[this.cardRects.length - 1];
-      text = TUTORIAL_TEXT[TutorialStage.RouteBoss];
+    } else if (t.stage === TutorialStage.RankReset) {
+      anchor = allCards();
+      text = TUTORIAL_TEXT[TutorialStage.RankReset];
+    } else if (t.stage === TutorialStage.RankGoal && this.rankRect) {
+      anchor = this.rankRect;
+      text = TUTORIAL_TEXT[TutorialStage.RankGoal];
     } else if (t.stage === TutorialStage.RouteStart && this.startRect) {
       anchor = this.startRect;
       text = TUTORIAL_TEXT[TutorialStage.RouteStart];
