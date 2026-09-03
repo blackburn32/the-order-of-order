@@ -12,6 +12,7 @@ import {
   saveActiveRun,
   type ResumableCheckpoint,
 } from "../systems/ActiveRunPersistence";
+import { STORY_BUTTONS } from "../story";
 import { responsive } from "../ui/layout";
 import {
   buildPageDots,
@@ -30,6 +31,13 @@ import { bannerButton } from "../ui/widgets";
  *  than the intro's dim margin light: these are the screens where the Order's
  *  work has just landed, and the room should read as answering it. */
 const ENDING_AMBIENCE = 0.8;
+
+/** Air under the button, before the dots. */
+const DOTS_GAP = 24;
+/** What the control block needs below its button: the gap, the dots and a
+ *  little air under them. Declared to the frame so the copy above stops clear
+ *  of the whole block rather than of the button alone. */
+const BLOCK_TAIL = DOTS_GAP + 12;
 
 export interface EndingSceneData {
   id: EndingId;
@@ -77,7 +85,12 @@ export class EndingScene extends Phaser.Scene {
   }
 
   private build(): void {
-    this.frame = buildStoryFrame(this, this.def.pages, ENDING_AMBIENCE);
+    this.frame = buildStoryFrame(
+      this,
+      this.def.pages,
+      ENDING_AMBIENCE,
+      BLOCK_TAIL,
+    );
     this.slideBackdrop = this.frame.backdrop;
     this.act = this.frame.page(this.def.pages[this.page]);
     this.buildControls();
@@ -89,22 +102,33 @@ export class EndingScene extends Phaser.Scene {
     for (const control of this.controls) control.destroy();
     this.controls = [];
 
-    const cx = this.scale.width / 2;
+    const { blockTop, blockX, blockWidth, blockBottom } = this.frame;
     const last = this.page === this.def.pages.length - 1;
 
-    const label = last ? this.def.button : "Continue";
-    const button = bannerButton(this, cx, 0, label, () => {
-      if (last) this.finish();
-      else this.nextPage();
-    });
-    button.y = this.frame.blockTop + button.height / 2;
+    // The button takes whatever the block has left once the dots are spoken
+    // for, so a short viewport shrinks it rather than pushing it off the foot
+    // of the screen or into the column beside it.
+    const label = last ? this.def.button : STORY_BUTTONS.continue;
+    const button = bannerButton(
+      this,
+      blockX,
+      0,
+      label,
+      () => {
+        if (last) this.finish();
+        else this.nextPage();
+      },
+      blockWidth,
+      Math.max(1, blockBottom - blockTop - BLOCK_TAIL),
+    );
+    button.y = blockTop + button.height / 2;
     this.controls.push(button);
 
     this.controls.push(
       ...buildPageDots(
         this,
-        cx,
-        button.y + button.height / 2 + 24,
+        blockX,
+        button.y + button.height / 2 + DOTS_GAP,
         this.def.pages.length,
         this.page,
       ),

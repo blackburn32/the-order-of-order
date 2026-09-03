@@ -1217,6 +1217,13 @@ const FACE_CELL = 76;
 const FACE_NUMERAL_PX = 34;
 const FACE_LABEL_PX = 13;
 
+/** The cross an inert die wears, in the die's own 96-unit design space: how far
+ *  each arm reaches from the die's center, and how thick it is drawn. Sized to
+ *  cross the body with a margin inside its rounded corners, and to stay clear of
+ *  the `FACE_CELL` the atlas packs it into. */
+const STRIKE_REACH = 30;
+const STRIKE_WIDTH = 6;
+
 /**
  * Phaser sizes a Text object's canvas from a fixed reference string
  * (`TextStyle.testString`, `"|MÉqgy"`) via `actualBoundingBoxAscent/Descent`,
@@ -1266,6 +1273,11 @@ function numeralYOffset(
  * every tumble tick of every roll, which is what made large dice grids crawl.
  */
 function buildDiceAtlas(scene: Phaser.Scene): void {
+  // Along with the faces and labels the atlas carries one frame that is not a
+  // face at all: the cross laid over a die an affliction has made inert. It
+  // lives here so showing one is a frame swap on a texture every die in the
+  // grid is already batching with, rather than a Graphics per struck-out die in
+  // a grid that can hold a viewport's worth of them.
   const faces = DIE_LADDER.flatMap((sides) =>
     Array.from({ length: sides }, (_, i) => ({
       name: `face-${sides}-${i + 1}`,
@@ -1278,7 +1290,7 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
     sides,
   }));
 
-  const total = faces.length + labels.length;
+  const total = faces.length + labels.length + 1; // + the inert strike
   const cols = Math.ceil(Math.sqrt(total));
   const rows = Math.ceil(total / cols);
 
@@ -1302,8 +1314,8 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
   };
 
   // draw() only queues a command referencing the object — it isn't rasterized
-  // until render() runs, so every throwaway Text must survive until then.
-  const throwaways: Phaser.GameObjects.Text[] = [];
+  // until render() runs, so every throwaway must survive until then.
+  const throwaways: Phaser.GameObjects.GameObject[] = [];
 
   // `resolution: 1`, against `installHighResolutionText`'s default of `DPR`.
   // That default is for text drawn straight to the screen, where the camera
@@ -1348,6 +1360,17 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
       .setOrigin(0.5);
     rt.draw(text, cx, cy);
     throwaways.push(text);
+  }
+
+  {
+    const { cx, cy } = placeAt("strike");
+    const reach = STRIKE_REACH * scale;
+    const strike = scene.add.graphics();
+    strike.lineStyle(STRIKE_WIDTH * scale, COLORS.waxRed, 1);
+    strike.lineBetween(-reach, -reach, reach, reach);
+    strike.lineBetween(reach, -reach, -reach, reach);
+    rt.draw(strike, cx, cy);
+    throwaways.push(strike);
   }
 
   rt.render();

@@ -1,7 +1,5 @@
 import { COLORS } from "../art/palette";
 import {
-  applyDeadDice,
-  applyDeadDiceCounts,
   applyMultiplierPenalty,
   extraPointsFor,
   jackpotFor,
@@ -36,8 +34,13 @@ import {
  *  O(types × faces) if sampled straight from buckets (huge counts). Once you hold
  *  a DiceAgg, scoring is O(distinct face values) regardless of dice count. */
 export interface DiceAgg {
-  total: number; // dice.length
-  valueCounts: Map<number, number>; // face value -> how many dice show it (all dice)
+  total: number; // dice.length — the whole grid, inert dice included, since that
+  // is what a grid-size rule (Dividend, Uniform) is counting
+  inertCount: number; // of those, how many rolled but went unread: the grid's
+  // inert head (see Afflictions.inertDiceCount). Every OTHER count below is over
+  // the live dice alone, so nothing downstream has to subtract this — it is here
+  // for the rules that need the live total, and for the UI to name the penalty
+  valueCounts: Map<number, number>; // face value -> how many LIVE dice show it
   scoringCount: number; // dice whose face is a scoring number, or that are wild
   scoringD1Count: number; // of those, how many are d1 (drives Keen Edge)
   extraNumberScoringCount: number; // scoring faces above 1 enabled by Extra Number
@@ -54,11 +57,14 @@ export interface DiceAgg {
 
 /** O(dice) bridge from the existing per-die array to a DiceAgg. Use this below
  *  the bucketing threshold and to verify the sampled path against real rolls.
- *  Mirrors the scoring-detection logic in Scoring.ts exactly. */
+ *  Mirrors the scoring-detection logic in Scoring.ts exactly — including which
+ *  dice it declines to read: the leading `inertCount` of them roll and are
+ *  counted in `total`, and are invisible to everything else. */
 export function aggFromDice(
   dice: Die[],
   scoringNumbers: number[],
   royalSealSizes: readonly number[] = [],
+  inertCount = 0,
 ): DiceAgg {
   const valueCounts = new Map<number, number>();
   let scoringCount = 0;
@@ -73,8 +79,13 @@ export function aggFromDice(
   const sealed = new Set(royalSealSizes);
   const allSizes = new Set<number>();
   const scoringSizes = new Set<number>();
-  for (const die of dice) {
+  const inert = Math.max(0, Math.min(dice.length, Math.floor(inertCount)));
+  for (let k = 0; k < dice.length; k++) {
+    const die = dice[k];
+    // A die's size is a fact about the grid, not about the roll, so the inert
+    // head still counts toward Uniform and the rest of `allSizes`.
     allSizes.add(die.sides);
+    if (k < inert) continue;
     valueCounts.set(die.value, (valueCounts.get(die.value) ?? 0) + 1);
     const windfallHit =
       die.maxFaceBonus > 0 && !die.loaded && die.value === die.sides;
@@ -99,6 +110,7 @@ export function aggFromDice(
   for (const factor of windfallFactors) windfallMult *= BigInt(factor);
   return {
     total: dice.length,
+    inertCount: inert,
     valueCounts,
     scoringCount,
     scoringD1Count,
@@ -246,6 +258,7 @@ export function rollBucketsToAgg(
   for (const factor of windfallFactors) windfallMult *= BigInt(factor);
   return {
     total,
+    inertCount: 0,
     valueCounts,
     scoringCount,
     scoringD1Count,
@@ -281,16 +294,14 @@ export function scoreRollHistogram(
   const silenced = suppresses(state, "extraNumber");
   const extraNumberScored = silenced ? 0 : agg.extraNumberScoringCount;
 
-  // The Toll makes a fraction of the grid inert. It is applied to the COUNTS
-  // rather than by removing dice: in bucket mode individual dice do not exist,
-  // so scaling the aggregate is the only definition that means the same thing at
-  // every grid size.
-  const scoringCount = applyDeadDice(
-    state,
-    agg.scoringCount - (silenced ? agg.extraNumberScoringCount : 0),
-  );
-  const scoringD1Count = applyDeadDice(state, agg.scoringD1Count);
-  const valueCounts = applyDeadDiceCounts(state, agg.valueCounts);
+  // Nothing here has to account for the inert dice. Whoever rolled the grid
+  // named them (Afflictions.inertDiceCount), and the aggregate arrived with
+  // their faces already left out of every count below — which is why the grid
+  // can draw a cross through exactly those dice and be telling the truth.
+  const scoringCount =
+    agg.scoringCount - (silenced ? agg.extraNumberScoringCount : 0);
+  const scoringD1Count = agg.scoringD1Count;
+  const valueCounts = agg.valueCounts;
 
   // Raw counts (scoringCount, valueCounts) stay Number — exact to ~9e15 dice —
   // but every points value is BigInt, since value×count and the multiplier stack
@@ -322,7 +333,7 @@ export function scoreRollHistogram(
     });
   }
 
-  const extraNumberScoringCount = applyDeadDice(state, extraNumberScored);
+  const extraNumberScoringCount = extraNumberScored;
   if (extraNumberScoringCount > 0) {
     modifiers.push({
       id: "extraNumber",
@@ -336,11 +347,11 @@ export function scoreRollHistogram(
     });
   }
 
-  const wildFaceScoringCount = applyDeadDice(state, agg.wildFaceScoringCount);
+  const wildFaceScoringCount = agg.wildFaceScoringCount;
   if (wildFaceScoringCount > 0) {
     modifiers.push({
       id: "wildFace",
-      name: "Wild Face",
+      name: "Contentment",
       points: 0n,
       displayPoints: BigInt(wildFaceScoringCount),
       color: COLORS.goldLight,
@@ -350,8 +361,8 @@ export function scoreRollHistogram(
     });
   }
 
-  const royalSealScoringCount = applyDeadDice(state, agg.royalSealScoringCount);
-  const royalSealBonus = applyDeadDice(state, agg.royalSealBonus);
+  const royalSealScoringCount = agg.royalSealScoringCount;
+  const royalSealBonus = agg.royalSealBonus;
   if (royalSealScoringCount > 0 || royalSealBonus > 0) {
     modifiers.push({
       id: "royalSeal",
@@ -371,7 +382,7 @@ export function scoreRollHistogram(
   if (extraPointBonus > 0) {
     modifiers.push({
       id: "extraPoint",
-      name: "Extra Point",
+      name: "Deeper Stillness",
       points: BigInt(extraPointBonus),
       color: COLORS.goldLight,
       dice: noDice,
@@ -385,7 +396,7 @@ export function scoreRollHistogram(
   if (keenEdgeBonus > 0) {
     modifiers.push({
       id: "keenEdge",
-      name: "Keen Edge",
+      name: "Enlightenment",
       points: BigInt(keenEdgeBonus),
       color: COLORS.goldLight,
       dice: noDice,
@@ -401,7 +412,7 @@ export function scoreRollHistogram(
     if (bonus > 0n) {
       modifiers.push({
         id: "snakeEyes",
-        name: "Snake Eyes",
+        name: "Consensus",
         points: bonus,
         color: COLORS.glowGreen,
         dice: noDice,
@@ -416,7 +427,7 @@ export function scoreRollHistogram(
   if (jackpot > 0 && jackpotSets > 0) {
     modifiers.push({
       id: "jackpot",
-      name: "Jackpot",
+      name: "The Congregation",
       points: BigInt(jackpotSets * JACKPOT_POINTS * jackpot),
       color: COLORS.goldLight,
       dice: noDice,
@@ -447,7 +458,7 @@ export function scoreRollHistogram(
   if (state.momentum > 0 && rollScored) {
     modifiers.push({
       id: "momentum",
-      name: "Momentum",
+      name: "Rhythm",
       points: BigInt(state.momentumStreak * state.momentum * 2),
       color: COLORS.glowGreen,
       dice: noDice,
@@ -459,7 +470,7 @@ export function scoreRollHistogram(
   if (state.pocketChange > 0) {
     modifiers.push({
       id: "pocketChange",
-      name: "Pocket Change",
+      name: "Small Mercies",
       points: BigInt(2 * state.pocketChange),
       color: COLORS.glow,
       dice: noDice,
@@ -471,7 +482,7 @@ export function scoreRollHistogram(
   if (dividendPoints > 0) {
     modifiers.push({
       id: "dividend",
-      name: "Dividend",
+      name: "Strength in Numbers",
       points: BigInt(dividendPoints),
       color: COLORS.glow,
       dice: noDice,
@@ -512,7 +523,7 @@ export function scoreRollHistogram(
   if (state.prism > 0) {
     modifiers.push({
       id: "prism",
-      name: "Prism",
+      name: "Clarity",
       points: 0n,
       mult: 3n ** BigInt(state.prism),
       color: COLORS.goldLight,
@@ -524,7 +535,7 @@ export function scoreRollHistogram(
   if (opts.finalRoll && state.lastCall > 0) {
     modifiers.push({
       id: "lastCall",
-      name: "Last Call",
+      name: "Vespers",
       points: 0n,
       mult: 4n ** BigInt(state.lastCall),
       color: COLORS.goldLight,
@@ -536,7 +547,7 @@ export function scoreRollHistogram(
   if (downbeatActive) {
     modifiers.push({
       id: "downbeat",
-      name: "Downbeat",
+      name: "The Toll",
       points: 0n,
       mult: DOWNBEAT_MULT ** BigInt(state.downbeat),
       color: COLORS.goldLight,
@@ -548,7 +559,7 @@ export function scoreRollHistogram(
   if (hairTriggerActive) {
     modifiers.push({
       id: "hairTrigger",
-      name: "Hair Trigger",
+      name: "First Light",
       points: 0n,
       mult: HAIR_TRIGGER_MULT,
       color: COLORS.goldLight,
@@ -560,7 +571,7 @@ export function scoreRollHistogram(
   if (paradeActive) {
     modifiers.push({
       id: "parade",
-      name: "Parade",
+      name: "The Procession",
       points: 0n,
       mult: 2n,
       color: COLORS.goldLight,
@@ -572,7 +583,7 @@ export function scoreRollHistogram(
   if (menagerieActive) {
     modifiers.push({
       id: "menagerie",
-      name: "Menagerie",
+      name: "The Whole Order",
       points: 0n,
       mult: 2n,
       color: COLORS.goldLight,
@@ -584,7 +595,7 @@ export function scoreRollHistogram(
   if (uniformActive) {
     modifiers.push({
       id: "uniform",
-      name: "Uniform",
+      name: "Of One Mind",
       points: 0n,
       mult: 3n,
       color: COLORS.goldLight,

@@ -74,11 +74,11 @@ export interface RunState {
   hasCrunchTime: boolean; // shorter trials, tripled points
   hasBloodPrice: boolean; // scoring dice may shatter, quadrupled points
   hasOuroboros: boolean; // scoring dice pay ten and usually shatter
-  hasFamishedIdol: boolean; // the grid is capped, points ×5
+  hasFamishedIdol: boolean; // the grid is capped, points ×8
   hasBloat: boolean; // dice grow a rung each trial, points ×4
   hasSealedDoors: boolean; // one purchase a shop, but it takes effect twice
   hasGamblersCurse: boolean; // a roll may score nothing, points ×4
-  hasReckoning: boolean; // every goal doubled, points doubled
+  hasReckoning: boolean; // every goal doubled, points tripled
   hasHairTrigger: boolean; // a trial's first roll ×10, every later roll halved
   // Every standing drawback in force for the rest of the run, by id. Cursed
   // cards push theirs here on purchase; a Boss Trial's modifiers are folded in
@@ -128,6 +128,7 @@ export interface RunState {
   titheBowl: number; // +1 gold per copy on a roll that scores nothing
   luckyCoin: number; // 10% chance per copy each roll of +1 gold
   countingHouse: number; // +1 gold per copy at every trial clear
+  deepPockets: number; // +2 to the unused-roll gold cap per copy
   // Always-maintained trackers that drive unlock criteria (not tied to owning
   // any particular item).
   scoreStreak: number; // consecutive scoring rolls this run; a dud resets it
@@ -234,6 +235,7 @@ export function newRun(shopUnlocks: readonly ShopItemId[] = []): RunState {
     titheBowl: 0,
     luckyCoin: 0,
     countingHouse: 0,
+    deepPockets: 0,
     scoreStreak: 0,
     momentumStreak: 0,
     clutchClear: false,

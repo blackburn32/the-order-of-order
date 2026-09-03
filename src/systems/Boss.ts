@@ -61,7 +61,7 @@ export const BOSS_MODIFIERS: BossModifier[] = [
   {
     id: "famine",
     name: "The Famine",
-    desc: "Extra Point and Keen Edge grant nothing.",
+    desc: "Deeper Stillness and Enlightenment grant nothing.",
     shortDesc: "BONUSES SEALED",
   },
   {
@@ -91,7 +91,7 @@ export const BOSS_MODIFIERS: BossModifier[] = [
   {
     id: "warden",
     name: "The Warden",
-    desc: "Snake Eyes, Jackpot and Lucky Seven grant nothing.",
+    desc: "Consensus, The Congregation and Lucky Seven grant nothing.",
     shortDesc: "PATTERNS SEALED",
   },
   {

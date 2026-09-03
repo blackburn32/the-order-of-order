@@ -126,7 +126,7 @@ export type AfflictionId =
  *  the shape a curse wants: felt where the trial is already tight. */
 export const CRUNCH_TIME_ROLL_COST = 3;
 /** Famished Idol's ceiling on the grid. */
-export const FAMISHED_IDOL_GRID_CAP = 100;
+export const FAMISHED_IDOL_GRID_CAP = 500;
 /** What Pauper's Vow lets the player carry out of a trial. */
 export const PAUPERS_VOW_GOLD_CEILING = 7;
 /** The Long Night's count of Boss Trial modifiers. */
@@ -151,10 +151,10 @@ export const AFFLICTIONS: Record<AfflictionId, Affliction> = {
   ouroboros: { dieBreakChance: 0.5 },
   famishedIdol: { gridCap: FAMISHED_IDOL_GRID_CAP },
   bloat: { dieGrowthPerTrial: 1 },
-  ironDebt: { clearGoldMultMilli: 0 },
+  ironDebt: { clearGoldMultMilli: 400 },
   paupersVow: { goldCeiling: PAUPERS_VOW_GOLD_CEILING },
   sealedDoors: { purchaseLimit: 1 },
-  devilsBargain: { goalMultMilli: 1_250 },
+  devilsBargain: { goalMultMilli: 1_150 },
   leadenDice: { loadsAllDice: true },
   locustIdol: { blocksGrowth: true },
   gamblersCurse: { dudRollChance: 0.1 },
@@ -191,7 +191,7 @@ export const AFFLICTION_COPY: Record<AfflictionId, AfflictionCopy> = {
   // --- Boss Trial modifiers ------------------------------------------------
   famine: {
     name: "The Lean Years",
-    desc: "Extra Point and Keen Edge grant nothing, ever again.",
+    desc: "Deeper Stillness and Enlightenment grant nothing, ever again.",
   },
   drought: {
     name: "The Dry Decree",
@@ -211,7 +211,7 @@ export const AFFLICTION_COPY: Record<AfflictionId, AfflictionCopy> = {
   },
   warden: {
     name: "The Warden's Seal",
-    desc: "Snake Eyes, Jackpot and Lucky Seven grant nothing, ever again.",
+    desc: "Consensus, The Congregation and Lucky Seven grant nothing, ever again.",
   },
   toll: {
     name: "The Levy of Dice",
@@ -245,7 +245,7 @@ export const AFFLICTION_COPY: Record<AfflictionId, AfflictionCopy> = {
   },
   ironDebt: {
     name: "The Iron Debt",
-    desc: "Clearing a trial pays no gold at all.",
+    desc: "A cleared trial pays only 40% of its ordinary gold.",
   },
   paupersVow: {
     name: "The Pauper's Writ",
@@ -257,7 +257,7 @@ export const AFFLICTION_COPY: Record<AfflictionId, AfflictionCopy> = {
   },
   devilsBargain: {
     name: "The Crown's Cut",
-    desc: "Every goal from here is 25% higher.",
+    desc: "Every goal from here is 15% higher.",
   },
   leadenDice: {
     name: "The Leaden Seal",
@@ -475,7 +475,8 @@ export function blocksGrowthPermanently(state: RunState): boolean {
  * Dead dice are the one lever that reduces points without touching the run
  * multiplier, so a penalty expressed here stays exact in the per-item
  * attribution: it lowers the modifiers themselves rather than the factor they
- * are later multiplied by.
+ * are later multiplied by. `inertDiceCount` turns the fraction into the dice
+ * that actually pay it.
  */
 export function deadDiceFraction(state: RunState): number {
   const a = afflictionsFor(state);
@@ -483,25 +484,43 @@ export function deadDiceFraction(state: RunState): number {
   return Math.min(DEAD_DICE_CEILING, a.deadDiceFraction + late);
 }
 
-/** Scale a die count down by the dead-dice fraction in force. The one place that
- *  rounding is decided, so both scorers agree exactly. */
-export function applyDeadDice(state: RunState, count: number): number {
+/**
+ * How many of the grid's dice are inert right now — and it is always the FIRST
+ * `n` of them, the oldest ranks the run has.
+ *
+ * This is the one place the fraction becomes a count, so the dice the grid draws
+ * with a cross through them are exactly the dice every scorer refuses to read.
+ * An inert die is still a die: it sits in the grid, it rolls, it can be shrunk,
+ * loaded, twinned, or counted by a grid-size rule. What it loses is its face —
+ * nothing reads the value it lands on, so it scores no points, joins no pattern,
+ * spawns no copy, and neither shatters nor defects.
+ *
+ * A contiguous block is picked over a scattered draw so it reads as a levy taken
+ * off one end of the ranks rather than as rot through all of them, and because
+ * it is recoverable from the grid size alone — a relayout, a reload and the
+ * second scorer all arrive at the same set without anyone remembering it.
+ *
+ * That end is the FRONT, and the reason is growth. The count is a share of the
+ * grid, so the block widens as the grid does; anchored at the back it would keep
+ * widening into the dice the player had just won, and every die won under the
+ * affliction would arrive already struck out. Anchored at the front it widens
+ * into the established ranks instead, dice are appended live at the far end
+ * where nothing has to be reordered to keep them that way, and a die only ever
+ * goes inert once — the block never gives one back and then takes another.
+ */
+export function inertDiceCount(state: RunState, total: number): number {
   const fraction = deadDiceFraction(state);
-  if (fraction <= 0 || count <= 0) return count;
-  return Math.max(0, count - Math.floor(count * fraction));
+  if (fraction <= 0 || total <= 0) return 0;
+  return Math.min(total, Math.floor(total * fraction));
 }
 
-/** Every face count, scaled by the dead-dice fraction. Returns the original map
- *  untouched when nothing is dead-dicing, so the common path allocates nothing. */
-export function applyDeadDiceCounts(
+/** Whether grid index `i`, of a grid of `total` dice, is one of the inert ones. */
+export function isInertIndex(
   state: RunState,
-  counts: Map<number, number>,
-): Map<number, number> {
-  if (deadDiceFraction(state) <= 0) return counts;
-  const scaled = new Map<number, number>();
-  for (const [value, count] of counts)
-    scaled.set(value, applyDeadDice(state, count));
-  return scaled;
+  i: number,
+  total: number,
+): boolean {
+  return i < inertDiceCount(state, total);
 }
 
 // ---- Suppression views -----------------------------------------------------

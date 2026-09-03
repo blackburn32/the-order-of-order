@@ -38,12 +38,18 @@ export function getBucketThreshold(): number {
 }
 
 /** A group of identical dice. `lastFaces[v-1]` holds how many of this bucket's
- *  dice showed face value `v` on the most recent roll (undefined before any roll);
- *  `lastScoring` caches how many of them scored, for Genesis, and
+ *  LIVE dice showed face value `v` on the most recent roll (undefined before any
+ *  roll); `lastScoring` caches how many of them scored, for Genesis, and
  *  `lastNonScoring` how many did not, for defection. The two halves are cached
  *  separately rather than derived from each other because each is spent by its
  *  own destruction pass, and a pass that has spent its half must not make the
- *  other half look larger. */
+ *  other half look larger.
+ *
+ *  A bucket that overlaps the grid's inert head also rolled dice nobody read.
+ *  Their faces are kept apart in `lastInertFaces` — the grid still has to draw
+ *  them, so they have to land on something — and are absent from every tally
+ *  above, which is the whole of what "inert" means here. `lastInert` is the
+ *  boundary: the bucket's first `lastInert` dice are inert, the rest live. */
 interface Bucket {
   sides: DieSides;
   maxFaceBonus: number;
@@ -52,6 +58,8 @@ interface Bucket {
   source: string;
   count: number;
   lastFaces?: number[];
+  lastInertFaces?: number[];
+  lastInert?: number;
   lastScoring?: number;
   lastNonScoring?: number;
   shuffleSeed?: number;
@@ -152,8 +160,14 @@ export class DicePool {
   private buckets: Bucket[] = [];
   private _count = 0;
   private roll_?: RollData; // cached result of the most recent roll()
-  private rolledCount = 0; // grid size at the last roll, so growth passives only
-  // clone dice that were present then (not each other)
+  // The half-open span of grid indices the last roll actually read —
+  // [rolledFrom, rolledTo) — and so everything the growth and destruction
+  // passives are allowed to act on. It is narrower than the grid at both ends:
+  // the inert head below `rolledFrom` was never read, so nothing may bill or
+  // breed it, and the copies a growth passive has since appended sit at or above
+  // `rolledTo`, so they cannot go on to clone each other.
+  private rolledFrom = 0;
+  private rolledTo = 0;
   private lastScoringNumbers: number[] = [];
   private rollVersion = 0;
 
@@ -276,17 +290,30 @@ export class DicePool {
 
   // --- rolling -------------------------------------------------------------
 
-  /** Roll every die (per-die) or sample each bucket's face histogram (bucketed),
-   *  caching the aggregate scoring view + per-source tallies. Call once per turn
-   *  before scoring; scoreRollHistogram then reads `agg()`. */
+  /**
+   * Roll every die (per-die) or sample each bucket's face histogram (bucketed),
+   * caching the aggregate scoring view + per-source tallies. Call once per turn
+   * before scoring; scoreRollHistogram then reads `agg()`.
+   *
+   * `inertCount` is how many dice at the FRONT of the grid an affliction has
+   * made inert (see Afflictions.inertDiceCount). They roll like any other die —
+   * the grid draws them face-up with a cross through them — but their faces are
+   * kept out of every tally cached here, which is the only definition of "inert"
+   * anything downstream needs: they cannot score, cannot complete a pattern,
+   * cannot be copied by a growth passive, and cannot be billed by breakage or
+   * defection, because none of those look anywhere but at these tallies.
+   */
   roll(
     rng: () => number,
     scoringNumbers: number[],
     royalSealSizes: readonly DieSides[] = [],
+    inertCount = 0,
   ): void {
     this.rollVersion += 1;
     this.lastScoringNumbers = scoringNumbers;
-    this.rolledCount = this._count;
+    const inert = Math.max(0, Math.min(this._count, Math.floor(inertCount)));
+    this.rolledFrom = inert;
+    this.rolledTo = this._count;
     const scoring = new Set(scoringNumbers);
     const sealed = new Set<DieSides>(royalSealSizes);
     const valueCounts = new Map<number, number>();
@@ -303,9 +330,14 @@ export class DicePool {
     let windfallScoringCount = 0;
 
     if (this.mode === "list") {
-      for (const die of this.list) {
+      for (let k = 0; k < this.list.length; k++) {
+        const die = this.list[k];
+        // Every die rolls, inert or not — the grid shows a face on all of them.
         rollDie(die, rng);
+        // A die's size is a fact about the grid rather than about the roll, so
+        // the inert head still counts toward Uniform and the rest of `allSizes`.
         allSizes.add(die.sides);
+        if (k < inert) continue;
         valueCounts.set(die.value, (valueCounts.get(die.value) ?? 0) + 1);
         const windfallHit =
           die.maxFaceBonus > 0 && !die.loaded && die.value === die.sides;
@@ -336,6 +368,7 @@ export class DicePool {
         if (windfallHit) windfallFactors.add(die.maxFaceBonus);
       }
     } else {
+      let bucketStart = 0;
       for (
         let bucketIndex = 0;
         bucketIndex < this.buckets.length;
@@ -344,8 +377,21 @@ export class DicePool {
         const b = this.buckets[bucketIndex];
         allSizes.add(b.sides);
         const faces = facesOf(b.sides, b.loaded);
-        const faceCounts = sampleFaceCounts(b.count, faces, rng);
+        // The inert head is a prefix of the grid and the buckets are laid out in
+        // grid order, so a bucket's share of it is the overlap of its own index
+        // span with [0, inert). The two halves are sampled as separate
+        // histograms: only the live one is tallied below, and the inert one
+        // exists purely so `dieAt` can still put a face on a die the grid draws.
+        const bucketInert = Math.max(0, Math.min(b.count, inert - bucketStart));
+        bucketStart += b.count;
+        const bucketLive = b.count - bucketInert;
+        const faceCounts = sampleFaceCounts(bucketLive, faces, rng);
         b.lastFaces = faceCounts;
+        b.lastInert = bucketInert;
+        b.lastInertFaces =
+          bucketInert > 0
+            ? sampleFaceCounts(bucketInert, faces, rng)
+            : undefined;
         b.shuffleSeed =
           Math.imul(this.rollVersion, 0x9e3779b1) ^
           Math.imul(bucketIndex + 1, 0x85ebca6b) ^
@@ -378,7 +424,7 @@ export class DicePool {
           if (windfallHit) windfallFactors.add(b.maxFaceBonus);
         }
         b.lastScoring = bucketScoring;
-        b.lastNonScoring = b.count - bucketScoring;
+        b.lastNonScoring = bucketLive - bucketScoring;
         scoringCount += bucketScoring;
         if (bucketScoring > 0)
           scoringBySource.set(
@@ -399,6 +445,7 @@ export class DicePool {
     this.roll_ = {
       agg: {
         total: this._count,
+        inertCount: inert,
         valueCounts,
         scoringCount,
         scoringD1Count,
@@ -448,7 +495,7 @@ export class DicePool {
   doubleTheFun(): number {
     if (this.mode === "list") {
       const copies: Die[] = [];
-      for (let k = 0; k < this.rolledCount; k++) {
+      for (let k = this.rolledFrom; k < this.rolledTo; k++) {
         const d = this.list[k];
         if (d.value === 5 || d.value === 6)
           copies.push(cloneDie(d, "double_the_fun"));
@@ -490,7 +537,11 @@ export class DicePool {
       // List mode retains rolled values, so recover the scoring dice directly.
       // Bounded to the rolled originals so spawned copies never re-spawn.
       const copies: Die[] = [];
-      for (let k = 0; k < this.rolledCount && copies.length < cap; k++) {
+      for (
+        let k = this.rolledFrom;
+        k < this.rolledTo && copies.length < cap;
+        k++
+      ) {
         const d = this.list[k];
         if (this.dieScored(d)) copies.push(cloneDie(d, "genesis"));
       }
@@ -786,8 +837,8 @@ export class DicePool {
    * Both halves can be billed after one roll, so each pass spends its own tally:
    * the dice it took are gone, and `spend` zeroes the cache that named them so a
    * later pass cannot bill them again. In list mode the same is done by shrinking
-   * `rolledCount`, since every die removed here came out of the rolled prefix and
-   * the growth passives' copies sit beyond it.
+   * `rolledTo`, since every die removed here came out of the read span and the
+   * growth passives' copies sit at or beyond its end.
    */
   private destroyRolled(
     count: number,
@@ -801,8 +852,8 @@ export class DicePool {
       // copies growth passives spawned after it are never the ones billed.
       let removed = 0;
       for (
-        let k = Math.min(this.rolledCount, this.list.length) - 1;
-        k >= 0 && removed < count;
+        let k = Math.min(this.rolledTo, this.list.length) - 1;
+        k >= this.rolledFrom && removed < count;
         k--
       ) {
         if (!eligible(this.list[k])) continue;
@@ -810,7 +861,7 @@ export class DicePool {
         removed += 1;
       }
       this._count -= removed;
-      this.rolledCount -= removed;
+      this.rolledTo -= removed;
       return removed;
     }
     const removed = this.removeSpread(count, weight);
@@ -1114,17 +1165,50 @@ export class DicePool {
 
   /** Pick a face value for the `offset`-th die of a bucket from its last-roll
    *  histogram, so a rendered window looks like a real roll. Falls back to the
-   *  top face before any roll. */
+   *  top face before any roll — and for any offset past what the last roll
+   *  covered, which is where a die a growth passive has since appended lands.
+   *
+   *  A bucket overlapping the inert head holds two histograms, and the offset
+   *  picks which: its first `lastInert` dice are drawn from the inert roll, the
+   *  rest from the live one. Reading them from the same table would let a
+   *  crossed-out die show a face that had in fact scored. */
   private synthValue(bucket: Bucket, offset: number): number {
-    const faces = bucket.lastFaces;
-    if (!faces) return bucket.sides;
-    offset = shuffledOffset(offset, bucket.count, bucket.shuffleSeed ?? 0);
+    const inert = bucket.lastInert ?? 0;
+    if (offset < inert)
+      return this.faceAtOffset(
+        bucket.lastInertFaces,
+        offset,
+        inert,
+        ~(bucket.shuffleSeed ?? 0),
+        bucket.sides,
+      );
+    return this.faceAtOffset(
+      bucket.lastFaces,
+      offset - inert,
+      bucket.count - inert,
+      bucket.shuffleSeed ?? 0,
+      bucket.sides,
+    );
+  }
+
+  /** The face the `offset`-th of `count` dice shows, given the histogram they
+   *  landed on. The offset is permuted first so that adjacent grid cells draw
+   *  from well-separated points of the histogram's contiguous face runs. */
+  private faceAtOffset(
+    faces: number[] | undefined,
+    offset: number,
+    count: number,
+    seed: number,
+    fallback: number,
+  ): number {
+    if (!faces || offset >= count) return fallback;
+    offset = shuffledOffset(offset, count, seed);
     let acc = 0;
     for (let v = 1; v <= faces.length; v++) {
       acc += faces[v - 1];
       if (offset < acc) return v;
     }
-    return bucket.sides;
+    return fallback;
   }
 
   // --- queries (criteria, shop availability, save, sim) --------------------

@@ -87,6 +87,23 @@ export function isCompactLandscape(width: number, height: number): boolean {
   );
 }
 
+/**
+ * True where the run's Inventory/Settings links split to opposite ends of one
+ * bottom row instead of stacking in the bottom-right corner. A viewport that
+ * is portrait or simply short puts a wide action across the bottom — the trial
+ * route's Start button, the shop's controls — and the upper of two stacked
+ * links lands on top of that button's right-hand end. A roomy landscape has
+ * the corner to spare, so it keeps the stack.
+ */
+export function isSplitFooter(scene: Phaser.Scene): boolean {
+  return isPortrait(scene) || scene.scale.height < COMPACT_LANDSCAPE_MAX_H;
+}
+
+/** Height the split footer row claims along the bottom edge, air included.
+ *  Content that would otherwise run to the bottom stops this far short of it
+ *  so it clears the link on its side. */
+export const RUN_FOOTER_ROW_H = 34;
+
 /** Outer margin and gutter of the compact-landscape column frame. Every screen
  *  that folds uses the same two numbers, so a device that flips them all at
  *  once folds them onto one grid rather than six near-misses. */

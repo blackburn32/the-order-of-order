@@ -4,7 +4,7 @@ import { loadSettings, saveSettings } from "../systems/SaveData";
 import { beginRun } from "../systems/Tutorial";
 import { bannerButton, checkboxRow } from "../ui/widgets";
 import { responsive } from "../ui/layout";
-import { INTRO_PAGES } from "../story";
+import { INTRO_PAGES, STORY_BUTTONS } from "../story";
 import {
   buildPageDots,
   buildStoryFrame,
@@ -22,6 +22,15 @@ import {
  *  only ever read at the margins around it, where the menu's brightness would
  *  compete with the art instead of framing it. */
 const INTRO_AMBIENCE = 0.35;
+
+/** Air under the button, before the skip row. */
+const ROW_GAP = 24;
+/** Air between the skip row and the dots. */
+const DOTS_GAP = 34;
+/** What the control block needs below its button: the skip row's slot — held
+ *  on every page, not just the one that fills it — and then the dots. Declared
+ *  to the frame so the copy above stops clear of the whole block. */
+const BLOCK_TAIL = ROW_GAP + DOTS_GAP + 12;
 
 export class IntroScene extends Phaser.Scene {
   private page = 0;
@@ -47,7 +56,7 @@ export class IntroScene extends Phaser.Scene {
   }
 
   private build(): void {
-    this.frame = buildStoryFrame(this, INTRO_PAGES, INTRO_AMBIENCE);
+    this.frame = buildStoryFrame(this, INTRO_PAGES, INTRO_AMBIENCE, BLOCK_TAIL);
     this.slideBackdrop = this.frame.backdrop;
     this.chapter = this.frame.page(INTRO_PAGES[this.page]);
     this.buildControls();
@@ -60,26 +69,37 @@ export class IntroScene extends Phaser.Scene {
     for (const control of this.controls) control.destroy();
     this.controls = [];
 
-    const cx = this.scale.width / 2;
+    const { blockTop, blockX, blockWidth, blockBottom } = this.frame;
     const last = this.page === INTRO_PAGES.length - 1;
 
-    const label = last ? "Begin" : "Continue";
-    const button = bannerButton(this, cx, 0, label, () => {
-      if (last) this.leave(() => beginRun(this));
-      else this.nextPage();
-    });
-    button.y = this.frame.blockTop + button.height / 2;
+    // The button takes whatever the block has left once the row and the dots
+    // are spoken for, so a short viewport shrinks it rather than pushing it off
+    // the foot of the screen or into the column beside it.
+    const label = last ? STORY_BUTTONS.beginRun : STORY_BUTTONS.continue;
+    const button = bannerButton(
+      this,
+      blockX,
+      0,
+      label,
+      () => {
+        if (last) this.leave(() => beginRun(this));
+        else this.nextPage();
+      },
+      blockWidth,
+      Math.max(1, blockBottom - blockTop - BLOCK_TAIL),
+    );
+    button.y = blockTop + button.height / 2;
     this.controls.push(button);
 
     // The skip row only exists on the last page, but its height is reserved on
     // every page: the dots are part of the furniture now, and they must not
     // step down the screen when the row appears under them.
-    const rowY = button.y + button.height / 2 + 24;
+    const rowY = button.y + button.height / 2 + ROW_GAP;
     if (last) {
       this.skip = !loadSettings().showIntro;
       const row = checkboxRow(
         this,
-        cx,
+        blockX,
         rowY,
         "Skip the intro on future runs",
         this.skip,
@@ -91,15 +111,27 @@ export class IntroScene extends Phaser.Scene {
         },
         26,
         // The row sits on the dark felt, so use light text and a parchment
-        // border instead of the panel-friendly ink defaults.
-        { textColor: CSS.ivory, boxStroke: COLORS.parchment },
+        // border instead of the panel-friendly ink defaults. Its label is a
+        // full sentence, so it is also the first thing to overrun the folded
+        // layout's column — hence the width budget.
+        {
+          textColor: CSS.ivory,
+          boxStroke: COLORS.parchment,
+          maxWidth: blockWidth,
+        },
       );
       row.setDepth(1);
       this.controls.push(row);
     }
 
     this.controls.push(
-      ...buildPageDots(this, cx, rowY + 34, INTRO_PAGES.length, this.page),
+      ...buildPageDots(
+        this,
+        blockX,
+        rowY + DOTS_GAP,
+        INTRO_PAGES.length,
+        this.page,
+      ),
     );
   }
 

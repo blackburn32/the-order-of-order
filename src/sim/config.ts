@@ -48,6 +48,17 @@ export interface SimConfig {
   /** Safety cap on total rolls per run, in case a build could loop forever. */
   maxRollsPerRun: number;
 
+  /** How willing the shopper is to accept a cursed card. Zero requires a clear
+   * bargain; one accepts anything that is not actively ruinous. */
+  curseAppetite?: number;
+
+  /** Simulation-only multiplier on the ordinary unused-roll payout. Reserve's
+   * item bonus is deliberately left alone. */
+  unusedRollBaseMultiplier?: number;
+
+  /** Simulation-only replacement for the maximum unused rolls that pay gold. */
+  unusedRollCap?: number;
+
   /**
    * Record every trial's per-roll cumulative score into its `TrialPoint`.
    *

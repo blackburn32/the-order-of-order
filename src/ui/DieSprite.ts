@@ -10,6 +10,11 @@ const SPAWN_MS = 260;
  *  twitching, large enough that the face is legible the whole way up. */
 const SPAWN_START_SCALE = 0.3;
 
+/** How faded an inert die is. Enough to drop it behind the dice that still
+ *  count, not so much that its face stops being readable — the player is meant
+ *  to see the 1 it wasted, which is the whole sting of the affliction. */
+const INERT_ALPHA = 0.5;
+
 /** A die in the grid: ivory body, baked face (pips/numeral), type label. */
 export class DieSprite extends Phaser.GameObjects.Container {
   die: Die;
@@ -17,6 +22,8 @@ export class DieSprite extends Phaser.GameObjects.Container {
   private faceImage: Phaser.GameObjects.Image;
   private typeImage: Phaser.GameObjects.Image;
   private marker?: Phaser.GameObjects.Image;
+  // The cross an inert die wears (see setInert), hidden on every other die.
+  private strikeImage: Phaser.GameObjects.Image;
   // Border overlay for effect flashes. Created up front (not lazily) so the
   // windowed grid camera's ignore-list snapshot covers it like the other children.
   private effectBorder: Phaser.GameObjects.Graphics;
@@ -33,6 +40,9 @@ export class DieSprite extends Phaser.GameObjects.Container {
   private spawnTween?: Phaser.Tweens.Tween;
   private spawnScale = 1;
   private spawnEndsAt = 0;
+  // Whether this die is currently struck out. Held because the pop-in and the
+  // pulse both write `alpha`, and an inert die does not rest at 1.
+  private inert = false;
 
   constructor(scene: Phaser.Scene, x: number, y: number, die: Die) {
     super(scene, x, y);
@@ -51,12 +61,38 @@ export class DieSprite extends Phaser.GameObjects.Container {
       this.add(this.marker);
     }
 
+    // Over the face, under the effect border, so a die that is both inert and
+    // flashing still reads as struck out. Built for every die rather than on
+    // demand for the few that need it: Camera.ignore() only snapshots a
+    // Container's *current* children (see the windowed grid camera in
+    // GameScene), so a child added later would leak into the cameras this
+    // sprite has opted out of.
+    this.strikeImage = artImage(scene, 0, 0, "die-atlas", "strike");
+    this.strikeImage.setVisible(false);
+    this.add(this.strikeImage);
+
     this.effectBorder = scene.add.graphics();
     this.effectBorder.setAlpha(0);
     this.add(this.effectBorder);
 
     this.showFace(die.value > 0 ? die.value : null);
     scene.add.existing(this);
+  }
+
+  /**
+   * Mark this die inert, or clear the mark.
+   *
+   * An inert die is one an affliction has struck off the grid's books: it still
+   * rolls, and the face it lands on is still shown, but nothing reads it (see
+   * Afflictions.inertDiceCount). So it is drawn as it is scored — faded, with a
+   * red cross laid over the face — rather than hidden or left blank, because the
+   * player has to be able to count what the affliction is costing them.
+   */
+  setInert(inert: boolean): void {
+    if (inert === this.inert) return;
+    this.inert = inert;
+    this.strikeImage.setVisible(inert);
+    this.setAlpha(inert ? INERT_ALPHA : 1);
   }
 
   /** Update body texture/label/face after the die type changed (shrink). */
@@ -95,7 +131,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
       targets: this,
       scaleX: scale,
       scaleY: scale,
-      alpha: 1,
+      alpha: this.inert ? INERT_ALPHA : 1,
       duration: SPAWN_MS,
       delay,
       ease: "Back.easeOut",
@@ -213,9 +249,10 @@ export class DieSprite extends Phaser.GameObjects.Container {
     this.effectBorder.setAlpha(0);
     // The kill above takes any pop-in with it, which would leave the die
     // stranded small and invisible. The caller owns the scale (it sets it
-    // right after), so only the fade has to be undone here.
+    // right after), so only the fade has to be undone here — back to whatever
+    // this die's resting alpha is, which for an inert one is not full.
     this.spawnTween = undefined;
-    this.setAlpha(1);
+    this.setAlpha(this.inert ? INERT_ALPHA : 1);
     this.snapSettled();
   }
 }

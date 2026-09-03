@@ -16,7 +16,12 @@ import {
 } from "../systems/Items";
 import { toNumberPointMap } from "../systems/ItemPoints";
 import { activeBosses, BossModifierId, goalFor } from "../systems/Boss";
-import { scoringNumbersFor } from "../systems/Afflictions";
+import { afflict } from "../systems/Afflictions";
+import {
+  endingAfterTrial,
+  markEndingSeen,
+  rollKingsDemands,
+} from "../systems/Endings";
 import { GOLD_PER_INTEREST, INTEREST_CAP } from "../systems/Gold";
 import {
   applyBoosterChoice,
@@ -35,18 +40,21 @@ import {
   rollBoosterOffers,
   rollShopOffers,
   ShopOffer,
+  shopClosed,
   weightsFor,
 } from "../systems/Shop";
 import {
   beginRun,
   resolveRoll,
   resolveTrialEnd,
+  rollPool,
   trialComplete,
   trialRollTarget,
 } from "./engine";
 import { isMirrorTrial, rankOf, trialInRank } from "../config";
 import { mulberry32 } from "./localStorageShim";
 import { SimConfig } from "./config";
+import { acceptsCurse, afflictionRisk } from "./curseValue";
 
 export type StrategyName =
   | "greedy"
@@ -100,6 +108,11 @@ export interface RunRecord {
   finalDiceTotal: number;
   finalDiceCounts: Record<number, number>; // sides -> count
   purchases: Partial<Record<ShopItemId, number>>;
+  /** Number of times each cursed card appeared across shelves, rerolls and
+   * booster reveals during this run. */
+  cursesOffered: Partial<Record<ShopItemId, number>>;
+  /** Cursed card id -> the trial after which it was accepted. */
+  cursesTaken: Partial<Record<ShopItemId, number>>;
   trajectory: TrialPoint[];
   /** boss modifier -> whether the run met it, and whether it cleared it. */
   bossesFaced: Partial<
@@ -199,7 +212,15 @@ export interface Strategy {
   theme: ItemTheme | null;
   /** Gold to keep banked rather than spend, to earn interest. */
   goldFloor: number;
-  visit(state: RunState, offers: ShopOffer[], rng: () => number): void;
+  curseAppetite: number;
+  visit(
+    state: RunState,
+    offers: ShopOffer[],
+    rng: () => number,
+    purchasesMade: number,
+    record: RunRecord,
+    curseAppetite: number,
+  ): number;
 }
 
 /** Cheapest first — maximises the number of cards bought per visit. */
@@ -222,13 +243,21 @@ function spendDown(
   ordered: ShopOffer[],
   floor: number,
   rng: () => number,
-): void {
+  curseAppetite: number,
+  purchasesMade: number,
+  record: RunRecord,
+): number {
   for (const offer of ordered) {
+    if (shopClosed(state, purchasesMade)) break;
+    if (!acceptsCurse(state, offer, curseAppetite)) continue;
     if (state.gold - offer.cost < floor) continue;
-    if (attemptBuy(state, offer, rng) && discountsShopPrices(offer.id)) {
-      repriceOffers(state, ordered);
+    if (attemptBuy(state, offer, rng)) {
+      purchasesMade += 1;
+      if (offer.cursed) record.cursesTaken[offer.id] = state.trial;
+      if (discountsShopPrices(offer.id)) repriceOffers(state, ordered);
     }
   }
+  return purchasesMade;
 }
 
 /** A themed bot takes its own cards cheapest-first — more theme cards beats one
@@ -236,14 +265,41 @@ function spendDown(
  *  matters: a visit with no in-theme card would otherwise sit on its gold and
  *  read as a broken strategy rather than an unlucky shop. */
 function themedVisit(theme: ItemTheme, floor: number) {
-  return (state: RunState, offers: ShopOffer[], rng: () => number): void => {
+  return (
+    state: RunState,
+    offers: ShopOffer[],
+    rng: () => number,
+    purchasesMade: number,
+    record: RunRecord,
+    curseAppetite: number,
+  ): number => {
+    // A coherent build has to exist before it can earn interest. Spend for
+    // survival through the opening three ranks, then begin keeping the build's
+    // normal reserve once it has enough power to carry a bank safely.
+    const visitFloor = rankOf(state.trial) <= 3 ? 0 : floor;
     const inTheme = offers.filter((o) => ITEM_THEMES[o.id].includes(theme));
     const rest = offers.filter((o) => !ITEM_THEMES[o.id].includes(theme));
-    spendDown(state, byCostAscending(inTheme), floor, rng);
+    purchasesMade = spendDown(
+      state,
+      byCostAscending(inTheme),
+      visitFloor,
+      rng,
+      curseAppetite,
+      purchasesMade,
+      record,
+    );
     // The in-theme spend may have bought a discount card; repricing is a no-op
     // when it did not.
     repriceOffers(state, rest);
-    spendDown(state, byCostAscending(rest), floor, rng);
+    return spendDown(
+      state,
+      byCostAscending(rest),
+      visitFloor,
+      rng,
+      curseAppetite,
+      purchasesMade,
+      record,
+    );
   };
 }
 
@@ -253,7 +309,13 @@ const HALF_FLOOR = Math.floor((GOLD_PER_INTEREST * INTEREST_CAP) / 2);
 const FULL_FLOOR = GOLD_PER_INTEREST * INTEREST_CAP;
 
 function themed(name: StrategyName, theme: ItemTheme, floor: number): Strategy {
-  return { name, theme, goldFloor: floor, visit: themedVisit(theme, floor) };
+  return {
+    name,
+    theme,
+    goldFloor: floor,
+    curseAppetite: 0.5,
+    visit: themedVisit(theme, floor),
+  };
 }
 
 export const STRATEGIES: Record<StrategyName, Strategy> = {
@@ -261,16 +323,34 @@ export const STRATEGIES: Record<StrategyName, Strategy> = {
     name: "greedy",
     theme: null,
     goldFloor: 0,
-    visit(state, offers, rng) {
-      spendDown(state, byCostDescending(offers), 0, rng);
+    curseAppetite: 0.5,
+    visit(state, offers, rng, purchasesMade, record) {
+      return spendDown(
+        state,
+        byCostDescending(offers),
+        0,
+        rng,
+        this.curseAppetite,
+        purchasesMade,
+        record,
+      );
     },
   },
   thrifty: {
     name: "thrifty",
     theme: null,
     goldFloor: 0,
-    visit(state, offers, rng) {
-      spendDown(state, byCostAscending(offers), 0, rng);
+    curseAppetite: 0.5,
+    visit(state, offers, rng, purchasesMade, record) {
+      return spendDown(
+        state,
+        byCostAscending(offers),
+        0,
+        rng,
+        this.curseAppetite,
+        purchasesMade,
+        record,
+      );
     },
   },
   swarm: themed("swarm", "swarm", HALF_FLOOR),
@@ -301,12 +381,14 @@ function visitShop(
   state: RunState,
   strategy: Strategy,
   rng: () => number,
+  record: RunRecord,
 ): number {
   const before = state.gold;
   const cardCount = state.ownedLedger ? 5 : 3;
   const boosted = state.boonNextShop;
   const visitWeights = { ...weightsFor(state) };
   let offers = rollShopOffers(state, cardCount, rng, visitWeights);
+  recordCurseOffers(record, offers);
   const packs = rollBoosterOffers(state, 2, boosted, rng);
   state.boonNextShop = false;
 
@@ -316,20 +398,48 @@ function visitShop(
   for (let attempt = 0; attempt < MAX_REROLLS_PER_VISIT; attempt++) {
     const free = rerollIsFree(state, attempt);
     const price = free ? 0 : rerollCost(attempt);
-    const stuck = offers.every((o) => !canAfford(state, o));
+    const stuck = offers.every(
+      (o) =>
+        !canAfford(state, o) || !acceptsCurse(state, o, strategy.curseAppetite),
+    );
     if (!free && !(stuck && state.gold > price)) break;
     state.gold -= price;
     offers = rerollShopOffers(state, cardCount, rng, visitWeights);
+    recordCurseOffers(record, offers);
   }
 
-  visitBoosters(state, strategy, packs, visitWeights, rng);
+  const purchasesMade = visitBoosters(
+    state,
+    strategy,
+    packs,
+    visitWeights,
+    rng,
+    record,
+  );
   // A discount card claimed from a pack applies to the row it was opened at.
   repriceOffers(state, offers);
   if (state.hasCouponBook && !offers.some((offer) => offer.freeByCoupon)) {
     applyCouponFreebie(state, offers, rng);
   }
-  strategy.visit(state, offers, rng);
+  strategy.visit(
+    state,
+    offers,
+    rng,
+    purchasesMade,
+    record,
+    strategy.curseAppetite,
+  );
   return before - state.gold;
+}
+
+function recordCurseOffers(
+  record: RunRecord,
+  offers: readonly ShopOffer[],
+): void {
+  for (const offer of offers) {
+    if (!offer.cursed) continue;
+    record.cursesOffered[offer.id] = (record.cursesOffered[offer.id] ?? 0) + 1;
+  }
 }
 
 function visitBoosters(
@@ -338,7 +448,9 @@ function visitBoosters(
   packs: BoosterOffer[],
   visitWeights: ReturnType<typeof weightsFor>,
   rng: () => number,
-): void {
+  record: RunRecord,
+): number {
+  let purchasesMade = 0;
   const ordered = [...packs].sort((a, b) => {
     if (strategy.theme) {
       const aMatch = a.theme === strategy.theme ? 1 : 0;
@@ -350,6 +462,7 @@ function visitBoosters(
   });
 
   for (const pack of ordered) {
+    if (shopClosed(state, purchasesMade)) break;
     const price = boosterPrice(state, pack);
     if (state.gold - price < strategy.goldFloor) continue;
     const choices = openBooster(
@@ -359,13 +472,18 @@ function visitBoosters(
       rng,
       visitWeights,
     );
+    recordCurseOffers(record, choices);
     if (choices.length === 0) continue;
+    const acceptable = choices.filter((offer) =>
+      acceptsCurse(state, offer, strategy.curseAppetite),
+    );
+    if (acceptable.length === 0) continue;
     const preferred = strategy.theme
-      ? choices.filter((offer) =>
+      ? acceptable.filter((offer) =>
           ITEM_THEMES[offer.id].includes(strategy.theme!),
         )
-      : choices;
-    const pool = preferred.length > 0 ? preferred : choices;
+      : acceptable;
+    const pool = preferred.length > 0 ? preferred : acceptable;
     // Once the pack has been paid for every revealed card costs the same
     // (nothing), so even the thrifty shopper takes the strongest band rather
     // than confusing the card's old shop price with a second charge.
@@ -377,8 +495,13 @@ function visitBoosters(
     );
     if (!choice) continue;
     state.gold -= price;
-    if (attemptBoosterChoice(state, choice, rng)) break;
+    if (attemptBoosterChoice(state, choice, rng)) {
+      purchasesMade += 1;
+      if (choice.cursed) record.cursesTaken[choice.id] = state.trial;
+      break;
+    }
   }
+  return purchasesMade;
 }
 
 /** Enough to break out of a dead shop, few enough that a rich run cannot simply
@@ -391,7 +514,10 @@ export function simulateRun(
   seed: number,
   cfg: SimConfig,
 ): RunRecord {
-  const strategy = STRATEGIES[strategyName];
+  const strategy: Strategy = {
+    ...STRATEGIES[strategyName],
+    curseAppetite: cfg.curseAppetite ?? STRATEGIES[strategyName].curseAppetite,
+  };
   const rng = mulberry32(seed);
   const state = newRun(cfg.unlockedAtStart);
   beginRun(state, rng);
@@ -411,6 +537,8 @@ export function simulateRun(
     finalDiceTotal: 0,
     finalDiceCounts: {},
     purchases: {},
+    cursesOffered: {},
+    cursesTaken: {},
     trajectory: [],
     bossesFaced: {},
     unlocksAchieved: {},
@@ -424,7 +552,7 @@ export function simulateRun(
   let clearedOnRoll: number | null = null;
   let rollScores: number[] | undefined = cfg.traceRolls ? [] : undefined;
   for (;;) {
-    state.dice.roll(rng, scoringNumbersFor(state), state.royalSealSizes);
+    rollPool(state, state.dice, rng);
     resolveRoll(state, rng);
     rolls += 1;
     rollScores?.push(Number(state.score));
@@ -454,7 +582,10 @@ export function simulateRun(
       });
       const point = record.trajectory[record.trajectory.length - 1];
 
-      const end = resolveTrialEnd(state, rng);
+      const end = resolveTrialEnd(state, rng, {
+        unusedRollBaseMultiplier: cfg.unusedRollBaseMultiplier,
+        unusedRollCap: cfg.unusedRollCap,
+      });
       // Every trial but the last is cleared by crossing its goal, which is what
       // the latch records. The duel has no goal to cross — it is won by leading
       // when the rolls run out — so there the engine's own answer is the answer.
@@ -476,11 +607,12 @@ export function simulateRun(
         record.outcome = "gameOver";
         break;
       }
+      applyStoryAfterTrial(state, end.completedTrial, rng);
       if (cfg.stopAfterTrial !== undefined && point.trial >= cfg.stopAfterTrial)
         break;
 
       // Every cleared trial is followed by a shop — the only shop there is.
-      goldSpent += visitShop(state, strategy, rng);
+      goldSpent += visitShop(state, strategy, rng, record);
       trackUnlocks(state, record.unlocksAchieved); // buys can change the grid
       continue;
     }
@@ -505,4 +637,28 @@ export function simulateRun(
   record.dicePoints = toNumberPointMap(state.dicePoints);
   record.itemPoints = toNumberPointMap(state.itemPoints);
   return record;
+}
+
+/** Apply the two story drawbacks the live scenes place between a clear and its
+ * shop. The bot chooses the least risky writ from the same rolled demand set a
+ * player sees, then receives Betrayal automatically. */
+function applyStoryAfterTrial(
+  state: RunState,
+  completedTrial: number,
+  rng: () => number,
+): void {
+  const ending = endingAfterTrial(completedTrial, state.endingsSeen);
+  if (!ending) return;
+  markEndingSeen(state, ending.id);
+  if (ending.gift === "kingsDemands") {
+    const demand = rollKingsDemands(state, rng)
+      .slice()
+      .sort((a, b) => afflictionRisk(state, a) - afflictionRisk(state, b))[0];
+    if (demand) {
+      afflict(state, demand);
+      state.kingsDemand = demand;
+    }
+  } else if (ending.gift === "betrayal") {
+    afflict(state, "betrayal");
+  }
 }

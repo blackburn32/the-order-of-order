@@ -12,6 +12,7 @@
 import { makeDie, rollAll, Die, DieSides, DIE_LADDER } from "../systems/Dice";
 import { newRun, RunState } from "../state/RunState";
 import { scoreRoll, ScoreModifier } from "../systems/Scoring";
+import { inertDiceCount } from "../systems/Afflictions";
 import {
   aggFromDice,
   bucketDice,
@@ -268,7 +269,16 @@ function correctness(): boolean {
 
     state.scoreStreak = scoreStreakBefore; // replay on identical dice
     state.momentumStreak = momentumStreakBefore;
-    const agg = aggFromDice(dice, state.scoringNumbers, state.royalSealSizes);
+    // Both scorers have to be told the same thing about the grid's inert tail:
+    // the per-die one derives it from the state itself, so the aggregate one
+    // gets it handed over here. A scenario under the Toll is exactly where the
+    // two would otherwise part company.
+    const agg = aggFromDice(
+      dice,
+      state.scoringNumbers,
+      state.royalSealSizes,
+      inertDiceCount(state, dice.length),
+    );
     const hist = scoreRollHistogram(state, agg, { finalRoll });
     const streaksAfterHist = [state.scoreStreak, state.momentumStreak];
 

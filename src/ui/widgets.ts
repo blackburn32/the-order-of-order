@@ -189,6 +189,10 @@ export interface CheckboxRow extends Phaser.GameObjects.Container {
 export interface CheckboxRowStyle {
   textColor?: string;
   boxStroke?: number;
+  /** Width the whole row — box, gap and label — has to fit inside. The label
+   *  shrinks to meet it; without one the row is as wide as its words. Pass it
+   *  where the row sits in a column rather than across the screen. */
+  maxWidth?: number;
 }
 
 export function checkboxRow(
@@ -220,6 +224,7 @@ export function checkboxRow(
       color: textColor,
     })
     .setOrigin(0, 0.5);
+  if (style.maxWidth) fitTextWidth(text, style.maxWidth - boxSize - 14);
 
   // Origin the container on the box's left edge, then shift so the whole row
   // reads as centered on x.

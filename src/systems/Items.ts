@@ -11,7 +11,12 @@ import {
 import { goalFor } from "./Boss";
 import { DIE_LADDER, DieOpts, DieSides } from "./Dice";
 import type { DicePool } from "./DicePool";
-import { grantGold, RELIQUARY_BONUS_PERCENT } from "./Gold";
+import {
+  DEEP_POCKETS_CAP_BONUS,
+  grantGold,
+  RELIQUARY_BONUS_PERCENT,
+  UNUSED_ROLL_GOLD_CAP,
+} from "./Gold";
 import {
   DOWNBEAT_INTERVAL,
   DOWNBEAT_MULT,
@@ -77,11 +82,12 @@ export type ShopItemId =
   | "tithe_bowl"
   | "lucky_coin"
   | "counting_house"
+  | "deep_pockets"
   | "prospector"
   | "reliquary"
   | "pawnbroker"
   // Cursed cards. Each pays for a real boon with a standing drawback, written
-  // as an affliction (see systems/Afflictions) rather than in gold alone.
+  // as an affliction (see systems/Afflictions) rather than in gold.
   | "blood_price"
   | "ouroboros"
   | "famished_idol"
@@ -166,7 +172,8 @@ type RunCounter =
   | "spikeMold"
   | "titheBowl"
   | "luckyCoin"
-  | "countingHouse";
+  | "countingHouse"
+  | "deepPockets";
 
 /**
  * A persistent-unlock condition on an item. Items without one are available
@@ -429,7 +436,7 @@ export const SHOPPING_CART_DISCOUNT_PERCENT = 25;
 export const ITEMS: ItemDef[] = [
   {
     id: "extra_die",
-    name: "Two Bricks",
+    name: "Two Newcomers",
     priceBand: "free",
     rarity: "common",
     desc: "Add two d6 to your grid.",
@@ -437,7 +444,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "chip",
-    name: "Two cents",
+    name: "Two Adepts",
     priceBand: "low",
     stackPricing: "linear",
     rarity: "uncommon",
@@ -447,7 +454,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "spike",
-    name: "Two spikes",
+    name: "Two Students",
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
@@ -475,7 +482,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "pocket_change",
-    name: "Pocket Change",
+    name: "Small Mercies",
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
@@ -489,7 +496,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "shrink",
-    name: "Shrink Die",
+    name: "A Lesson",
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
@@ -500,7 +507,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "grindstone",
-    name: "Grindstone",
+    name: "Group Study",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
@@ -512,7 +519,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "whetstone",
-    name: "Whetstone",
+    name: "Daily Practice",
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
@@ -528,7 +535,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "twin",
-    name: "Twins",
+    name: "Like Minds",
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "common",
@@ -539,7 +546,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "overtime",
-    name: "Overtime",
+    name: "The Long Sitting",
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
@@ -548,7 +555,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "metronome",
-    name: "Metronome",
+    name: "The Bell",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
@@ -566,7 +573,7 @@ export const ITEMS: ItemDef[] = [
   // overkill instead of adding to it.
   {
     id: "rain_check",
-    name: "Rain Check",
+    name: "Held Breath",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
@@ -581,7 +588,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "downbeat",
-    name: "Downbeat",
+    name: "The Toll",
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "uncommon",
@@ -596,7 +603,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "extra_dice",
-    name: "Extra Dice",
+    name: "Word of Mouth",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
@@ -608,7 +615,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "mult2",
-    name: "Multiply Dice ×2",
+    name: "The Gathering",
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "uncommon",
@@ -617,7 +624,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "mult3",
-    name: "Multiply Dice ×3",
+    name: "The Great Gathering",
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "rare",
@@ -626,7 +633,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "loaded_die",
-    name: "Loaded Die",
+    name: "The Vow",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
@@ -638,7 +645,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "snake_eyes",
-    name: "Snake Eyes",
+    name: "Consensus",
     priceBand: "strong",
     rarity: "uncommon",
     unique: true,
@@ -656,7 +663,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "extra_point",
-    name: "Extra Point",
+    name: "Deeper Stillness",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "rare",
@@ -679,7 +686,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "amplifier",
-    name: "Amplifier",
+    name: "Resonance",
     priceBand: "build",
     rarity: "rare",
     unique: true,
@@ -700,7 +707,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "wild_face",
-    name: "Wild Face",
+    name: "Contentment",
     priceBand: "strong",
     stackPricing: "linear",
     rarity: "rare",
@@ -729,14 +736,14 @@ export const ITEMS: ItemDef[] = [
     id: "lucky_seven",
     name: "Lucky Seven",
     priceBand: "strong",
-    rarity: "uncommon",
+    rarity: "rare",
     unique: true,
     desc: "If any rolled value contains a 7, multiply all points earned that roll by 7.",
     effects: [setFlag("hasLuckySeven")],
   },
   {
     id: "parade",
-    name: "Parade",
+    name: "The Procession",
     priceBand: "strong",
     rarity: "uncommon",
     unique: true,
@@ -745,7 +752,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "menagerie",
-    name: "Menagerie",
+    name: "The Whole Order",
     priceBand: "strong",
     rarity: "uncommon",
     unique: true,
@@ -757,7 +764,7 @@ export const ITEMS: ItemDef[] = [
   // sixth, so the smaller the mold, the dearer and rarer it is.
   {
     id: "chip_mold",
-    name: "Chip Mold",
+    name: "The Sanctum",
     priceBand: "strong",
     stackPricing: "linear",
     rarity: "rare",
@@ -770,7 +777,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "spike_mold",
-    name: "Spike Mold",
+    name: "The Novitiate",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
@@ -783,7 +790,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "brick_mold",
-    name: "Brick Mold",
+    name: "The Open Gate",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
@@ -813,7 +820,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "uniform",
-    name: "Uniform",
+    name: "Of One Mind",
     priceBand: "build",
     rarity: "rare",
     unique: true,
@@ -831,7 +838,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "insurance_policy",
-    name: "Insurance Policy",
+    name: "Dispensation",
     priceBand: "strong",
     rarity: "rare",
     unique: true,
@@ -850,7 +857,7 @@ export const ITEMS: ItemDef[] = [
   // offering.
   {
     id: "crunch_time",
-    name: "Crunch Time",
+    name: "Haste",
     priceBand: "build",
     rarity: "rare",
     unique: true,
@@ -865,7 +872,7 @@ export const ITEMS: ItemDef[] = [
   // dieBreakChance fold), so Blood Price and Ouroboros together are a build.
   {
     id: "blood_price",
-    name: "Blood Price",
+    name: "The Shattering Path",
     priceBand: "build",
     rarity: "rare",
     unique: true,
@@ -887,7 +894,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "famished_idol",
-    name: "Famished Idol",
+    name: "The Closed Hall",
     priceBand: "build",
     rarity: "rare",
     unique: true,
@@ -898,7 +905,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "the_bloat",
-    name: "The Bloat",
+    name: "Backsliding",
     priceBand: "build",
     rarity: "uncommon",
     unique: true,
@@ -915,10 +922,10 @@ export const ITEMS: ItemDef[] = [
     rarity: "rare",
     unique: true,
     cursed: true,
-    // Buys the whole precision build in one card, then takes away the shop that
-    // would have sold it: what the run holds when it signs is what it rides.
+    // Buys the whole precision build in one card, then garnishes the income
+    // that would have paid for the rest of it.
     desc: (s) =>
-      `The Order decrees that dice showing ${2 + s.extraNumberCount} and ${3 + s.extraNumberCount} also score, but a cleared trial pays nothing but its interest.`,
+      `The Order decrees that dice showing ${2 + s.extraNumberCount} and ${3 + s.extraNumberCount} also score, but a cleared trial pays only ${AFFLICTIONS.ironDebt.clearGoldMultMilli! / 10}% of its ordinary gold.`,
     available: (s) => s.extraNumberCount <= MAX_EXTRA_NUMBERS - 2,
     unlock: { kind: "goldHeld", amount: 25 },
     effects: [extraNumber(), extraNumber(), afflictWith("ironDebt")],
@@ -955,7 +962,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "devils_bargain",
-    name: "Devil's Bargain",
+    name: "The Old Bargain",
     priceBand: "low",
     rarity: "common",
     unique: true,
@@ -1008,7 +1015,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "locust_idol",
-    name: "Locust Idol",
+    name: "The Final Sermon",
     priceBand: "build",
     rarity: "rare",
     unique: true,
@@ -1022,7 +1029,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "gamblers_curse",
-    name: "Gambler's Curse",
+    name: "Old Habits",
     priceBand: "build",
     rarity: "uncommon",
     unique: true,
@@ -1038,15 +1045,14 @@ export const ITEMS: ItemDef[] = [
     rarity: "common",
     unique: true,
     cursed: true,
-    // The honest arithmetic trade, and the one cursed card worth buying early:
-    // the multiplier compounds with everything else the run owns, and the goal
-    // it doubles does not.
+    // A genuine net gain: its ×3 multiplier outruns the doubled goal, and both
+    // still compound honestly with the rest of the run.
     desc: `Every point you earn is multiplied by ${flatMult("the_reckoning")}, but every trial's goal is doubled.`,
     effects: [setFlag("hasReckoning"), afflictWith("reckoning")],
   },
   {
     id: "hair_trigger",
-    name: "Hair Trigger",
+    name: "First Light",
     priceBand: "strong",
     rarity: "rare",
     unique: true,
@@ -1075,7 +1081,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "coupon_book",
-    name: "Coupon Book",
+    name: "The Benefactor",
     priceBand: "build",
     rarity: "rare",
     unique: true,
@@ -1084,7 +1090,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "dealers_bell",
-    name: "Dealer's Bell",
+    name: "The Second Look",
     priceBand: "standard",
     rarity: "rare",
     unique: true,
@@ -1093,7 +1099,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "shopping_cart",
-    name: "Shopping Cart",
+    name: "Fair Weights",
     priceBand: "build",
     rarity: "rare",
     unique: true,
@@ -1103,7 +1109,7 @@ export const ITEMS: ItemDef[] = [
 
   {
     id: "double_the_fun",
-    name: "Double the Fun",
+    name: "The Curious",
     priceBand: "build",
     rarity: "uncommon",
     unique: true,
@@ -1117,7 +1123,7 @@ export const ITEMS: ItemDef[] = [
   // whether the next copy is worth its rising price.
   {
     id: "dividend",
-    name: "Dividend",
+    name: "Strength in Numbers",
     priceBand: "build",
     stackPricing: "linear",
     rarity: "common",
@@ -1132,7 +1138,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "momentum",
-    name: "Momentum",
+    name: "Rhythm",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "common",
@@ -1150,7 +1156,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "keen_edge",
-    name: "Keen Edge",
+    name: "Enlightenment",
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "common",
@@ -1169,7 +1175,7 @@ export const ITEMS: ItemDef[] = [
   // to the grid it is poured into, which is what its explosive price assumes.
   {
     id: "foundry",
-    name: "Foundry",
+    name: "The Inner Circle",
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "uncommon",
@@ -1187,7 +1193,7 @@ export const ITEMS: ItemDef[] = [
   // land, then a flat purse for every five that do.
   {
     id: "jackpot",
-    name: "Jackpot",
+    name: "The Congregation",
     priceBand: "build",
     stackPricing: "linear",
     rarity: "uncommon",
@@ -1202,7 +1208,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "last_call",
-    name: "Last Call",
+    name: "Vespers",
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "uncommon",
@@ -1217,7 +1223,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "genesis",
-    name: "Genesis",
+    name: "Testimony",
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "rare",
@@ -1248,7 +1254,7 @@ export const ITEMS: ItemDef[] = [
   },
   {
     id: "prism",
-    name: "Prism",
+    name: "Clarity",
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "rare",
@@ -1308,6 +1314,20 @@ export const ITEMS: ItemDef[] = [
       (gold) => `Gain ${gold} extra gold every time you clear a trial.`,
     ),
     effects: [incCounter("countingHouse")],
+  },
+  {
+    id: "deep_pockets",
+    name: "The Almsbag",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => s.deepPockets,
+      (copies) => UNUSED_ROLL_GOLD_CAP + copies * DEEP_POCKETS_CAP_BONUS,
+      (gold) =>
+        `Gold is paid for up to ${gold} rolls left in hand when a trial clears.`,
+    ),
+    effects: [incCounter("deepPockets")],
   },
   {
     id: "prospector",
@@ -1774,6 +1794,7 @@ export const ITEM_THEMES: Record<ShopItemId, ItemTheme[]> = {
   tithe_bowl: ["economy"],
   lucky_coin: ["economy"],
   counting_house: ["economy"],
+  deep_pockets: ["economy", "tempo"],
   prospector: ["economy"],
   reliquary: ["economy"],
   pawnbroker: ["economy"],

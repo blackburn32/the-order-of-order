@@ -4,9 +4,11 @@
 // Run: npm run gold:check
 
 import { newRun, RunState } from "../state/RunState";
+import { rollsForTrial } from "../config";
 import { activeBoss } from "../systems/Boss";
 import {
   BOSS_CLEAR_GOLD,
+  DEEP_POCKETS_CAP_BONUS,
   GOLD_PER_INTEREST,
   INTEREST_CAP,
   interestOn,
@@ -82,25 +84,55 @@ console.log("\nTrial payout");
 }
 
 {
-  const state = runAt(2, 12); // 15-roll trial cleared with 3 to spare
+  const state = runAt(2, rollsForTrial(2) - 3);
   check(unusedRolls(state) === 3, "unused rolls counted from the trial budget");
   check(trialPayout(state).rolls === 3, "and paid at 1 gold each");
 }
 
 {
-  const state = runAt(2, 0); // cleared on the first roll: 15 unused
+  const state = runAt(2, 0); // cleared before spending any of the trial's rolls
+  const payout = trialPayout(state);
   check(
-    trialPayout(state).rolls === UNUSED_ROLL_GOLD_CAP,
+    payout.rollsLeft === unusedRolls(state) &&
+      payout.rollsLeft > UNUSED_ROLL_GOLD_CAP,
+    "the receipt keeps the true number of unused rolls",
+  );
+  check(
+    payout.rolls === UNUSED_ROLL_GOLD_CAP,
     "the unused-roll payout is capped",
   );
 }
 
 {
-  const state = runAt(2, 12);
+  const state = runAt(2, 0);
+  state.deepPockets = 2;
+  check(
+    trialPayout(state).rolls ===
+      UNUSED_ROLL_GOLD_CAP + 2 * DEEP_POCKETS_CAP_BONUS,
+    "Deep Pockets raises the unused-roll gold cap by 2 per copy",
+  );
+}
+
+{
+  const state = runAt(2, rollsForTrial(2) - 3);
   state.reserve = 2;
   check(
     trialPayout(state).rolls === 3 * (1 + 2),
     "Reserve adds a gold per unused roll, per copy",
+  );
+}
+
+{
+  const state = runAt(2, rollsForTrial(2) - 5);
+  state.reserve = 2;
+  check(
+    trialPayout(state, { unusedRollBaseMultiplier: 0.5 }).rolls === 12,
+    "the simulation can halve ordinary early-clear gold without changing Reserve",
+  );
+  state.reserve = 0;
+  check(
+    trialPayout(state, { unusedRollCap: 2 }).rolls === 2,
+    "the simulation can test a smaller paid-unused-roll cap",
   );
 }
 
@@ -262,10 +294,10 @@ console.log("\nShop pricing");
   state.hasShoppingCart = true;
   let floored = true;
   for (const item of ITEMS) {
-    if (item.priceBand === "free") continue;
+    if (item.priceBand === "free" || item.cursed) continue;
     if (priceFor(item, state) < 1) floored = false;
   }
-  check(floored, "no paid card can be discounted below 1 gold");
+  check(floored, "no ordinary paid card can be discounted below 1 gold");
 }
 
 {

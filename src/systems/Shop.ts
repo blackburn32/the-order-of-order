@@ -6,6 +6,8 @@ import {
 } from "../systems/Afflictions";
 import {
   BOON_RARITY_WEIGHTS,
+  CURSE_DRAW_WEIGHT,
+  MAX_CURSES_PER_OFFER_SET,
   RARITY_WEIGHTS,
   type RarityWeights,
 } from "../config";
@@ -119,6 +121,8 @@ function listPriceFor(
   state: RunState,
   marketFactor: number,
 ): number {
+  // The standing drawback is the price of a cursed card.
+  if (def.cursed) return 0;
   if (def.priceBand === "free") return 0;
 
   const market = Math.min(
@@ -239,6 +243,32 @@ function groupByTier(ids: ShopItemId[]): Record<Rarity, ShopItemId[]> {
   return groups;
 }
 
+/** Remove and return one id, weighting cursed cards below ordinary cards in
+ * the same tier. The pool is mutated just like Array.splice so every reveal is
+ * distinct. */
+function takeWeighted(pool: ShopItemId[], rng: () => number): ShopItemId {
+  const weights = pool.map((id) =>
+    BY_ID.get(id)!.cursed ? CURSE_DRAW_WEIGHT : 1,
+  );
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  let roll = Math.min(rng(), 1 - Number.EPSILON) * total;
+  let index = pool.length - 1;
+  for (let i = 0; i < pool.length; i++) {
+    roll -= weights[i];
+    if (roll < 0) {
+      index = i;
+      break;
+    }
+  }
+  return pool.splice(index, 1)[0];
+}
+
+function removeCurses(groups: Record<Rarity, ShopItemId[]>): void {
+  for (const tier of Object.keys(groups) as Rarity[]) {
+    groups[tier] = groups[tier].filter((id) => !BY_ID.get(id)!.cursed);
+  }
+}
+
 function rollOffers(
   state: RunState,
   count: number,
@@ -252,6 +282,7 @@ function rollOffers(
   );
   const groups = groupByTier(eligibleIds);
   const chosen: ShopItemId[] = [];
+  let cursesChosen = 0;
 
   for (let c = 0; c < count; c++) {
     const rolledTier = rollTier(rng, weights);
@@ -263,8 +294,12 @@ function rollOffers(
       }
     }
     if (!pool) break; // nothing eligible left in any tier
-    const idx = Math.floor(rng() * pool.length);
-    chosen.push(pool.splice(idx, 1)[0]);
+    const id = takeWeighted(pool, rng);
+    chosen.push(id);
+    if (BY_ID.get(id)!.cursed) {
+      cursesChosen += 1;
+      if (cursesChosen >= MAX_CURSES_PER_OFFER_SET) removeCurses(groups);
+    }
   }
 
   const offers = chosen.map((id) => offerFor(id, state, rollMarketFactor(rng)));
@@ -273,7 +308,7 @@ function rollOffers(
   // Two Bricks in that case ('extra_die' is always in the pool).
   if (
     offers.length > 0 &&
-    offers.every((o) => o.cost > state.gold) &&
+    offers.filter((o) => !o.cursed).every((o) => o.cost > state.gold) &&
     eligibleIds.includes("extra_die")
   ) {
     offers[offers.length - 1] = offerFor("extra_die", state);
@@ -365,7 +400,7 @@ export const BOOSTER_PACKS: readonly BoosterPackDef[] = [
   },
   {
     id: "swarm_pack",
-    name: "Foundry Pack",
+    name: "Gathering Pack",
     desc: "Choose one grid-growth card.",
     cost: 6,
     color: 0x9b5a2d,
@@ -461,13 +496,28 @@ export function openBooster(
 ): ShopOffer[] {
   const ids = idsForPack(state, pack);
   const chosen: ShopItemId[] = [];
+  let cursesChosen = 0;
+  const take = (pool: ShopItemId[]): void => {
+    const id = takeWeighted(pool, rng);
+    chosen.push(id);
+    if (BY_ID.get(id)!.cursed) cursesChosen += 1;
+  };
+  const uncursedOnly = (pool: ShopItemId[]): void => {
+    if (cursesChosen < MAX_CURSES_PER_OFFER_SET) return;
+    for (let i = pool.length - 1; i >= 0; i--) {
+      if (BY_ID.get(pool[i])!.cursed) pool.splice(i, 1);
+    }
+  };
   if (pack.rarity) {
     while (chosen.length < count && ids.length > 0) {
-      chosen.push(ids.splice(Math.floor(rng() * ids.length), 1)[0]);
+      uncursedOnly(ids);
+      if (ids.length === 0) break;
+      take(ids);
     }
   } else {
     const groups = groupByTier(ids);
     while (chosen.length < count) {
+      if (cursesChosen >= MAX_CURSES_PER_OFFER_SET) removeCurses(groups);
       const tier = rollTier(rng, weights);
       let pool: ShopItemId[] | undefined;
       for (const fallback of TIER_FALLBACK[tier]) {
@@ -477,7 +527,7 @@ export function openBooster(
         }
       }
       if (!pool) break;
-      chosen.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
+      take(pool);
     }
   }
   // A late-run category can be depleted by unique purchases between the shop
@@ -487,6 +537,7 @@ export function openBooster(
   const fallbackIds = availableIds(state).filter((id) => !chosen.includes(id));
   const fallbackGroups = groupByTier(fallbackIds);
   while (chosen.length < count) {
+    if (cursesChosen >= MAX_CURSES_PER_OFFER_SET) removeCurses(fallbackGroups);
     const tier = rollTier(rng, weights);
     let pool: ShopItemId[] | undefined;
     for (const fallback of TIER_FALLBACK[tier]) {
@@ -496,7 +547,7 @@ export function openBooster(
       }
     }
     if (!pool) break;
-    chosen.push(pool.splice(Math.floor(rng() * pool.length), 1)[0]);
+    take(pool);
   }
   return chosen.map((id) => ({ ...offerFor(id, state), cost: 0 }));
 }

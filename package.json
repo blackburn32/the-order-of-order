@@ -23,6 +23,11 @@
     "trials:check": "tsx src/sim/trialEndCheck.ts",
     "gold:check": "tsx src/sim/goldCheck.ts",
     "scoring:check": "tsx src/sim/compareScoring.ts",
+    "curse:check": "tsx src/sim/curseCheck.ts",
+    "curve:smart": "tsx src/sim/smartSurvivalCurve.ts",
+    "pacing:feasibility": "tsx src/sim/pacingFeasibility.ts",
+    "economy:experiment": "tsx src/sim/economyExperiment.ts",
+    "duration:experiment": "tsx src/sim/durationExperiment.ts",
     "persistence:check": "tsx src/sim/activeRunPersistenceCheck.ts"
   },
   "dependencies": {

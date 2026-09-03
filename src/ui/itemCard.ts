@@ -94,18 +94,7 @@ const RARITY_COLOR: Record<ItemDef["rarity"], string> = {
   rare: CSS.rarityRare,
 };
 
-/**
- * A cursed card takes over the line that would name its rarity, and its
- * parchment is stamped with the seal of the drawback it carries. Both surfaces
- * that draw cards — this one and the shop's own builder — read the treatment
- * from here, so a cursed card looks the same wherever it is drawn.
- *
- * The rarity line is where the mark goes because it is the one field already
- * set apart in colour, and reusing it costs the card no layout: the copy below
- * is measured and wrapped exactly as before (see `copyFits`). What it costs is
- * the rarity itself, which the card no longer prints — a fair trade, since
- * "this will cost you something" is the more urgent of the two.
- */
+/** A cursed card keeps its strength signal and adds the warning beside it. */
 export const CURSED_LABEL = "CURSED";
 
 /** How wide the seal is drawn on a card at rest, and where its centre sits.
@@ -156,10 +145,14 @@ export function buildCursedSeal(
 export function rarityMark(
   rarity: ItemDef["rarity"],
   cursed: boolean,
-): { text: string; color: string } {
-  return cursed
-    ? { text: CURSED_LABEL, color: CSS.cursed }
-    : { text: rarity.toUpperCase(), color: RARITY_COLOR[rarity] };
+): { text: string; color: string; curse?: { text: string; color: string } } {
+  return {
+    text: rarity.toUpperCase(),
+    color: RARITY_COLOR[rarity],
+    curse: cursed
+      ? { text: ` · ${CURSED_LABEL}`, color: CSS.cursed }
+      : undefined,
+  };
 }
 
 /**
@@ -215,6 +208,22 @@ export function buildItemCard(
       },
     )
     .setOrigin(0.5, terse ? 0 : 0.5);
+  const curseMark =
+    !opts.locked && mark.curse
+      ? scene.add
+          .text(0, rarity.y, mark.curse.text, {
+            fontFamily: SERIF,
+            fontSize: fontSize(13, 8),
+            color: mark.curse.color,
+            fontStyle: "bold",
+          })
+          .setOrigin(0, terse ? 0 : 0.5)
+      : undefined;
+  if (curseMark) {
+    const totalWidth = rarity.width + curseMark.width;
+    rarity.setOrigin(0, terse ? 0 : 0.5).setX(-totalWidth / 2);
+    curseMark.setX(rarity.x + rarity.width);
+  }
 
   // A duplicate's tally is set into the top-right corner of the ink border,
   // on the rarity line's free shoulder. A locked card gives nothing away, this
@@ -315,6 +324,7 @@ export function buildItemCard(
   // is laid out centred on its position, so that is what the fit check reads.
   const printed: PrintedField[] = [
     rarity,
+    ...(curseMark ? [curseMark] : []),
     name,
     ...(desc
       ? [{ y: desc.y, width: desc.width, height: desc.height, originY: 0.5 }]
@@ -328,6 +338,7 @@ export function buildItemCard(
     img,
     ...(seal ? [seal] : []),
     rarity,
+    ...(curseMark ? [curseMark] : []),
     ...(tally ? [tally] : []),
     name,
     ...(desc ? [desc] : []),

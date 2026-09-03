@@ -4,7 +4,7 @@
 // marks with rounded data-ends, native <title> hover tooltips, and a selected
 // dark mode (not an auto-flip). Detail-heavy per-item numbers live in tables.
 
-import { BatchStats, ItemStat, StrategyStats } from "./stats";
+import { BatchStats, CurseStat, ItemStat, StrategyStats } from "./stats";
 import { SIM_SERIES } from "./series";
 
 const STRATEGY_ORDER = SIM_SERIES.map((series) => series.id);
@@ -378,7 +378,7 @@ function trialGoalFrom(stats: StrategyStats[], trial: number): number {
  * How much of a trial the field actually plays.
  *
  * A goal curve can be correct about attrition and still wrong about tempo: if
- * the trial ends on the opening roll, the twenty rolls it granted were never a
+ * the trial ends on the opening roll, the full budget it granted was never a
  * resource and the trial was never a decision. This is the section that says so.
  *
  * Cleared trials only, and counted at the roll the goal was CROSSED, so a run
@@ -535,6 +535,59 @@ function itemTableSection(stats: StrategyStats[]): string {
   );
 }
 
+function curseTableSection(stats: StrategyStats[]): string {
+  const base = stats[0].curses
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const byStrategy = new Map<string, Map<string, CurseStat>>();
+  for (const strategy of stats)
+    byStrategy.set(
+      strategy.name,
+      new Map(strategy.curses.map((curse) => [curse.id, curse])),
+    );
+
+  const head =
+    `<tr><th>Cursed card</th>` +
+    stats
+      .map(
+        (strategy) =>
+          `<th class="grp" colspan="5">${esc(strategyLabel(strategy.name))}</th>`,
+      )
+      .join("") +
+    `</tr><tr><th></th>` +
+    stats
+      .map(
+        () =>
+          `<th>offer%</th><th>take%</th><th>win% taken</th><th>win% declined</th><th>avg trial</th>`,
+      )
+      .join("") +
+    `</tr>`;
+
+  const rows = base
+    .map((curse) => {
+      const cells = stats
+        .map((strategy) => {
+          const stat = byStrategy.get(strategy.name)!.get(curse.id)!;
+          return (
+            `<td class="num">${stat.offered ? pct(stat.offerRate) : "—"}</td>` +
+            `<td class="num">${stat.offered ? pct(stat.takeRate) : "—"}</td>` +
+            `<td class="num">${stat.taken ? pct(stat.winRateIfTaken) : "—"}</td>` +
+            `<td class="num">${stat.offered > stat.taken ? pct(stat.winRateIfNotTaken) : "—"}</td>` +
+            `<td class="num">${stat.taken ? n1(stat.avgTrialIfTaken) : "—"}</td>`
+          );
+        })
+        .join("");
+      return `<tr><td>${esc(curse.name)}</td>${cells}</tr>`;
+    })
+    .join("");
+
+  return (
+    `<section><h2>Cursed cards</h2>` +
+    `<p class="note">How often each curse appeared in a run, how often the appetite model accepted an appearance, and the outcome correlation among exposed runs. “Declined” excludes runs that never saw the card; correlations still carry selection bias and should be read beside each strategy’s baseline.</p>` +
+    `<div class="tablewrap"><table>${head}${rows}</table></div></section>`
+  );
+}
+
 function itemPointsSection(stats: StrategyStats[]): string {
   const TOP = 12;
   const cards = stats
@@ -661,6 +714,7 @@ ${rollPacingSection(ordered)}
 ${bossSection(ordered)}
 ${goldSection(ordered)}
 ${itemPointsSection(ordered)}
+${curseTableSection(ordered)}
 ${itemTableSection(ordered)}
 ${unlockSection(ordered)}
 </div></body></html>`;

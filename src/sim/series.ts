@@ -6,6 +6,7 @@ export interface SimulationSeries {
   id: string;
   label: string;
   strategy: StrategyName;
+  curseAppetite: number;
   unlockedAtStart: readonly ShopItemId[];
   seedOffset: number;
 }
@@ -38,6 +39,7 @@ function series(
     id: `${strategy}-${pool}`,
     label,
     strategy,
+    curseAppetite: 0.5,
     unlockedAtStart: UNLOCK_POOLS[pool],
     seedOffset: OFFSETS[strategy],
   };
@@ -59,6 +61,13 @@ export const SIM_SERIES: SimulationSeries[] = [
  *  the pooled field the goal curve is designed against is simply all of them. */
 export const SHOPPER_SERIES = SIM_SERIES;
 
+/** Coherent, fully unlocked shoppers used to set the survival curve. Base-pool
+ * runs and the deliberately weak economy hoarder remain in validation, but do
+ * not make the opening ladder lethal for builds that spend toward power. */
+export const SMART_SERIES = SIM_SERIES.filter(
+  (series) => series.id.endsWith("-all") && series.strategy !== "economy",
+);
+
 export function seriesSeed(baseSeed: number, run: number, seedOffset: number) {
   return baseSeed * 1_000_003 + run + seedOffset;
 }
@@ -71,5 +80,9 @@ export function seriesConfig(
   cfg: SimConfig,
   series: SimulationSeries,
 ): SimConfig {
-  return { ...cfg, unlockedAtStart: [...series.unlockedAtStart] };
+  return {
+    ...cfg,
+    unlockedAtStart: [...series.unlockedAtStart],
+    curseAppetite: series.curseAppetite,
+  };
 }

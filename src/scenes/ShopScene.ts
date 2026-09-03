@@ -38,6 +38,7 @@ import {
   destroyAllChildren,
   isCompactLandscape,
   onResizeCoalesced,
+  RUN_FOOTER_ROW_H,
 } from "../ui/layout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
@@ -680,7 +681,10 @@ export class ShopScene extends Phaser.Scene {
     const sidebarW = Phaser.Math.Clamp(panelW * 0.29, 186, 250);
     const cardsW = panelW - sidebarW - colGap;
     const contentTop = ruleY + 10;
-    const contentBottom = panelBottom - 6;
+    // Short landscape always splits the Inventory/Settings links into a row
+    // along the bottom, under both columns — so both stop short of it rather
+    // than only the sidebar ducking a corner.
+    const contentBottom = Math.min(panelBottom - 6, H - RUN_FOOTER_ROW_H);
     const cardsH = Math.max(0, contentBottom - contentTop);
 
     // Screen rect of the card column, for the tutorial callout's open "hole".
@@ -694,15 +698,12 @@ export class ShopScene extends Phaser.Scene {
     );
     items.push(...grid.decor);
 
-    // Inventory/Settings are pinned to the bottom-right corner, which is where
-    // the sidebar's last button would otherwise land.
-    const sidebarBottom = Math.min(contentBottom, H - 56);
     items.push(
       ...this.buildCompactSidebar(
         right - sidebarW / 2,
         contentTop,
         sidebarW,
-        Math.max(0, sidebarBottom - contentTop),
+        Math.max(0, contentBottom - contentTop),
       ),
     );
     return items;
@@ -1591,15 +1592,19 @@ export class ShopScene extends Phaser.Scene {
       this.selectedCarouselIndex = index;
       this.focusCarouselCard(index, true);
       const affordable = this.canBuy(entry.offer);
-      const price =
-        entry.offer.cost === 0 ? "FREE" : `${entry.offer.cost} GOLD`;
+      const price = entry.offer.cursed
+        ? "ACCEPT CURSE"
+        : entry.offer.cost === 0
+          ? "FREE"
+          : `${entry.offer.cost} GOLD`;
       label.setText(
         affordable
-          ? `BUY · ${price}`
+          ? `${entry.offer.cursed ? "TAKE" : "BUY"} · ${price}`
           : this.counterClosed()
             ? "DOORS SEALED"
             : `NEED ${price}`,
       );
+      label.setFontSize(entry.offer.cursed ? "11px" : "13px");
       label.setColor(affordable ? CSS.ivory : CSS.red);
       plate.setStrokeStyle(2, affordable ? COLORS.gold : COLORS.waxRed, 0.9);
       const target = this.carouselBuyButtonPosition(index);
@@ -1617,12 +1622,13 @@ export class ShopScene extends Phaser.Scene {
       });
     };
 
-    if (this.selectedCarouselIndex !== undefined) {
-      this.selectedCarouselIndex = undefined;
-      this.fadeOutCarouselBuyButton(reveal);
-    } else {
-      reveal();
-    }
+    // Do not leave selection empty while moving between cards. On touch,
+    // `pointerout` normally follows a quick release; the old fade-out used to
+    // outlive that release and made `pointerout` clear the newly focused pose
+    // before `reveal` selected and lifted the card again. Reset the button at
+    // its new position immediately so the card stays selected throughout the
+    // handoff and a short tap behaves exactly like a long press.
+    reveal();
   }
 
   private fadeOutCarouselBuyButton(onComplete?: () => void): void {
@@ -2009,6 +2015,21 @@ export class ShopScene extends Phaser.Scene {
         fontStyle: "bold",
       })
       .setOrigin(0.5);
+    const curseLabel = mark.curse
+      ? this.add
+          .text(0, rarityLabel.y, mark.curse.text, {
+            fontFamily: SERIF,
+            fontSize: fontSize(13, 8),
+            color: mark.curse.color,
+            fontStyle: "bold",
+          })
+          .setOrigin(0, 0.5)
+      : undefined;
+    if (curseLabel) {
+      const totalWidth = rarityLabel.width + curseLabel.width;
+      rarityLabel.setOrigin(0, 0.5).setX(-totalWidth / 2);
+      curseLabel.setX(rarityLabel.x + rarityLabel.width);
+    }
     // The title hangs from its top edge rather than sitting on its centre: a
     // name long enough for two lines then grows down into the gap above the
     // description instead of up into the rarity line, which a centred title
@@ -2046,15 +2067,17 @@ export class ShopScene extends Phaser.Scene {
             wordWrap: { width: descWrap },
           })
           .setOrigin(0.5);
-    const costLabel = offer.freeByCoupon
-      ? "Coupon Book: Free"
-      : offer.cost === 0
-        ? "Free"
-        : `${offer.cost} gold`;
+    const costLabel = offer.cursed
+      ? "Free"
+      : offer.freeByCoupon
+        ? "Coupon: Free"
+        : offer.cost === 0
+          ? "Free"
+          : `${offer.cost} gold`;
     const cost = this.add
       .text(0, 128 * scale, costLabel, {
         fontFamily: SERIF,
-        fontSize: fontSize(24, 14),
+        fontSize: fontSize(offer.cursed ? 18 : 24, offer.cursed ? 11 : 14),
         color: affordable ? CSS.gold : CSS.red,
         fontStyle: "bold",
       })
@@ -2065,6 +2088,7 @@ export class ShopScene extends Phaser.Scene {
         img,
         ...(seal ? [seal] : []),
         rarityLabel,
+        ...(curseLabel ? [curseLabel] : []),
         name,
         desc,
         cost,
@@ -2126,6 +2150,7 @@ export class ShopScene extends Phaser.Scene {
       // produces the same dim read without revealing the card underneath.
       img.setTint(0x978e79);
       rarityLabel.setAlpha(0.72);
+      curseLabel?.setAlpha(0.72);
       name.setAlpha(0.72);
       desc.setAlpha(0.68);
       cost.setAlpha(0.86);
@@ -2197,7 +2222,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private openPack(pack: BoosterOffer, origin: PackOrigin): void {
-    if (pack.sold || this.openingPack) return;
+    if (pack.sold || this.openingPack || this.counterClosed()) return;
     const price = boosterPrice(this.state, pack);
     if (this.state.gold < price) {
       audio.deny();
@@ -2531,6 +2556,7 @@ export class ShopScene extends Phaser.Scene {
     if (this.packChoices?.includes(offer)) {
       recordSelection(offer.id);
       audio.buy();
+      this.purchasesMade += 1;
       if (offer.id === "coupon_book") {
         applyCouponFreebie(this.state, this.offers);
       }

@@ -207,7 +207,7 @@ for (let trial = FROM; trial < WIN_TRIAL; trial++) {
   // The two monotonicity rules the authored table is cut with: a slot always
   // asks more than the same slot one rank down, and within a rank the goals rise
   // with the roll budget. The sawtooth between ranks is deliberate — a rank
-  // opens on a seven-roll Lesser Trial and closes on a twenty-roll Boss Trial.
+  // opens on a seven-roll Lesser Trial and closes on an eighteen-roll Boss Trial.
   if (trial > TRIALS_PER_RANK)
     goal = Math.max(goal, curve[trial - TRIALS_PER_RANK - 1] + 1);
   if ((trial - 1) % TRIALS_PER_RANK !== 0)

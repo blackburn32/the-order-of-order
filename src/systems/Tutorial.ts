@@ -6,6 +6,7 @@ import { goalFor } from "./Boss";
 import { trialRollTarget } from "./Trial";
 import { PHONE_BUILD } from "../buildFlags";
 import { WIN_RANK } from "../config";
+import { UNUSED_ROLL_GOLD_CAP } from "./Gold";
 import { refreshActiveRun, saveActiveRun } from "./ActiveRunPersistence";
 
 // The tutorial steps, in the order they are shown. They follow the run's own
@@ -16,10 +17,18 @@ import { refreshActiveRun, saveActiveRun } from "./ActiveRunPersistence";
 // Every step belongs to exactly one scene, which is what lets each scene render
 // the current stage (and only it) without coordinating with the others.
 //
-// Boss fires on the first Boss Trial rather than in sequence, because it has
-// nothing to point at until one arrives — and the two steps after it wait on
-// that same trial being cleared, which is the earliest the ladder ahead is
-// something the player can be shown rather than told.
+// Some steps wait on the run rather than on the step before them. Boss waits in
+// place for the first Boss Trial, which the ladder guarantees, and the two steps
+// after it wait on that same trial being cleared — the earliest the ladder ahead
+// is something the player can be shown rather than told.
+//
+// EarlyGold and Interest cannot wait in place, because the run may take several
+// trials to pay either and may never pay them at all: a trial cleared on its
+// last roll pays nothing for rolls left in hand, and a purse under five pays no
+// interest — the first clear is paid on the four gold a run starts with, so it
+// never does. A step like that is *deferred* rather than blocking (see
+// `deferTutorialStage`): the script carries on without it and it returns at the
+// first clear that finally prints the line it is about.
 export enum TutorialStage {
   Route, // TrialOverview: the three trials of a rank
   RouteStart, // TrialOverview: the button that begins the first one
@@ -29,11 +38,12 @@ export enum TutorialStage {
   Goal,
   Rolls,
   Results, // TrialResults: what a clear paid
+  EarlyGold, // TrialResults: and what it paid for finishing with rolls to spare
   Interest, // TrialResults: and what the purse pays on itself
   Shop, // Shop: spending it
   Boss, // Game, once a Boss Trial is actually in force
-  RankReset, // TrialOverview: the rank after that boss, and its steeper goals
   RankGoal, // TrialOverview: how far the ladder runs
+  RankReset, // TrialOverview: the rank after that boss, and its steeper goals
   Done,
 }
 
@@ -68,20 +78,27 @@ export const TUTORIAL_TEXT: Record<
 
   [TutorialStage.Results]:
     "Clearing a trial pays gold. You'll spend it in the shop for new dice and upgrades.",
+  [TutorialStage.EarlyGold]: `Every roll you did not need pays a gold of its own, up to ${UNUSED_ROLL_GOLD_CAP} a trial. Clear early to earn it.`,
   [TutorialStage.Interest]: `Gold you hold at at a trial's end pays interest. Saving earns!`,
   [TutorialStage.Shop]:
     "Welcome to the shop. Purchase cards or booster packs to improve your odds.",
+  // Points at the boss pills (see GameScene), so it names the effect rather
+  // than announcing that one exists somewhere on screen.
   [TutorialStage.Boss]:
     "Be careful, the boss effect is active and will make your task harder. Defeat the boss to advance a rank!",
 
+  [TutorialStage.RankGoal]: `Congratulations, you've gained a rank! You're one step closer to an orderly realm. Clear rank ${WIN_RANK} to win the game.`,
   [TutorialStage.RankReset]:
-    "The rank is yours. Three fresh trials await, and each rank asks for far more points than the last.",
-  [TutorialStage.RankGoal]: `This is your rank. Clear rank ${WIN_RANK} to win the game.`,
+    "Three fresh trials await, and each rank asks for far more points than the last.",
 };
 
 export interface TutorialState {
   active: boolean;
   stage: TutorialStage;
+  /** Steps the script has passed without showing, because the run had not yet
+   *  produced the thing they explain. They are owed, not spent: the scene that
+   *  owns them shows them again the moment it can (see `deferTutorialStage`). */
+  deferred: TutorialStage[];
 }
 
 // Kept in the Phaser registry (like RunState) rather than a scene field, so it
@@ -93,6 +110,7 @@ export function getTutorial(registry: Phaser.Data.DataManager): TutorialState {
     (registry.get(KEY) as TutorialState | undefined) ?? {
       active: false,
       stage: TutorialStage.Done,
+      deferred: [],
     }
   );
 }
@@ -107,9 +125,17 @@ export function setTutorial(
 /** Arm the tutorial for a fresh run when the player hasn't turned it off. */
 export function beginTutorial(registry: Phaser.Data.DataManager): void {
   if (loadSettings().showTutorial) {
-    setTutorial(registry, { active: true, stage: TutorialStage.Route });
+    setTutorial(registry, {
+      active: true,
+      stage: TutorialStage.Route,
+      deferred: [],
+    });
   } else {
-    setTutorial(registry, { active: false, stage: TutorialStage.Done });
+    setTutorial(registry, {
+      active: false,
+      stage: TutorialStage.Done,
+      deferred: [],
+    });
   }
 }
 
@@ -124,7 +150,38 @@ export function advanceTutorial(registry: Phaser.Data.DataManager): void {
     completeTutorial(registry);
     return;
   }
-  setTutorial(registry, { active: true, stage: next });
+  setTutorial(registry, { ...t, stage: next });
+  refreshActiveRun(registry);
+}
+
+/**
+ * Set the current step aside and carry on to the next one. For a step whose
+ * scene has nothing to point at yet — no gold paid for rolls left in hand, no
+ * interest on the purse — this is what keeps the lessons behind it, the shop's
+ * among them, from waiting on a line the receipt may not print for several
+ * trials or ever. The step stays owed on `deferred` until its scene finds
+ * something to point at, and the run ending the script drops whatever is still
+ * owed, since a tutorial that outlived its own last step would keep the first
+ * run's safety net (`tutorialForcesRoll`) running with it.
+ */
+export function deferTutorialStage(registry: Phaser.Data.DataManager): void {
+  const t = getTutorial(registry);
+  if (!t.active || t.deferred.includes(t.stage)) return;
+  setTutorial(registry, { ...t, deferred: [...t.deferred, t.stage] });
+  advanceTutorial(registry);
+}
+
+/** Mark a deferred step as finally shown and dismissed. */
+export function resolveDeferredStage(
+  registry: Phaser.Data.DataManager,
+  stage: TutorialStage,
+): void {
+  const t = getTutorial(registry);
+  if (!t.deferred.includes(stage)) return;
+  setTutorial(registry, {
+    ...t,
+    deferred: t.deferred.filter((owed) => owed !== stage),
+  });
   refreshActiveRun(registry);
 }
 
@@ -138,10 +195,22 @@ export function atStage(
 }
 
 /** Finish the tutorial and persist that it shouldn't play again (re-enableable
- *  from the Settings menu). */
+ *  from the Settings menu).
+ *
+ *  The setting is only spent when the tutorial was actually armed for this run.
+ *  Every ended run passes through here (see GameOverScene), so a player who
+ *  re-enables the tutorial mid-run — a run that started with it off, and so
+ *  never armed it — would otherwise have that switch flipped straight back off
+ *  by the run they were already in, before the next run could ever read it. */
 export function completeTutorial(registry: Phaser.Data.DataManager): void {
-  setTutorial(registry, { active: false, stage: TutorialStage.Done });
+  const wasActive = getTutorial(registry).active;
+  setTutorial(registry, {
+    active: false,
+    stage: TutorialStage.Done,
+    deferred: [],
+  });
   refreshActiveRun(registry);
+  if (!wasActive) return;
   const settings = loadSettings();
   if (settings.showTutorial) {
     settings.showTutorial = false;

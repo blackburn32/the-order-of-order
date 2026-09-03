@@ -10,6 +10,8 @@ import { RunState } from "../state/RunState";
 import {
   afflictionsFor,
   blocksGrowth,
+  inertDiceCount,
+  scoringNumbersFor,
   type ActiveAfflictions,
   type AfflictionId,
 } from "../systems/Afflictions";
@@ -23,6 +25,7 @@ import {
   grantGold,
   rollGoldBreakdown,
   trialPayout,
+  type TrialPayoutTuning,
   unusedRolls,
 } from "../systems/Gold";
 import {
@@ -40,6 +43,28 @@ import { trialRollTarget } from "../systems/Trial";
 // trial loop; the definition lives in systems/Trial to stay importable from the
 // scorers without a cycle.
 export { trialRollTarget };
+
+/**
+ * Roll a grid for the run it belongs to.
+ *
+ * The only door onto `DicePool.roll` that the game and the sim use, because
+ * three of its four arguments are the run restated and one of them — the inert
+ * tail an affliction has taken off the end of the grid — is not something a
+ * caller can be expected to remember. Forgetting it would quietly hand those
+ * dice their points back while the grid went on drawing a cross through them.
+ */
+export function rollPool(
+  state: RunState,
+  pool: DicePool,
+  rng: () => number = Math.random,
+): void {
+  pool.roll(
+    rng,
+    scoringNumbersFor(state),
+    state.royalSealSizes,
+    inertDiceCount(state, pool.length),
+  );
+}
 
 /** True when the trial is over — either its goal has been met (`trialCleared`,
  *  latched by resolveRoll) or its rolls have run out. The caller should then run
@@ -118,7 +143,7 @@ export interface TrialEndOutcome {
 
 /**
  * Resolve a single roll's scoring and grid growth against dice that have
- * already been rolled (the caller rolls them via `state.dice.roll(rng, nums)` —
+ * already been rolled (the caller rolls them via `rollPool` —
  * in GameScene that's tied to the tumble animation, in the bot it's a seeded
  * RNG). Mutates `state`: advances `roll`, banks `score`/`totalScore`, tracks
  * `trialScore` and `clutchClear`, grants any mid-trial gold, and grows the grid
@@ -277,7 +302,10 @@ export function applyGridPassives(
   // defection bill the same roll rather than the grid the other one left behind.
   const agg = pool.agg();
   const scoringCount = agg.scoringCount;
-  const nonScoringCount = agg.total - agg.scoringCount;
+  // The dice that failed are the LIVE dice that failed. An inert die produced no
+  // outcome either way, so it is neither a success breakage can tax nor a
+  // failure the Order of Disorder can point at.
+  const nonScoringCount = agg.total - agg.inertCount - agg.scoringCount;
 
   // Grid-growing passives, applied after scoring so the new copies don't score
   // the roll they were born on. The pool computes these from the cached roll and
@@ -376,6 +404,7 @@ const INDIVIDUAL_BREAK_ROLLS = 64;
 export function resolveTrialEnd(
   state: RunState,
   rng: () => number = Math.random,
+  payoutTuning: TrialPayoutTuning = {},
 ): TrialEndOutcome {
   const completedTrial = state.trial;
   const completedScore = state.score;
@@ -440,7 +469,9 @@ export function resolveTrialEnd(
 
   const bossCleared = cleared && isBossTrial(state.trial);
   const goldBreakdown =
-    cleared || !cullingEnabled ? trialPayout(state) : EMPTY_BREAKDOWN;
+    cleared || !cullingEnabled
+      ? trialPayout(state, payoutTuning)
+      : EMPTY_BREAKDOWN;
   grantGold(state, goldBreakdown.total);
   // The purse is skimmed once the trial's own pay is in it, so what a ceiling
   // affliction leaves behind is exactly what the player walks into the shop with.

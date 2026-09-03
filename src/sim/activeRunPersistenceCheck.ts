@@ -28,7 +28,11 @@ class TestRegistry {
 
 function registry(
   run: RunState,
-  tutorial: TutorialState = { active: true, stage: TutorialStage.Shop },
+  tutorial: TutorialState = {
+    active: true,
+    stage: TutorialStage.Shop,
+    deferred: [],
+  },
 ): Phaser.Data.DataManager {
   return new TestRegistry()
     .set("run", run)
@@ -145,7 +149,15 @@ async function main(): Promise<void> {
     completedScore: 9_999_999_999_999_999_999n,
     completedGoal: 8_888_888_888_888_888_888n,
     goldEarned: 8,
-    goldBreakdown: { base: 1, rolls: 2, interest: 3, items: 2, total: 8 },
+    goldBreakdown: {
+      base: 1,
+      rollsLeft: 6,
+      rollsPaid: 4,
+      rolls: 2,
+      interest: 3,
+      items: 2,
+      total: 8,
+    },
     goldForfeited: 0,
     rollGold: { titheBowl: 1, luckyCoin: 1, total: 2 },
     totalGoldEarned: 40,

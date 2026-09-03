@@ -26,6 +26,8 @@ export const GOLD_PER_UNUSED_ROLL = 1;
 /** At most this many unused rolls are paid for, so a runaway build that clears
  *  the Greater Trial on roll 2 does not out-earn the whole rest of the economy. */
 export const UNUSED_ROLL_GOLD_CAP = 5;
+/** Deep Pockets raises the unused-roll payout ceiling by this much per copy. */
+export const DEEP_POCKETS_CAP_BONUS = 2;
 
 /** Interest pays 1 gold per this much banked, at every trial clear. */
 export const GOLD_PER_INTEREST = 5;
@@ -56,7 +58,13 @@ export const LUCKY_COIN_CHANCE = 0.1;
 export interface GoldBreakdown {
   /** The trial's level payout. */
   base: number;
-  /** Rolls left in hand when the goal was met (plus Reserve). */
+  /** How many rolls were actually left when the goal was met. */
+  rollsLeft: number;
+  /** How many of those the ceiling actually paid for. Below the ceiling this
+   *  equals `rollsLeft`; above it, the difference is what the clear left on the
+   *  table, which the receipt prints struck through. */
+  rollsPaid: number;
+  /** Gold paid for rolls left in hand (including Reserve). */
   rolls: number;
   /** Interest on gold already banked. */
   interest: number;
@@ -65,8 +73,20 @@ export interface GoldBreakdown {
   total: number;
 }
 
+/** Optional payout knobs used by the balance simulator. Live play omits this
+ * object and therefore uses the authored constants above. */
+export interface TrialPayoutTuning {
+  /** Multiplier on the ordinary one-gold-per-unused-roll reward. Reserve's item
+   * bonus remains intact so the experiment does not silently rewrite the card. */
+  unusedRollBaseMultiplier?: number;
+  /** Experimental replacement for UNUSED_ROLL_GOLD_CAP. */
+  unusedRollCap?: number;
+}
+
 export const EMPTY_BREAKDOWN: GoldBreakdown = {
   base: 0,
+  rollsLeft: 0,
+  rollsPaid: 0,
   rolls: 0,
   interest: 0,
   items: 0,
@@ -99,13 +119,28 @@ export function unusedRolls(state: RunState): number {
  * The Hoard's doubling applies to the trial's own payout (level, rolls, items)
  * but not to interest, which is earned on the bank rather than on the trial.
  */
-export function trialPayout(state: RunState): GoldBreakdown {
+export function trialPayout(
+  state: RunState,
+  tuning: TrialPayoutTuning = {},
+): GoldBreakdown {
   const base = TRIAL_GOLD_BASE[trialInRank(state.trial) - 1];
 
   // Reserve adds to the per-roll rate rather than the cap, so it stays useful
   // on a trial cleared with only a roll or two to spare.
-  const paidRolls = Math.min(unusedRolls(state), UNUSED_ROLL_GOLD_CAP);
-  const rolls = paidRolls * (GOLD_PER_UNUSED_ROLL + state.reserve);
+  const rollsLeft = unusedRolls(state);
+  // Deep Pockets raises the authored or experimental ceiling rather than the
+  // per-roll rate. This makes every copy worth exactly two more payable rolls,
+  // while Reserve remains the item that makes each of those rolls worth more.
+  const rollGoldCap =
+    (tuning.unusedRollCap ?? UNUSED_ROLL_GOLD_CAP) +
+    state.deepPockets * DEEP_POCKETS_CAP_BONUS;
+  const paidRolls = Math.min(rollsLeft, rollGoldCap);
+  const baseRollGold = Math.floor(
+    paidRolls *
+      GOLD_PER_UNUSED_ROLL *
+      Math.max(0, tuning.unusedRollBaseMultiplier ?? 1),
+  );
+  const rolls = baseRollGold + paidRolls * state.reserve;
 
   let items = state.countingHouse;
   if (state.hasProspector) {
@@ -117,7 +152,7 @@ export function trialPayout(state: RunState): GoldBreakdown {
   if (isBossTrial(state.trial)) items += BOSS_CLEAR_GOLD;
 
   // The Hoard's doubling, Reliquary's share, and any affliction that garnishes
-  // a clear (Iron Debt pays none of it) all meet in one per-mille factor.
+  // a clear (Iron Debt garnishes it) all meet in one per-mille factor.
   let multMilli = bossGoldMultMilli(state);
   if (state.hasReliquary)
     multMilli = Math.floor((multMilli * RELIQUARY_MULT_MILLI) / 1_000);
@@ -128,6 +163,8 @@ export function trialPayout(state: RunState): GoldBreakdown {
 
   const scaled = {
     base: scale(base),
+    rollsLeft,
+    rollsPaid: paidRolls,
     rolls: scale(rolls),
     items: scale(items),
     interest: interestOn(state),

@@ -13,10 +13,10 @@
 
 import { WIN_TRIAL } from "../config";
 import { newRun, type RunState } from "../state/RunState";
-import { scoringNumbersFor, type AfflictionId } from "../systems/Afflictions";
+import { type AfflictionId } from "../systems/Afflictions";
 import { playerLeadsDuel } from "../systems/Rival";
 import { trialRollTarget } from "../systems/Trial";
-import { prepareDuel, resolveRoll } from "./engine";
+import { prepareDuel, resolveRoll, rollPool } from "./engine";
 
 const DUELS = 4000;
 
@@ -97,7 +97,7 @@ function duel(build: Build, seed: number): "win" | "loss" | "tie" {
   const rng = makeRng(seed);
   const rolls = trialRollTarget(state);
   for (let r = 0; r < rolls; r++) {
-    state.dice.roll(rng, scoringNumbersFor(state), state.royalSealSizes);
+    rollPool(state, state.dice, rng);
     resolveRoll(state, rng);
   }
   if (playerLeadsDuel(state)) return "win";

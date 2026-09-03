@@ -437,6 +437,12 @@ function hydrateOutcome(value: unknown): TrialEndOutcome | null {
   const completedGoal = parseBigInt(value.completedGoal);
   const goldBreakdown = value.goldBreakdown;
   const rollGold = value.rollGold;
+  // Results checkpoints written before the receipt displayed the actual roll
+  // count have no `rollsLeft`. Keep those runs resumable; zero is the only
+  // honest fallback once the trial's roll counter has already been reset.
+  const rollsLeft = isRecord(goldBreakdown)
+    ? (goldBreakdown.rollsLeft ?? 0)
+    : 0;
   if (
     !["victory", "gameOver", "advanced"].includes(value.phase as string) ||
     completedScore === null ||
@@ -447,6 +453,7 @@ function hydrateOutcome(value: unknown): TrialEndOutcome | null {
     !["base", "rolls", "interest", "items", "total"].every((key) =>
       isFiniteNumber(goldBreakdown[key]),
     ) ||
+    !isNonNegativeInteger(rollsLeft) ||
     !isNonNegativeInteger(value.goldForfeited) ||
     !isRecord(rollGold) ||
     !["titheBowl", "luckyCoin", "total"].every((key) =>
@@ -458,12 +465,21 @@ function hydrateOutcome(value: unknown): TrialEndOutcome | null {
     typeof value.bossCleared !== "boolean"
   )
     return null;
+  // Likewise for `rollsPaid`, added when the receipt began striking through the
+  // rolls the ceiling did not pay for. Assuming every roll left was paid is the
+  // fallback that prints no strike, which is the honest reading of a receipt
+  // that never recorded a ceiling.
+  const rollsPaid = isNonNegativeInteger(goldBreakdown.rollsPaid)
+    ? Math.min(goldBreakdown.rollsPaid, rollsLeft)
+    : rollsLeft;
   return {
     ...(value as unknown as TrialEndOutcome),
     completedScore,
     completedGoal,
     goldBreakdown: {
       ...goldBreakdown,
+      rollsLeft,
+      rollsPaid,
     } as unknown as TrialEndOutcome["goldBreakdown"],
     rollGold: { ...rollGold } as unknown as TrialEndOutcome["rollGold"],
   };
@@ -566,6 +582,21 @@ function cloneShopCheckpoint(
   };
 }
 
+/** A save written before deferred steps existed carries no list at all, which
+ *  reads as an empty one rather than as a corrupt save: a run resumed from it
+ *  simply owes nothing. */
+function isTutorialStageList(
+  value: unknown,
+): value is TutorialStage[] | undefined {
+  return (
+    value === undefined ||
+    (Array.isArray(value) &&
+      value.every(
+        (stage) => isNonNegativeInteger(stage) && stage <= TutorialStage.Done,
+      ))
+  );
+}
+
 function serializeEnvelope(
   run: RunState,
   tutorial: TutorialState,
@@ -577,7 +608,7 @@ function serializeEnvelope(
     // sort after that clear's tombstone on the next native launch.
     savedAt: Math.max(Date.now(), localTombstone() + 1),
     run: serializeRunState(run),
-    tutorial: { ...tutorial },
+    tutorial: { ...tutorial, deferred: [...tutorial.deferred] },
     checkpoint: serializeCheckpoint(checkpoint),
   };
   return JSON.stringify(envelope);
@@ -604,13 +635,18 @@ function parseEnvelope(
       !isRecord(tutorial) ||
       typeof tutorial.active !== "boolean" ||
       !isNonNegativeInteger(tutorial.stage) ||
-      tutorial.stage > TutorialStage.Done
+      tutorial.stage > TutorialStage.Done ||
+      !isTutorialStageList(tutorial.deferred)
     )
       return null;
     return {
       run,
       checkpoint,
-      tutorial: { active: tutorial.active, stage: tutorial.stage },
+      tutorial: {
+        active: tutorial.active,
+        stage: tutorial.stage,
+        deferred: [...(tutorial.deferred ?? [])],
+      },
       savedAt: value.savedAt,
     };
   } catch {

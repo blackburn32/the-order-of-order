@@ -12,10 +12,11 @@ import {
   goalFor,
   type BossModifier,
 } from "../systems/Boss";
-import { deadDiceFraction, scoringNumbersFor } from "../systems/Afflictions";
+import { inertDiceCount, scoringNumbersFor } from "../systems/Afflictions";
 import {
   resolveRoll,
   resolveTrialEnd,
+  rollPool,
   trialComplete,
   trialRollTarget,
 } from "../sim/engine";
@@ -66,7 +67,9 @@ import {
 import {
   isCompactLandscape,
   isPortrait,
+  isSplitFooter,
   onResizeCoalesced,
+  RUN_FOOTER_ROW_H,
 } from "../ui/layout";
 import { GridArea } from "../ui/gridLayout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
@@ -265,7 +268,7 @@ interface HudCell {
 interface Layout {
   hud: Record<HudStatKey, HudCell>;
   bossRibbon?: { x: number; y: number; w: number; h: number; compact: boolean };
-  footer: { numbersY: number; settingsY: number };
+  footer: { numbersY: number; settingsY: number; split: boolean };
   /** The gold rule closing the interface strip off from the playfield. It sits
    *  in the air between the last piece of top chrome — the HUD, or the boss
    *  ribbon when one presides — and the top of the grid, so the stats read as
@@ -381,6 +384,12 @@ export class GameScene extends Phaser.Scene {
   // The Boss tutorial step waits out the "presides" banner, which the callout's
   // dim would otherwise bury (the banner sits below it).
   private bossCalloutHeld = true;
+  // Screen rect of the boss pills as actually laid out, which the Boss tutorial
+  // step spotlights. The ribbon's layout cell is only the space the row was
+  // offered — the pills shrink to their copy inside it and a one-modifier trial
+  // leaves most of a roomy strip empty — so the rect is measured at build time
+  // rather than taken from the cell. Cleared when no boss presides.
+  private bossRibbonRect?: Phaser.Geom.Rectangle;
   // Unlocks still persist at the moment their criterion is met, but their
   // presentation waits for TrialResults so the roll itself stays readable.
   private trialUnlocks: ShopItemId[] = [];
@@ -575,13 +584,19 @@ export class GameScene extends Phaser.Scene {
         anchor = plaqueRect("roll");
         onContinue = advance;
         break;
-      case TutorialStage.Boss:
+      case TutorialStage.Boss: {
         // Nothing to point at until a Boss Trial is actually running, and
         // nothing to read while its banner is still on screen.
         if (this.bossCalloutHeld || !activeBoss(this.state)) return;
-        anchor = plaqueRect("target");
+        // The pills are what the step is about — they name the modifier and
+        // spell out its rule. The goal plaque only shows the number that rule
+        // moved, so spotlighting it left the lesson pointing at the wrong
+        // thing. (The rect is built alongside the pills; fall back to the
+        // plaque if a boss somehow presides without a ribbon on screen.)
+        anchor = this.bossRibbonRect ?? plaqueRect("target");
         onContinue = advance;
         break;
+      }
       default:
         // Route, rank, Results and Shop steps belong to their own scenes.
         return;
@@ -621,7 +636,11 @@ export class GameScene extends Phaser.Scene {
     // Too short to stack the grid above the seal: the two sit side by side
     // instead, seal on the right. See the compact branch below.
     const compact = isCompactLandscape(W, H);
-    const footerH = portrait ? 64 : 40;
+    // Where the Inventory/Settings links split to the ends of one bottom row
+    // they take over the bottom-left corner, so the sacred numbers move up
+    // onto a line of their own and the footer band grows to hold both.
+    const split = isSplitFooter(this);
+    const footerH = split ? (portrait ? 76 : 60) : 40;
 
     // One compact strip at every width. The score gets the broadest plaque,
     // then the goal; the ladder position needs the least room. Capping
@@ -651,12 +670,14 @@ export class GameScene extends Phaser.Scene {
     const dividerX = W / 2;
     const dividerW = Math.min(W - hudMargin * 2, hudWidth + 24);
 
-    // Sacred numbers stay bottom-left, Inventory/Settings bottom-right, in
-    // every orientation — portrait just reserves a taller footer so the
-    // (potentially wrapping) sacred-numbers text clears the two links.
+    // Split, the links own the bottom row and the sacred numbers sit on the
+    // line above it, bottom-aligned so a second wrapped line grows up into the
+    // band rather than down onto the links. Stacked, the numbers share the
+    // footer baseline with them, half a screen to the left.
     const footer = {
-      numbersY: portrait ? H - 27 : H - footerH + 10,
-      settingsY: portrait ? H - 16 : H - footerH + 10,
+      numbersY: split ? H - RUN_FOOTER_ROW_H : H - footerH + 10,
+      settingsY: split ? H - 16 : H - footerH + 10,
+      split,
     };
 
     if (compact) {
@@ -668,9 +689,9 @@ export class GameScene extends Phaser.Scene {
       const railW = Phaser.Math.Clamp(W * 0.2, 132, 200);
       const railLeft = W - railW;
       const gridBottom = H - footerH - 4;
-      // The rail also has to clear the Inventory/Settings links, which sit
-      // above the footer baseline in the same corner.
-      const railBottom = H - footerH - 28;
+      // Split, the links are inside the footer band already; stacked, the
+      // upper one sits above the baseline in the rail's own corner.
+      const railBottom = H - footerH - (split ? 4 : 28);
       // On a short landscape screen the boss ribbon occupies the seal rail,
       // not a strip across the playfield. The grid keeps its pre-boss bounds.
       // Each modifier gets its own pill, so the rail grows a row per boss.
@@ -850,19 +871,20 @@ export class GameScene extends Phaser.Scene {
 
     items.push(this.buildHudDivider(layout));
 
-    const { numbersY } = layout.footer;
-    // Sacred numbers pinned bottom-left; Inventory (upper) and Settings (lower)
-    // pinned bottom-right. The left text wraps within the half-width gap so it
-    // never runs under the right-hand links on narrow portrait screens.
+    const { numbersY, split } = layout.footer;
+    // Sacred numbers pinned bottom-left. Sharing the baseline with the stacked
+    // links, the text wraps within the half-width gap so it never runs under
+    // them; on the line above a split row it has the whole width, which is
+    // what usually keeps it to one line there.
     this.hudNumbers = this.add
       .text(24, numbersY, "", {
         fontFamily: SERIF,
         fontSize: "15px",
         color: CSS.dim,
         fontStyle: "italic",
-        wordWrap: { width: W * 0.5 },
+        wordWrap: { width: split ? W - 48 : W * 0.5 },
       })
-      .setOrigin(0, 0.5);
+      .setOrigin(0, split ? 1 : 0.5);
     this.runFooterLinks = buildRunFooterLinks(this, "Game");
     items.push(this.hudNumbers, ...this.runFooterLinks);
 
@@ -920,6 +942,7 @@ export class GameScene extends Phaser.Scene {
     // its own framed pill rather than sharing one ribbon's punctuation.
     const bosses = activeBosses(this.state);
     const cell = layout.bossRibbon;
+    this.bossRibbonRect = undefined;
     if (!bosses.length || !cell) return undefined;
 
     const container = this.add.container(cell.x, cell.y);
@@ -931,12 +954,21 @@ export class GameScene extends Phaser.Scene {
     );
 
     if (cell.compact) {
+      let widest = 0;
       pills.forEach((pill, index) => {
-        pill.place(Math.min(cell.w, pill.fixedWidth + pill.textWidth));
+        const width = Math.min(cell.w, pill.fixedWidth + pill.textWidth);
+        pill.place(width);
         pill.container.setY(
           -cell.h / 2 + rowH / 2 + index * (rowH + BOSS_PILL_GAP),
         );
+        widest = Math.max(widest, width);
       });
+      this.bossRibbonRect = new Phaser.Geom.Rectangle(
+        cell.x - widest / 2,
+        cell.y - cell.h / 2,
+        widest,
+        cell.h,
+      );
     } else {
       // Share the strip out: every pill keeps its frame and sigil at full
       // size, and the copy inside them all shrinks by the same factor until
@@ -960,6 +992,12 @@ export class GameScene extends Phaser.Scene {
         pill.container.setX(left + widths[index] / 2);
         left += widths[index] + gap;
       });
+      this.bossRibbonRect = new Phaser.Geom.Rectangle(
+        cell.x - row / 2,
+        cell.y - cell.h / 2,
+        row,
+        cell.h,
+      );
     }
 
     container.add(pills.map((pill) => pill.container));
@@ -1351,6 +1389,13 @@ export class GameScene extends Phaser.Scene {
       const moved: { sprite: DieSprite; from: { x: number; y: number } }[] = [];
       const arrived: DieSprite[] = [];
 
+      // How many dice at the head of the grid an affliction has struck inert.
+      // Recomputed on every relayout rather than remembered, because the grid
+      // it is measured against is the one being laid out: dice won or lost
+      // since the last roll move the boundary, and the next roll will read it
+      // exactly where the player is about to see it drawn.
+      const inertCount = inertDiceCount(this.state, n);
+
       for (const { index, x, y } of visible) {
         let sprite = this.sprites.get(index);
         const priorPosition = from?.positions.get(index);
@@ -1376,6 +1421,7 @@ export class GameScene extends Phaser.Scene {
         }
         sprite.setPosition(x, y);
         sprite.setScale(scale);
+        sprite.setInert(index < inertCount);
         if (!animate || !from) continue;
         // Three kinds of die end up here: one that was already on screen and
         // has to slide to its new cell, one the player has just won, and one
@@ -2157,11 +2203,7 @@ export class GameScene extends Phaser.Scene {
     // on every die (see tutorialForcesRoll).
     const forced = tutorialForcesRoll(this.registry, this.state);
     const rollDice = () =>
-      this.state.dice.roll(
-        forced ? () => 0 : Math.random,
-        scoringNumbersFor(this.state),
-        this.state.royalSealSizes,
-      );
+      rollPool(this.state, this.state.dice, forced ? () => 0 : Math.random);
     rollDice();
     // ...and its opening roll is not allowed to be a hot one either: clearing
     // the Lesser Trial immediately would skip the steps that come after the
@@ -2228,8 +2270,14 @@ export class GameScene extends Phaser.Scene {
 
     switch (boss.id) {
       case "famine":
-        cancelled("Extra Point", agg.scoringCount * this.state.extraPoints);
-        cancelled("Keen Edge", agg.scoringD1Count * this.state.keenEdge * 2);
+        cancelled(
+          "Deeper Stillness",
+          agg.scoringCount * this.state.extraPoints,
+        );
+        cancelled(
+          "Enlightenment",
+          agg.scoringD1Count * this.state.keenEdge * 2,
+        );
         break;
       case "drought": {
         const doubled = this.state.hasDoubleTheFun
@@ -2266,7 +2314,7 @@ export class GameScene extends Phaser.Scene {
         for (const value of this.state.scoringNumbers) {
           if (value !== 1) silenced += agg.valueCounts.get(value) ?? 0;
         }
-        cancelled("Extra Number", silenced);
+        cancelled("Decree", silenced);
         break;
       }
       case "warden": {
@@ -2274,11 +2322,14 @@ export class GameScene extends Phaser.Scene {
           let points = 0;
           for (const [value, count] of agg.valueCounts)
             if (count >= 2) points += value * count;
-          cancelled("Snake Eyes", points);
+          cancelled("Consensus", points);
         }
         if (this.state.jackpot > 0) {
           const sets = Math.floor(agg.scoringCount / JACKPOT_DICE);
-          cancelled("Jackpot", sets * JACKPOT_POINTS * this.state.jackpot);
+          cancelled(
+            "The Congregation",
+            sets * JACKPOT_POINTS * this.state.jackpot,
+          );
         }
         if (this.state.hasLuckySeven && showsASeven(agg.valueCounts)) {
           // A refused multiplier, priced as the points it would have added on
@@ -2292,7 +2343,7 @@ export class GameScene extends Phaser.Scene {
         break;
       }
       case "toll": {
-        const inert = Math.floor(agg.total * deadDiceFraction(this.state));
+        const inert = agg.inertCount;
         if (inert > 0)
           cues.push({
             kind: "penalty",
@@ -2370,8 +2421,14 @@ export class GameScene extends Phaser.Scene {
     // sized snapshot lets us reconstruct only the indicators the player can see.
     const rolledVisible = new Map<number, Die>();
     if (showPerDieEffects) {
+      // The inert head is left out entirely. Every per-die flash below is read
+      // off this map, and the scorer did not read those dice — a die wearing a
+      // cross must not also be shown pulsing for the points it did not score.
+      // Measured before `resolveRoll` grows the grid, so it is the same block
+      // the roll itself was scored against.
+      const inertCount = inertDiceCount(s, s.dice.length);
       for (const [index, sprite] of this.sprites)
-        rolledVisible.set(index, { ...sprite.die });
+        if (index >= inertCount) rolledVisible.set(index, { ...sprite.die });
     }
 
     // Growing the pool relays out the grid and clears in-flight pulses. Show

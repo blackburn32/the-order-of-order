@@ -17,7 +17,13 @@ import { installStorage, seedGlobalRandom } from "./localStorageShim";
 import { RunRecord, simulateRun } from "./bot";
 import { aggregate } from "./stats";
 import { buildReport } from "./report";
-import { seriesConfig, seriesSeed, SHOPPER_SERIES, SIM_SERIES } from "./series";
+import {
+  seriesConfig,
+  seriesSeed,
+  SHOPPER_SERIES,
+  SIM_SERIES,
+  SMART_SERIES,
+} from "./series";
 import {
   setTrialGoals,
   TRIALS_PER_RANK,
@@ -78,6 +84,7 @@ for (const series of SIM_SERIES) {
 }
 
 const pooled = SHOPPER_SERIES.flatMap((series) => byStrategy[series.id]);
+const smart = SMART_SERIES.flatMap((series) => byStrategy[series.id]);
 let alive = pooled;
 console.log("\nPooled field (the README attrition measure):");
 console.log(
@@ -97,6 +104,17 @@ for (let trial = 1; trial <= WIN_TRIAL; trial++) {
       `${String(survivors.length).padStart(9)} | ${((survivors.length / pooled.length) * 100).toFixed(1).padStart(10)}%`,
   );
   alive = survivors;
+}
+
+console.log("\nSmart-field survival by rank:");
+for (let rank = 1; rank <= WIN_RANK; rank++) {
+  const lastTrial = rank * TRIALS_PER_RANK;
+  const survivors = smart.filter(
+    (record) => record.won || record.trialReached > lastTrial,
+  ).length;
+  console.log(
+    `  rank ${String(rank).padStart(2)}  ${((survivors / smart.length) * 100).toFixed(1).padStart(5)}% alive`,
+  );
 }
 
 printPacing(pooled);

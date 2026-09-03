@@ -287,11 +287,14 @@ export class SettingsScene extends Phaser.Scene {
     const abandon: BannerAction = {
       label: "Abandon Run",
       onClick: () =>
+        // Abandoning ends the run, so the felt stays opaque on the way out:
+        // crossfading back to the table first would flash the dice grid the
+        // player just walked away from. Game Over arrives behind the same room.
         this.leave(() => {
           finalizeRun(getRun(this.registry));
           if (this.overlay) this.scene.stop(this.returnTo);
           this.scene.start("GameOver");
-        }),
+        }, true),
     };
 
     if (compact) {
@@ -388,10 +391,12 @@ export class SettingsScene extends Phaser.Scene {
     });
   }
 
-  private leave(complete: () => void): void {
+  /** `keepFelt` holds the overlay's room opaque as the form leaves, for exits
+   *  that go somewhere else rather than back to the scene underneath. */
+  private leave(complete: () => void, keepFelt = false): void {
     if (this.leaving) return;
     this.leaving = true;
-    if (this.overlay && this.overlayFelt) {
+    if (this.overlay && this.overlayFelt && !keepFelt) {
       slideOverlayOut(this, this.overlayFelt, complete);
     } else {
       slideSceneOut(this, complete, this.slideBackdrop);

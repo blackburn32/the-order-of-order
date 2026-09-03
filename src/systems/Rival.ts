@@ -14,7 +14,7 @@
 // that wants changing.
 
 import type { RunState } from "../state/RunState";
-import { scoringNumbersFor } from "./Afflictions";
+import { inertDiceCount, scoringNumbersFor } from "./Afflictions";
 import { DicePool } from "./DicePool";
 
 export interface RivalState {
@@ -41,7 +41,16 @@ export function rollRival(
   rival: RivalState,
   rng: () => number = Math.random,
 ): void {
-  rival.dice.roll(rng, scoringNumbersFor(state), state.royalSealSizes);
+  // Not `engine.rollPool`, which is where every other caller goes: sim/engine
+  // imports this file, so importing it back would close a cycle. The inert tail
+  // is measured against the rival's own grid — the two can differ in size once
+  // breakage has been at them.
+  rival.dice.roll(
+    rng,
+    scoringNumbersFor(state),
+    state.royalSealSizes,
+    inertDiceCount(state, rival.dice.length),
+  );
 }
 
 /** True when the player is ahead of the rival. A tie is not a lead: the trial

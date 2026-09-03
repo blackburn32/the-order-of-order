@@ -4,24 +4,33 @@ import { rankOf, trialName } from "../config";
 import type { TrialEndOutcome } from "../sim/engine";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
-import { describeUnlockAction, ITEMS, type ShopItemId } from "../systems/Items";
+import {
+  describeUnlockAction,
+  ITEMS,
+  MARK_STRUCK,
+  type ShopItemId,
+} from "../systems/Items";
 import {
   COMPACT_MARGIN,
   compactColumns,
   destroyAllChildren,
   isCompactLandscape,
   onResizeCoalesced,
+  RUN_FOOTER_ROW_H,
 } from "../ui/layout";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { RuleDice } from "../ui/RuleDice";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
+import { buildRichCopy } from "../ui/richCopy";
 import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
 import { buildItemCard } from "../ui/itemCard";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { CalloutHandle, showCallout } from "../ui/Callout";
 import {
   advanceTutorial,
+  deferTutorialStage,
   getTutorial,
+  resolveDeferredStage,
   TutorialStage,
   TUTORIAL_TEXT,
 } from "../systems/Tutorial";
@@ -88,33 +97,63 @@ function receiptHeight(lines: number, lineGap: number): number {
 /** The label of the interest row, which the tutorial's Interest step points at. */
 const INTEREST_LABEL = "Interest";
 
+/** The opening of the rolls-left row, which the tutorial's EarlyGold step points
+ *  at. The row itself carries the count, so it is matched by its opening. */
+const ROLLS_LABEL = "Rolls left in hand";
+
+/** Air between a struck figure and the amount it sits left of, so the slash's
+ *  overshoot never touches the gold. */
+const STRUCK_FIGURE_GAP = 8;
+
+/** The tutorial steps this screen owns. Their copy comes from the shared
+ *  script; only where they point, and whether this receipt has anything for
+ *  them to point at, is decided here. */
+type ResultsStep =
+  TutorialStage.Results | TutorialStage.EarlyGold | TutorialStage.Interest;
+
+function isResultsStep(stage: TutorialStage): stage is ResultsStep {
+  return (
+    stage === TutorialStage.Results ||
+    stage === TutorialStage.EarlyGold ||
+    stage === TutorialStage.Interest
+  );
+}
+
 /** The itemised gold lines worth printing: every source that paid, plus the
  *  trial reward itself even when it paid nothing (a receipt with no first
- *  line reads as an error rather than as a small reward). While the tutorial is
- *  running the interest row is kept too, at +0 or not: it is the thing the
- *  Interest step explains, and a lesson needs a row to point at. A first purse
- *  is four gold, so that row would otherwise never appear during the tutorial —
- *  which is exactly why players did not know interest existed. */
-function receiptLines(
-  o: TrialEndOutcome,
-  teaching = false,
-): Array<[string, number]> {
-  const all: Array<[string, number]> = [
-    ["Trial reward", o.goldBreakdown.base],
-    ["Rolls left in hand", o.goldBreakdown.rolls],
-    [INTEREST_LABEL, o.goldBreakdown.interest],
-    ["Relics and boss rewards", o.goldBreakdown.items],
-    ["Tithe Bowl during rolls", o.rollGold.titheBowl],
-    ["Lucky Coin during rolls", o.rollGold.luckyCoin],
+ *  line reads as an error rather than as a small reward). Nothing else is
+ *  printed at +0 — including for the tutorial, whose two receipt-line steps
+ *  wait for the line they explain to be worth something rather than have the
+ *  receipt hold an empty row open for them. */
+interface ReceiptLine {
+  label: string;
+  amount: number;
+  /** A figure printed struck through immediately left of the amount — the
+   *  rolls-left count, on the clears where the payout ceiling did not pay for
+   *  all of them. Absent everywhere else, including on a clear that came in
+   *  under the ceiling: there the bonus is the whole story. */
+  struck?: number;
+}
+
+function receiptLines(o: TrialEndOutcome): ReceiptLine[] {
+  const { rollsLeft, rollsPaid } = o.goldBreakdown;
+  const all: ReceiptLine[] = [
+    { label: "Trial reward", amount: o.goldBreakdown.base },
+    {
+      label: ROLLS_LABEL,
+      amount: o.goldBreakdown.rolls,
+      ...(rollsLeft > rollsPaid ? { struck: rollsLeft } : {}),
+    },
+    { label: INTEREST_LABEL, amount: o.goldBreakdown.interest },
+    { label: "Relics and boss rewards", amount: o.goldBreakdown.items },
+    { label: "Tithe Bowl during rolls", amount: o.rollGold.titheBowl },
+    { label: "Lucky Coin during rolls", amount: o.rollGold.luckyCoin },
     // The one line that can take gold away: a ceiling affliction skimming the
     // purse as the trial ends (Pauper's Vow). Printed last, and signed, so the
     // receipt still adds up to what the player is carrying into the shop.
-    ["Forfeited to your vow", -o.goldForfeited],
+    { label: "Forfeited to your vow", amount: -o.goldForfeited },
   ];
-  return all.filter(
-    ([label, amount], i) =>
-      amount !== 0 || i === 0 || (teaching && label === INTEREST_LABEL),
-  );
+  return all.filter(({ amount }, i) => amount !== 0 || i === 0);
 }
 
 /** A laid-out results screen, handed to the reveal sequence: the groups it
@@ -149,8 +188,11 @@ export class TrialResultsScene extends Phaser.Scene {
   // Screen rect of the gold receipt, which the first-run tutorial points at
   // once the reveal has finished.
   private receiptRect?: Phaser.Geom.Rectangle;
-  // The interest row inside it, which the tutorial's Interest step points at.
+  // The interest and rolls-left rows inside it, which the tutorial's Interest
+  // and EarlyGold steps point at. Either is absent whenever this clear paid
+  // nothing from that source, which is what makes those steps wait.
   private interestRect?: Phaser.Geom.Rectangle;
+  private rollsRect?: Phaser.Geom.Rectangle;
   private tutorialCallout?: CalloutHandle;
   // Which fanned card is currently pulled to the front, so the same card is
   // not re-focused on every pointer move across it.
@@ -414,6 +456,9 @@ export class TrialResultsScene extends Phaser.Scene {
     const unlocks = this.unlockedDefs().length > 0;
     const columns = compactColumns(this, {
       top: ruleY + 12,
+      // Short landscape always splits the Inventory/Settings links into a row
+      // along the bottom, under both columns: the band ends above it.
+      bottom: H - RUN_FOOTER_ROW_H,
       leftFraction: 0.46,
     });
     // With no cards to show, the receipt column is the whole band.
@@ -425,7 +470,7 @@ export class TrialResultsScene extends Phaser.Scene {
     // measures itself, so the pair can be centred in the column as one block.
     const lineGap = Phaser.Math.Clamp(columns.height * 0.07, 16, 27);
     const boxH = receiptHeight(
-      receiptLines(this.dataIn.outcome, this.teachingReceipt()).length,
+      receiptLines(this.dataIn.outcome).length,
       lineGap,
     );
     const button = this.buildContinueButton(
@@ -447,13 +492,10 @@ export class TrialResultsScene extends Phaser.Scene {
     const buttonY = receipt.bottom + blockGap + button.height / 2;
     button.setY(buttonY);
 
-    // Inventory/Settings are pinned to the bottom-right corner on every run
-    // screen, and that is where this column ends — so the cards stop short of
-    // them, the way the shop's compact sidebar does.
     const unlock = this.buildUnlockSection(
       columns.right.cx,
       columns.top,
-      Math.min(columns.bottom, H - 62),
+      columns.bottom,
       columns.right.width / 0.92,
     );
 
@@ -555,7 +597,7 @@ export class TrialResultsScene extends Phaser.Scene {
     lineGap: number,
   ): { objects: Phaser.GameObjects.GameObject[]; bottom: number } {
     const o = this.dataIn.outcome;
-    const lines = receiptLines(o, this.teachingReceipt());
+    const lines = receiptLines(o);
     const bottom = top + receiptHeight(lines.length, lineGap);
     // The accounting sits straight on the felt, like every other line on this
     // screen. `width` still describes the block it occupies — it places the
@@ -580,16 +622,18 @@ export class TrialResultsScene extends Phaser.Scene {
     // wide enough to cap that width can't push the labels past its edge.
     const labelDx = Math.min(typeBasis * 0.3, width / 2 - 12);
     this.interestRect = undefined;
-    const rows = lines.flatMap(([label, amount], i) => {
+    this.rollsRect = undefined;
+    const rows = lines.flatMap(({ label, amount, struck }, i) => {
       const y = top + RECEIPT_LINES_INSET + i * lineGap;
-      if (label === INTEREST_LABEL) {
-        this.interestRect = new Phaser.Geom.Rectangle(
+      const rowRect = () =>
+        new Phaser.Geom.Rectangle(
           cx - labelDx,
           y - lineGap / 2,
           labelDx * 2,
           lineGap,
         );
-      }
+      if (label === INTEREST_LABEL) this.interestRect = rowRect();
+      else if (label.startsWith(ROLLS_LABEL)) this.rollsRect = rowRect();
       const name = this.add
         .text(cx - labelDx, y, label, {
           fontFamily: SERIF,
@@ -597,54 +641,113 @@ export class TrialResultsScene extends Phaser.Scene {
           color: CSS.parchment,
         })
         .setOrigin(0, 0.5);
+      const amountSize = Phaser.Math.Clamp(typeBasis * 0.02, 13, 19);
       const amountText = this.add
         .text(cx + labelDx, y, amount < 0 ? `${amount}` : `+${amount}`, {
           fontFamily: SERIF,
-          fontSize: `${Phaser.Math.Clamp(typeBasis * 0.02, 13, 19)}px`,
+          fontSize: `${amountSize}px`,
           color: amount < 0 ? CSS.red : CSS.gold,
           fontStyle: "bold",
         })
         .setOrigin(1, 0.5);
-      return [name, amountText];
+      if (struck === undefined) return [name, amountText];
+      // Set the way a shop card cancels a figure it is replacing — same slash,
+      // same red — so "this is the number that no longer counts" reads the same
+      // on the receipt as it does on a card.
+      const cancelled = buildRichCopy(this, `${MARK_STRUCK}${struck}`, {
+        fontFamily: SERIF,
+        fontSizePx: amountSize,
+        color: CSS.parchmentDark,
+        wrapWidth: Number.MAX_SAFE_INTEGER,
+      });
+      cancelled.setPosition(
+        cx +
+          labelDx -
+          amountText.width -
+          STRUCK_FIGURE_GAP -
+          cancelled.width / 2,
+        y,
+      );
+      return [name, amountText, cancelled];
     });
 
     return { objects: [goldTitle, ...rows], bottom };
   }
 
-  /** Whether the receipt is being used to teach, which is what keeps the
-   *  interest row on it while the purse is still too small to earn any. */
-  private teachingReceipt(): boolean {
-    const t = getTutorial(this.registry);
-    return (
-      t.active &&
-      (t.stage === TutorialStage.Results || t.stage === TutorialStage.Interest)
-    );
+  /** Where a step this screen owns points, or nothing when this receipt never
+   *  printed the line it is about. */
+  private stepAnchor(step: TutorialStage): Phaser.Geom.Rectangle | undefined {
+    if (!isResultsStep(step)) return undefined;
+    switch (step) {
+      case TutorialStage.Results:
+        return this.receiptRect;
+      // Both of these can find nothing to say, and then say nothing: a trial
+      // cleared on its last roll pays no rolls-left gold, and a purse under
+      // five pays no interest, and a receipt prints neither row at +0. Each
+      // step waits — as the Boss step waits for a boss — for the first clear
+      // that gives it the line it is explaining.
+      case TutorialStage.EarlyGold:
+        return this.dataIn.outcome.goldBreakdown.rolls > 0
+          ? this.rollsRect
+          : undefined;
+      case TutorialStage.Interest:
+        return this.dataIn.outcome.goldBreakdown.interest > 0
+          ? this.interestRect
+          : undefined;
+    }
   }
 
-  /** The first run's two results-screen steps: what the clear just paid, then
-   *  the line on the receipt that pays for holding gold rather than earning it.
-   *  Both wait for the reveal to finish, so a callout never dims a receipt that
-   *  is still counting itself up. */
+  /** The first run's results-screen steps: what the clear just paid, what the
+   *  rolls it did not need were worth, and the line that pays for holding gold
+   *  rather than earning it. All wait for the reveal to finish, so a callout
+   *  never dims a receipt that is still counting itself up.
+   *
+   *  A step this screen owns but this receipt cannot illustrate is deferred
+   *  rather than shown or dropped: the script moves straight on to the next
+   *  step — which may be showable here, hence the recursion — and the deferred
+   *  one comes back on the first later clear that does print its line. */
   private renderTutorial(): void {
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
     const t = getTutorial(this.registry);
     if (!t.active) return;
-    const step =
-      t.stage === TutorialStage.Results || t.stage === TutorialStage.Interest
-        ? t.stage
-        : undefined;
-    if (step === undefined) return;
-    const anchor =
-      step === TutorialStage.Results
-        ? this.receiptRect
-        : (this.interestRect ?? this.receiptRect);
-    if (!anchor) return;
+
+    if (isResultsStep(t.stage)) {
+      const anchor = this.stepAnchor(t.stage);
+      if (anchor) {
+        this.showStep(t.stage, anchor, () => advanceTutorial(this.registry));
+        return;
+      }
+      deferTutorialStage(this.registry);
+      this.renderTutorial();
+      return;
+    }
+
+    // Nothing of the script's own to show here, so this is where a step owed
+    // from an earlier, emptier receipt is paid back.
+    const owed = t.deferred.find(
+      (step): step is ResultsStep =>
+        isResultsStep(step) && this.stepAnchor(step) !== undefined,
+    );
+    const owedAnchor = owed === undefined ? undefined : this.stepAnchor(owed);
+    if (owed === undefined || !owedAnchor) return;
+    this.showStep(owed, owedAnchor, () =>
+      resolveDeferredStage(this.registry, owed),
+    );
+  }
+
+  /** One callout for one step, dismissed by whatever moves the script past it.
+   *  The re-render is what lets a screen show two steps in a row. */
+  private showStep(
+    step: ResultsStep,
+    anchor: Phaser.Geom.Rectangle,
+    dismiss: () => void,
+  ): void {
     this.tutorialCallout = showCallout(this, {
       anchor,
       text: TUTORIAL_TEXT[step],
       onContinue: () => {
-        advanceTutorial(this.registry);
+        dismiss();
         this.renderTutorial();
       },
       interactiveAnchor: false,

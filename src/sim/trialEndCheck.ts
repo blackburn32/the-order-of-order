@@ -11,6 +11,7 @@ import {
   isBossTrial,
   rankOf,
   rollsForTrial,
+  setTrialRollCadenceForSimulation,
   setTrialGoals,
   STARTING_DICE,
   TRIALS_PER_RANK,
@@ -70,12 +71,27 @@ check(
   "every third trial is a Boss Trial",
 );
 check(
-  rollsForTrial(1) === 7 && rollsForTrial(2) === 15 && rollsForTrial(3) === 20,
-  "trials grant 7 / 15 / 20 rolls",
+  rollsForTrial(1) === 7 &&
+    rollsForTrial(2) === 14 &&
+    rollsForTrial(3) === 18 &&
+    rollsForTrial(4) === 7 &&
+    rollsForTrial(9) === 18 &&
+    rollsForTrial(10) === 7,
+  "every rank uses the same 7 / 14 / 18 roll cadence",
+);
+setTrialRollCadenceForSimulation([7, 13, 17]);
+check(
+  rollsForTrial(1) === 7 && rollsForTrial(2) === 13 && rollsForTrial(3) === 17,
+  "the simulator can compare a shorter cadence",
+);
+setTrialRollCadenceForSimulation(null);
+check(
+  rollsForTrial(2) === 14 && rollsForTrial(3) === 18,
+  "and restores the authored cadence",
 );
 {
   // The curve rises per SLOT, not across the whole ladder: a rank's 7-roll
-  // Lesser Trial asks for less than the 20-roll Boss Trial before it, which is
+  // Lesser Trial asks for less than the 18-roll Boss Trial before it, which is
   // the shape of a rank rather than a mistake. What must always rise is the same
   // slot from one rank to the next. Equal adjacent-rank goals are allowed at
   // the very start of the curve, where the smaller opening grid is the wall.
@@ -97,6 +113,15 @@ check(
   check(
     neverDropsInRank,
     "and at least as much as the trial before it within its own rank",
+  );
+
+  let openingStrictlyRises = true;
+  for (let t = 2; t <= 3 * TRIALS_PER_RANK; t++) {
+    if (trialGoal(t) <= trialGoal(t - 1)) openingStrictlyRises = false;
+  }
+  check(
+    openingStrictlyRises,
+    "the first three ranks raise the goal on every trial",
   );
 }
 check(
@@ -299,7 +324,10 @@ console.log("\nStarting state");
     "with one starting die",
   );
   check(trialGoal(1) === 1n, "with a starting goal of 1");
-  check(trialGoal(2) === 3n, "with a second-trial goal of 3");
+  check(
+    trialGoal(2) === 2n,
+    "with a rising onboarding goal on the second trial",
+  );
   check(state.gold === STARTING_GOLD, "with a starting purse");
   check(state.score === 0n, "and no score");
   check(!state.endless, "and is not endless");

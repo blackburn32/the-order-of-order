@@ -35,13 +35,25 @@ export const WIN_TRIAL = WIN_RANK * TRIALS_PER_RANK; // 30
 /** Rolls granted by each trial in a rank, indexed by `trialInRank() - 1`. The
  *  Lesser Trial is deliberately the shortest: it is a sprint against a small
  *  goal, not a gentler version of the same thing. */
-export const ROLLS_PER_TRIAL = [7, 15, 20] as const;
+export const ROLLS_PER_TRIAL = [7, 14, 18] as const;
+export type TrialRollCadence = readonly [number, number, number];
+
+// Simulation-only override for duration experiments. Shipping code never sets
+// this; keeping the hook beside the goal override lets balance tools compare
+// cadences while every real roll-budget consumer still uses one shared rule.
+let SIM_ROLLS_PER_TRIAL: TrialRollCadence | null = null;
+
+export function setTrialRollCadenceForSimulation(
+  cadence: TrialRollCadence | null,
+): void {
+  SIM_ROLLS_PER_TRIAL = cadence;
+}
 
 /**
  * The duel's roll budget, fixed.
  *
  * The final Boss Trial is not a score to reach but a race against a copy of the
- * player's own grid, and a race that runs twenty rolls is decided long before it
+ * player's own grid, and a race that runs eighteen rolls is decided long before it
  * ends: two identical engines compounding side by side settle into their gap
  * early and then simply widen it. Ten rolls keeps the lead inside the range a
  * single roll can overturn, so the last trial of a run stays live to its last
@@ -100,95 +112,86 @@ export function trialName(trial: number): string {
 
 /** Base rolls for a trial, before Metronome/Overtime and any boss modifier. */
 export function rollsForTrial(trial: number): number {
-  return ROLLS_PER_TRIAL[trialInRank(trial) - 1];
+  return (SIM_ROLLS_PER_TRIAL ?? ROLLS_PER_TRIAL)[trialInRank(trial) - 1];
 }
 
 // ---- Goal curve ------------------------------------------------------------
 //
 // Score goals for every trial of the ladder (index = trial - 1), designed
-// against the balance simulation (src/sim/pacingCurve.ts) rather than by a
+// against the balance simulation (src/sim/smartSurvivalCurve.ts) rather than by a
 // single geometric ratio, because shopping creates a wildly skewed score
 // distribution that diverges across builds.
 //
 // The tuner designs each goal from UNCENSORED capacity: it replays the field one
 // trial at a time with that trial playing its whole roll budget out, so what it
 // samples is what each build COULD have scored rather than what the previous
-// goal let it stop at. The goal is then the quantile of that distribution that
-// leaves ~90% of a trial's entrants able to reach it (~85% on a Boss Trial,
-// whose modifier is already doing work). Front to back, so each rank is designed
-// against the shops the ranks before it could actually afford.
+// goal let it stop at. The goal is then the quantile that lands on an explicit
+// absolute survival schedule. Front to back, so each rank is designed against
+// the shops the ranks before it could actually afford.
 //
-// Attrition that buys, on the pooled bot field (a thinking player does much
-// better) — fraction of the whole field still alive after each rank:
-//   rank 1 — 36%   the on-ramp, and the only rank NOT designed by the tuner:
-//                  a lone d6 whiffs all seven rolls of the Lesser Trial 28% of
-//                  the time, and that early variance is the intent, not a bug
-//   rank 3 — 21%   the King's messenger
-//   rank 6 — 11%   the Betrayal
-//   rank 9 —  5%   the summons
-//   rank 10 —  2%  the duel
+// Attrition intent on the coherent, fully unlocked smart field — weak/base-pool
+// builds remain in the report, but do not set the goals:
+//   rank 1 — ~65%  the first three trials now form a real onboarding ramp
+//   rank 2 — ~62%  the learning runway continues to climb
+//   rank 3 — ~57%  the King's messenger
+//   rank 6 — ~36%  the Betrayal
+//   rank 9 — ~9%   the summons; these builds enter the final rank
+// The final duel then decides how many of that cohort actually win.
 //
 // The curve SAWTOOTHS, and that is deliberate: a rank opens with a seven-roll
-// Lesser Trial and closes with a twenty-roll Boss Trial, so the Lesser Trial of
+// Lesser Trial and closes with an eighteen-roll Boss Trial, so the Lesser Trial of
 // rank 3 asks for less than the Boss Trial of rank 2. What rises from rank to
 // rank is each slot against the same slot.
 //
-// A note on what this curve can and cannot buy. It was retuned to stop trials
-// ending on their opening roll, and it roughly halved that: across the ladder
-// the field now spends about a quarter of a trial's budget reaching its goal,
-// against a tenth before. It cannot do much better, and the reason is not the
-// curve. A trial's full-budget capacity runs about a thousandfold from the
-// field's tenth percentile to its ninetieth, so ANY goal the weakest tenth can
-// survive is met on the first roll by the strongest tenth. Tempo past this point
-// has to be bought somewhere other than the goal — a shorter roll budget, or
-// items whose per-roll spread is narrower.
+// Trial 1 remains the smallest score the rules can express. From there the
+// opening rises every trial: onboarding still has a gentler slope than the late
+// ladder, but no clear after the first is handed out at the minimum goal.
 //
-// See src/sim/pacingCurve.ts to redesign the curve, src/sim/pacingSweep.ts to
-// see what any other attrition target would cost, and src/sim/validate.ts to
-// re-test a candidate against the real survival gate.
+// See src/sim/smartSurvivalCurve.ts to redesign this schedule and
+// src/sim/validate.ts to re-test it against the real survival gate.
 const AUTHORED_GOALS: bigint[] = [
-  // rank 1 — hand-authored; the tutorial ramp, left exactly as it was
+  // rank 1 — a short onboarding ramp
   1n,
+  2n,
   3n,
-  5n,
   // rank 2
-  6n,
-  45n,
-  140n,
+  5n,
+  12n,
+  30n,
   // rank 3 — closes on the King's messenger
-  150n,
-  660n,
-  1_700n,
+  60n,
+  120n,
+  280n,
   // rank 4
-  1_900n,
-  6_900n,
-  14_000n,
+  210n,
+  1_100n,
+  2_700n,
   // rank 5
-  20_000n,
-  87_000n,
-  200_000n,
+  1_500n,
+  5_800n,
+  18_000n,
   // rank 6 — closes on the Betrayal
-  310_000n,
-  1_300_000n,
-  2_600_000n,
+  11_000n,
+  58_000n,
+  160_000n,
   // rank 7
-  6_100_000n,
-  26_000_000n,
-  37_000_000n,
+  140_000n,
+  620_000n,
+  2_600_000n,
   // rank 8
-  86_000_000n,
-  340_000_000n,
-  740_000_000n,
+  2_200_000n,
+  23_000_000n,
+  90_000_000n,
   // rank 9 — closes on the summons
-  1_300_000_000n,
-  5_300_000_000n,
-  11_000_000_000n,
+  150_000_000n,
+  1_800_000_000n,
+  39_000_000_000n,
   // rank 10 — the last rank; its Boss Trial is the duel, which has no goal at
   // all (see isMirrorTrial). The entry is still a real number because the
   // endless ladder walks out from it.
-  21_000_000_000n,
-  81_000_000_000n,
-  170_000_000_000n,
+  20_000_000_000n,
+  29_000_000_000n,
+  17_000_000_000_000n,
 ];
 
 // The authored table covers the whole ladder, so the formula below is only
@@ -197,16 +200,16 @@ const AUTHORED_GOALS: bigint[] = [
 // restart it:
 //
 //   RANK_RATIO — how much a rank's Boss Trial asks over the last one's. The
-//     tuner measured 15.5x across ranks 5-8, so the curve continues at 15.
+//     the late smart-field curve grows sharply as it selects its final cohort.
 //   SLOT_SHARE — each trial's goal as a fraction of its OWN rank's Boss Trial.
-//     The measured ranks settle near 0.12 / 0.46 / 1.
+//     The last measured rank is approximately 0.006 / 0.062 / 1.
 //
 // Taking the shares off the rank's own boss is what preserves the sawtooth: a
 // rank opens on a seven-roll Lesser Trial asking for an eighth of what its
-// twenty-roll Boss Trial will, so the Lesser Trial of rank 8 asks less than the
+// eighteen-roll Boss Trial will, so the Lesser Trial of rank 8 asks less than the
 // Boss Trial of rank 7.
-const RANK_RATIO = 15n;
-const SLOT_SHARE_MILLI = [120n, 460n, 1_000n] as const;
+const RANK_RATIO = 433n;
+const SLOT_SHARE_MILLI = [4n, 46n, 1_000n] as const;
 
 /** The authored ranks, extended by formula if WIN_RANK ever outruns them. */
 function buildGoals(): bigint[] {
@@ -300,6 +303,14 @@ export const RARITY_WEIGHTS: RarityWeights = {
   uncommon: 30,
   rare: 10,
 };
+
+/** How heavily a cursed card is drawn against an ordinary card in the same
+ * rarity tier. Rarity chooses the tier; this chooses the card within it. */
+export const CURSE_DRAW_WEIGHT = 0.4;
+
+/** A curse is an event, not a shelf theme. This cap applies independently to
+ * each shop row and booster reveal. */
+export const MAX_CURSES_PER_OFFER_SET = 1;
 
 /** The boosted odds a shop uses after the player clears a Boss Trial — the
  *  reward for beating the boss is better cards, not just more gold. */

@@ -1,14 +1,19 @@
-import { isBossTrial, STARTING_DICE } from "../config";
+import {
+  isBossTrial,
+  MAX_CURSES_PER_OFFER_SET,
+  STARTING_DICE,
+} from "../config";
 import { newRun, type RunState } from "../state/RunState";
 import { bossesForRank, goalFor } from "../systems/Boss";
-import { applyDeadDice } from "../systems/Afflictions";
-import { applyTrialStart, enforceGridCap } from "../systems/Items";
+import { applyTrialStart, enforceGridCap, ITEMS } from "../systems/Items";
 import { makeDie } from "../systems/Dice";
 import {
   applyBoosterChoice,
   applyOffer,
   availableIds,
+  BOOSTER_PACKS,
   offerFor,
+  openBooster,
   shopClosed,
   rerollShopOffers,
   rollShopOffers,
@@ -28,12 +33,14 @@ import {
   afflictionsFor,
   CRUNCH_TIME_ROLL_COST,
   fold,
+  inertDiceCount,
+  isInertIndex,
   type AfflictionId,
   NO_AFFLICTIONS,
 } from "../systems/Afflictions";
 import { rollsForTrial } from "../config";
 import { scoreRollHistogram } from "../systems/ScoringHistogram";
-import { resolveRoll, resolveTrialEnd } from "./engine";
+import { resolveRoll, resolveTrialEnd, rollPool } from "./engine";
 import { mulberry32 } from "./localStorageShim";
 
 function check(condition: unknown, message: string): void {
@@ -48,6 +55,10 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
 
 // Lucky Seven multiplies the whole roll, on any value with a 7 written in it.
 {
+  check(
+    ITEMS.find((item) => item.id === "lucky_seven")?.rarity === "rare",
+    "Lucky Seven should be rare enough for its sevenfold roll multiplier",
+  );
   const state = newRun();
   state.hasLuckySeven = true;
   const sevenless = scoreRoll(state, [die(6, 1), die(6, 1)]);
@@ -215,11 +226,39 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
     return seed / 0x1_0000_0000;
   };
   for (let i = 0; i < 100; i++) {
+    const initial = rollShopOffers(state, 5, rng);
+    check(
+      initial.some((offer) => offer.id === "extra_die"),
+      "A free curse must not suppress the Two Bricks safety net",
+    );
     const offers = rerollShopOffers(state, 5, rng);
     check(
       !offers.some((offer) => offer.id === "extra_die"),
       "Rerolls should never offer Two Bricks",
     );
+  }
+}
+
+// A reveal set never carries more than one curse, whether it is a shelf, a
+// rarity pack, or a themed pack with a fallback fill.
+{
+  const state = newRun(ITEMS.filter((def) => def.unlock).map((def) => def.id));
+  state.gold = 1_000;
+  const rng = mulberry32(0xc0ffee);
+  for (let i = 0; i < 250; i++) {
+    const shelf = rollShopOffers(state, 5, rng);
+    check(
+      shelf.filter((offer) => offer.cursed).length <= MAX_CURSES_PER_OFFER_SET,
+      "A shop shelf should contain at most one curse",
+    );
+    for (const pack of BOOSTER_PACKS) {
+      const reveal = openBooster(state, pack, 5, rng);
+      check(
+        reveal.filter((offer) => offer.cursed).length <=
+          MAX_CURSES_PER_OFFER_SET,
+        `${pack.name} should reveal at most one curse`,
+      );
+    }
   }
 }
 
@@ -247,21 +286,21 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
 
 // --- Boss modifiers ---------------------------------------------------------
 
-// The Toll takes a tenth of the grid out of play. Defined on the aggregate, so
-// a hundred dice under it must score exactly what ninety dice score without it —
-// that equivalence is what lets it mean the same thing once the pool is
-// bucketed and individual dice no longer exist.
+// The Toll takes a tenth of the grid out of play — a named tenth: the first ten
+// dice of a hundred, which the grid draws struck out. So a hundred dice under it
+// must score exactly what ninety dice score without it, and the roll has to say
+// which ten paid, or the cross-out on screen would be decoration.
 {
   const tolled = newRun();
   tolled.trial = 3;
   tolled.bossModifiers = ["toll"];
   tolled.dice.addDice(6, 99, {}, "test"); // 100 dice
-  tolled.dice.roll(() => 0, tolled.scoringNumbers, tolled.royalSealSizes);
+  rollPool(tolled, tolled.dice, () => 0);
   const withToll = scoreRollHistogram(tolled, tolled.dice.agg());
 
   const plain = newRun();
   plain.dice.addDice(6, 89, {}, "test"); // 90 dice
-  plain.dice.roll(() => 0, plain.scoringNumbers, plain.royalSealSizes);
+  rollPool(plain, plain.dice, () => 0);
   const without = scoreRollHistogram(plain, plain.dice.agg());
 
   check(
@@ -269,8 +308,27 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
     "The Toll on 100 dice should score exactly what 90 dice score",
   );
   check(
-    applyDeadDice(tolled, 100) === 90,
-    "The Toll should retire a tenth of a die count",
+    inertDiceCount(tolled, 100) === 10 &&
+      isInertIndex(tolled, 9, 100) &&
+      !isInertIndex(tolled, 10, 100),
+    "The Toll should make the first tenth of the grid inert",
+  );
+  // The block is anchored at the head precisely so that growth cannot reach the
+  // dice a player has just won: it widens into the ranks behind them instead.
+  check(
+    !isInertIndex(tolled, 100, 140) && inertDiceCount(tolled, 140) === 14,
+    "and forty dice won under it should all still be live",
+  );
+  const tolledAgg = tolled.dice.agg();
+  check(
+    tolledAgg.total === 100 &&
+      tolledAgg.inertCount === 10 &&
+      tolledAgg.scoringCount === 90,
+    "and the roll should report the whole grid, the inert tail, and the rest",
+  );
+  check(
+    inertDiceCount(plain, 90) === 0,
+    "while an untolled grid has no inert dice at all",
   );
 }
 
@@ -367,9 +425,9 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
 // The Hoard raises the goal it has to be measured against.
 {
   const plain = newRun();
-  plain.trial = 3;
+  plain.trial = 12;
   const hoard = newRun();
-  hoard.trial = 3;
+  hoard.trial = 12;
   hoard.bossModifiers = ["hoard"];
   check(
     goalFor(hoard) > goalFor(plain),
@@ -394,12 +452,13 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   );
 }
 
-// The six gold items apply their flag or counter on purchase.
+// The gold items apply their flag or counter on purchase.
 {
   const goldItems: [string, (s: ReturnType<typeof newRun>) => boolean][] = [
     ["tithe_bowl", (s) => s.titheBowl === 1],
     ["lucky_coin", (s) => s.luckyCoin === 1],
     ["counting_house", (s) => s.countingHouse === 1],
+    ["deep_pockets", (s) => s.deepPockets === 1],
     ["prospector", (s) => s.hasProspector],
     ["reliquary", (s) => s.hasReliquary],
     ["pawnbroker", (s) => s.hasPawnbroker],
@@ -692,6 +751,8 @@ function buy(
     ["tollkeeper", "tollkeeper"],
   ];
   for (const [id, affliction] of cursed) {
+    const priced = offerFor(id, newRun());
+    check(priced.cost === 0, `${id} should cost no gold`);
     const state = buy(id);
     check(
       state.afflictions.includes(affliction),
@@ -723,7 +784,7 @@ function buy(
   both.hasBloodPrice = true;
   both.hasReckoning = true;
   check(
-    scoreRoll(both, dice).points === plain * 4n * 2n,
+    scoreRoll(both, dice).points === plain * 4n * 3n,
     "two flat multipliers should compound",
   );
 }
@@ -827,7 +888,7 @@ function buy(
   );
 }
 
-// Iron Debt: a cleared trial pays only the interest earned on the bank.
+// Iron Debt: a cleared trial pays 40% of its ordinary proceeds, plus interest.
 {
   const state = buy("iron_debt", (s) => {
     s.trial = 1;
@@ -838,13 +899,17 @@ function buy(
   );
   state.gold = 20; // enough to earn interest
   const payout = trialPayout(state);
+  const plain = newRun();
+  plain.trial = state.trial;
+  plain.gold = state.gold;
+  const ordinary = trialPayout(plain);
   check(
-    payout.base === 0 && payout.rolls === 0 && payout.items === 0,
-    "Iron Debt should pay nothing for the trial itself",
+    payout.base > 0 && payout.base < ordinary.base,
+    "Iron Debt should reduce rather than erase the trial payout",
   );
   check(
-    payout.interest > 0 && payout.total === payout.interest,
-    "and leave only the interest on the bank",
+    payout.interest === ordinary.interest && payout.total < ordinary.total,
+    "and leave interest untouched",
   );
 }
 
@@ -886,7 +951,7 @@ function buy(
 }
 
 // Devil's Bargain lends gold against every goal for the rest of the run. Read on
-// a mid-ladder trial: rank 1's goals are single digits, where a 25% rise floors
+// a mid-ladder trial: rank 1's goals are single digits, where a 15% rise floors
 // away to nothing.
 {
   const before = newRun();
@@ -901,7 +966,7 @@ function buy(
   );
 }
 
-// The Reckoning doubles the goal as well as the points.
+// The Reckoning triples points against a doubled goal.
 {
   const plain = newRun();
   plain.trial = 10;

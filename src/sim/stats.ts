@@ -44,6 +44,18 @@ export interface ItemStat {
   medianUnlockTrial: number | null; // (gated) median trial it was first met
 }
 
+export interface CurseStat {
+  id: ShopItemId;
+  name: string;
+  offered: number;
+  offerRate: number;
+  taken: number;
+  takeRate: number;
+  winRateIfTaken: number;
+  winRateIfNotTaken: number;
+  avgTrialIfTaken: number;
+}
+
 /** How many points a single item contributed, averaged over winning runs. */
 export interface ItemPointStat {
   id: string; // item id, or the starter-die sentinel
@@ -122,6 +134,7 @@ export interface StrategyStats {
   finalDice: { mean: number; median: number; max: number };
   trialCurve: TrialCurvePoint[];
   items: ItemStat[];
+  curses: CurseStat[];
   winningRuns: number; // runs used for the point ranking below
   itemPointRanking: ItemPointStat[]; // points per item across winning runs, desc
 }
@@ -176,6 +189,47 @@ function itemStats(records: RunRecord[]): ItemStat[] {
       avgTrialIfBought: mean(trialsIfBought),
       unlockRate: runs ? unlockRuns / runs : 0,
       medianUnlockTrial: unlockTrials.length ? median(unlockTrials) : null,
+    };
+  });
+}
+
+function curseStats(records: RunRecord[]): CurseStat[] {
+  const cursed = ITEMS.filter((def) => def.cursed);
+  const runs = records.length;
+  return cursed.map((def) => {
+    let offered = 0;
+    let offerRuns = 0;
+    let taken = 0;
+    let winsIfTaken = 0;
+    let declinedRuns = 0;
+    let winsIfDeclined = 0;
+    const trialsIfTaken: number[] = [];
+
+    for (const record of records) {
+      const appearances = record.cursesOffered[def.id] ?? 0;
+      const trialTaken = record.cursesTaken[def.id];
+      offered += appearances;
+      if (appearances > 0) offerRuns += 1;
+      if (trialTaken !== undefined) {
+        taken += 1;
+        trialsIfTaken.push(trialTaken);
+        if (record.won) winsIfTaken += 1;
+      } else if (appearances > 0) {
+        declinedRuns += 1;
+        if (record.won) winsIfDeclined += 1;
+      }
+    }
+
+    return {
+      id: def.id,
+      name: def.name,
+      offered,
+      offerRate: runs ? offerRuns / runs : 0,
+      taken,
+      takeRate: offered ? taken / offered : 0,
+      winRateIfTaken: taken ? winsIfTaken / taken : 0,
+      winRateIfNotTaken: declinedRuns ? winsIfDeclined / declinedRuns : 0,
+      avgTrialIfTaken: mean(trialsIfTaken),
     };
   });
 }
@@ -365,6 +419,7 @@ function strategyStats(name: string, records: RunRecord[]): StrategyStats {
     },
     trialCurve,
     items: itemStats(records),
+    curses: curseStats(records),
     winningRuns: ranking.winningRuns,
     itemPointRanking: ranking.ranking,
   };

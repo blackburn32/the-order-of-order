@@ -290,13 +290,13 @@ Gold is deliberately not the score. It is a small, slow-growing purse that persi
 whole run, and it is the only thing the shop takes. A run opens with 4 gold; clearing a trial
 pays:
 
-| Source        | Amount                                                                |
-| ------------- | --------------------------------------------------------------------- |
-| The trial     | 3 / 4 / 6 for the Lesser / Greater / Boss Trial                       |
-| Rolls in hand | 1 per unused roll, up to 5 (Reserve adds 1 more per roll, per copy)   |
-| Interest      | 1 per 5 gold banked, up to 5 (Vault raises the cap to 10)             |
-| Boss cleared  | +2, and +3 more with Reliquary                                        |
-| Gold items    | Counting House (+1 per copy), Prospector (+1 per 25 dice held, max 5) |
+| Source        | Amount                                                                                                                        |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| The trial     | 3 / 4 / 6 for the Lesser / Greater / Boss Trial                                                                               |
+| Rolls in hand | 1 per unused roll, up to 5 (Deep Pockets raises the paid-roll cap by 2 per copy; Reserve adds 1 more per paid roll, per copy) |
+| Interest      | 1 per 5 gold banked, up to 5 (Vault raises the cap to 10)                                                                     |
+| Boss cleared  | +2, and +3 more with Reliquary                                                                                                |
+| Gold items    | Counting House (+1 per copy), Deep Pockets (+2 roll-gold cap per copy), Prospector (+1 per 25 dice held, max 5)               |
 
 Interest is what makes banking a real alternative to spending: gold left unspent compounds a
 little at every clear. Tithe Bowl and Lucky Coin also pay out mid-trial, during rolls.

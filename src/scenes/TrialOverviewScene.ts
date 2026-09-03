@@ -133,7 +133,7 @@ export class TrialOverviewScene extends Phaser.Scene {
       `Start ${trialName(this.state.trial)}`,
       () => this.startTrial(),
       // Folded, the button also has to stay clear of the Inventory/Settings
-      // links pinned to the bottom-right corner — the row it now sits in.
+      // links, which sit at the two ends of the row it now shares with them.
       compact
         ? Phaser.Math.Clamp(W * 0.42, 200, 360)
         : Math.min(panelW * 0.72, 430),
@@ -400,12 +400,12 @@ export class TrialOverviewScene extends Phaser.Scene {
     if (t.stage === TutorialStage.Route) {
       anchor = allCards();
       text = TUTORIAL_TEXT[TutorialStage.Route];
-    } else if (t.stage === TutorialStage.RankReset) {
-      anchor = allCards();
-      text = TUTORIAL_TEXT[TutorialStage.RankReset];
     } else if (t.stage === TutorialStage.RankGoal && this.rankRect) {
       anchor = this.rankRect;
       text = TUTORIAL_TEXT[TutorialStage.RankGoal];
+    } else if (t.stage === TutorialStage.RankReset) {
+      anchor = allCards();
+      text = TUTORIAL_TEXT[TutorialStage.RankReset];
     } else if (t.stage === TutorialStage.RouteStart && this.startRect) {
       anchor = this.startRect;
       text = TUTORIAL_TEXT[TutorialStage.RouteStart];
