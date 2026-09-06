@@ -27,6 +27,7 @@ import {
   OUROBOROS_BONUS,
 } from "./Scoring";
 import { trialRollTarget } from "./Trial";
+import { addItemValue } from "./ItemValue";
 
 export type ShopItemId =
   | "extra_die"
@@ -1722,7 +1723,7 @@ export function applyTrialStart(state: RunState): number {
     // Foundry: double the smallest size on the grid, once per copy owned. A flat
     // handful of dice was noise past the first few trials; a doubling stays worth
     // the explosive price the card is sold at.
-    state.dice.foundryDouble(state.foundry);
+    addItemValue(state, "foundry", state.dice.foundryDouble(state.foundry));
   }
   enforceGridCap(state);
   return state.dice.length - before;

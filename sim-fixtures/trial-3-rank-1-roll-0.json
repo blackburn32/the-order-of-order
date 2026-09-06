@@ -1,0 +1,201 @@
+{
+  "kind": "the-order-of-order.run-fixture",
+  "version": 1,
+  "exportedAt": 1788622352705,
+  "label": "trial-3-rank-1-roll-0",
+  "run": {
+    "trial": 3,
+    "endless": false,
+    "roll": 0,
+    "bossModifiers": [
+      "warden"
+    ],
+    "boonNextShop": false,
+    "bossesCleared": 0,
+    "trialCleared": false,
+    "score": "0",
+    "trialScore": "0",
+    "totalScore": "3",
+    "gold": 2,
+    "goldEarned": 17,
+    "trialRollGold": {
+      "titheBowl": 0,
+      "luckyCoin": 0
+    },
+    "dice": [
+      {
+        "sides": 6,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "starter",
+        "count": 1
+      }
+    ],
+    "scoringNumbers": [
+      1
+    ],
+    "loadedSizes": [],
+    "wildSizes": [],
+    "royalSealSizes": [],
+    "extraPoints": 0,
+    "extraNumberCount": 0,
+    "startedAt": 1788622261610,
+    "bonusRollsThisRound": 0,
+    "bonusRollsPerRound": 0,
+    "ownedLedger": false,
+    "hasSnakeEyes": false,
+    "hasAmplifier": false,
+    "hasVault": false,
+    "hasDoubleTheFun": false,
+    "hasLuckySeven": false,
+    "hasParade": false,
+    "hasMenagerie": false,
+    "hasUniform": false,
+    "hasHourglass": false,
+    "hasInsurancePolicy": false,
+    "hasCrunchTime": false,
+    "hasBloodPrice": false,
+    "hasOuroboros": false,
+    "hasFamishedIdol": false,
+    "hasBloat": false,
+    "hasSealedDoors": false,
+    "hasGamblersCurse": false,
+    "hasReckoning": false,
+    "hasHairTrigger": false,
+    "afflictions": [],
+    "endingsSeen": [],
+    "kingsDemand": null,
+    "defectors": 0,
+    "rival": null,
+    "hasCouponBook": false,
+    "hasDealersBell": false,
+    "hasShoppingCart": false,
+    "hasProspector": false,
+    "hasReliquary": false,
+    "hasPawnbroker": false,
+    "pocketChange": 1,
+    "whetstone": 0,
+    "dividend": 0,
+    "momentum": 0,
+    "keenEdge": 0,
+    "foundry": 0,
+    "jackpot": 0,
+    "genesis": 0,
+    "reserve": 0,
+    "rainCheck": 0,
+    "downbeat": 1,
+    "prism": 0,
+    "lastCall": 0,
+    "chipMold": 0,
+    "spikeMold": 0,
+    "brickMold": 1,
+    "titheBowl": 0,
+    "luckyCoin": 0,
+    "countingHouse": 0,
+    "deepPockets": 0,
+    "scoreStreak": 1,
+    "momentumStreak": 0,
+    "clutchClear": false,
+    "peakGold": 10,
+    "peakRollsLeftOnClear": 10,
+    "shopUnlocks": [
+      "last_call",
+      "reserve",
+      "dividend",
+      "rain_check",
+      "iron_debt",
+      "tollkeeper",
+      "prospector",
+      "famished_idol",
+      "jackpot",
+      "blood_price",
+      "momentum",
+      "foundry",
+      "downbeat",
+      "long_night",
+      "genesis",
+      "reliquary",
+      "keen_edge",
+      "locust_idol",
+      "double_the_fun",
+      "sealed_doors",
+      "pawnbroker",
+      "crunch_time",
+      "ouroboros",
+      "leaden_dice",
+      "prism",
+      "hair_trigger"
+    ],
+    "ownedUnique": [],
+    "purchases": {
+      "downbeat": 1,
+      "brick_mold": 1,
+      "pocket_change": 1
+    },
+    "dicePoints": {
+      "starter": "2"
+    },
+    "itemPoints": {
+      "downbeat": "1"
+    },
+    "rollsTaken": 10,
+    "rollHistory": [
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "3",
+        "d": 1
+      }
+    ]
+  }
+}

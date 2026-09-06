@@ -21,6 +21,9 @@ import {
 } from "../systems/Boss";
 import { DicePool } from "../systems/DicePool";
 import { getRun, RunState } from "../state/RunState";
+import { setFullBudgetAllTrials } from "../sim/engine";
+import { serializeRunState } from "../systems/ActiveRunPersistence";
+import { rankOf as rankOfTrial } from "../config";
 import {
   ALL_SHOP_ITEM_IDS,
   applyOffer,
@@ -47,6 +50,10 @@ const PRESET_COUNTS = [10, 100, 1000, 1500, 3000, 10000, 100000];
  */
 export function installDevPanel(game: Phaser.Game): void {
   if (!import.meta.env.DEV) return;
+
+  // Read back before anything renders, so a session that was left measuring is
+  // still measuring after a reload rather than silently reverting to real play.
+  setFullBudgetAllTrials(fullBudgetPreference());
 
   const toggle = document.createElement("button");
   toggle.textContent = "DEV ▾";
@@ -123,6 +130,17 @@ export function installDevPanel(game: Phaser.Game): void {
       Grant ALL items (free)
     </button>
     <hr style="border:none;border-top:1px solid #5a4a2e;margin:10px 0 8px;" />
+    <h4 style="margin:0 0 6px;font-size:12px;color:#e6c65a;">Measurement</h4>
+    <label style="display:flex;align-items:flex-start;gap:5px;margin-top:4px;font-size:11px;opacity:.85;">
+      <input id="dp-full-budget" type="checkbox" style="margin:2px 0 0;" />
+      <span>Play every trial to full budget<br />
+        <span style="opacity:.6;">Trials never stop at the goal. No unused-roll gold.</span></span>
+    </label>
+    <button id="dp-export-run" style="margin-top:8px;width:100%;padding:5px;background:#1f6b8a;
+      color:#e9d8a6;border:none;border-radius:3px;cursor:pointer;font:inherit;font-weight:bold;">
+      Export run (JSON)
+    </button>
+    <hr style="border:none;border-top:1px solid #5a4a2e;margin:10px 0 8px;" />
     <h4 style="margin:0 0 6px;font-size:12px;color:#e6c65a;">Leaderboard Test</h4>
     <label style="display:block;margin-top:2px;font-size:11px;opacity:.85;">Score (int or 1e35)</label>
     <input id="dp-lb-score" type="text" value="1e35"
@@ -145,6 +163,9 @@ export function installDevPanel(game: Phaser.Game): void {
   const bossSelect = panel.querySelector("#dp-boss") as HTMLSelectElement;
   const itemSelect = panel.querySelector("#dp-item") as HTMLSelectElement;
   const lbScoreInput = panel.querySelector("#dp-lb-score") as HTMLInputElement;
+  const fullBudgetCheckbox = panel.querySelector(
+    "#dp-full-budget",
+  ) as HTMLInputElement;
   const status = panel.querySelector("#dp-status") as HTMLDivElement;
 
   // Item names come from `offerFor`; the argument state only affects a couple
@@ -191,6 +212,21 @@ export function installDevPanel(game: Phaser.Game): void {
 
   panel.querySelector("#dp-lb-submit")!.addEventListener("click", () => {
     void submitLeaderboardTest(lbScoreInput.value, (msg) => {
+      status.textContent = msg;
+    });
+  });
+
+  fullBudgetCheckbox.checked = fullBudgetPreference();
+  fullBudgetCheckbox.addEventListener("change", () => {
+    const on = fullBudgetCheckbox.checked;
+    setFullBudgetPreference(on);
+    status.textContent = on
+      ? "Trials now play their whole roll budget out."
+      : "Trials end at the goal again.";
+  });
+
+  panel.querySelector("#dp-export-run")!.addEventListener("click", () => {
+    void exportRun(game, (msg) => {
       status.textContent = msg;
     });
   });
@@ -436,4 +472,87 @@ function applyDiceSetup(
   state.dice = DicePool.fromDice(dice);
   game.registry.set("run", state);
   refreshActiveScene(game);
+}
+
+// ---- measurement helpers ---------------------------------------------------
+
+/** Where the full-budget toggle remembers itself. Not part of the game's own
+ *  settings: it is a dev instrument, and a production build never reads it. */
+const FULL_BUDGET_KEY = "the-order-of-order.dev.full-budget";
+
+function fullBudgetPreference(): boolean {
+  try {
+    return localStorage.getItem(FULL_BUDGET_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setFullBudgetPreference(enabled: boolean): void {
+  setFullBudgetAllTrials(enabled);
+  try {
+    if (enabled) localStorage.setItem(FULL_BUDGET_KEY, "1");
+    else localStorage.removeItem(FULL_BUDGET_KEY);
+  } catch {
+    // Private-mode storage. The toggle still applies to this session.
+  }
+}
+
+/** The exported envelope. `run` is exactly what the active-run save writes, so
+ *  `hydrateRunState` reads a fixture and a save through the same door — see
+ *  sim/importRun.ts. The rest is there for a human reading the file. */
+interface ExportedRun {
+  kind: "the-order-of-order.run-fixture";
+  version: 1;
+  exportedAt: number;
+  label: string;
+  run: ReturnType<typeof serializeRunState>;
+}
+
+function fixtureLabel(state: RunState): string {
+  const rank = rankOfTrial(state.trial);
+  return `trial-${state.trial}-rank-${rank}-roll-${state.roll}`;
+}
+
+/**
+ * Write the live run out as a balance fixture: to the clipboard, and as a file
+ * the browser downloads. Two routes because the clipboard fails silently on an
+ * unfocused page and the download fails silently when downloads are blocked;
+ * between them one of the two always lands.
+ */
+async function exportRun(
+  game: Phaser.Game,
+  report: (msg: string) => void,
+): Promise<void> {
+  const state = getRun(game.registry);
+  const label = fixtureLabel(state);
+  const payload: ExportedRun = {
+    kind: "the-order-of-order.run-fixture",
+    version: 1,
+    exportedAt: Date.now(),
+    label,
+    run: serializeRunState(state),
+  };
+  const json = JSON.stringify(payload, null, 2);
+
+  const url = URL.createObjectURL(
+    new Blob([json], { type: "application/json" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${label}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(json);
+    copied = true;
+  } catch {
+    // No clipboard permission, or the page is not focused. The download stands.
+  }
+  report(
+    `Exported ${label}.json (${state.dice.length} dice, ${state.gold}g)` +
+      (copied ? " — also on the clipboard." : "."),
+  );
 }

@@ -394,12 +394,14 @@ export class HallScene extends Phaser.Scene {
       dice.container.setX(blockLeft + gridX);
       if (dice.width > gridColW) dice.container.setScale(gridColW / dice.width);
 
-      // Runs recorded with a points breakdown are tappable to open their
-      // analysis. A near-transparent zone highlights on hover; older entries
-      // predate the breakdown and stay inert.
+      // Runs recorded with a points breakdown — or with the roll-by-roll
+      // timeline the analysis screen charts — are tappable to open it. A
+      // near-transparent zone highlights on hover; older entries predate both
+      // and stay inert.
       const hasPoints =
         !!(entry.itemPoints && Object.keys(entry.itemPoints).length) ||
-        !!(entry.dicePoints && Object.keys(entry.dicePoints).length);
+        !!(entry.dicePoints && Object.keys(entry.dicePoints).length) ||
+        (entry.history?.length ?? 0) >= 2;
       if (hasPoints) {
         const zone = this.add
           .rectangle(cx, y, bandW, rowStep, COLORS.goldLight, 0.0001)
@@ -486,6 +488,8 @@ export class HallScene extends Phaser.Scene {
       subtitle: `${date} · rank ${entry.rank}-${entry.trial}${entry.won ? " · victory" : ""}`,
       dicePoints: toNumberPointMap(entry.dicePoints ?? {}),
       itemPoints: toNumberPointMap(entry.itemPoints ?? {}),
+      history: entry.history,
+      rolls: entry.rolls,
     });
   }
 

@@ -1,0 +1,894 @@
+{
+  "kind": "the-order-of-order.run-fixture",
+  "version": 1,
+  "exportedAt": 1788624202734,
+  "label": "trial-28-rank-10-roll-0",
+  "run": {
+    "trial": 28,
+    "endless": false,
+    "roll": 0,
+    "bossModifiers": [],
+    "boonNextShop": false,
+    "bossesCleared": 9,
+    "trialCleared": false,
+    "score": "0",
+    "trialScore": "0",
+    "totalScore": "117411142290",
+    "gold": 46,
+    "goldEarned": 419,
+    "trialRollGold": {
+      "titheBowl": 0,
+      "luckyCoin": 0
+    },
+    "dice": [
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "starter",
+        "count": 1
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "brick_mold",
+        "count": 49
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "chip",
+        "count": 4
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "twin",
+        "count": 386482
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "spike",
+        "count": 2
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "foundry",
+        "count": 1632072
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "extra_dice",
+        "count": 14
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "extra_die",
+        "count": 2
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "genesis",
+        "count": 1289
+      },
+      {
+        "sides": 2,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "brick_mold",
+        "count": 5
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "spike_mold",
+        "count": 7
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "mult3",
+        "count": 42943
+      },
+      {
+        "sides": 2,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "mult3",
+        "count": 3
+      },
+      {
+        "sides": 2,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "double_the_fun",
+        "count": 9
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 4,
+        "loaded": true,
+        "wildFace": false,
+        "source": "centurion",
+        "count": 1
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 4,
+        "loaded": true,
+        "wildFace": false,
+        "source": "twin",
+        "count": 7
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "chip_mold",
+        "count": 11
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 4,
+        "loaded": true,
+        "wildFace": false,
+        "source": "mult3",
+        "count": 4
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 4,
+        "loaded": true,
+        "wildFace": false,
+        "source": "foundry",
+        "count": 36
+      },
+      {
+        "sides": 2,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "chip_mold",
+        "count": 17
+      },
+      {
+        "sides": 4,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "spike_mold",
+        "count": 14
+      },
+      {
+        "sides": 6,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "brick_mold",
+        "count": 12
+      },
+      {
+        "sides": 6,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "double_the_fun",
+        "count": 84
+      }
+    ],
+    "scoringNumbers": [
+      1
+    ],
+    "loadedSizes": [
+      10
+    ],
+    "wildSizes": [],
+    "royalSealSizes": [],
+    "extraPoints": 0,
+    "extraNumberCount": 0,
+    "startedAt": 1788622261610,
+    "bonusRollsThisRound": 0,
+    "bonusRollsPerRound": 0,
+    "ownedLedger": true,
+    "hasSnakeEyes": true,
+    "hasAmplifier": true,
+    "hasVault": false,
+    "hasDoubleTheFun": true,
+    "hasLuckySeven": false,
+    "hasParade": true,
+    "hasMenagerie": true,
+    "hasUniform": false,
+    "hasHourglass": true,
+    "hasInsurancePolicy": false,
+    "hasCrunchTime": false,
+    "hasBloodPrice": false,
+    "hasOuroboros": false,
+    "hasFamishedIdol": false,
+    "hasBloat": false,
+    "hasSealedDoors": false,
+    "hasGamblersCurse": false,
+    "hasReckoning": true,
+    "hasHairTrigger": false,
+    "afflictions": [
+      "reckoning",
+      "gamblersCurse",
+      "betrayal"
+    ],
+    "endingsSeen": [
+      "tribute",
+      "betrayal",
+      "summons"
+    ],
+    "kingsDemand": "gamblersCurse",
+    "defectors": 106,
+    "rival": null,
+    "hasCouponBook": false,
+    "hasDealersBell": false,
+    "hasShoppingCart": true,
+    "hasProspector": true,
+    "hasReliquary": true,
+    "hasPawnbroker": false,
+    "pocketChange": 2,
+    "whetstone": 0,
+    "dividend": 1,
+    "momentum": 1,
+    "keenEdge": 1,
+    "foundry": 1,
+    "jackpot": 4,
+    "genesis": 2,
+    "reserve": 0,
+    "rainCheck": 0,
+    "downbeat": 1,
+    "prism": 3,
+    "lastCall": 0,
+    "chipMold": 1,
+    "spikeMold": 1,
+    "brickMold": 1,
+    "titheBowl": 0,
+    "luckyCoin": 0,
+    "countingHouse": 0,
+    "deepPockets": 1,
+    "scoreStreak": 14,
+    "momentumStreak": 14,
+    "clutchClear": false,
+    "peakGold": 60,
+    "peakRollsLeftOnClear": 16,
+    "shopUnlocks": [
+      "last_call",
+      "reserve",
+      "dividend",
+      "rain_check",
+      "iron_debt",
+      "tollkeeper",
+      "prospector",
+      "famished_idol",
+      "jackpot",
+      "blood_price",
+      "momentum",
+      "foundry",
+      "downbeat",
+      "long_night",
+      "genesis",
+      "reliquary",
+      "keen_edge",
+      "locust_idol",
+      "double_the_fun",
+      "sealed_doors",
+      "pawnbroker",
+      "crunch_time",
+      "ouroboros",
+      "leaden_dice",
+      "prism",
+      "hair_trigger"
+    ],
+    "ownedUnique": [
+      "the_reckoning",
+      "amplifier",
+      "hourglass",
+      "snake_eyes",
+      "parade",
+      "shopping_cart",
+      "menagerie",
+      "prospector",
+      "ledger",
+      "double_the_fun",
+      "reliquary"
+    ],
+    "purchases": {
+      "downbeat": 1,
+      "brick_mold": 1,
+      "pocket_change": 2,
+      "jackpot": 4,
+      "the_reckoning": 1,
+      "chip": 2,
+      "deep_pockets": 1,
+      "shrink": 2,
+      "grindstone": 3,
+      "amplifier": 1,
+      "twin": 4,
+      "momentum": 1,
+      "spike": 1,
+      "foundry": 1,
+      "prism": 3,
+      "extra_dice": 1,
+      "hourglass": 1,
+      "snake_eyes": 1,
+      "parade": 1,
+      "centurion": 1,
+      "extra_die": 1,
+      "shopping_cart": 1,
+      "refinement": 3,
+      "loaded_die": 1,
+      "genesis": 2,
+      "menagerie": 1,
+      "chip_mold": 1,
+      "spike_mold": 1,
+      "prospector": 1,
+      "ledger": 1,
+      "dividend": 1,
+      "mult3": 1,
+      "double_the_fun": 1,
+      "keen_edge": 1,
+      "reliquary": 1
+    },
+    "dicePoints": {
+      "starter": "57",
+      "brick_mold": "1890",
+      "chip": "229",
+      "twin": "6570377",
+      "spike": "82",
+      "foundry": "9805125",
+      "extra_dice": "470",
+      "centurion": "30",
+      "extra_die": "65",
+      "genesis": "19679",
+      "chip_mold": "277",
+      "spike_mold": "148",
+      "mult3": "773055",
+      "double_the_fun": "135"
+    },
+    "itemPoints": {
+      "downbeat": "3094081314",
+      "pocket_change": "312",
+      "the_reckoning": "17373729840",
+      "jackpot": "343423125",
+      "amplifier": "8686864787",
+      "momentum": "1370",
+      "prism": "69486887386",
+      "hourglass": "1850065508",
+      "snake_eyes": "17175401",
+      "parade": "8043654847",
+      "menagerie": "8458367339",
+      "dividend": "5692907",
+      "keen_edge": "34026428"
+    },
+    "rollsTaken": 98,
+    "rollHistory": [
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "3",
+        "d": 1
+      },
+      {
+        "t": 3,
+        "s": "5",
+        "d": 2
+      },
+      {
+        "t": 3,
+        "s": "7",
+        "d": 3
+      },
+      {
+        "t": 4,
+        "s": "12",
+        "d": 4
+      },
+      {
+        "t": 5,
+        "s": "21",
+        "d": 5
+      },
+      {
+        "t": 5,
+        "s": "33",
+        "d": 6
+      },
+      {
+        "t": 5,
+        "s": "42",
+        "d": 7
+      },
+      {
+        "t": 6,
+        "s": "57",
+        "d": 10
+      },
+      {
+        "t": 6,
+        "s": "159",
+        "d": 11
+      },
+      {
+        "t": 7,
+        "s": "264",
+        "d": 12
+      },
+      {
+        "t": 7,
+        "s": "372",
+        "d": 13
+      },
+      {
+        "t": 8,
+        "s": "600",
+        "d": 14
+      },
+      {
+        "t": 8,
+        "s": "822",
+        "d": 15
+      },
+      {
+        "t": 9,
+        "s": "1044",
+        "d": 16
+      },
+      {
+        "t": 9,
+        "s": "1254",
+        "d": 16
+      },
+      {
+        "t": 9,
+        "s": "1470",
+        "d": 16
+      },
+      {
+        "t": 10,
+        "s": "2166",
+        "d": 19
+      },
+      {
+        "t": 11,
+        "s": "2538",
+        "d": 20
+      },
+      {
+        "t": 11,
+        "s": "2538",
+        "d": 21
+      },
+      {
+        "t": 11,
+        "s": "2538",
+        "d": 22
+      },
+      {
+        "t": 11,
+        "s": "3942",
+        "d": 23
+      },
+      {
+        "t": 11,
+        "s": "3942",
+        "d": 24
+      },
+      {
+        "t": 11,
+        "s": "4650",
+        "d": 25
+      },
+      {
+        "t": 12,
+        "s": "4650",
+        "d": 28
+      },
+      {
+        "t": 12,
+        "s": "5004",
+        "d": 29
+      },
+      {
+        "t": 12,
+        "s": "5358",
+        "d": 30
+      },
+      {
+        "t": 12,
+        "s": "6090",
+        "d": 31
+      },
+      {
+        "t": 12,
+        "s": "6459",
+        "d": 32
+      },
+      {
+        "t": 12,
+        "s": "6834",
+        "d": 33
+      },
+      {
+        "t": 12,
+        "s": "7056",
+        "d": 34
+      },
+      {
+        "t": 12,
+        "s": "7830",
+        "d": 35
+      },
+      {
+        "t": 12,
+        "s": "8229",
+        "d": 36
+      },
+      {
+        "t": 12,
+        "s": "8631",
+        "d": 37
+      },
+      {
+        "t": 12,
+        "s": "8874",
+        "d": 38
+      },
+      {
+        "t": 12,
+        "s": "10026",
+        "d": 39
+      },
+      {
+        "t": 12,
+        "s": "10446",
+        "d": 40
+      },
+      {
+        "t": 13,
+        "s": "14010",
+        "d": 43
+      },
+      {
+        "t": 14,
+        "s": "17628",
+        "d": 48
+      },
+      {
+        "t": 14,
+        "s": "21282",
+        "d": 49
+      },
+      {
+        "t": 14,
+        "s": "25890",
+        "d": 50
+      },
+      {
+        "t": 15,
+        "s": "36690",
+        "d": 73
+      },
+      {
+        "t": 15,
+        "s": "44682",
+        "d": 74
+      },
+      {
+        "t": 15,
+        "s": "54078",
+        "d": 75
+      },
+      {
+        "t": 15,
+        "s": "73014",
+        "d": 76
+      },
+      {
+        "t": 15,
+        "s": "81078",
+        "d": 77
+      },
+      {
+        "t": 16,
+        "s": "111606",
+        "d": 94
+      },
+      {
+        "t": 17,
+        "s": "168522",
+        "d": 127
+      },
+      {
+        "t": 17,
+        "s": "223062",
+        "d": 128
+      },
+      {
+        "t": 17,
+        "s": "247938",
+        "d": 129
+      },
+      {
+        "t": 18,
+        "s": "441906",
+        "d": 197
+      },
+      {
+        "t": 18,
+        "s": "637890",
+        "d": 198
+      },
+      {
+        "t": 19,
+        "s": "1084938",
+        "d": 326
+      },
+      {
+        "t": 20,
+        "s": "1525146",
+        "d": 604
+      },
+      {
+        "t": 20,
+        "s": "1525146",
+        "d": 625
+      },
+      {
+        "t": 20,
+        "s": "1758426",
+        "d": 641
+      },
+      {
+        "t": 20,
+        "s": "2715162",
+        "d": 661
+      },
+      {
+        "t": 21,
+        "s": "4631082",
+        "d": 1264
+      },
+      {
+        "t": 21,
+        "s": "4631082",
+        "d": 1285
+      },
+      {
+        "t": 21,
+        "s": "5616618",
+        "d": 1303
+      },
+      {
+        "t": 21,
+        "s": "9621546",
+        "d": 1321
+      },
+      {
+        "t": 22,
+        "s": "15682722",
+        "d": 2578
+      },
+      {
+        "t": 23,
+        "s": "40135650",
+        "d": 5192
+      },
+      {
+        "t": 23,
+        "s": "64802418",
+        "d": 5234
+      },
+      {
+        "t": 24,
+        "s": "89635938",
+        "d": 10500
+      },
+      {
+        "t": 24,
+        "s": "114564282",
+        "d": 10542
+      },
+      {
+        "t": 24,
+        "s": "139588746",
+        "d": 10585
+      },
+      {
+        "t": 24,
+        "s": "189850650",
+        "d": 10627
+      },
+      {
+        "t": 24,
+        "s": "215078154",
+        "d": 10669
+      },
+      {
+        "t": 24,
+        "s": "240400914",
+        "d": 10712
+      },
+      {
+        "t": 24,
+        "s": "265818822",
+        "d": 10753
+      },
+      {
+        "t": 25,
+        "s": "887144982",
+        "d": 64488
+      },
+      {
+        "t": 26,
+        "s": "6304521750",
+        "d": 515428
+      },
+      {
+        "t": 27,
+        "s": "9013455618",
+        "d": 1030853
+      },
+      {
+        "t": 27,
+        "s": "14431535034",
+        "d": 1030897
+      },
+      {
+        "t": 27,
+        "s": "14431535034",
+        "d": 1030942
+      },
+      {
+        "t": 27,
+        "s": "25268576010",
+        "d": 1030984
+      },
+      {
+        "t": 27,
+        "s": "30687267570",
+        "d": 1031025
+      },
+      {
+        "t": 27,
+        "s": "36106171674",
+        "d": 1031068
+      },
+      {
+        "t": 27,
+        "s": "41525334546",
+        "d": 1031115
+      },
+      {
+        "t": 27,
+        "s": "52364049954",
+        "d": 1031161
+      },
+      {
+        "t": 27,
+        "s": "57783661026",
+        "d": 1031205
+      },
+      {
+        "t": 27,
+        "s": "63203469954",
+        "d": 1031250
+      },
+      {
+        "t": 27,
+        "s": "68623492074",
+        "d": 1031295
+      },
+      {
+        "t": 27,
+        "s": "79464006330",
+        "d": 1031338
+      },
+      {
+        "t": 27,
+        "s": "84884457642",
+        "d": 1031391
+      },
+      {
+        "t": 27,
+        "s": "90305143962",
+        "d": 1031436
+      },
+      {
+        "t": 27,
+        "s": "95726050818",
+        "d": 1031489
+      },
+      {
+        "t": 27,
+        "s": "106568354418",
+        "d": 1031546
+      },
+      {
+        "t": 27,
+        "s": "117411142290",
+        "d": 1031606
+      }
+    ]
+  }
+}

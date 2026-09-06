@@ -105,6 +105,7 @@ npm run items:check    # item mechanics, including every boss modifier
 npm run trials:check   # the trial loop: clears, advances, ranks, endings
 npm run gold:check     # payouts, interest, prices, rerolls, discounts
 npm run scoring:check  # the two scorers agree, per-die vs bucketed
+npm run history:check  # the per-roll run timeline the analysis screen charts
 ```
 
 Nearly all art is drawn procedurally at runtime and most audio is synthesized with WebAudio; the
@@ -540,6 +541,8 @@ npm run items:check      # item mechanics, including every boss modifier
 npm run trials:check     # the trial loop: clears, advances, ranks, endings
 npm run gold:check       # payouts, interest, prices, rerolls, discounts
 npm run scoring:check    # the two scorers agree, per-die vs bucketed
+npm run persistence:check # an in-progress run survives a save/restore round trip
+npm run history:check    # the per-roll run timeline the analysis screen charts
 ```
 
 See `src/sim/README.md` for flags and details.

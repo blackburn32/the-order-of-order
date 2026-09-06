@@ -35,9 +35,11 @@ import {
   type ShopItemId,
 } from "../systems/Items";
 import { accumulatePoints } from "../systems/ItemPoints";
+import { recordRollSample, seedRollHistory } from "../systems/RunHistory";
 import { deniedRoll, RollResult } from "../systems/Scoring";
 import { scoreRollHistogram } from "../systems/ScoringHistogram";
 import { trialRollTarget } from "../systems/Trial";
+import { addItemValue } from "../systems/ItemValue";
 
 // Re-exported so GameScene and the bot keep a single import site for the
 // trial loop; the definition lives in systems/Trial to stay importable from the
@@ -70,9 +72,9 @@ export function rollPool(
  *  latched by resolveRoll) or its rolls have run out. The caller should then run
  *  `resolveTrialEnd`. */
 export function trialComplete(state: RunState): boolean {
+  const playsOut = fullBudgetAllTrials || state.trial === fullBudgetTrial;
   return (
-    (state.trialCleared && state.trial !== fullBudgetTrial) ||
-    state.roll >= trialRollTarget(state)
+    (state.trialCleared && !playsOut) || state.roll >= trialRollTarget(state)
   );
 }
 
@@ -121,6 +123,29 @@ let fullBudgetTrial: number | null = null;
  *  its goal is met, so capacity can be read past the goal. */
 export function setFullBudgetTrial(trial: number | null): void {
   fullBudgetTrial = trial;
+}
+
+// The same switch thrown for every trial at once, for a human rather than a
+// tuner: the dev panel's "play out every trial" toggle (see dev/DevPanel.ts).
+// It answers by hand the question the tuner answers in bulk — what does a trial
+// score when it is played to the end of its budget instead of stopping at the
+// goal — which is the only way to see, while playing, how much of the budget a
+// goal is actually asking for.
+//
+// It carries the distortion named above and one more: a trial played out has no
+// rolls left over, so it earns no unused-roll gold, no Reserve bonus and no Rain
+// Check carry. A run under this toggle is therefore POORER than a real one at
+// the same point on the ladder. It is a measuring instrument, not a way to play.
+let fullBudgetAllTrials = false;
+
+/** Dev/sim-only. Every trial plays its whole roll budget out, goal or no goal.
+ *  Excluded from production builds by its only caller, the dev panel. */
+export function setFullBudgetAllTrials(enabled: boolean): void {
+  fullBudgetAllTrials = enabled;
+}
+
+export function fullBudgetAllTrialsEnabled(): boolean {
+  return fullBudgetAllTrials;
 }
 
 export interface TrialEndOutcome {
@@ -218,6 +243,8 @@ export function resolveRoll(
   const goldGained = rollReceipt.total;
   state.trialRollGold.titheBowl += rollReceipt.titheBowl;
   state.trialRollGold.luckyCoin += rollReceipt.luckyCoin;
+  addItemValue(state, "tithe_bowl", rollReceipt.titheBowl);
+  addItemValue(state, "lucky_coin", rollReceipt.luckyCoin);
   grantGold(state, goldGained);
 
   // Last Call unlock: this roll crossed the trial's goal as its final roll.
@@ -256,6 +283,10 @@ export function resolveRoll(
     state.rival.roll += 1;
     applyGridPassives(state, state.rival.dice, afflictions, false, rng);
   }
+
+  // The run's timeline, taken last so the sample carries the grid the player is
+  // actually left looking at — everything this roll grew, shattered or culled.
+  recordRollSample(state);
 
   return {
     result,
@@ -349,11 +380,22 @@ export function applyGridPassives(
   // die a step. Applied after scoring so it only helps future rolls. Below the
   // bucket threshold the shrunk grid index comes back so the scene can flash it.
   const shrunk: number[] = [];
+  let whetstoneShrinks = 0;
   for (let c = 0; c < state.whetstone; c++) {
     if (rng() >= 0.1) continue;
     const idx = pool.whetstoneShrink(rng);
     if (idx === null) break;
+    whetstoneShrinks += 1;
     if (idx >= 0) shrunk.push(idx);
+  }
+
+  // The rival mirrors these passives during the duel, but its copies are not
+  // payoff the player's item returned. Count only the player's own pool.
+  if (pool === state.dice) {
+    addItemValue(state, "double_the_fun", doubleTheFunCount);
+    addItemValue(state, "genesis", genesisCount);
+    for (const mold of molds) addItemValue(state, mold.id, mold.count);
+    addItemValue(state, "whetstone", whetstoneShrinks);
   }
 
   return {
@@ -472,6 +514,9 @@ export function resolveTrialEnd(
     cleared || !cullingEnabled
       ? trialPayout(state, payoutTuning)
       : EMPTY_BREAKDOWN;
+  recordClearItemValue(state, goldBreakdown, payoutTuning);
+  addItemValue(state, "rain_check", carriedRolls);
+  if (insuranceUsed) addItemValue(state, "insurance_policy", 1);
   grantGold(state, goldBreakdown.total);
   // The purse is skimmed once the trial's own pay is in it, so what a ceiling
   // affliction leaves behind is exactly what the player walks into the shop with.
@@ -499,6 +544,7 @@ export function resolveTrialEnd(
   }
 
   state.trial += 1;
+  recordPermanentRollValue(state);
   state.roll = 0;
   state.trialCleared = false;
   state.bonusRollsThisRound = carriedRolls;
@@ -556,6 +602,8 @@ export function beginRun(
 ): void {
   state.bossModifiers = bossesForRank(state, state.trial, rng);
   prepareDuel(state);
+  // The origin of the run's curves: no points yet, and the starter grid.
+  seedRollHistory(state);
 }
 
 /** Continue a won run into endless without ending or recording it. This
@@ -569,9 +617,11 @@ export function continueEndless(
   // endless rather than being dropped at the finish line. Counted before the
   // ladder moves, while the budget still belongs to the trial just won.
   const carriedRolls = Math.min(state.rainCheck, unusedRolls(state));
+  addItemValue(state, "rain_check", carriedRolls);
   liftStoryDebuffs(state);
   state.endless = true;
   state.trial += 1;
+  recordPermanentRollValue(state);
   state.roll = 0;
   state.trialCleared = false;
   state.bonusRollsThisRound = carriedRolls;
@@ -586,6 +636,60 @@ export function continueEndless(
   );
   applyTrialStart(state);
   prepareDuel(state);
+}
+
+/** Permanent tempo cards pay once for the next trial when purchased, then once
+ * again each time the ladder advances. */
+function recordPermanentRollValue(state: RunState): void {
+  addItemValue(state, "metronome", state.purchases.metronome ?? 0);
+  if (state.purchases.long_night) addItemValue(state, "long_night", 5);
+}
+
+/** Source-level portions of a clear payout. These are the concrete gold each
+ * economy card unlocked; ordinary base payout and boss gold belong to no item. */
+function recordClearItemValue(
+  state: RunState,
+  breakdown: GoldBreakdown,
+  tuning: TrialPayoutTuning,
+): void {
+  if (breakdown.total <= 0) return;
+  // Marginal re-evaluation preserves every boss/curse multiplier and rounding
+  // rule. It also gives each item its full synergistic payoff, which is the
+  // useful ROI question the Codex is answering.
+  const without = (overrides: Partial<RunState>) =>
+    trialPayout({ ...state, ...overrides }, tuning).total;
+  if (state.reserve > 0)
+    addItemValue(state, "reserve", breakdown.total - without({ reserve: 0 }));
+  if (state.deepPockets > 0)
+    addItemValue(
+      state,
+      "deep_pockets",
+      breakdown.total - without({ deepPockets: 0 }),
+    );
+  if (state.countingHouse > 0)
+    addItemValue(
+      state,
+      "counting_house",
+      breakdown.total - without({ countingHouse: 0 }),
+    );
+  if (state.hasProspector)
+    addItemValue(
+      state,
+      "prospector",
+      breakdown.total - without({ hasProspector: false }),
+    );
+  if (state.hasVault)
+    addItemValue(
+      state,
+      "vault",
+      breakdown.total - without({ hasVault: false }),
+    );
+  if (state.hasReliquary)
+    addItemValue(
+      state,
+      "reliquary",
+      breakdown.total - without({ hasReliquary: false }),
+    );
 }
 
 /**

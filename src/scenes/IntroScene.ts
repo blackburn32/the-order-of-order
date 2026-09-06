@@ -11,6 +11,7 @@ import {
   type StoryFrame,
 } from "../ui/storyPage";
 import {
+  PAGE_TURN,
   slideObjectsIn,
   slideObjectsOut,
   slideSceneIn,
@@ -135,26 +136,37 @@ export class IntroScene extends Phaser.Scene {
     );
   }
 
-  /** Send the current chapter to the right, draw the next one, then bring it in
-   *  from the left. Only the chapter travels — the room behind it and the
-   *  controls beneath it hold their place, so the page turns within the screen
-   *  rather than the whole screen turning over. */
+  /** Send the current chapter to the left, draw the next one, then bring it in
+   *  from the right — a page turning in a book. Only the chapter travels — the
+   *  room behind it and the controls beneath it hold their place, so the page
+   *  turns within the screen rather than the whole screen turning over. */
   private nextPage(): void {
     if (this.transitioning) return;
     this.transitioning = true;
     const outgoing = this.chapter;
-    slideObjectsOut(this, [outgoing], () => {
-      outgoing.destroy();
-      this.page += 1;
-      this.chapter = this.frame.page(INTRO_PAGES[this.page]);
-      this.buildControls();
-      // slideObjectsOut disables input before invoking its completion. Re-arm
-      // it so slideObjectsIn can own the incoming chapter's lock and restore it.
-      this.input.enabled = true;
-      slideObjectsIn(this, [this.chapter], () => {
-        this.transitioning = false;
-      });
-    });
+    slideObjectsOut(
+      this,
+      [outgoing],
+      () => {
+        outgoing.destroy();
+        this.page += 1;
+        this.chapter = this.frame.page(INTRO_PAGES[this.page]);
+        this.buildControls();
+        // slideObjectsOut disables input before invoking its completion. Re-arm
+        // it so slideObjectsIn can own the incoming chapter's lock and restore
+        // it.
+        this.input.enabled = true;
+        slideObjectsIn(
+          this,
+          [this.chapter],
+          () => {
+            this.transitioning = false;
+          },
+          PAGE_TURN,
+        );
+      },
+      PAGE_TURN,
+    );
   }
 
   private leave(complete: () => void): void {

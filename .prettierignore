@@ -1,5 +1,7 @@
 dist/
 node_modules/
 sim-out/
+# Exported run fixtures: data written by the browser, not source.
+sim-fixtures/
 the-order-of-order.zip
 android/

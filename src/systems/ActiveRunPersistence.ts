@@ -13,6 +13,11 @@ import { DicePool, type DiceStack } from "./DicePool";
 import { ITEMS, type ShopItemId } from "./Items";
 import type { RivalState } from "./Rival";
 import {
+  hydrateRollHistory,
+  serializeRollHistory,
+  type SerializedRollSample,
+} from "./RunHistory";
+import {
   rollBoosterOffers,
   rollShopOffers,
   type BoosterOffer,
@@ -20,6 +25,7 @@ import {
   weightsFor,
 } from "./Shop";
 import { TutorialStage, type TutorialState } from "./Tutorial";
+import { addItemValue } from "./ItemValue";
 
 export const ACTIVE_RUN_STORAGE_KEY = "the-order-of-order.active-run";
 const ACTIVE_RUN_TOMBSTONE_KEY = `${ACTIVE_RUN_STORAGE_KEY}.cleared-at`;
@@ -42,6 +48,7 @@ type SerializedRunState = Omit<
   | "dicePoints"
   | "itemPoints"
   | "rival"
+  | "rollHistory"
 > & {
   dice: DiceStack[];
   score: string;
@@ -50,6 +57,7 @@ type SerializedRunState = Omit<
   dicePoints: Record<string, string>;
   itemPoints: Record<string, string>;
   rival: SerializedRival | null;
+  rollHistory: SerializedRollSample[];
 };
 
 type SerializedTrialEndOutcome = Omit<
@@ -65,6 +73,8 @@ export interface ShopCheckpointState {
   packs: BoosterOffer[];
   packChoices?: ShopOffer[];
   openingPackId?: BoosterOffer["id"];
+  /** Actual price already paid for the open pack, later assigned to its pick. */
+  openingPackCost?: number;
   visitWeights: RarityWeights;
   boonSpent: boolean;
   purchasesMade: number;
@@ -200,8 +210,11 @@ export function serializeRunState(state: RunState): SerializedRunState {
     shopUnlocks: [...state.shopUnlocks],
     ownedUnique: [...state.ownedUnique],
     purchases: { ...state.purchases },
+    itemPurchases: state.itemPurchases.map((purchase) => ({ ...purchase })),
+    itemValues: { ...state.itemValues },
     dicePoints: serializePointMap(state.dicePoints),
     itemPoints: serializePointMap(state.itemPoints),
+    rollHistory: serializeRollHistory(state.rollHistory),
   };
 }
 
@@ -261,6 +274,7 @@ export function hydrateRunState(value: unknown): RunState | null {
     if (
       key === "dice" ||
       key === "rival" ||
+      key === "rollHistory" ||
       key.endsWith("Score") ||
       key.endsWith("Points")
     )
@@ -315,7 +329,9 @@ export function hydrateRunState(value: unknown): RunState | null {
     !validSidesArray(value.loadedSizes) ||
     !validSidesArray(value.wildSizes) ||
     !validSidesArray(value.royalSealSizes) ||
-    !validPurchases(value.purchases)
+    !validPurchases(value.purchases) ||
+    !validItemPurchases(value.itemPurchases ?? []) ||
+    !validItemValues(value.itemValues ?? {})
   ) {
     return null;
   }
@@ -326,6 +342,13 @@ export function hydrateRunState(value: unknown): RunState | null {
   hydrated.dice = dice;
   hydrated.dicePoints = dicePoints;
   hydrated.itemPoints = itemPoints;
+  // A save written before the run timeline existed simply has no curves to
+  // draw; the run itself is still perfectly resumable, so this never fails the
+  // hydration the way a malformed grid or score does.
+  hydrated.rollHistory = hydrateRollHistory(value.rollHistory);
+  // `rollsTaken` is what spaces the samples, so it may never outlive them: a
+  // save with no readable timeline restarts the count along with the series.
+  if (hydrated.rollHistory.length === 0) hydrated.rollsTaken = 0;
   hydrated.trialRollGold = {
     titheBowl: value.trialRollGold.titheBowl,
     luckyCoin: value.trialRollGold.luckyCoin,
@@ -366,6 +389,30 @@ function validPurchases(value: unknown): boolean {
     isRecord(value) &&
     Object.entries(value).every(
       ([id, count]) => itemIds.has(id) && isNonNegativeInteger(count),
+    )
+  );
+}
+
+function validItemPurchases(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (purchase) =>
+        isRecord(purchase) &&
+        typeof purchase.id === "string" &&
+        itemIds.has(purchase.id) &&
+        isNonNegativeInteger(purchase.cost) &&
+        isNonNegativeInteger(purchase.trial) &&
+        purchase.trial >= 1,
+    )
+  );
+}
+
+function validItemValues(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Object.entries(value).every(
+      ([id, amount]) => itemIds.has(id) && isNonNegativeInteger(amount),
     )
   );
 }
@@ -546,6 +593,8 @@ function hydrateCheckpoint(value: unknown): ResumableCheckpoint | null {
         !value.packChoices.every(validOffer))) ||
     (value.openingPackId !== undefined &&
       !packIds.has(value.openingPackId as string)) ||
+    (value.openingPackCost !== undefined &&
+      !isNonNegativeInteger(value.openingPackCost)) ||
     !validWeights(value.visitWeights) ||
     typeof value.boonSpent !== "boolean" ||
     !isNonNegativeInteger(value.purchasesMade) ||
@@ -570,6 +619,7 @@ function cloneShopCheckpoint(
     packs: checkpoint.packs.map(clonePack),
     packChoices: checkpoint.packChoices?.map(cloneOffer),
     openingPackId: checkpoint.openingPackId,
+    openingPackCost: checkpoint.openingPackCost,
     visitWeights: { ...checkpoint.visitWeights },
     boonSpent: checkpoint.boonSpent,
     purchasesMade: checkpoint.purchasesMade,
@@ -828,6 +878,7 @@ export function createFreshShopCheckpoint(
     pickedIndices: [],
   };
   state.boonNextShop = false;
+  if (state.ownedLedger) addItemValue(state, "ledger", 2);
   return checkpoint;
 }
 

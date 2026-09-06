@@ -1,0 +1,579 @@
+{
+  "kind": "the-order-of-order.run-fixture",
+  "version": 1,
+  "exportedAt": 1788623649101,
+  "label": "trial-19-rank-7-roll-0",
+  "run": {
+    "trial": 19,
+    "endless": false,
+    "roll": 0,
+    "bossModifiers": [
+      "silence"
+    ],
+    "boonNextShop": false,
+    "bossesCleared": 6,
+    "trialCleared": false,
+    "score": "0",
+    "trialScore": "0",
+    "totalScore": "637890",
+    "gold": 39,
+    "goldEarned": 245,
+    "trialRollGold": {
+      "titheBowl": 0,
+      "luckyCoin": 0
+    },
+    "dice": [
+      {
+        "sides": 2,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "starter",
+        "count": 1
+      },
+      {
+        "sides": 2,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "brick_mold",
+        "count": 8
+      },
+      {
+        "sides": 2,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "chip",
+        "count": 3
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "chip",
+        "count": 1
+      },
+      {
+        "sides": 6,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "brick_mold",
+        "count": 39
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "twin",
+        "count": 1
+      },
+      {
+        "sides": 4,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "spike",
+        "count": 2
+      },
+      {
+        "sides": 1,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "foundry",
+        "count": 254
+      },
+      {
+        "sides": 6,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "extra_dice",
+        "count": 14
+      },
+      {
+        "sides": 100,
+        "maxFaceBonus": 4,
+        "loaded": false,
+        "wildFace": false,
+        "source": "centurion",
+        "count": 1
+      },
+      {
+        "sides": 6,
+        "maxFaceBonus": 0,
+        "loaded": false,
+        "wildFace": false,
+        "source": "extra_die",
+        "count": 2
+      }
+    ],
+    "scoringNumbers": [
+      1
+    ],
+    "loadedSizes": [],
+    "wildSizes": [],
+    "royalSealSizes": [],
+    "extraPoints": 0,
+    "extraNumberCount": 0,
+    "startedAt": 1788622261610,
+    "bonusRollsThisRound": 0,
+    "bonusRollsPerRound": 0,
+    "ownedLedger": false,
+    "hasSnakeEyes": true,
+    "hasAmplifier": true,
+    "hasVault": false,
+    "hasDoubleTheFun": false,
+    "hasLuckySeven": false,
+    "hasParade": true,
+    "hasMenagerie": false,
+    "hasUniform": false,
+    "hasHourglass": true,
+    "hasInsurancePolicy": false,
+    "hasCrunchTime": false,
+    "hasBloodPrice": false,
+    "hasOuroboros": false,
+    "hasFamishedIdol": false,
+    "hasBloat": false,
+    "hasSealedDoors": false,
+    "hasGamblersCurse": false,
+    "hasReckoning": true,
+    "hasHairTrigger": false,
+    "afflictions": [
+      "reckoning",
+      "gamblersCurse",
+      "betrayal"
+    ],
+    "endingsSeen": [
+      "tribute",
+      "betrayal"
+    ],
+    "kingsDemand": "gamblersCurse",
+    "defectors": 0,
+    "rival": null,
+    "hasCouponBook": false,
+    "hasDealersBell": false,
+    "hasShoppingCart": true,
+    "hasProspector": false,
+    "hasReliquary": false,
+    "hasPawnbroker": false,
+    "pocketChange": 2,
+    "whetstone": 0,
+    "dividend": 0,
+    "momentum": 1,
+    "keenEdge": 0,
+    "foundry": 1,
+    "jackpot": 4,
+    "genesis": 0,
+    "reserve": 0,
+    "rainCheck": 0,
+    "downbeat": 1,
+    "prism": 1,
+    "lastCall": 0,
+    "chipMold": 0,
+    "spikeMold": 0,
+    "brickMold": 1,
+    "titheBowl": 0,
+    "luckyCoin": 0,
+    "countingHouse": 0,
+    "deepPockets": 1,
+    "scoreStreak": 27,
+    "momentumStreak": 27,
+    "clutchClear": false,
+    "peakGold": 60,
+    "peakRollsLeftOnClear": 16,
+    "shopUnlocks": [
+      "last_call",
+      "reserve",
+      "dividend",
+      "rain_check",
+      "iron_debt",
+      "tollkeeper",
+      "prospector",
+      "famished_idol",
+      "jackpot",
+      "blood_price",
+      "momentum",
+      "foundry",
+      "downbeat",
+      "long_night",
+      "genesis",
+      "reliquary",
+      "keen_edge",
+      "locust_idol",
+      "double_the_fun",
+      "sealed_doors",
+      "pawnbroker",
+      "crunch_time",
+      "ouroboros",
+      "leaden_dice",
+      "prism",
+      "hair_trigger"
+    ],
+    "ownedUnique": [
+      "the_reckoning",
+      "amplifier",
+      "hourglass",
+      "snake_eyes",
+      "parade",
+      "shopping_cart"
+    ],
+    "purchases": {
+      "downbeat": 1,
+      "brick_mold": 1,
+      "pocket_change": 2,
+      "jackpot": 4,
+      "the_reckoning": 1,
+      "chip": 2,
+      "deep_pockets": 1,
+      "shrink": 2,
+      "grindstone": 1,
+      "amplifier": 1,
+      "twin": 1,
+      "momentum": 1,
+      "spike": 1,
+      "foundry": 1,
+      "prism": 1,
+      "extra_dice": 1,
+      "hourglass": 1,
+      "snake_eyes": 1,
+      "parade": 1,
+      "centurion": 1,
+      "extra_die": 1,
+      "shopping_cart": 1
+    },
+    "dicePoints": {
+      "starter": "22",
+      "brick_mold": "291",
+      "chip": "89",
+      "twin": "34",
+      "spike": "14",
+      "foundry": "558",
+      "extra_dice": "33"
+    },
+    "itemPoints": {
+      "downbeat": "3943",
+      "pocket_change": "172",
+      "the_reckoning": "195912",
+      "jackpot": "12925",
+      "amplifier": "97828",
+      "momentum": "762",
+      "prism": "190938",
+      "hourglass": "77937",
+      "snake_eyes": "1456",
+      "parade": "54932"
+    },
+    "rollsTaken": 60,
+    "rollHistory": [
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "0",
+        "d": 1
+      },
+      {
+        "t": 1,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "1",
+        "d": 1
+      },
+      {
+        "t": 2,
+        "s": "3",
+        "d": 1
+      },
+      {
+        "t": 3,
+        "s": "5",
+        "d": 2
+      },
+      {
+        "t": 3,
+        "s": "7",
+        "d": 3
+      },
+      {
+        "t": 4,
+        "s": "12",
+        "d": 4
+      },
+      {
+        "t": 5,
+        "s": "21",
+        "d": 5
+      },
+      {
+        "t": 5,
+        "s": "33",
+        "d": 6
+      },
+      {
+        "t": 5,
+        "s": "42",
+        "d": 7
+      },
+      {
+        "t": 6,
+        "s": "57",
+        "d": 10
+      },
+      {
+        "t": 6,
+        "s": "159",
+        "d": 11
+      },
+      {
+        "t": 7,
+        "s": "264",
+        "d": 12
+      },
+      {
+        "t": 7,
+        "s": "372",
+        "d": 13
+      },
+      {
+        "t": 8,
+        "s": "600",
+        "d": 14
+      },
+      {
+        "t": 8,
+        "s": "822",
+        "d": 15
+      },
+      {
+        "t": 9,
+        "s": "1044",
+        "d": 16
+      },
+      {
+        "t": 9,
+        "s": "1254",
+        "d": 16
+      },
+      {
+        "t": 9,
+        "s": "1470",
+        "d": 16
+      },
+      {
+        "t": 10,
+        "s": "2166",
+        "d": 19
+      },
+      {
+        "t": 11,
+        "s": "2538",
+        "d": 20
+      },
+      {
+        "t": 11,
+        "s": "2538",
+        "d": 21
+      },
+      {
+        "t": 11,
+        "s": "2538",
+        "d": 22
+      },
+      {
+        "t": 11,
+        "s": "3942",
+        "d": 23
+      },
+      {
+        "t": 11,
+        "s": "3942",
+        "d": 24
+      },
+      {
+        "t": 11,
+        "s": "4650",
+        "d": 25
+      },
+      {
+        "t": 12,
+        "s": "4650",
+        "d": 28
+      },
+      {
+        "t": 12,
+        "s": "5004",
+        "d": 29
+      },
+      {
+        "t": 12,
+        "s": "5358",
+        "d": 30
+      },
+      {
+        "t": 12,
+        "s": "6090",
+        "d": 31
+      },
+      {
+        "t": 12,
+        "s": "6459",
+        "d": 32
+      },
+      {
+        "t": 12,
+        "s": "6834",
+        "d": 33
+      },
+      {
+        "t": 12,
+        "s": "7056",
+        "d": 34
+      },
+      {
+        "t": 12,
+        "s": "7830",
+        "d": 35
+      },
+      {
+        "t": 12,
+        "s": "8229",
+        "d": 36
+      },
+      {
+        "t": 12,
+        "s": "8631",
+        "d": 37
+      },
+      {
+        "t": 12,
+        "s": "8874",
+        "d": 38
+      },
+      {
+        "t": 12,
+        "s": "10026",
+        "d": 39
+      },
+      {
+        "t": 12,
+        "s": "10446",
+        "d": 40
+      },
+      {
+        "t": 13,
+        "s": "14010",
+        "d": 43
+      },
+      {
+        "t": 14,
+        "s": "17628",
+        "d": 48
+      },
+      {
+        "t": 14,
+        "s": "21282",
+        "d": 49
+      },
+      {
+        "t": 14,
+        "s": "25890",
+        "d": 50
+      },
+      {
+        "t": 15,
+        "s": "36690",
+        "d": 73
+      },
+      {
+        "t": 15,
+        "s": "44682",
+        "d": 74
+      },
+      {
+        "t": 15,
+        "s": "54078",
+        "d": 75
+      },
+      {
+        "t": 15,
+        "s": "73014",
+        "d": 76
+      },
+      {
+        "t": 15,
+        "s": "81078",
+        "d": 77
+      },
+      {
+        "t": 16,
+        "s": "111606",
+        "d": 94
+      },
+      {
+        "t": 17,
+        "s": "168522",
+        "d": 127
+      },
+      {
+        "t": 17,
+        "s": "223062",
+        "d": 128
+      },
+      {
+        "t": 17,
+        "s": "247938",
+        "d": 129
+      },
+      {
+        "t": 18,
+        "s": "441906",
+        "d": 197
+      },
+      {
+        "t": 18,
+        "s": "637890",
+        "d": 198
+      }
+    ]
+  }
+}

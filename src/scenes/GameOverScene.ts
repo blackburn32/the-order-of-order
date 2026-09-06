@@ -235,6 +235,8 @@ export class GameOverScene extends Phaser.Scene {
       subtitle: "where this run’s points came from",
       dicePoints: toNumberPointMap(state.dicePoints),
       itemPoints: toNumberPointMap(state.itemPoints),
+      history: state.rollHistory,
+      rolls: state.rollsTaken,
     });
   }
 }

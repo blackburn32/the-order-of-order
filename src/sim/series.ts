@@ -28,6 +28,7 @@ const OFFSETS: Record<StrategyName, number> = {
   precision: 39_595,
   economy: 47_514,
   tempo: 55_433,
+  expert: 63_352,
 };
 
 function series(
@@ -46,6 +47,7 @@ function series(
 }
 
 export const SIM_SERIES: SimulationSeries[] = [
+  series("expert", "Expert · measured value", "all"),
   series("greedy", "Greedy · base only", "none"),
   series("greedy", "Greedy · all unlocked", "all"),
   series("thrifty", "Thrifty · base only", "none"),
@@ -57,16 +59,73 @@ export const SIM_SERIES: SimulationSeries[] = [
   series("tempo", "Tempo · rolls and safety", "all"),
 ];
 
+/** The expert on its own — the only series that appraises what it buys and aims
+ *  the cards that need a die (see sim/expert.ts).
+ *
+ *  Deliberately NOT folded into the two pooled fields below. Every shipped goal
+ *  was designed against a field that shops by price and theme, and quietly
+ *  adding a stronger shopper to that pool would move the whole curve as a side
+ *  effect of this file being edited. Point a tuner at it on purpose:
+ *
+ *      FIELD=expert node node_modules/tsx/dist/cli.mjs src/sim/smartSurvivalCurve.ts
+ */
+export const EXPERT_SERIES = SIM_SERIES.filter(
+  (series) => series.strategy === "expert",
+);
+
 /** Every series is a shopper now — there is no no-buy baseline to exclude — so
- *  the pooled field the goal curve is designed against is simply all of them. */
-export const SHOPPER_SERIES = SIM_SERIES;
+ *  the pooled field the goal curve is designed against is simply all of them,
+ *  less the expert (see above). */
+export const SHOPPER_SERIES = SIM_SERIES.filter(
+  (series) => series.strategy !== "expert",
+);
 
 /** Coherent, fully unlocked shoppers used to set the survival curve. Base-pool
  * runs and the deliberately weak economy hoarder remain in validation, but do
  * not make the opening ladder lethal for builds that spend toward power. */
 export const SMART_SERIES = SIM_SERIES.filter(
-  (series) => series.id.endsWith("-all") && series.strategy !== "economy",
+  (series) =>
+    series.id.endsWith("-all") &&
+    series.strategy !== "economy" &&
+    series.strategy !== "expert",
 );
+
+/**
+ * The field a tuner designs a curve against, named by the `FIELD` environment
+ * variable.
+ *
+ * Which field is chosen IS the design decision, so it is made out loud on the
+ * command line rather than by whichever constant a tuner happened to import:
+ *
+ *   `smart`   the coherent all-unlocked price-and-theme shoppers (the default,
+ *             and what every shipped goal was designed against).
+ *   `expert`  the appraising shopper alone — a curve for people who play the
+ *             way it does, and a harder ladder for everyone who does not.
+ *   `shopper` every series but the expert, base pools included.
+ *
+ * A curve designed against a stronger field is a harder game for weaker builds,
+ * which is a design call and not a mechanical one. See sim/README.md.
+ */
+export function tunerField(): SimulationSeries[] {
+  const name = (process.env.FIELD ?? "smart").toLowerCase();
+  switch (name) {
+    case "smart":
+      return SMART_SERIES;
+    case "expert":
+      return EXPERT_SERIES;
+    case "shopper":
+      return SHOPPER_SERIES;
+    default:
+      throw new Error(
+        `FIELD=${name} is not a field. Use smart, expert or shopper.`,
+      );
+  }
+}
+
+/** What `tunerField()` is currently pointed at, for a report header. */
+export function tunerFieldName(): string {
+  return (process.env.FIELD ?? "smart").toLowerCase();
+}
 
 export function seriesSeed(baseSeed: number, run: number, seedOffset: number) {
   return baseSeed * 1_000_003 + run + seedOffset;

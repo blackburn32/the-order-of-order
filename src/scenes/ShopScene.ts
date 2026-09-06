@@ -43,6 +43,7 @@ import {
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { buildCursedSeal, rarityMark } from "../ui/itemCard";
+import { addItemValue, recordRunItemPurchase } from "../systems/ItemValue";
 import { buildRichCopy, isMarked } from "../ui/richCopy";
 import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
 import {
@@ -153,6 +154,7 @@ export class ShopScene extends Phaser.Scene {
   private packs: BoosterOffer[] = [];
   private packChoices?: ShopOffer[];
   private openingPack?: BoosterOffer;
+  private openingPackCost?: number;
   // Set only while the pack's choices are drawn as a fan; a grid of choices
   // needs none of this, since nothing is covering anything.
   private packFan?: PackFan;
@@ -238,6 +240,9 @@ export class ShopScene extends Phaser.Scene {
     this.openingPack = checkpoint.openingPackId
       ? this.packs.find((pack) => pack.id === checkpoint.openingPackId)
       : undefined;
+    this.openingPackCost = checkpoint.openingPackCost;
+    if (this.openingPack && this.openingPackCost === undefined)
+      this.openingPackCost = boosterPrice(this.state, this.openingPack);
     const pickerWasFromPack =
       !!checkpoint.pickerOffer &&
       !!checkpoint.packChoices?.some(
@@ -300,6 +305,7 @@ export class ShopScene extends Phaser.Scene {
       packs: this.packs,
       packChoices: this.packChoices,
       openingPackId: this.openingPack?.id,
+      openingPackCost: this.openingPackCost,
       visitWeights: this.visitWeights,
       boonSpent: this.boonSpent,
       purchasesMade: this.purchasesMade,
@@ -2246,7 +2252,9 @@ export class ShopScene extends Phaser.Scene {
     this.state.gold -= price;
     pack.sold = true;
     this.openingPack = pack;
+    this.openingPackCost = price;
     this.packChoices = choices;
+    if (this.state.ownedLedger) addItemValue(this.state, "ledger", 2);
     this.saveCheckpoint();
     audio.buy();
     this.showBoosterChoices(true, origin);
@@ -2539,9 +2547,56 @@ export class ShopScene extends Phaser.Scene {
     targetIndex?: number,
     targetIndices?: number[],
   ): boolean {
-    return this.packChoices?.includes(offer)
+    const fromPack = !!this.packChoices?.includes(offer);
+    const paid = fromPack ? (this.openingPackCost ?? 0) : offer.cost;
+    const listPrice = fromPack
+      ? (this.openingPack?.cost ?? paid)
+      : (offer.listPrice ?? offer.cost);
+    // Discount cards bought by this transaction cannot rebate themselves.
+    const hadCart = this.state.hasShoppingCart;
+    const hadPawnbroker = this.state.hasPawnbroker;
+    const hadCoupon = this.state.hasCouponBook && !!offer.freeByCoupon;
+    const applied = fromPack
       ? applyBoosterChoice(this.state, offer, targetIndex, targetIndices)
       : applyOffer(this.state, offer, targetIndex, targetIndices);
+    if (!applied) return false;
+    recordRunItemPurchase(this.state, offer.id, paid);
+    this.recordShopSavings(
+      listPrice,
+      hadCart,
+      hadPawnbroker,
+      hadCoupon,
+      fromPack,
+    );
+    return true;
+  }
+
+  private recordShopSavings(
+    listPrice: number,
+    cart: boolean,
+    pawnbroker: boolean,
+    coupon: boolean,
+    fromPack: boolean,
+  ): void {
+    if (listPrice <= 0) return;
+    const undiscounted = Math.ceil(listPrice);
+    const afterCart = cart ? Math.ceil(listPrice * 0.75) : undiscounted;
+    if (cart)
+      addItemValue(this.state, "shopping_cart", undiscounted - afterCart);
+    if (pawnbroker)
+      addItemValue(
+        this.state,
+        "pawnbroker",
+        Math.max(0, afterCart - Math.max(1, afterCart - 2)),
+      );
+    // Coupon Book marks loose cards only. A pack pick is free because its pack
+    // was paid for, not because Coupon Book waived the chosen card.
+    if (coupon && !fromPack)
+      addItemValue(
+        this.state,
+        "coupon_book",
+        Math.max(1, afterCart - (pawnbroker ? 2 : 0)),
+      );
   }
 
   private completeChosenOffer(offer: ShopOffer): void {
@@ -2562,6 +2617,7 @@ export class ShopScene extends Phaser.Scene {
       }
       this.packChoices = undefined;
       this.openingPack = undefined;
+      this.openingPackCost = undefined;
       this.pickerOffer = undefined;
       this.pickedIndices = [];
       this.packGroup = undefined;
@@ -2911,14 +2967,19 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private rerollStore(): void {
-    const price = rerollIsFree(this.state, this.rerollsThisVisit)
-      ? 0
-      : rerollCost(this.rerollsThisVisit);
+    const freeByBell = rerollIsFree(this.state, this.rerollsThisVisit);
+    const price = freeByBell ? 0 : rerollCost(this.rerollsThisVisit);
     if (this.state.gold < price) {
       audio.deny();
       return;
     }
     this.state.gold -= price;
+    if (freeByBell)
+      addItemValue(
+        this.state,
+        "dealers_bell",
+        rerollCost(this.rerollsThisVisit),
+      );
     this.rerollsThisVisit += 1;
     this.pendingCarouselPan = 0;
     audio.click();
@@ -2929,6 +2990,7 @@ export class ShopScene extends Phaser.Scene {
       this.visitWeights,
       !this.couponFreebieClaimedThisVisit,
     );
+    if (this.state.ownedLedger) addItemValue(this.state, "ledger", 2);
     this.pickerOffer = undefined;
     this.pickedIndices = [];
     this.saveCheckpoint();

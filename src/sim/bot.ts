@@ -55,6 +55,11 @@ import { isMirrorTrial, rankOf, trialInRank } from "../config";
 import { mulberry32 } from "./localStorageShim";
 import { SimConfig } from "./config";
 import { acceptsCurse, afflictionRisk } from "./curseValue";
+import {
+  expertShopVisit,
+  expertWantsReroll,
+  type ExpertOptions,
+} from "./expert";
 
 export type StrategyName =
   | "greedy"
@@ -63,7 +68,8 @@ export type StrategyName =
   | "multiplier"
   | "precision"
   | "economy"
-  | "tempo";
+  | "tempo"
+  | "expert";
 
 /** One trial's result, captured the moment it completes — goal met or rolls run
  *  out — and before the score resets. `trialScore` is the peak reached. */
@@ -358,6 +364,19 @@ export const STRATEGIES: Record<StrategyName, Strategy> = {
   precision: themed("precision", "precision", HALF_FLOOR),
   economy: themed("economy", "economy", FULL_FLOOR),
   tempo: themed("tempo", "tempo", HALF_FLOOR),
+  // The expert shops through `expertShopVisit`, which needs the visit's boosters
+  // and rarity table as well as its shelf — more than `Strategy.visit` is handed.
+  // `visitShop` therefore routes this one strategy itself, and this stub exists
+  // so the record stays total. See sim/expert.ts.
+  expert: {
+    name: "expert",
+    theme: null,
+    goldFloor: 0,
+    curseAppetite: 0.5,
+    visit(_state, _offers, _rng, purchasesMade) {
+      return purchasesMade;
+    },
+  },
 };
 
 // ---- run driver ------------------------------------------------------------
@@ -382,6 +401,7 @@ function visitShop(
   strategy: Strategy,
   rng: () => number,
   record: RunRecord,
+  expertOptions: ExpertOptions,
 ): number {
   const before = state.gold;
   const cardCount = state.ownedLedger ? 5 : 3;
@@ -394,18 +414,53 @@ function visitShop(
 
   // Reroll only while it is free (Dealer's Bell) or while nothing on the table
   // is affordable and the reroll itself is — a bot that rerolled on preference
-  // would be measuring its own taste rather than the economy.
+  // would be measuring its own taste rather than the economy. The expert is the
+  // one exception, and says so out loud: see `expertWantsReroll`.
   for (let attempt = 0; attempt < MAX_REROLLS_PER_VISIT; attempt++) {
     const free = rerollIsFree(state, attempt);
     const price = free ? 0 : rerollCost(attempt);
-    const stuck = offers.every(
-      (o) =>
-        !canAfford(state, o) || !acceptsCurse(state, o, strategy.curseAppetite),
-    );
-    if (!free && !(stuck && state.gold > price)) break;
+    if (strategy.name === "expert") {
+      if (
+        !expertWantsReroll(state, offers, free, price, strategy.curseAppetite)
+      )
+        break;
+    } else {
+      const stuck = offers.every(
+        (o) =>
+          !canAfford(state, o) ||
+          !acceptsCurse(state, o, strategy.curseAppetite),
+      );
+      if (!free && !(stuck && state.gold > price)) break;
+    }
     state.gold -= price;
     offers = rerollShopOffers(state, cardCount, rng, visitWeights);
     recordCurseOffers(record, offers);
+  }
+
+  if (strategy.name === "expert") {
+    // The freebie is claimed before the shelf is appraised rather than after,
+    // so the card it makes free is appraised at the price it will actually be
+    // bought at. A free card that helps at all is worth taking.
+    if (state.hasCouponBook && !offers.some((offer) => offer.freeByCoupon)) {
+      applyCouponFreebie(state, offers, rng);
+    }
+    const visit = expertShopVisit(
+      state,
+      offers,
+      packs,
+      visitWeights,
+      rng,
+      strategy.curseAppetite,
+      // Each shop gets its own dice to weigh cards against. Sharing one seed
+      // across a run would let a build that happened to suit trial 4's roll-outs
+      // keep being flattered by them for the rest of the ladder.
+      { ...expertOptions, seed: expertOptions.seed + state.trial * 1_000_003 },
+    );
+    recordCurseOffers(record, visit.revealed);
+    for (const purchase of visit.taken) {
+      if (purchase.cursed) record.cursesTaken[purchase.id] = state.trial;
+    }
+    return before - state.gold;
   }
 
   const purchasesMade = visitBoosters(
@@ -508,6 +563,13 @@ function visitBoosters(
  *  shop until the card it wants appears. */
 const MAX_REROLLS_PER_VISIT = 3;
 
+/** Roll-outs the expert averages each hypothesis over. Low because every
+ *  hypothesis in a visit is rolled against the same dice as the baseline it is
+ *  compared to, which removes most of the variance three samples would
+ *  otherwise leave. Raise it with `SimConfig.expertSamples` when a run matters
+ *  more than the clock. */
+const DEFAULT_EXPERT_SAMPLES = 3;
+
 /** Simulate one complete run under a strategy with a per-run seed. */
 export function simulateRun(
   strategyName: StrategyName,
@@ -519,6 +581,17 @@ export function simulateRun(
     curseAppetite: cfg.curseAppetite ?? STRATEGIES[strategyName].curseAppetite,
   };
   const rng = mulberry32(seed);
+  const expertOptions: ExpertOptions = {
+    samples: cfg.expertSamples ?? DEFAULT_EXPERT_SAMPLES,
+    seed,
+    horizonScale: cfg.expertHorizonScale,
+    relativeFloor: cfg.expertRelativeFloor,
+    passes: cfg.expertPasses,
+    goldWeight: cfg.expertGoldWeight,
+    crossTrials: cfg.expertCrossTrials,
+    bundleSize: cfg.expertBundleSize,
+    objective: cfg.expertObjective,
+  };
   const state = newRun(cfg.unlockedAtStart);
   beginRun(state, rng);
 
@@ -552,6 +625,10 @@ export function simulateRun(
   let clearedOnRoll: number | null = null;
   let rollScores: number[] | undefined = cfg.traceRolls ? [] : undefined;
   for (;;) {
+    // The state a trial is entered with — after its shop, before its first roll.
+    // It is what `benchmark.ts` measures a bot's capacity from, and the same
+    // moment a run exported from the dev panel is usually captured at.
+    if (state.roll === 0) cfg.onTrialStart?.(state);
     rollPool(state, state.dice, rng);
     resolveRoll(state, rng);
     rolls += 1;
@@ -612,7 +689,7 @@ export function simulateRun(
         break;
 
       // Every cleared trial is followed by a shop — the only shop there is.
-      goldSpent += visitShop(state, strategy, rng, record);
+      goldSpent += visitShop(state, strategy, rng, record, expertOptions);
       trackUnlocks(state, record.unlocksAchieved); // buys can change the grid
       continue;
     }

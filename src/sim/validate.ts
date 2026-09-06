@@ -22,8 +22,10 @@ import {
   seriesSeed,
   SHOPPER_SERIES,
   SIM_SERIES,
-  SMART_SERIES,
+  tunerField,
+  tunerFieldName,
 } from "./series";
+import { targetSurvivalAfterTrial } from "./survivalTargets";
 import {
   setTrialGoals,
   TRIALS_PER_RANK,
@@ -84,7 +86,7 @@ for (const series of SIM_SERIES) {
 }
 
 const pooled = SHOPPER_SERIES.flatMap((series) => byStrategy[series.id]);
-const smart = SMART_SERIES.flatMap((series) => byStrategy[series.id]);
+const field = tunerField().flatMap((series) => byStrategy[series.id]);
 let alive = pooled;
 console.log("\nPooled field (the README attrition measure):");
 console.log(
@@ -106,14 +108,16 @@ for (let trial = 1; trial <= WIN_TRIAL; trial++) {
   alive = survivors;
 }
 
-console.log("\nSmart-field survival by rank:");
+console.log(`\n${tunerFieldName()}-field survival by rank:`);
 for (let rank = 1; rank <= WIN_RANK; rank++) {
   const lastTrial = rank * TRIALS_PER_RANK;
-  const survivors = smart.filter(
+  const survivors = field.filter(
     (record) => record.won || record.trialReached > lastTrial,
   ).length;
   console.log(
-    `  rank ${String(rank).padStart(2)}  ${((survivors / smart.length) * 100).toFixed(1).padStart(5)}% alive`,
+    `  rank ${String(rank).padStart(2)}  ` +
+      `${((survivors / field.length) * 100).toFixed(1).padStart(5)}% alive` +
+      `  (target ${(targetSurvivalAfterTrial(lastTrial) * 100).toFixed(1)}%)`,
   );
 }
 

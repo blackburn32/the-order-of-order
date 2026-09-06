@@ -14,9 +14,10 @@ import { simulateRun, type TrialPoint } from "./bot";
 import { DEFAULT_CONFIG } from "./config";
 import { setFullBudgetTrial } from "./engine";
 import { installStorage, seedGlobalRandom } from "./localStorageShim";
-import { seriesConfig, seriesSeed, SMART_SERIES } from "./series";
+import { seriesConfig, seriesSeed, tunerField, tunerFieldName } from "./series";
 import { targetSurvivalAfterTrial } from "./survivalTargets";
 
+const FIELD = tunerField();
 const RUNS = Math.max(1, Number(process.env.RUNS ?? 300) | 0);
 const FROM = Math.max(2, Number(process.env.FROM ?? 2) | 0);
 
@@ -40,7 +41,7 @@ function measureTrial(trial: number, curve: number[]): TrialPoint[] {
   setTrialGoals(curve);
   setFullBudgetTrial(trial);
   const points: TrialPoint[] = [];
-  for (const series of SMART_SERIES) {
+  for (const series of FIELD) {
     seedGlobalRandom(DEFAULT_CONFIG.seed + series.seedOffset);
     installStorage([...series.unlockedAtStart]);
     for (let run = 0; run < RUNS; run++) {
@@ -70,13 +71,14 @@ function rollReached(scores: number[], goal: number): number | null {
   return index < 0 ? null : index + 1;
 }
 
-const totalRuns = RUNS * SMART_SERIES.length;
+const totalRuns = RUNS * FIELD.length;
 const curve = Array.from({ length: WIN_TRIAL }, (_, index) =>
   Number(trialGoal(index + 1)),
 );
 
 console.log(
-  `Smart survival tune — ${RUNS} runs × ${SMART_SERIES.length} coherent series`,
+  `Survival tune against the ${tunerFieldName()} field — ` +
+    `${RUNS} runs × ${FIELD.length} series`,
 );
 console.log(
   "trial | rank | entrants | target alive | goal | projected alive | median roll",
@@ -142,6 +144,13 @@ const candidatePath = "sim-out/candidate.json";
 const candidates = existsSync(candidatePath)
   ? JSON.parse(readFileSync(candidatePath, "utf8"))
   : {};
-candidates.SMART_SURVIVAL = curve;
+// Named for the field it was designed against: a curve set by the expert is a
+// different design decision from one set by the price-and-theme shoppers, and
+// two of them must not overwrite each other in the candidate file.
+const curveName =
+  tunerFieldName() === "smart"
+    ? "SMART_SURVIVAL"
+    : `${tunerFieldName().toUpperCase()}_SURVIVAL`;
+candidates[curveName] = curve;
 writeFileSync(candidatePath, JSON.stringify(candidates, null, 2));
-console.log(`\nWrote SMART_SURVIVAL to ${candidatePath}`);
+console.log(`\nWrote ${curveName} to ${candidatePath}`);

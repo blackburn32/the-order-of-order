@@ -7,6 +7,8 @@ import type { EndingId } from "../systems/Endings";
 import type { RivalState } from "../systems/Rival";
 import { STARTING_GOLD } from "../systems/Gold";
 import type { ShopItemId } from "../systems/Items";
+import type { RollSample } from "../systems/RunHistory";
+import type { ItemPurchaseEvent } from "../systems/ItemValue";
 
 export interface RunState {
   // Ladder position. `trial` runs straight through the whole run (1..30 for the
@@ -150,12 +152,26 @@ export interface RunState {
   // The single source of truth for the inventory screen (ownership is otherwise
   // scattered across flags/counters/dice and can't be reconstructed by id).
   purchases: Partial<Record<ShopItemId, number>>;
+  // One entry per card actually selected. Unlike `purchases`, Sealed Doors does
+  // not double these: timing, spend and copies-per-run describe transactions.
+  itemPurchases: ItemPurchaseEvent[];
+  // Cumulative non-point payoff counters (dice added/modified, gold returned,
+  // rolls added and concrete utility uses). Point items use the attribution
+  // maps below instead.
+  itemValues: Partial<Record<ShopItemId, number>>;
   // Per-item point attribution, accumulated every roll by accumulatePoints (see
   // systems/ItemPoints). `dicePoints` credits base rolling points (1 per scoring
   // die) to each die's source; `itemPoints` credits bonus and multiplier points
   // to the item that produced them. Together they sum to `totalScore`.
   dicePoints: Record<string, bigint>;
   itemPoints: Record<string, bigint>;
+  // Rolls resolved across the whole run, never reset (unlike `roll`, which is
+  // per-trial). It is what fixes the spacing of `rollHistory` below.
+  rollsTaken: number;
+  // One sample per roll, from the run's first to its last (see
+  // systems/RunHistory). Drives the analysis screen's score and dice-pool
+  // curves; thinned rather than truncated once a very long run outgrows its cap.
+  rollHistory: RollSample[];
 }
 
 export function newRun(shopUnlocks: readonly ShopItemId[] = []): RunState {
@@ -244,8 +260,12 @@ export function newRun(shopUnlocks: readonly ShopItemId[] = []): RunState {
     shopUnlocks: [...shopUnlocks],
     ownedUnique: [],
     purchases: {},
+    itemPurchases: [],
+    itemValues: {},
     dicePoints: {},
     itemPoints: {},
+    rollsTaken: 0,
+    rollHistory: [],
   };
 }
 

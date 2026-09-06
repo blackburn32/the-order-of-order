@@ -20,6 +20,7 @@ import {
   type StoryFrame,
 } from "../ui/storyPage";
 import {
+  PAGE_TURN,
   slideObjectsIn,
   slideObjectsOut,
   slideSceneIn,
@@ -135,25 +136,35 @@ export class EndingScene extends Phaser.Scene {
     );
   }
 
-  /** Send the current page to the right and bring the next one in from the
-   *  left — the intro's page turn, for the same reason: the room and the
+  /** Send the current page to the left and bring the next one in from the
+   *  right — the intro's page turn, for the same reason: the room and the
    *  controls stay put, and only the act itself moves. */
   private nextPage(): void {
     if (this.transitioning) return;
     this.transitioning = true;
     const outgoing = this.act;
-    slideObjectsOut(this, [outgoing], () => {
-      outgoing.destroy();
-      this.page += 1;
-      this.act = this.frame.page(this.def.pages[this.page]);
-      this.buildControls();
-      // slideObjectsOut disables input before invoking its completion. Re-arm
-      // it so slideObjectsIn can own the incoming page's lock and restore it.
-      this.input.enabled = true;
-      slideObjectsIn(this, [this.act], () => {
-        this.transitioning = false;
-      });
-    });
+    slideObjectsOut(
+      this,
+      [outgoing],
+      () => {
+        outgoing.destroy();
+        this.page += 1;
+        this.act = this.frame.page(this.def.pages[this.page]);
+        this.buildControls();
+        // slideObjectsOut disables input before invoking its completion. Re-arm
+        // it so slideObjectsIn can own the incoming page's lock and restore it.
+        this.input.enabled = true;
+        slideObjectsIn(
+          this,
+          [this.act],
+          () => {
+            this.transitioning = false;
+          },
+          PAGE_TURN,
+        );
+      },
+      PAGE_TURN,
+    );
   }
 
   /** Hand off to whatever the act leads to, saving that as the checkpoint first

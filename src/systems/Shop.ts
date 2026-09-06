@@ -26,6 +26,7 @@ import {
   itemGrowsGrid,
   itemsInTheme,
 } from "./Items";
+import { addItemValue, ITEM_VALUE_KIND } from "./ItemValue";
 
 export type { Rarity, ShopItemId } from "./Items";
 
@@ -648,6 +649,12 @@ export function applyOffer(
   if (!canAfford(state, offer)) return false;
 
   const def = BY_ID.get(offer.id)!;
+  const diceBefore = state.dice.summarize();
+  const sealsBefore = new Set(state.royalSealSizes);
+  const rollsBefore = state.bonusRollsThisRound + state.bonusRollsPerRound;
+  const scoringNumbersBefore = state.scoringNumbers.length;
+  const goldBefore = state.gold;
+  const sealedBeforePurchase = state.hasSealedDoors;
   if (
     def.targetCount &&
     def.targetCount > 1 &&
@@ -678,9 +685,73 @@ export function applyOffer(
   // rising price and its "one more copy buys you this" line both stay honest.
   state.purchases[def.id] =
     (state.purchases[def.id] ?? 0) + (def.unique ? 1 : applications);
+  const kind = ITEM_VALUE_KIND[def.id];
+  if (kind === "diceAdded")
+    addItemValue(state, def.id, state.dice.length - stackTotal(diceBefore));
+  else if (kind === "diceModified") {
+    const transformed = changedDiceCount(diceBefore, state.dice.summarize());
+    let newlySealed = 0;
+    for (const sides of state.royalSealSizes)
+      if (!sealsBefore.has(sides)) newlySealed += state.dice.countOfSize(sides);
+    addItemValue(state, def.id, Math.max(transformed, newlySealed));
+  } else if (kind === "rollsAdded") {
+    addItemValue(
+      state,
+      def.id,
+      state.bonusRollsThisRound + state.bonusRollsPerRound - rollsBefore,
+    );
+  } else if (kind === "scoringNumbersAdded") {
+    addItemValue(
+      state,
+      def.id,
+      state.scoringNumbers.length - scoringNumbersBefore,
+    );
+  } else if (kind === "goldReturned") {
+    addItemValue(state, def.id, state.gold - goldBefore);
+  }
+  if (sealedBeforePurchase && def.id !== "sealed_doors")
+    addItemValue(state, "sealed_doors", applications - 1);
   state.gold -= offer.cost;
   // A card that grew the grid may have pushed it past a cap affliction; the
   // ceiling holds between rolls as well as during them.
   enforceGridCap(state);
   return true;
+}
+
+function stackKey(
+  stack: ReturnType<RunState["dice"]["summarize"]>[number],
+): string {
+  return [
+    stack.sides,
+    stack.maxFaceBonus,
+    stack.loaded ? 1 : 0,
+    stack.wildFace ? 1 : 0,
+    stack.source,
+  ].join(":");
+}
+
+function stackTotal(stacks: ReturnType<RunState["dice"]["summarize"]>): number {
+  return stacks.reduce((sum, stack) => sum + stack.count, 0);
+}
+
+/** Half the distribution distance is the number of dice whose size or aura
+ * changed: a transformed die leaves one bucket and enters another. */
+function changedDiceCount(
+  before: ReturnType<RunState["dice"]["summarize"]>,
+  after: ReturnType<RunState["dice"]["summarize"]>,
+): number {
+  const counts = new Map<string, number>();
+  for (const stack of before)
+    counts.set(
+      stackKey(stack),
+      (counts.get(stackKey(stack)) ?? 0) + stack.count,
+    );
+  for (const stack of after)
+    counts.set(
+      stackKey(stack),
+      (counts.get(stackKey(stack)) ?? 0) - stack.count,
+    );
+  let distance = 0;
+  for (const count of counts.values()) distance += Math.abs(count);
+  return Math.floor(distance / 2);
 }

@@ -4,6 +4,12 @@ import { clearActiveRun } from "./ActiveRunPersistence";
 import type { DiceStack } from "./DicePool";
 import { windfallFactor } from "./Dice";
 import { ITEMS, meetsCriterion, ShopItemId } from "./Items";
+import {
+  hydrateRollHistory,
+  serializeRollHistory,
+  type RollSample,
+} from "./RunHistory";
+import { recordItemAnalysisRun, resetItemAnalysis } from "./ItemAnalytics";
 
 // Bumped to v2 for the ranks/trials/gold restructure. Runs recorded under the
 // v1 keys measured a different game (ten flat rounds, score-as-currency, Hard
@@ -33,6 +39,13 @@ export interface HallEntry {
   // absent. Full fidelity locally (no size cap).
   dicePoints?: Record<string, bigint>;
   itemPoints?: Record<string, bigint>;
+  // The run's per-roll timeline (see systems/RunHistory), for the analysis
+  // screen's score and dice-pool curves. Optional for the same reason the point
+  // maps are: entries recorded before it existed still load, and simply chart
+  // nothing. `rolls` is the run's true roll count, which the timeline only
+  // matches one-for-one until a very long run thins it.
+  history?: RollSample[];
+  rolls?: number;
 }
 
 export interface Settings {
@@ -80,6 +93,8 @@ export function loadHall(): HallEntry[] {
         }),
         dicePoints: bigintMap(entry.dicePoints),
         itemPoints: bigintMap(entry.itemPoints),
+        history: hydrateRollHistory(entry.history),
+        rolls: Number(entry.rolls ?? 0),
       }));
   } catch {
     return [];
@@ -113,8 +128,15 @@ export function saveHallEntry(entry: HallEntry): void {
   try {
     localStorage.setItem(
       KEY_SCORES,
-      JSON.stringify(hall, (_key, value) =>
-        typeof value === "bigint" ? value.toString() : value,
+      JSON.stringify(
+        // Hundreds of roll samples per entry, times the whole Hall, is the one
+        // part of this payload big enough to care about: they go out under the
+        // shared short-key form rather than one verbose object per roll.
+        hall.map((e) => ({
+          ...e,
+          history: serializeRollHistory(e.history ?? []),
+        })),
+        (_key, value) => (typeof value === "bigint" ? value.toString() : value),
       ),
     );
   } catch {
@@ -266,11 +288,21 @@ export function recordRunEnd(
     dice: state.dice.summarize(),
     dicePoints: { ...state.dicePoints },
     itemPoints: { ...state.itemPoints },
+    history: state.rollHistory.map((sample) => ({
+      ...sample,
+      pointsByItem: sample.pointsByItem
+        ? { ...sample.pointsByItem }
+        : undefined,
+      diceByItem: sample.diceByItem ? { ...sample.diceByItem } : undefined,
+      valueByItem: sample.valueByItem ? { ...sample.valueByItem } : undefined,
+    })),
+    rolls: state.rollsTaken,
   };
   // "Personal best" now means beating the top of the Hall on its own terms —
   // rank first, score second — not merely out-scoring it.
   const best = loadHall()[0];
   const personalBest = !best || compareHallEntries(entry, best) < 0;
+  recordItemAnalysisRun(state, won);
   saveHallEntry(entry);
   recordGameCompleted();
   return { personalBest };
@@ -298,6 +330,7 @@ export function evaluateAndUnlock(state: RunState): ShopItemId[] {
  *  Scores. Audio settings are intentionally left untouched. */
 export function resetAllProgress(): void {
   clearActiveRun();
+  resetItemAnalysis();
   try {
     localStorage.removeItem(KEY_PROGRESS);
     localStorage.removeItem(KEY_SCORES);

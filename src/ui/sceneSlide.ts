@@ -8,6 +8,17 @@ const OVERLAY_FADE_MS = 240;
 export type SlideObject = Phaser.GameObjects.GameObject &
   Phaser.GameObjects.Components.Transform;
 
+/** Which way objects travel across the screen. `1` is the room's own motion —
+ * in from the left, out to the right — which every scene change uses. `-1`
+ * mirrors it, so a story sequence turns its page the way a book does: the page
+ * you have read leaves to the left and the next one arrives from the right. */
+export type SlideTravel = 1 | -1;
+
+/** The mirrored travel the story sequences turn their pages with, named so the
+ * intro and the endings ask for the same motion rather than each spelling out
+ * a bare `-1`. */
+export const PAGE_TURN: SlideTravel = -1;
+
 function containsStationaryObject(
   object: Phaser.GameObjects.GameObject,
   stationary: Set<Phaser.GameObjects.GameObject>,
@@ -43,9 +54,10 @@ function slideTargets(
   return targets;
 }
 
-/** Move an explicit set of objects in from off the left edge, restoring the
- * scene's input lock once they arrive. The whole-scene entrance is one caller;
- * a story sequence turning a page is the other, where the set is just the page.
+/** Move an explicit set of objects in from off screen, restoring the scene's
+ * input lock once they arrive. The whole-scene entrance is one caller, coming
+ * in from the left; a story sequence turning a page is the other, and it passes
+ * the mirrored `travel` so its page arrives from the right instead.
  *
  * `arrived` runs once they have come to rest — and immediately when there is no
  * slide to wait for — so a caller can hold deferred work (see the Codex's card
@@ -54,12 +66,13 @@ export function slideObjectsIn(
   scene: Phaser.Scene,
   targets: readonly SlideObject[],
   arrived?: () => void,
+  travel: SlideTravel = 1,
 ): void {
   if (!fx.motion) {
     arrived?.();
     return;
   }
-  const distance = scene.scale.width;
+  const distance = scene.scale.width * travel;
   const inputWasEnabled = scene.input.enabled;
   scene.input.enabled = false;
 
@@ -88,19 +101,21 @@ export function slideObjectsIn(
   }
 }
 
-/** Send an explicit set of objects off the right edge, holding input closed
- * behind them: whatever replaces them owns re-arming it. */
+/** Send an explicit set of objects off screen — the right edge by default, the
+ * left under mirrored `travel` — holding input closed behind them: whatever
+ * replaces them owns re-arming it. */
 export function slideObjectsOut(
   scene: Phaser.Scene,
   targets: readonly SlideObject[],
   complete: () => void,
+  travel: SlideTravel = 1,
 ): void {
   if (!fx.motion) {
     complete();
     return;
   }
   scene.input.enabled = false;
-  const distance = scene.scale.width;
+  const distance = scene.scale.width * travel;
   let remaining = targets.length;
   if (remaining === 0) {
     complete();

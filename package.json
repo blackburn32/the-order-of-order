@@ -28,7 +28,11 @@
     "pacing:feasibility": "tsx src/sim/pacingFeasibility.ts",
     "economy:experiment": "tsx src/sim/economyExperiment.ts",
     "duration:experiment": "tsx src/sim/durationExperiment.ts",
-    "persistence:check": "tsx src/sim/activeRunPersistenceCheck.ts"
+    "persistence:check": "tsx src/sim/activeRunPersistenceCheck.ts",
+    "history:check": "tsx src/sim/runHistoryCheck.ts",
+    "benchmark": "tsx src/sim/benchmark.ts",
+    "expert:check": "tsx src/sim/expertCheck.ts",
+    "expert:tune": "tsx src/sim/expertTune.ts"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",

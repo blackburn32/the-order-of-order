@@ -485,6 +485,29 @@ export class ItemsScene extends Phaser.Scene {
       Math.floor(index / g.cols) * g.cellH + g.cellH / 2,
     );
     g.track.add(card);
+    if (!def.unlock || g.unlocked.has(def.id)) {
+      let pressX = 0;
+      let pressY = 0;
+      card.setInteractive({ useHandCursor: true });
+      card.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+        pressX = pointer.x;
+        pressY = pointer.y;
+      });
+      card.on("pointerover", () => card.setScale(1.018));
+      card.on("pointerout", () => card.setScale(1));
+      card.on("pointerup", (pointer: Phaser.Input.Pointer) => {
+        if (
+          Phaser.Math.Distance.Between(pressX, pressY, pointer.x, pointer.y) >
+          10
+        )
+          return;
+        card.setScale(1);
+        this.scene.launch("ItemAnalysis", {
+          returnTo: "Items",
+          itemId: def.id,
+        });
+      });
+    }
     // `Camera.ignore` walks a container's children as they stand at the time of
     // the call, so the main camera's filter over the track doesn't cover a card
     // that arrives later. Without this one it would be drawn a second time,

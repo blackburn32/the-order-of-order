@@ -149,6 +149,28 @@ export function rollsForTrial(trial: number): number {
 //
 // See src/sim/smartSurvivalCurve.ts to redesign this schedule and
 // src/sim/validate.ts to re-test it against the real survival gate.
+//
+// Ranks 4 through 8 were designed against the APPRAISING bot — the one strategy
+// that measures what it buys and aims the cards that need a die (sim/expert.ts)
+// — because the price-and-theme field the earlier curve came from left them 10
+// to 14 points slacker than the survival schedule intends for anyone playing
+// well: it walked into rank 5 with 60% of its runs alive against a target of
+// 49%, and into rank 8 with 36% against 26%.
+//
+//   FIELD=expert RUNS=200 node node_modules/tsx/dist/cli.mjs src/sim/smartSurvivalCurve.ts
+//
+// Ranks 1 to 3 keep the goals they had. The expert was only a few points loose
+// there, the opening's real difficulty is trial 1's single d6 rather than any
+// number in this table, and the designed alternative asked five times as much on
+// trial 3 — which nearly doubled rank-1 deaths for builds that shop by price,
+// i.e. for a person still learning what the cards do.
+//
+// Ranks 9 and 10 keep the SHAPE they had, scaled by the factor rank 8 moved
+// (x44). By then the design pass was setting goals from 15 to 35 surviving runs,
+// where the quantile it takes is barely more than one lucky run's ceiling — it
+// proposed raising the last trial a millionfold — and the live endgame was
+// already landing on target for the expert anyway. Measure while the sample is
+// thick; continue by formula once it is not.
 const AUTHORED_GOALS: bigint[] = [
   // rank 1 — a short onboarding ramp
   1n,
@@ -162,36 +184,36 @@ const AUTHORED_GOALS: bigint[] = [
   60n,
   120n,
   280n,
-  // rank 4
-  210n,
-  1_100n,
-  2_700n,
-  // rank 5
-  1_500n,
-  5_800n,
-  18_000n,
-  // rank 6 — closes on the Betrayal
+  // rank 4 — from here the curve is the appraising bot's
+  800n,
+  4_100n,
   11_000n,
-  58_000n,
-  160_000n,
+  // rank 5
+  9_300n,
+  53_000n,
+  110_000n,
+  // rank 6 — closes on the Betrayal
+  89_000n,
+  200_000n,
+  580_000n,
   // rank 7
-  140_000n,
-  620_000n,
-  2_600_000n,
+  160_000n,
+  2_500_000n,
+  41_000_000n,
   // rank 8
-  2_200_000n,
-  23_000_000n,
-  90_000_000n,
-  // rank 9 — closes on the summons
-  150_000_000n,
-  1_800_000_000n,
-  39_000_000_000n,
+  50_000_000n,
+  100_000_000n,
+  4_000_000_000n,
+  // rank 9 — closes on the summons; the live shape, scaled by rank 8's move
+  6_700_000_000n,
+  80_000_000_000n,
+  1_700_000_000_000n,
   // rank 10 — the last rank; its Boss Trial is the duel, which has no goal at
   // all (see isMirrorTrial). The entry is still a real number because the
   // endless ladder walks out from it.
-  20_000_000_000n,
-  29_000_000_000n,
-  17_000_000_000_000n,
+  890_000_000_000n,
+  1_300_000_000_000n,
+  760_000_000_000_000n,
 ];
 
 // The authored table covers the whole ladder, so the formula below is only
@@ -202,13 +224,13 @@ const AUTHORED_GOALS: bigint[] = [
 //   RANK_RATIO — how much a rank's Boss Trial asks over the last one's. The
 //     the late smart-field curve grows sharply as it selects its final cohort.
 //   SLOT_SHARE — each trial's goal as a fraction of its OWN rank's Boss Trial.
-//     The last measured rank is approximately 0.006 / 0.062 / 1.
+//     The last measured rank is approximately 0.004 / 0.047 / 1.
 //
 // Taking the shares off the rank's own boss is what preserves the sawtooth: a
 // rank opens on a seven-roll Lesser Trial asking for an eighth of what its
 // eighteen-roll Boss Trial will, so the Lesser Trial of rank 8 asks less than the
 // Boss Trial of rank 7.
-const RANK_RATIO = 433n;
+const RANK_RATIO = 447n;
 const SLOT_SHARE_MILLI = [4n, 46n, 1_000n] as const;
 
 /** The authored ranks, extended by formula if WIN_RANK ever outruns them. */

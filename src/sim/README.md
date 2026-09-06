@@ -29,9 +29,19 @@ npm run sim -- --seed=42         # reproducible; same seed → same report
 npm run sim -- --out=sim-out/base-only.html
 npm run curse:check              # appetite 0 vs 1 curse decisions
 npm run pacing:feasibility       # survival-vs-duration frontier, no rule changes
+npm run benchmark                # your exported runs vs the whole field
+npm run expert:tune              # the expert's knobs, swept against those runs
 ```
 
 Open the resulting `sim-out/report.html` in any browser (no server needed).
+
+**On timing.** The expert series measures every card it considers by rolling it
+out, so it costs about 1.3s per run against 0.01s for the other nine — a default
+1,000-run batch spends roughly twenty minutes there and seconds everywhere else.
+That is the price of having the report contain a shopper that plays well, which
+is exactly the blind spot the rest of this file is about. Use `--runs` freely
+while iterating; the expert's numbers are steadier per run than the field's,
+because it is the one series whose decisions are not mostly luck.
 
 ### Reading the report
 
@@ -58,7 +68,7 @@ run is far too much memory for a full batch to carry by default.
 
 ## Strategies compared
 
-Nine series, chosen so the field resembles how the game is actually played
+Ten series, chosen so the field resembles how the game is actually played
 rather than bracketing it. There is no "never buy" baseline: with gold split out
 from score, hoarding it forever buys nothing, so a no-buy run measures a game
 nobody is playing.
@@ -89,6 +99,264 @@ build exists before they begin banking; from rank 4 onward each keeps a
 whole build. Theme membership is a total `Record` in
 `systems/Items.ts` (`ITEM_THEMES`), so adding an item without theming it is a
 compile error.
+
+## Measuring the field against a run you actually played
+
+A goal is set from what the field can score, so a field that plays worse than the
+people it is designed for produces goals those people meet on their opening roll.
+That is not arguable from the outside — it needs a run somebody actually played,
+measured against the bots at the same point on the ladder.
+
+Play the game (`npm run dev`), open the dev panel with the `` ` `` key, and press
+**Export run (JSON)** at the point you want measured. Save the download into
+`sim-fixtures/` and:
+
+```bash
+npm run benchmark                                   # everything in sim-fixtures/
+npm run benchmark -- sim-fixtures/my-rank-5.json
+RUNS=150 SAMPLES=15 npm run benchmark               # tighter, slower
+```
+
+For each fixture it prints that trial's live goal, what your build reaches with
+its whole roll budget (p10/p50/p90), how often that build meets the goal and how
+often it does so **on roll 1**, and then the same three numbers for every series
+in the field. The column to read is `vs you`: it is log10 of the capacity ratio,
+so `-1.00` means the bot reaches a tenth of what you reach and a goal tuned to
+challenge it is one you clear tenfold — which the `1-roll` column then confirms.
+
+The export is written through `serializeRunState`, the same function the
+active-run save uses, and read back through `hydrateRunState`. There is no second
+serializer to drift, and the raw `the-order-of-order.active-run` localStorage
+value loads as a fixture unchanged. `sim-fixtures/sample-generated-trial-13.json`
+is a stand-in produced by a bot so the command has something to show; replace it
+with your own runs, which is the only reason the tool exists.
+
+### Playing a trial out, in the real game
+
+The dev panel also carries **Play every trial to full budget**, which is
+`engine.setFullBudgetAllTrials` — the same switch the tuners throw, thrown for
+every trial at once so a person can feel it rather than read it. Trials stop
+ending the instant their goal is met, so what a trial scores when it is played to
+the end of its budget becomes something you can watch.
+
+It is a measuring instrument, not a way to play. A trial played out has no rolls
+left over, so it earns no unused-roll gold, no Reserve bonus and no Rain Check
+carry: a run under the toggle is poorer than a real one at the same rank. The
+setting persists across reloads, and production builds never read it.
+
+## The expert shopper
+
+`expert.ts` is the strategy that plays well, and it is the field the goal curve
+should be designed against once you are happy with it.
+
+The other eight decide what to buy from a card's **price** (greedy, thrifty) or
+its **theme**, and none of them decides where to point a card that needs a die —
+`bot.chooseTargets` picks a valid target uniformly at random. The expert asks the
+question a player asks instead, literally: it buys each candidate on a throwaway
+copy of the run (`cloneRun.ts`), plays the next four trials out on it, and keeps
+the card that moved the score most per gold (`appraise.ts`).
+
+Nothing in it encodes an opinion about which items are good. An item rebalanced
+in `Items.ts` changes the bot's behaviour on the next run with no edit here, and
+a synergy nobody wrote down is found because it shows up in the score. Two
+measurements make that affordable: capacity is read in log10, so builds orders of
+magnitude apart still compare; and every candidate is rolled against the **same
+seeds** as the baseline it is compared to, which cancels most of the variance and
+lets three roll-outs stand in for thirty.
+
+Over 192 matched runs it reaches trial **15.4** and wins 16 of them, at about
+1.3s a run against 0.01s for the rest of the field — which is why it is not in
+the default pooled fields.
+
+| knob                            | default | what it does                                      |
+| ------------------------------- | ------- | ------------------------------------------------- |
+| `SimConfig.expertSamples`       | 3       | roll-outs averaged per hypothesis                 |
+| `SimConfig.expertHorizonScale`  | 2       | trials each card is judged over                   |
+| `SimConfig.expertCrossTrials`   | true    | a roll-out resolves a trial and plays the next    |
+| `SimConfig.expertRelativeFloor` | 0.25    | how far below the visit's best card a card may be |
+| `SimConfig.expertPasses`        | 2       | shelf re-appraisals per visit                     |
+| `SimConfig.expertGoldWeight`    | 1       | scales what a gold in hand is judged to be worth  |
+| `SimConfig.expertBundleSize`    | 1       | cards weighed together as one purchase            |
+| `SimConfig.expertObjective`     | score   | what a roll-out is scored by                      |
+
+Every one of them is swept by `expert:tune` below rather than argued about here.
+
+`expertRelativeFloor` is the whole of the spending discipline: a card is bought
+when it is worth at least a quarter of what the best card the visit could BUY is
+worth per gold, and the visit ends at the first card under that line. The best
+card it could buy, not the best card on the shelf — a free card converts no gold
+into points at all, so it is infinitely efficient, and a floor taken off one of
+those is a floor nothing can clear. Every curse is free and so is anything a
+Coupon Book has zeroed, so that is not a corner case: it is a shelf in two, and
+it used to end the visit with the run's whole purse still in the bank.
+
+### Read the paired interval, not the mean
+
+**A run of this game swings whole ranks on its seed.** Mean trial reached over 48
+runs moves by two or three for no reason at all: on one such sweep, handing the
+appraiser strictly MORE samples — more information, same objective, same window —
+read three trials WORSE. That is the measurement calling itself a liar, and every
+knob in the table above was at some point adopted or rejected on differences that
+size.
+
+So `expert:tune` differences the variants **per run** and bootstraps a 95%
+interval over those differences. The variants play identical seeds, so run 7
+under one setting and run 7 under the other differ by the knob and nothing else;
+comparing their means throws that away. An interval straddling zero means the
+knob did nothing this sweep could see, which is a result. Wins are differenced
+the same way — a win is the rarer event and the sharper signal, and it is the row
+the one surviving change below was decided on.
+
+Nothing here is settled by a single 48-run sweep any more. 192 pairs is what a
+default costs.
+
+### A roll-out crosses the trial boundary
+
+Income is paid when a trial **ends**. Interest, the Boss Trial bonus, Counting
+House, Deep Pockets and Reserve all arrive at a clear, so a roll-out that plays
+one trial far past its goal prices the entire economy at exactly zero, however
+long it runs. A bot that cannot see income does not buy income, and this one did
+not: over twelve runs it bought Deep Pockets never and Counting House once.
+
+So the horizon plays the game: the goal is met, `resolveTrialEnd` pays the trial
+out and advances the ladder exactly as the live game does, and the rest of the
+horizon is rolled in the next trial. A hypothesis that cannot clear the trial in
+front of it simply ends there, which is also what the run would do.
+
+Over 192 paired runs:
+
+| crossing | reach | Δ reach (paired 95%) | wins   | cost       |
+| -------- | ----- | -------------------- | ------ | ---------- |
+| off      | 15.0  | (reference)          | 9/192  | 2.58 s/run |
+| on       | 16.2  | +1.16 [-0.10, +2.34] | 28/192 | 2.14 s/run |
+
+The reach interval only just touches zero; the decision rests on the rest of the
+picture agreeing with it. Wins go from a twentieth of the runs to a seventh,
+reach at trial 28 goes 7% → 26%, capacity is up at every fixture, and crossing is
+CHEAPER than not crossing — a roll-out that ends a trial when its goal is met
+stops playing one enormous trial forever. Several independent readouts, one
+direction.
+
+### How long a window — unsettled
+
+`expertHorizonScale` is **2**, and that is a confession rather than a finding.
+
+Four looked worth two trials of reach on a 48-run sweep and was shipped on it.
+At 192 pairs the gap is **+0.74, interval [-0.23, +1.79]** — straddling zero,
+for 60% more time per run (2.08s against 1.29s). Six was worse than four on both
+of the sweeps that looked at it, so the shape is probably a hump rather than a
+ladder, but none of it clears the noise.
+
+The window is only worth anything at all because a roll-out crosses the trial
+boundary: judged on one trial played four times as long, longer windows read
+**17.5 / 17.1 / 16.8** for two, four and six — lengthening into nothing, because
+a trial played four times as long is not four trials. That reading is what sent
+this pass looking for what the roll-out could not see, and it was the one thing
+this file measured that turned out to be about the bot rather than about noise.
+
+Raise it for a curve-design pass, where an hour of clock is cheaper than a bot
+that stops short.
+
+### Cards in pairs, and why the late game is the real problem
+
+`expertBundleSize` is a measured negative, kept because the reason it failed is
+the most useful thing this file knows. Set to two it also weighs the top few
+cards in **pairs**, as one hypothesis bought together, and takes the pair when it
+beats every single card per gold. The target was the combination lock: a Genesis
+breeds off dice that SCORE, so on a grid that rarely scores it measures at
+nothing, and the scoring numbers that would make it enormous measure at nothing
+without it — each correctly priced at zero alone, the pair worth the run.
+
+Over 48 matched runs on three seed streams it did not pay: reach
+15.6 / 17.3 / 12.8 against 15.8 / 18.6 / 12.8, 23 wins of 144 against 21, and
+25-35% slower for it. Those are unpaired means, from before this file learned
+better — but a knob has to beat the noise to be worth re-measuring, and this one
+did not come close on any of the three.
+
+A trace of what the pairs actually found says why, and it is not about pairs:
+
+```
+visit t2  bundle devils_bargain+spike     worth 0.3867  vs best single 0.3327  TAKEN
+visit t5  bundle the_reckoning+brick_mold worth 0.1369  vs best single 0.0402  TAKEN
+visit t15 bundle reliquary+overtime       worth 0.0000  vs best single 0.0000  -
+visit t18 bundle double_the_fun+twin      worth 0.0000  vs best single 0.0000  -
+visit t24 bundle extra_die+counting_house worth 0.0000  vs best single 0.0000  -
+```
+
+Pairs fire about five times a run and almost all of them before trial 10, because
+**from the mid ladder on every hypothesis measures zero** — singles and pairs
+alike. Once a build compounds, one more die or one more flat bonus does not
+change the growth rate, so it does not move log10 of a 1e14 score at all, and a
+pair of cards that each measure nothing measures nothing. The appraiser has no
+gradient left to follow and the late shops are effectively coin flips; that, not
+the combination lock, is what stands between this bot and a played run that built
+a compounding engine. Whatever closes it has to give the late game a signal —
+measuring against the ladder's next goal rather than the build's own score is the
+obvious candidate, and is not tried here.
+
+### Scoring a roll-out by the ladder instead — also measured, also no
+
+`expertObjective` is the other kept negative. Set to `"ladder"`, a roll-out
+reports how far up the goal ladder it walked — trials cleared, plus part of one
+for how close it came on the trial that stopped it — instead of the log10 of the
+best trial it played. The argument was the same saturation the pairs ran into: a
+compounding build one-rolls its goals, so what it posts is one roll of its grid
+however large the grid is, and a card that adds a die or a flat bonus moves
+log10 of a 1e14 score by nothing. Depth up the ladder keeps its gradient exactly
+where score loses it, because the ladder is what eventually outruns a build.
+
+It read flat on one 48-run sweep (reach 15.8 → 15.9, wins 4 → 10) and badly on
+another (18.6 → 15.5, wins 11 → 6). The obvious confound was resolution — depth
+is quantised, and at three samples a card can only move it in thirds — so the
+next sweep crossed the objective with the sample count, and that is the sweep
+that broke this file's faith in its own numbers: **more samples made the SCORE
+objective read three trials worse** (18.6 → 15.5), which cannot be a real effect.
+See the paired-interval note above. The objective is off, unproven rather than
+disproven, and any future attempt on it wants 192 pairs and the paired readout.
+
+A measurement worth keeping from it: on a played run's deep build the score
+objective is not as dead as the bot's own trace suggested — at trial 20 it still
+moves for 33 of 70 cards, against 23 for the ladder. Whatever is holding the late
+game shut, "no gradient at all" is too simple a story for it.
+
+### Tuning it against runs you played
+
+`expertTune.ts` is the loop that produced the table above: it sweeps the knobs
+over a matched seed stream and prints, for every trial one of your exported runs
+was taken at, what that setting of the bot arrives with against what you arrived
+with.
+
+```bash
+npm run expert:tune                                  # every axis at its default
+RUNS=192 CROSS_TRIALS=0,1 npm run expert:tune        # the A/B above
+HORIZONS=2,4 FLOORS=0.25,0.08 npm run expert:tune    # two axes crossed
+RUNS=192 npm run expert:tune -- sim-fixtures/trial-20-*.json
+```
+
+| env              | default | axis                           |
+| ---------------- | ------- | ------------------------------ |
+| `RUNS`           | 24      | matched runs per variant       |
+| `SAMPLES`        | 9       | roll-outs per captured state   |
+| `HORIZONS`       | 2       | `expertHorizonScale`           |
+| `EXPERT_SAMPLES` | 3       | `expertSamples`                |
+| `APPETITES`      | 0.5     | curse appetite                 |
+| `FLOORS`         | 0.25    | `expertRelativeFloor`          |
+| `PASSES`         | 2       | `expertPasses`                 |
+| `GOLD_WEIGHTS`   | 1       | `expertGoldWeight`             |
+| `CROSS_TRIALS`   | 1       | `expertCrossTrials`, as 0 or 1 |
+| `BUNDLES`        | 1       | `expertBundleSize`             |
+| `LADDERS`        | 0       | `expertObjective`, as 0 or 1   |
+
+Every axis takes a comma-separated list and the sweep is their cross product, so
+one axis at a time keeps the table readable and two crossed answers whether the
+knobs interact. Bot-made fixtures (`sample-*`) are skipped by default: measuring
+this bot against a bot is measuring it against itself.
+
+`series.ts` keeps the expert **out** of `SHOPPER_SERIES` and `SMART_SERIES` on
+purpose. Every shipped goal was designed against the price-and-theme field, and
+quietly adding a stronger shopper to that pool would move the whole curve as a
+side effect of a file being edited. `EXPERT_SERIES` is there to point a tuner at
+it deliberately.
 
 ## Designing the smart-field survival curve
 
@@ -210,6 +478,9 @@ npm run items:check      # item mechanics, including every boss modifier
 npm run trials:check     # the trial loop: clears, advances, ranks, endings
 npm run gold:check       # payouts, interest, prices, rerolls, discounts
 npm run scoring:check    # the two scorers agree, per-die vs bucketed
+npm run persistence:check # an in-progress run survives a save/restore round trip
+npm run history:check    # the per-roll run timeline the analysis screen charts
+npm run expert:check     # the appraiser: its clone, its measurement, its targeting
 ```
 
 `scoring:check` is the safety net for anything that touches scoring: the live
@@ -244,6 +515,13 @@ crosses the bucket threshold.
 
 | File                    | Role                                                                                             |
 | ----------------------- | ------------------------------------------------------------------------------------------------ |
+| `benchmark.ts`          | An exported run measured against every series at the same trial. Start here.                     |
+| `expertTune.ts`         | The expert's knobs swept against those runs, over a matched seed stream.                         |
+| `importRun.ts`          | Reads a dev-panel run export (or a raw active-run save) back into a `RunState`.                  |
+| `cloneRun.ts`           | A run a hypothesis may ruin. Not the save path — see the file for why.                           |
+| `appraise.ts`           | Capacity measured by rolling it out; what a card is worth, and which die it wants.               |
+| `expert.ts`             | The appraising shopper. The only strategy that measures anything.                                |
+| `expertCheck.ts`        | Appraiser assertions: clone isolation, shared seeds, and that cards land on the right die.       |
 | `engine.ts`             | Pure trial-loop rules shared with `GameScene` (roll → score → grow, trial-end win/lose/advance). |
 | `bot.ts`                | Strategies, die-target selection, `simulateRun`, per-run unlock and boss tracking.               |
 | `stats.ts`              | Aggregates `RunRecord[]` into the report's numbers.                                              |
@@ -266,5 +544,6 @@ crosses the bucket threshold.
 | `endlessCurve.ts`       | Confirms the endless ladder terminates.                                                          |
 | `itemCheck.ts`          | Item + boss-modifier assertions.                                                                 |
 | `trialEndCheck.ts`      | Trial-loop assertions.                                                                           |
+| `runHistoryCheck.ts`    | Run-timeline assertions: what is recorded, and how it survives both saves.                       |
 | `goldCheck.ts`          | Gold-economy assertions.                                                                         |
 | `compareScoring.ts`     | Per-die vs histogram scorer parity + perf timing.                                                |
