@@ -1,0 +1,33 @@
+# Cloudflare Worker backing the global Hall of High Scores.
+#
+# Three bindings: D1 holds the sortable board index, R2 holds one gzipped run
+# analysis per player, and SUBMIT_KEY (optional secret) filters drive-by bots.
+#
+# First-time setup lives in README.md — the two `database_id` / bucket names
+# below are the only things you must fill in after creating the resources.
+
+name = "order-of-order-leaderboard"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+# The board index: one row per player, their best run.
+[[d1_databases]]
+binding = "DB"
+database_name = "order-of-order"
+database_id = "43532b7d-9d4d-488c-8f47-88d9f0d92946"
+
+# The run analyses: one gzipped blob per player, keyed by their device id.
+[[r2_buckets]]
+binding = "RUNS"
+bucket_name = "order-of-order-runs"
+
+# Sweeps expired throttle rows. Nothing else needs cleaning: a player's blob is
+# overwritten in place by their next personal best, so blobs never accumulate.
+[triggers]
+crons = ["17 4 * * *"]
+
+[vars]
+# Largest `limit` the board will serve. The client asks for 100.
+MAX_BOARD_SIZE = "250"
+# Submissions allowed per device per hour.
+SUBMITS_PER_HOUR = "20"

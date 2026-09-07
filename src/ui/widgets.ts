@@ -388,6 +388,139 @@ export function toggleRow(
   return row;
 }
 
+/** Chip geometry. The pill is drawn compactly so a strip of them fits over a
+ *  gallery, while the hit area is padded out to a finger-sized band — the two
+ *  need not be the same rectangle. */
+const CHIP_H = 30;
+const CHIP_HIT_H = 40;
+const CHIP_PAD_X = 13;
+const CHIP_FONT_PX = 15;
+const CHIP_MIN_FONT_PX = 11;
+
+export interface CycleChip extends Phaser.GameObjects.Container {
+  /** The pill's drawn width. The hit band is taller than the pill but no
+   *  wider, so a flow layout wraps a row of chips on this rather than on
+   *  `width`. */
+  chipWidth: number;
+}
+
+export interface CycleChipOptions {
+  /** The dimension the chip names, printed ahead of the value: "Sort". */
+  label: string;
+  /** The values, in the order taps walk them. The first is the default. */
+  options: readonly string[];
+  /** Which of `options` is showing to begin with. */
+  index: number;
+  onChange: (index: number) => void;
+  /** Width the chip has to fit inside; its type shrinks to meet it. */
+  maxWidth?: number;
+}
+
+/**
+ * A pill that steps through a short list of options on each tap: "Sort:
+ * Rarity" becomes "Sort: Purchases", and comes back round at the end. Where a
+ * settings screen has room to give every option a row of its own, a control
+ * strip over a gallery has one band — so the chip prints the value in force
+ * and nothing else.
+ *
+ * The pill is sized to its widest option rather than to the value showing, so
+ * a row of chips never reflows under the finger that tapped it. A chip off its
+ * first option is drawn lit: each control's first option is its "everything,
+ * in the usual order" default, which makes an active sort or filter something
+ * the player can see without reading the strip.
+ */
+export function cycleChip(
+  scene: Phaser.Scene,
+  x: number,
+  y: number,
+  opts: CycleChipOptions,
+): CycleChip {
+  let index = opts.index;
+  let hovered = false;
+
+  const text = scene.add
+    .text(0, 0, "", {
+      fontFamily: SERIF,
+      fontSize: `${CHIP_FONT_PX}px`,
+      color: CSS.parchment,
+    })
+    .setOrigin(0.5);
+
+  // Every option is measured before the pill is sized, so the widest of them
+  // sets both the type size and the width — the two things a tap must not
+  // change.
+  const measure = () =>
+    opts.options.reduce((widest, option) => {
+      text.setText(`${opts.label}: ${option}`);
+      return Math.max(widest, text.width);
+    }, 0);
+  let widest = measure();
+  const room = opts.maxWidth ? opts.maxWidth - CHIP_PAD_X * 2 : widest;
+  if (widest > room) {
+    text.setFontSize(
+      Math.max(CHIP_MIN_FONT_PX, Math.floor(CHIP_FONT_PX * (room / widest))),
+    );
+    // A chip narrower than its own floor can still be asked for; the width is
+    // capped either way and `fitTextWidth` takes the rest off the value on
+    // show.
+    widest = Math.min(measure(), Math.max(1, room));
+  }
+  const width = widest + CHIP_PAD_X * 2;
+
+  const pill = scene.add.graphics();
+  const redraw = () => {
+    const active = index > 0;
+    pill.clear();
+    pill.fillStyle(
+      active ? COLORS.gold : COLORS.feltLight,
+      active ? 0.3 : 0.85,
+    );
+    pill.fillRoundedRect(-width / 2, -CHIP_H / 2, width, CHIP_H, CHIP_H / 2);
+    pill.lineStyle(
+      1.5,
+      active ? COLORS.goldLight : COLORS.parchmentDark,
+      hovered ? 0.95 : 0.6,
+    );
+    pill.strokeRoundedRect(-width / 2, -CHIP_H / 2, width, CHIP_H, CHIP_H / 2);
+    text.setColor(hovered ? CSS.ivory : active ? CSS.goldLight : CSS.parchment);
+  };
+  const show = () => {
+    text.setText(`${opts.label}: ${opts.options[index]}`);
+    fitTextWidth(text, Math.max(1, width - CHIP_PAD_X * 2));
+    redraw();
+  };
+  show();
+
+  const container = scene.add.container(x, y, [pill, text]) as CycleChip;
+  container.chipWidth = width;
+  container.setSize(width, CHIP_HIT_H);
+  // Phaser adds the display origin before running a hit test, and setSize puts
+  // a container's origin at its centre — so the rectangle is measured from the
+  // band's top-left corner, not from its middle (see `toggleRow`).
+  container.setInteractive(
+    new Phaser.Geom.Rectangle(0, 0, width, CHIP_HIT_H),
+    Phaser.Geom.Rectangle.Contains,
+  );
+  container.input!.cursor = "pointer";
+  container.on("pointerover", () => {
+    hovered = true;
+    redraw();
+  });
+  container.on("pointerout", () => {
+    hovered = false;
+    redraw();
+  });
+  container.on("pointerdown", () => {
+    index = (index + 1) % opts.options.length;
+    audio.click();
+    // Shown before the caller is told, so a caller that leaves the chip
+    // standing still sees the value it just chose.
+    show();
+    opts.onChange(index);
+  });
+  return container;
+}
+
 /** Floating score text that drifts up and fades. Returns the Text so callers
  *  that render through a secondary camera (e.g. a windowed dice grid) can
  *  exclude it from that camera and keep it above everything. */

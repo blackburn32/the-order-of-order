@@ -226,8 +226,7 @@ export class VictoryScene extends Phaser.Scene {
     if (!pending) return;
     this.scene.launch("InitialsPrompt", {
       score: pending.score,
-      dicePoints: pending.dicePoints,
-      itemPoints: pending.itemPoints,
+      startedAt: pending.startedAt,
       rank: pending.rank,
       trial: pending.trial,
       endless: pending.endless,

@@ -44,6 +44,7 @@ import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { buildCursedSeal, rarityMark } from "../ui/itemCard";
 import { addItemValue, recordRunItemPurchase } from "../systems/ItemValue";
+import { spendGold } from "../systems/Gold";
 import { buildRichCopy, isMarked } from "../ui/richCopy";
 import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
 import {
@@ -2249,7 +2250,7 @@ export class ShopScene extends Phaser.Scene {
       audio.deny();
       return;
     }
-    this.state.gold -= price;
+    spendGold(this.state, price);
     pack.sold = true;
     this.openingPack = pack;
     this.openingPackCost = price;
@@ -2973,7 +2974,7 @@ export class ShopScene extends Phaser.Scene {
       audio.deny();
       return;
     }
-    this.state.gold -= price;
+    spendGold(this.state, price);
     if (freeByBell)
       addItemValue(
         this.state,

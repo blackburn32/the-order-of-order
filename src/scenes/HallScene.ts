@@ -11,6 +11,8 @@ import {
   fetchTopScores,
   globalScoresEnabled,
   GlobalScoreRow,
+  fetchRunAnalysis,
+  type GlobalRunAnalysis,
 } from "../systems/GlobalScores";
 import { toNumberPointMap } from "../systems/ItemPoints";
 import { formatScore } from "../ui/formatScore";
@@ -37,7 +39,8 @@ const BAND_ALPHA = 0.3;
 
 /**
  * The Hall of High Scores. Two tabs: the player's local runs (drawn from
- * localStorage) and the worldwide top-100 fetched from LootLocker. The selected
+ * localStorage) and the worldwide top-100 fetched from the leaderboard Worker
+ * (see worker/ and systems/GlobalScores). The selected
  * tab and the fetched global rows live in instance fields so they survive the
  * wipe-and-rebuild that runs on every resize / tab switch. The global list can
  * overflow the screen, so — like the Codex — its rows live in a `track`
@@ -50,6 +53,18 @@ export class HallScene extends Phaser.Scene {
   private tab: Tab = "local";
   private globalRows: GlobalScoreRow[] | null = null;
   private globalStatus: GlobalStatus = "idle";
+  // Global analyses are fetched one row at a time, on tap, and kept for the
+  // life of the scene: they are a few tens of KB each and a player comparing
+  // the top of the board will open the same handful repeatedly.
+  private analysisCache = new Map<string, GlobalRunAnalysis>();
+  private analysisPending: string | null = null;
+  /** Replaces the list's hint line while a fetch is in flight or after one
+   *  failed, so a tap that goes nowhere still says something. Survives the
+   *  rebuild-on-resize; `globalHint` is the live text object it is written to,
+   *  and `globalHintBase` the standing hint it temporarily displaces. */
+  private globalNotice = "";
+  private globalHint?: Phaser.GameObjects.Text;
+  private globalHintBase = "";
   private gridCamera?: Phaser.Cameras.Scene2D.Camera;
   // The felt, the sigil and the masthead's halo — the room the scores are laid
   // out in. Held still while the scores themselves slide on and off.
@@ -70,6 +85,9 @@ export class HallScene extends Phaser.Scene {
     this.tab = "local";
     this.globalRows = null;
     this.globalStatus = "idle";
+    this.analysisCache.clear();
+    this.analysisPending = null;
+    this.globalNotice = "";
     this.gridCamera = undefined;
     this.leaving = false;
     this.build();
@@ -85,6 +103,9 @@ export class HallScene extends Phaser.Scene {
 
   private rebuild(): void {
     this.teardownInput();
+    // Dropped before the children are destroyed: an in-flight analysis fetch
+    // resolving after a resize must not write into a dead text object.
+    this.globalHint = undefined;
     if (this.gridCamera) {
       this.cameras.remove(this.gridCamera, true);
       this.gridCamera = undefined;
@@ -203,6 +224,9 @@ export class HallScene extends Phaser.Scene {
     ) {
       this.loadGlobal();
     }
+    // A stale "could not be read" from an earlier tap shouldn't greet the
+    // player when they come back to the tab.
+    this.globalNotice = "";
     this.tab = tab;
     this.rebuild();
   }
@@ -254,16 +278,14 @@ export class HallScene extends Phaser.Scene {
     /** Room between the column heads and the first row. */
     const HEAD_H = 34;
 
-    // The table is centred in the band rather than hung off the tabs: with the
-    // panel gone there is no frame holding it, and a short list left at the top
-    // of a tall screen reads as a page that stopped halfway.
+    // The table hangs off the top of the band, the same way the global tab's
+    // fixed header does — switching tabs shouldn't shift the column heads.
     const rowStep = Phaser.Math.Clamp(
       (band - HEAD_H - hintH) / entries.length,
       20,
       36,
     );
-    const blockH = HEAD_H + entries.length * rowStep + hintH;
-    const headerY = contentTop + Math.max(0, (band - blockH) / 2);
+    const headerY = contentTop;
     const rowStart = headerY + HEAD_H;
 
     // Claimed now, filled once the columns have been measured: a container
@@ -493,12 +515,60 @@ export class HallScene extends Phaser.Scene {
     });
   }
 
+  /** Open a global row's analysis, fetching the run's blob first if this is the
+   *  first tap on it. The board list itself carries only the score line — the
+   *  analysis is tens of KB per run, so it is pulled on demand rather than with
+   *  the hundred rows of the board. */
   private openAnalysisGlobal(row: GlobalScoreRow): void {
+    const cached = this.analysisCache.get(row.memberId);
+    if (cached) {
+      this.launchGlobalAnalysis(row, cached);
+      return;
+    }
+    if (this.analysisPending !== null) return; // one fetch at a time
+
+    this.analysisPending = row.memberId;
+    this.setGlobalNotice("consulting the archive…");
+
+    void fetchRunAnalysis(row.memberId).then((analysis) => {
+      if (!this.scene.isActive()) return; // scene left while in flight
+      this.analysisPending = null;
+      if (analysis && analysis.history.length > 0) {
+        // Only a successful fetch is cached, so a failure retries on next tap.
+        this.analysisCache.set(row.memberId, analysis);
+        this.setGlobalNotice("");
+        this.launchGlobalAnalysis(row, analysis);
+      } else {
+        this.setGlobalNotice("that run's analysis could not be read");
+      }
+    });
+  }
+
+  /** Swap the global list's hint line for a transient message (or back, with
+   *  ""). Written straight onto the live text object rather than through
+   *  `rebuild`, which would throw away the player's scroll position in the
+   *  middle of them reading the board. */
+  private setGlobalNotice(notice: string): void {
+    this.globalNotice = notice;
+    this.globalHint?.setText(notice || this.globalHintBase);
+  }
+
+  private launchGlobalAnalysis(
+    row: GlobalScoreRow,
+    analysis: GlobalRunAnalysis,
+  ): void {
     this.scene.launch("Analysis", {
       returnTo: "Hall",
       title: row.name || "Global Run",
-      subtitle: `global rank ${row.rank} · approximate per-item shares`,
-      entries: row.breakdown,
+      // A global run now charts exactly what a local one does, so the subtitle
+      // reads like the local one's rather than apologising for approximations.
+      subtitle: `global #${row.rank} · rank ${row.runRank}-${row.trial}${
+        row.endless ? " · endless" : ""
+      }`,
+      dicePoints: analysis.dicePoints,
+      itemPoints: analysis.itemPoints,
+      history: analysis.history,
+      rolls: analysis.rolls,
     });
   }
 
@@ -667,9 +737,7 @@ export class HallScene extends Phaser.Scene {
       p.x <= grid.x + grid.width &&
       p.y >= grid.y &&
       p.y <= grid.y + grid.height;
-    const anyBreakdown = rows.some(
-      (r) => r.breakdown && r.breakdown.length > 0,
-    );
+    const anyAnalysis = rows.some((r) => r.hasAnalysis);
 
     // Map a pointer to the row under it (accounting for the scroll offset) so a
     // tap can open that run's points breakdown; a drag scrolls the list instead.
@@ -693,7 +761,7 @@ export class HallScene extends Phaser.Scene {
     const onMove: PointerHandler = (p) => {
       if (!dragging) {
         const over = inBounds(p);
-        const tappable = over && !!rowAt(p)?.breakdown?.length;
+        const tappable = over && !!rowAt(p)?.hasAnalysis;
         this.input.setDefaultCursor(
           tappable ? "pointer" : over && overflow > 0 ? "grab" : "default",
         );
@@ -715,7 +783,7 @@ export class HallScene extends Phaser.Scene {
         inBounds(p)
       ) {
         const row = rowAt(p);
-        if (row?.breakdown?.length) this.openAnalysisGlobal(row);
+        if (row?.hasAnalysis) this.openAnalysisGlobal(row);
       }
       dragging = false;
     };
@@ -731,25 +799,31 @@ export class HallScene extends Phaser.Scene {
     this.input.on("wheel", onWheel);
     this.input$ = { down: onDown, move: onMove, up: onUp, wheel: onWheel };
 
-    const hintText =
+    this.globalHintBase =
       overflow > 0
-        ? anyBreakdown
-          ? "drag or scroll for more · tap a row for its points"
+        ? anyAnalysis
+          ? "drag or scroll for more · tap a row for its analysis"
           : "drag or scroll for more"
-        : anyBreakdown
-          ? "tap a row for its points"
+        : anyAnalysis
+          ? "tap a row for its analysis"
           : "";
-    if (hintText) {
-      const hint = this.add
-        .text(grid.x + grid.width / 2, grid.y + grid.height + 2, hintText, {
+    // Always built, even when there is no standing hint: it is also where a
+    // fetch's progress and failure notices are written (see setGlobalNotice),
+    // and those can arrive long after this list was laid out.
+    this.globalHint = this.add
+      .text(
+        grid.x + grid.width / 2,
+        grid.y + grid.height + 2,
+        this.globalNotice || this.globalHintBase,
+        {
           fontFamily: SERIF,
           fontSize: "13px",
           color: CSS.dim,
           fontStyle: "italic",
-        })
-        .setOrigin(0.5, 0);
-      this.gridCamera?.ignore(hint);
-    }
+        },
+      )
+      .setOrigin(0.5, 0);
+    this.gridCamera?.ignore(this.globalHint);
   }
 
   /** Send the scores off to the right, then hand over to the menu, which

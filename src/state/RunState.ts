@@ -41,6 +41,10 @@ export interface RunState {
   // digits all run. See systems/Gold.ts.
   gold: number;
   goldEarned: number; // lifetime gold earned this run, for the run summary
+  // Gold this run has paid out — cards, booster packs, shop rerolls and the
+  // Tollkeeper's per-roll levy. Everything that leaves the purse by choice or by
+  // tax; gold a ceiling affliction confiscates is forfeited, not spent.
+  goldSpent: number;
   // Gold earned during rolls in the current trial. Clear rewards are returned
   // by resolveTrialEnd; these two counters let Results account for the whole
   // trial, including Tithe Bowl and Lucky Coin.
@@ -165,6 +169,9 @@ export interface RunState {
   // to the item that produced them. Together they sum to `totalScore`.
   dicePoints: Record<string, bigint>;
   itemPoints: Record<string, bigint>;
+  // Dice that landed on a 1 across the whole run, counted as they are read. The
+  // scoring number the game is named for, tallied for the lifetime stats.
+  onesRolled: number;
   // Rolls resolved across the whole run, never reset (unlike `roll`, which is
   // per-trial). It is what fixes the spacing of `rollHistory` below.
   rollsTaken: number;
@@ -188,6 +195,7 @@ export function newRun(shopUnlocks: readonly ShopItemId[] = []): RunState {
     totalScore: 0n,
     gold: STARTING_GOLD,
     goldEarned: STARTING_GOLD,
+    goldSpent: 0,
     trialRollGold: { titheBowl: 0, luckyCoin: 0 },
     dice: DicePool.fromDice(
       Array.from({ length: STARTING_DICE }, () => makeDie(6)),
@@ -264,6 +272,7 @@ export function newRun(shopUnlocks: readonly ShopItemId[] = []): RunState {
     itemValues: {},
     dicePoints: {},
     itemPoints: {},
+    onesRolled: 0,
     rollsTaken: 0,
     rollHistory: [],
   };

@@ -1,88 +1,107 @@
-// LootLocker-backed global leaderboard client.
+// Client for the global leaderboard Worker (see worker/).
 //
-// The game ships as a static HTML5 bundle (itch.io) with no server of our own,
-// so a shared leaderboard lives in LootLocker and is reached over plain fetch —
-// there is no official LootLocker JS SDK. Players are anonymous: a per-device
-// UUID is used both as the LootLocker guest `player_identifier` (to open a
-// session with no sign-in) and as the leaderboard `member_id`, so the same
-// browser keeps the same identity and we can spot our own rows in the list by a
-// direct id match.
+// The game ships as a static bundle (itch.io) or a Capacitor WebView with no
+// server of its own, so the shared board lives in a small Cloudflare Worker
+// reached over plain fetch. Players are anonymous: a per-device UUID is the
+// member id, so the same browser keeps the same identity and we can spot our
+// own row by a direct id match.
 //
-// The "orderscores" board is a *generic* leaderboard: submissions must carry an
-// explicit `member_id`, and entries expose `{ member_id, rank, score, metadata }`
-// with no player object — so the display initials ride in `metadata`.
+// The point of this backend over a hosted leaderboard product is fidelity. A
+// finished run's per-roll timeline is 100-300 KB of JSON — three orders of
+// magnitude past the ~250-character metadata field the previous backend gave
+// us, which is why a global row used to show approximate per-item shares and no
+// curves at all. Here the whole analysis goes up gzipped alongside the score,
+// and a global row opens exactly the screen a local one does.
+//
+// Two consequences worth knowing:
+//   - Rank and points are separate columns server-side, so there is no longer
+//     one sortable integer to pack them into. The wire-ordinal packing this
+//     file used to depend on is gone.
+//   - Scores ride as decimal strings end to end, so a bigint past 2^53 is never
+//     narrowed through Number.
 //
 // Every network call is wrapped so a backend/network failure never throws into
 // gameplay — the feature just goes quiet and the local Hall keeps working.
-//
-// Dashboard prerequisites (one-time): the game must have the **Guest** login
-// platform enabled, and the leaderboard with the configured key must exist.
 
-import { ITEMS } from "./Items";
-import { combinePointsByItem, sourceLabel, STARTER_SOURCE } from "./ItemPoints";
+import type { HallEntry } from "./SaveData";
 import {
-  buildLeaderboardSubmissionBody,
-  normalizeLeaderboardScore,
-  runToWireOrdinal,
-} from "./LeaderboardWire";
+  hydrateRollHistory,
+  serializeRollHistory,
+  type RollSample,
+  type SerializedRollSample,
+} from "./RunHistory";
 
-const API = "https://api.lootlocker.io/game";
-
-const GAME_KEY = import.meta.env.VITE_LOOTLOCKER_GAME_KEY;
-const LEADERBOARD_KEY = import.meta.env.VITE_LOOTLOCKER_LEADERBOARD_KEY;
-const GAME_VERSION = import.meta.env.VITE_LOOTLOCKER_GAME_VERSION ?? "0.1.0";
+const API = (import.meta.env.VITE_LEADERBOARD_API ?? "").replace(/\/+$/, "");
+const SUBMIT_KEY = import.meta.env.VITE_LEADERBOARD_SUBMIT_KEY ?? "";
 
 export const GLOBAL_TOP_N = 100;
 
 const KEY_PLAYER_ID = "ooo_player_id_v1";
 const KEY_INITIALS = "ooo_initials_v1";
-const KEY_PENDING = "ooo_pending_global_v1";
+const KEY_PENDING = "ooo_pending_global_v2";
 
-/** One item's reconstructed point contribution for a fetched global row. Points
- *  are approximate: the metadata carries each item's share (permille) of the
- *  run's total, and we multiply it back by the row's score. */
-export interface GlobalBreakdownEntry {
-  id: string;
-  label: string;
-  points: number;
-}
+/** How long to wait on any one call before giving up. The board is a nicety;
+ *  it must never leave a scene sitting on a spinner. */
+const TIMEOUT_MS = 12_000;
 
+/** One row of the global board. `position` is where it sits on the board;
+ *  `runRank` is the rank the run reached, which is what the board sorts by. */
 export interface GlobalScoreRow {
-  rank: number; // position on the leaderboard
-  runRank: number; // the rank the run reached — what the board is sorted by
+  /** Board position (1-based). Named `rank` for the Hall's column, which has
+   *  printed it under that heading since the board existed. */
+  rank: number;
+  runRank: number; // the rank the run reached
   trial: number; // trial within that rank (1..3)
   endless: boolean;
   score: bigint; // total points, the tiebreak
-  name: string; // initials (from metadata), uppercased; may be ''
+  name: string; // initials, uppercased; may be ''
   isYou: boolean;
-  breakdown?: GlobalBreakdownEntry[]; // top items by points, when metadata carried them
+  /** Opaque handle for `fetchRunAnalysis`. */
+  memberId: string;
+  rolls: number;
+  /** Whether an analysis blob was stored with this row. False only for rows
+   *  submitted from a browser without CompressionStream, or from the dev panel. */
+  hasAnalysis: boolean;
 }
 
-/** Per-item point attribution for a run (see systems/ItemPoints). */
+/** Per-item point attribution for a run (see systems/ItemPoints). Number-valued
+ *  at this boundary because it feeds the analysis screen's bars. */
 export type PointMap = Record<string, number>;
 
-export interface PendingSubmission {
+/** Everything the board stores about one finished run. Built from a Hall entry
+ *  by `submissionFromHallEntry` — the Hall is the record of truth, and this is
+ *  a projection of it rather than a second copy. */
+export interface RunSubmission {
   score: bigint;
   rank: number;
   trial: number;
-  won: boolean;
   endless: boolean;
-  dicePoints: PointMap;
-  itemPoints: PointMap;
+  rolls: number;
+  dicePoints: Record<string, bigint>;
+  itemPoints: Record<string, bigint>;
+  history: readonly RollSample[];
 }
 
-/** True only when the LootLocker keys are configured; otherwise the whole
- *  feature is inert (Hall shows an offline message, nothing else changes). */
+/** What a global row's analysis unpacks into — the same shape the local Hall
+ *  hands the analysis screen. */
+export interface GlobalRunAnalysis {
+  dicePoints: PointMap;
+  itemPoints: PointMap;
+  history: RollSample[];
+  rolls: number;
+}
+
+/** True only when the API base is configured; otherwise the whole feature is
+ *  inert (Hall shows an offline message, nothing else changes). */
 export function globalScoresEnabled(): boolean {
-  return !!GAME_KEY && !!LEADERBOARD_KEY;
+  return API.length > 0;
 }
 
 // --- Local identity (device-scoped, no sign-in) -----------------------------
 
 let ephemeralId: string | null = null;
 
-/** Stable per-device id used as both the LootLocker guest `player_identifier`
- *  and the leaderboard `member_id` (so our own rows are identifiable). */
+/** Stable per-device id, used as the board's `member_id`. */
 export function getPlayerId(): string {
   try {
     let id = localStorage.getItem(KEY_PLAYER_ID);
@@ -124,6 +143,20 @@ export function normalizeInitials(raw: string): string {
 
 // --- Pending submission (survives the end-of-run scene transition) ----------
 
+/** What the end-of-run scene hands the initials prompt. Only the run's Hall key
+ *  and the few fields the prompt actually displays: the analysis itself is read
+ *  back out of the Hall at submit time rather than copied into a second
+ *  localStorage key, which for a long run would be another 300 KB. */
+export interface PendingSubmission {
+  /** `HallEntry.startedAt` — identifies the run's Hall entry. */
+  startedAt: number;
+  score: bigint;
+  rank: number;
+  trial: number;
+  won: boolean;
+  endless: boolean;
+}
+
 export function queuePendingSubmission(pending: PendingSubmission): void {
   try {
     localStorage.setItem(
@@ -143,253 +176,195 @@ export function takePendingSubmission(): PendingSubmission | null {
     const parsed = JSON.parse(raw) as Omit<PendingSubmission, "score"> & {
       score: string | number;
     };
+    if (!Number.isFinite(parsed.startedAt)) return null;
     return { ...parsed, score: BigInt(parsed.score) };
   } catch {
     return null;
   }
 }
 
-// --- Session handling -------------------------------------------------------
+// --- The analysis blob ------------------------------------------------------
 
-let sessionToken: string | null = null;
+/** Envelope version. Bumped only if the blob's own shape changes — the roll
+ *  samples inside carry their own backward compatibility (see RunHistory). */
+const BLOB_VERSION = 1;
 
-async function startGuestSession(): Promise<string | null> {
+interface AnalysisBlob {
+  v: number;
+  /** Decimal strings: per-item totals pass Number.MAX_SAFE_INTEGER in a long
+   *  run just as the run total does. */
+  dice: Record<string, string>;
+  item: Record<string, string>;
+  rolls: number;
+  history: SerializedRollSample[];
+}
+
+function encodeAnalysis(run: RunSubmission): string {
+  const decimals = (m: Record<string, bigint>): Record<string, string> =>
+    Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v.toString()]));
+  const blob: AnalysisBlob = {
+    v: BLOB_VERSION,
+    dice: decimals(run.dicePoints),
+    item: decimals(run.itemPoints),
+    rolls: run.rolls,
+    history: serializeRollHistory(run.history),
+  };
+  return JSON.stringify(blob);
+}
+
+/** Untrusted input: this came off the network. Anything malformed degrades to
+ *  "no analysis" rather than throwing — `hydrateRollHistory` already treats a
+ *  bad timeline that way, and the point maps get the same treatment. */
+function decodeAnalysis(text: string): GlobalRunAnalysis | null {
+  let parsed: Partial<AnalysisBlob>;
   try {
-    const res = await fetch(`${API}/v2/session/guest`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        game_key: GAME_KEY,
-        game_version: GAME_VERSION,
-        player_identifier: getPlayerId(),
-      }),
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { session_token?: string };
-    sessionToken = data.session_token ?? null;
-    return sessionToken;
+    parsed = JSON.parse(text) as Partial<AnalysisBlob>;
   } catch {
     return null;
   }
+  if (parsed.v !== BLOB_VERSION) return null;
+  const history = hydrateRollHistory(parsed.history);
+  return {
+    dicePoints: numberMap(parsed.dice),
+    itemPoints: numberMap(parsed.item),
+    history,
+    rolls: Number.isFinite(parsed.rolls)
+      ? Number(parsed.rolls)
+      : Math.max(0, history.length - 1),
+  };
 }
 
-async function ensureSession(): Promise<string | null> {
-  return sessionToken ?? startGuestSession();
+function numberMap(value: unknown): PointMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: PointMap = {};
+  for (const [id, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw !== "string" || !/^\d+$/.test(raw)) continue;
+    // Number, not bigint: the analysis screen sizes bars with it. Values past
+    // ~9e15 lose low-order digits, which is invisible in a bar chart.
+    out[id] = Number(raw);
+  }
+  return out;
 }
 
-/** Authed request that transparently re-auths once on 401 (expired token).
- *  Returns null when we can't obtain a session or the network fails. */
-async function authed(
+// Gzip's magic number. Blobs are stored as opaque bytes, so the reader sniffs
+// these rather than trusting a header — which also lets a browser without
+// CompressionStream submit an uncompressed blob that everyone else can still
+// read.
+const GZIP_MAGIC = [0x1f, 0x8b];
+
+function canCompress(): boolean {
+  return typeof CompressionStream !== "undefined";
+}
+
+async function gzip(text: string): Promise<Uint8Array> {
+  const stream = new Blob([text])
+    .stream()
+    .pipeThrough(new CompressionStream("gzip"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+async function gunzip(bytes: ArrayBuffer): Promise<string> {
+  const view = new Uint8Array(bytes);
+  const compressed =
+    view.length >= 2 && view[0] === GZIP_MAGIC[0] && view[1] === GZIP_MAGIC[1];
+  if (!compressed) return new TextDecoder().decode(view);
+  const stream = new Blob([view])
+    .stream()
+    .pipeThrough(new DecompressionStream("gzip"));
+  return new Response(stream).text();
+}
+
+// --- Transport --------------------------------------------------------------
+
+/** Fetch with a timeout, returning null for anything that is not a usable
+ *  response. Never throws. */
+async function call(
   path: string,
   init: RequestInit = {},
 ): Promise<Response | null> {
-  let token = await ensureSession();
-  if (!token) return null;
-  const doFetch = (t: string): Promise<Response> =>
-    fetch(`${API}${path}`, {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    const res = await fetch(`${API}${path}`, {
       ...init,
+      signal: controller.signal,
       headers: {
-        "Content-Type": "application/json",
-        "x-session-token": t,
+        ...(SUBMIT_KEY ? { "X-Submit-Key": SUBMIT_KEY } : {}),
         ...(init.headers ?? {}),
       },
     });
-  try {
-    let res = await doFetch(token);
-    if (res.status === 401) {
-      sessionToken = null;
-      token = await startGuestSession();
-      if (!token) return null;
-      res = await doFetch(token);
-    }
-    return res;
+    return res.ok ? res : null;
   } catch {
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
 // --- Public API -------------------------------------------------------------
 
-// LootLocker's generic-leaderboard `metadata` is a single string with a length
-// cap (~256 chars). We pack the display initials, the run's ladder position and
-// a compact per-item points breakdown into a JSON envelope { i, r, t, e, s, b }.
-// `r`/`t` are the rank and trial reached, `e` marks an endless run, `s` is the
-// exact decimal score, and `b` is an array of [code, permille] for the top items
-// by points, where `code` is the item's ID and `permille` is that item's share
-// of the run's total (×1000). Absolute points are reconstructed on read as
-// share × the row's score.
-//
-// Codes are item IDs rather than indices into ITEMS. Indices made the array
-// append-only — reordering or removing an item silently rewrote the history of
-// every stored row — and the ids cost only a few characters.
-const META_MAX = 250;
-const MAX_BREAKDOWN_ITEMS = 14;
-
-/** Compact code for a point-source key: the item's own id, or `*` for the
- *  starter die. Returns null for an id no longer in the roster. */
-function codeForSource(source: string): string | null {
-  if (source === STARTER_SOURCE) return "*";
-  return ITEMS.some((it) => it.id === source) ? source : null;
-}
-
-function sourceForCode(code: unknown): string | null {
-  if (code === "*") return STARTER_SOURCE;
-  if (typeof code !== "string") return null;
-  return ITEMS.some((it) => it.id === code) ? code : null;
-}
-
-/** Pack initials + a top-N points breakdown into the one metadata string. Packs
- *  as many top items as fit the length cap, degrading to fewer items and finally
- *  to just initials, so an otherwise-valid submission never fails on size. */
-function encodeMeta(
-  initials: string,
-  dicePoints: PointMap,
-  itemPoints: PointMap,
-  run: { rank: number; trial: number; endless: boolean },
-  score: bigint,
-): string {
-  const entries = combinePointsByItem(dicePoints, itemPoints).filter(
-    (e) => e.points > 0,
-  );
-  const total = entries.reduce((s, e) => s + e.points, 0);
-  const coded: [string, number][] = [];
-  for (const e of entries) {
-    const code = codeForSource(e.id);
-    const permille = total > 0 ? Math.round((e.points / total) * 1000) : 0;
-    if (code !== null && permille > 0) coded.push([code, permille]);
-  }
-  // The ladder position is what the board sorts by, so it is never dropped to
-  // fit the length cap — the breakdown is.
-  const runField = {
-    r: run.rank,
-    t: run.trial,
-    ...(run.endless ? { e: 1 } : {}),
+/** Project a Hall entry onto what the board stores. The Hall is where a
+ *  finished run actually lives; this is the one place that knows how to read it
+ *  as a submission. */
+export function submissionFromHallEntry(entry: HallEntry): RunSubmission {
+  return {
+    score: entry.score,
+    rank: entry.rank,
+    trial: entry.trial,
+    endless: !!entry.endless,
+    rolls: entry.rolls ?? Math.max(0, (entry.history?.length ?? 1) - 1),
+    dicePoints: entry.dicePoints ?? {},
+    itemPoints: entry.itemPoints ?? {},
+    history: entry.history ?? [],
   };
-  // LootLocker's response is parsed through JavaScript Number, so it cannot
-  // reproduce large integers exactly. Keep the canonical decimal score in
-  // metadata for lossless display while the numeric field remains the value the
-  // backend ranks.
-  const scoreField = { s: score.toString() };
-  for (let n = Math.min(coded.length, MAX_BREAKDOWN_ITEMS); n > 0; n--) {
-    const s = JSON.stringify({
-      i: initials,
-      ...runField,
-      ...scoreField,
-      b: coded.slice(0, n),
-    });
-    if (s.length <= META_MAX) return s;
-  }
-  return JSON.stringify({ i: initials, ...runField, ...scoreField });
 }
 
-/** Decode a row's metadata. Returns null for anything that does not carry the
- *  current envelope — rows submitted before the ranks/trials/gold restructure
- *  measured a different game and cannot be ranked against these, so they are
- *  dropped from the board rather than shown with invented values. */
-function decodeMeta(
-  meta: string | undefined,
-  wireScore: number,
-): {
-  score: bigint;
-  initials: string;
-  runRank: number;
-  trial: number;
-  endless: boolean;
-  breakdown?: GlobalBreakdownEntry[];
-} | null {
-  if (!meta) return null;
-  let parsed: {
-    i?: unknown;
-    r?: unknown;
-    t?: unknown;
-    e?: unknown;
-    s?: unknown;
-    b?: unknown;
-  };
-  try {
-    parsed = JSON.parse(meta);
-  } catch {
-    return null; // legacy row: metadata was the bare initials string
-  }
-  const runRank = Number(parsed.r);
-  if (!Number.isFinite(runRank) || runRank <= 0) return null;
-
-  const score =
-    typeof parsed.s === "string" && /^\d+$/.test(parsed.s)
-      ? BigInt(parsed.s)
-      : wireScoreToBigInt(wireScore);
-  const initials = typeof parsed.i === "string" ? parsed.i.toUpperCase() : "";
-  const trial = Number.isFinite(Number(parsed.t)) ? Number(parsed.t) : 1;
-  const endless = parsed.e === 1 || parsed.e === true;
-
-  let breakdown: GlobalBreakdownEntry[] | undefined;
-  const approximateScore = Number(score);
-  if (Array.isArray(parsed.b)) {
-    breakdown = parsed.b
-      .map((pair) => {
-        if (!Array.isArray(pair)) return null;
-        const id = sourceForCode(pair[0]);
-        const permille = Number(pair[1]);
-        if (id === null || !Number.isFinite(permille)) return null;
-        return {
-          id,
-          label: sourceLabel(id),
-          points: (permille / 1000) * approximateScore,
-        };
-      })
-      .filter((e): e is GlobalBreakdownEntry => e !== null);
-    if (breakdown.length === 0) breakdown = undefined;
-  }
-  return { score, initials, runRank, trial, endless, breakdown };
-}
-
-function wireScoreToBigInt(score: number): bigint {
-  return normalizeLeaderboardScore(score);
-}
-
-/** Push a score to the global leaderboard under our device member id, packing
- *  the initials (display name) and a compact per-item points breakdown into
- *  `metadata`. Resolves to whether it succeeded; never throws. */
-export async function submitScore(
-  score: bigint | number,
+/**
+ * Push a run to the global board: the score and ladder position as query
+ * fields, the gzipped analysis as the request body.
+ *
+ * The compression happens here rather than server-side for two reasons — it
+ * cuts the upload roughly sevenfold, which is what a phone on a slow connection
+ * notices, and it keeps the Worker from having to spend CPU on a payload it
+ * otherwise never needs to look at.
+ *
+ * Resolves to whether it succeeded; never throws.
+ */
+export async function submitRun(
+  run: RunSubmission,
   initials: string,
-  dicePoints: PointMap = {},
-  itemPoints: PointMap = {},
-  run: { rank: number; trial: number; endless: boolean } = {
-    rank: 1,
-    trial: 1,
-    endless: false,
-  },
 ): Promise<boolean> {
   if (!globalScoresEnabled()) return false;
-  const exactScore = normalizeLeaderboardScore(score);
-  const metadata = encodeMeta(
-    normalizeInitials(initials),
-    dicePoints,
-    itemPoints,
-    run,
-    exactScore,
-  );
-  // LootLocker ranks by one signed int64 `score` field, so the run's rank and
-  // its point total are packed into it together — rank in the high digits,
-  // compressed points in the low ones — while the exact total stays in metadata
-  // `s` for lossless display (see encodeMeta / decodeMeta).
-  const wireScore = runToWireOrdinal(run.rank, exactScore);
-  // Do not hand the score to JSON.stringify: once a Number reaches 1e21 it
-  // emits exponent notation (`1e+21`), which LootLocker's integer validator
-  // rejects, and converting bigint to Number already loses low digits. The
-  // interpolated token is a validated non-negative bigint decimal, so this is
-  // still valid JSON while preserving the complete integer.
-  const body = buildLeaderboardSubmissionBody(
-    getPlayerId(),
-    wireScore,
-    metadata,
-  );
-  const res = await authed(`/leaderboards/${LEADERBOARD_KEY}/submit`, {
-    method: "POST",
-    body,
+
+  const params = new URLSearchParams({
+    member: getPlayerId(),
+    initials: normalizeInitials(initials),
+    rank: String(Math.max(1, Math.floor(run.rank))),
+    trial: String(Math.min(3, Math.max(1, Math.floor(run.trial)))),
+    endless: run.endless ? "1" : "0",
+    score: (run.score < 0n ? 0n : run.score).toString(),
+    rolls: String(Math.max(0, Math.floor(run.rolls))),
   });
-  return !!res && res.ok;
+
+  // A browser without CompressionStream still gets its score on the board; it
+  // just posts the blob uncompressed, which readers detect by the missing gzip
+  // magic. Only the upload size suffers, and only for that player.
+  let body: Uint8Array | string = "";
+  if (run.history.length > 0) {
+    const text = encodeAnalysis(run);
+    try {
+      body = canCompress() ? await gzip(text) : text;
+    } catch {
+      body = text;
+    }
+  }
+
+  const res = await call(`/v1/runs?${params.toString()}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: body as BodyInit,
+  });
+  return res !== null;
 }
 
 /** Fetch the global top-N. Returns null when disabled or the request fails
@@ -398,43 +373,69 @@ export async function fetchTopScores(
   limit = GLOBAL_TOP_N,
 ): Promise<GlobalScoreRow[] | null> {
   if (!globalScoresEnabled()) return null;
-  const res = await authed(
-    `/leaderboards/${LEADERBOARD_KEY}/list?count=${limit}`,
-    { method: "GET" },
-  );
-  if (!res || !res.ok) return null;
+  const res = await call(`/v1/top?limit=${limit}`, { method: "GET" });
+  if (!res) return null;
   try {
-    const data = (await res.json()) as { items?: LLEntry[] | null };
+    const data = (await res.json()) as { rows?: unknown };
+    if (!Array.isArray(data.rows)) return null;
     const me = getPlayerId();
-    // Rows from before the restructure decode to null and are dropped: they
-    // measured a different game and have no rank to sort by.
-    return (data.items ?? [])
-      .map((e) => toRow(e, me))
+    return data.rows
+      .map((row) => toRow(row, me))
       .filter((row): row is GlobalScoreRow => row !== null);
   } catch {
     return null;
   }
 }
 
-// LootLocker generic-leaderboard entry shape (fields we use).
-interface LLEntry {
-  rank: number;
-  score: number;
-  metadata?: string;
-  member_id?: string;
+/** Fetch one global row's full run analysis. Returns null when the row has no
+ *  stored analysis or the request fails; the caller keeps the board usable
+ *  either way. */
+export async function fetchRunAnalysis(
+  memberId: string,
+): Promise<GlobalRunAnalysis | null> {
+  if (!globalScoresEnabled()) return null;
+  const res = await call(`/v1/runs/${encodeURIComponent(memberId)}`, {
+    method: "GET",
+  });
+  if (!res) return null;
+  try {
+    return decodeAnalysis(await gunzip(await res.arrayBuffer()));
+  } catch {
+    return null;
+  }
 }
 
-function toRow(e: LLEntry, me: string): GlobalScoreRow | null {
-  const meta = decodeMeta(e.metadata, e.score);
-  if (!meta) return null;
+interface WireRow {
+  position?: unknown;
+  memberId?: unknown;
+  initials?: unknown;
+  rank?: unknown;
+  trial?: unknown;
+  endless?: unknown;
+  score?: unknown;
+  rolls?: unknown;
+  hasAnalysis?: unknown;
+}
+
+function toRow(raw: unknown, me: string): GlobalScoreRow | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as WireRow;
+  const position = Number(row.position);
+  const runRank = Number(row.rank);
+  if (!Number.isFinite(position) || !Number.isFinite(runRank) || runRank <= 0)
+    return null;
+  if (typeof row.score !== "string" || !/^\d+$/.test(row.score)) return null;
+  const memberId = typeof row.memberId === "string" ? row.memberId : "";
   return {
-    rank: e.rank,
-    runRank: meta.runRank,
-    trial: meta.trial,
-    endless: meta.endless,
-    score: meta.score,
-    name: meta.initials,
-    isYou: !!e.member_id && e.member_id === me,
-    breakdown: meta.breakdown,
+    rank: position,
+    runRank,
+    trial: Number.isFinite(Number(row.trial)) ? Number(row.trial) : 1,
+    endless: row.endless === true,
+    score: BigInt(row.score),
+    name: typeof row.initials === "string" ? row.initials.toUpperCase() : "",
+    isYou: memberId !== "" && memberId === me,
+    memberId,
+    rolls: Number.isFinite(Number(row.rolls)) ? Number(row.rolls) : 0,
+    hasAnalysis: row.hasAnalysis === true,
   };
 }

@@ -19,6 +19,7 @@
 // the complaint this module was written to answer.
 
 import { PRICE_BANDS } from "../systems/Shop";
+import { spendGold } from "../systems/Gold";
 import {
   applyBoosterChoice,
   applyOffer,
@@ -556,7 +557,7 @@ function buyBooster(
         : (resolveGroupIndex(state.dice, best.targetKey) ?? undefined);
     if (best.targetKey !== null && index === undefined) continue;
 
-    state.gold -= price;
+    spendGold(state, price);
     if (applyBoosterChoice(state, best.offer, index)) {
       purchasesMade += 1;
       taken.push({ id: best.offer.id, cursed: best.offer.cursed });

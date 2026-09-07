@@ -46,8 +46,7 @@ export class GameOverScene extends Phaser.Scene {
     if (pending)
       this.scene.launch("InitialsPrompt", {
         score: pending.score,
-        dicePoints: pending.dicePoints,
-        itemPoints: pending.itemPoints,
+        startedAt: pending.startedAt,
         rank: pending.rank,
         trial: pending.trial,
         endless: pending.endless,

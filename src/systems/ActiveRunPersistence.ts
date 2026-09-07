@@ -51,6 +51,9 @@ type SerializedRunState = Omit<
   | "rollHistory"
 > & {
   dice: DiceStack[];
+  /** The grid's intake (see `DicePool.everAdded`). A stack summary is only the
+   *  survivors, so a resume would otherwise forget every die the run lost. */
+  diceEverAdded: number;
   score: string;
   trialScore: string;
   totalScore: string;
@@ -192,6 +195,7 @@ export function serializeRunState(state: RunState): SerializedRunState {
     trialScore: state.trialScore.toString(),
     totalScore: state.totalScore.toString(),
     dice: state.dice.summarize().map((stack) => ({ ...stack })),
+    diceEverAdded: state.dice.everAdded,
     trialRollGold: { ...state.trialRollGold },
     bossModifiers: [...state.bossModifiers],
     scoringNumbers: [...state.scoringNumbers],
@@ -229,7 +233,7 @@ function hydratePointMap(value: unknown): Record<string, bigint> | null {
   return result;
 }
 
-function hydrateDice(value: unknown): DicePool | null {
+function hydrateDice(value: unknown, everAdded?: unknown): DicePool | null {
   if (!Array.isArray(value) || value.length === 0) return null;
   const stacks: DiceStack[] = [];
   for (const raw of value) {
@@ -249,7 +253,14 @@ function hydrateDice(value: unknown): DicePool | null {
     }
     stacks.push(raw as unknown as DiceStack);
   }
-  return DicePool.fromStacks(stacks);
+  // A save written before the intake was tracked starts it at the grid it
+  // restored: the run resumes perfectly, and only its own dice-collected tally
+  // is short by whatever it had already lost. The rival's mirror passes nothing
+  // — it is never counted toward the player's own.
+  return DicePool.fromStacks(
+    stacks,
+    isNonNegativeInteger(everAdded) ? everAdded : undefined,
+  );
 }
 
 function validIdArray(
@@ -299,7 +310,7 @@ export function hydrateRunState(value: unknown): RunState | null {
   const score = parseBigInt(value.score);
   const trialScore = parseBigInt(value.trialScore);
   const totalScore = parseBigInt(value.totalScore);
-  const dice = hydrateDice(value.dice);
+  const dice = hydrateDice(value.dice, value.diceEverAdded);
   const dicePoints = hydratePointMap(value.dicePoints);
   const itemPoints = hydratePointMap(value.itemPoints);
   if (

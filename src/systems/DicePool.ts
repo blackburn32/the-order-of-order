@@ -124,7 +124,10 @@ function facesOf(sides: number, loaded: boolean): number {
  */
 function shuffledOffset(offset: number, count: number, seed: number): number {
   if (count <= 1) return 0;
-  const bits = Math.ceil(Math.log2(count));
+  // clz32 rather than Math.ceil(Math.log2(count)): the bit length of an integer
+  // is exact and identical on every engine, where Math.log2 is only
+  // implementation-approximated and can land either side of a power of two.
+  const bits = 32 - Math.clz32(count - 1);
   // Current run caps are far below this, but retain a safe fallback if a custom
   // game ever grows beyond the range supported by 31-bit bitwise arithmetic.
   if (bits > 31) {
@@ -159,6 +162,11 @@ export class DicePool {
   private list: Die[] = [];
   private buckets: Bucket[] = [];
   private _count = 0;
+  // Every die this pool has ever gained, counted as it arrives and never
+  // decremented — the grid's intake, as opposed to `_count`, which is what is
+  // left of it after breakage, defection and the grid caps. Carried across a
+  // resume by `fromStacks`, since a saved grid is only ever the survivors.
+  private _everAdded = 0;
   private roll_?: RollData; // cached result of the most recent roll()
   // The half-open span of grid indices the last roll actually read —
   // [rolledFrom, rolledTo) — and so everything the growth and destruction
@@ -173,23 +181,34 @@ export class DicePool {
 
   private constructor() {}
 
+  /** The one place the grid grows. Every path that adds dice goes through it,
+   *  so `everAdded` cannot fall behind a new growth effect. */
+  private gain(count: number): void {
+    this._count += count;
+    this._everAdded += count;
+  }
+
   /** A fresh pool holding the given starter dice (per-die mode). */
   static fromDice(dice: Die[]): DicePool {
     const p = new DicePool();
     p.list = dice;
-    p._count = dice.length;
+    p.gain(dice.length);
     p.ensureMode();
     return p;
   }
 
   /** Rebuild a pool from a saved bucket summary (already bucketed). */
-  static fromStacks(stacks: DiceStack[]): DicePool {
+  static fromStacks(stacks: DiceStack[], everAdded?: number): DicePool {
     const p = new DicePool();
     p.buckets = stacks.map((s) => ({
       ...s,
       maxFaceBonus: windfallFactor(s.maxFaceBonus as number | boolean, s.sides),
     }));
-    p._count = stacks.reduce((n, s) => n + s.count, 0);
+    p.gain(stacks.reduce((n, s) => n + s.count, 0));
+    // A summary is the grid's survivors, so restoring one would otherwise reset
+    // the intake to whatever lived through the run so far.
+    if (everAdded !== undefined && everAdded > p._everAdded)
+      p._everAdded = everAdded;
     p.mode = p._count >= bucketThreshold ? "bucket" : "list";
     if (p.mode === "list") {
       // Small enough to materialise for full fidelity.
@@ -214,6 +233,11 @@ export class DicePool {
 
   get length(): number {
     return this._count;
+  }
+
+  /** Dice this pool has ever been given, survivors and casualties alike. */
+  get everAdded(): number {
+    return this._everAdded;
   }
 
   get bucketed(): boolean {
@@ -501,7 +525,7 @@ export class DicePool {
           copies.push(cloneDie(d, "double_the_fun"));
       }
       for (const d of copies) this.list.push(d);
-      this._count += copies.length;
+      this.gain(copies.length);
       this.ensureMode();
       return copies.length;
     }
@@ -525,7 +549,7 @@ export class DicePool {
         added += high;
       }
     }
-    this._count += added;
+    this.gain(added);
     return added;
   }
 
@@ -546,7 +570,7 @@ export class DicePool {
         if (this.dieScored(d)) copies.push(cloneDie(d, "genesis"));
       }
       for (const d of copies) this.list.push(d);
-      this._count += copies.length;
+      this.gain(copies.length);
       this.ensureMode();
       return copies.length;
     }
@@ -569,7 +593,7 @@ export class DicePool {
         added += take;
       }
     }
-    this._count += added;
+    this.gain(added);
     return added;
   }
 
@@ -603,7 +627,7 @@ export class DicePool {
         for (const d of targets)
           for (let i = 0; i < extraPerDie; i++)
             this.list.push(cloneDie(d, "foundry"));
-        this._count += added;
+        this.gain(added);
         return added;
       }
       this.convert();
@@ -632,7 +656,7 @@ export class DicePool {
       );
       added += extra;
     }
-    this._count += added;
+    this.gain(added);
     return added;
   }
 
@@ -717,7 +741,7 @@ export class DicePool {
     if (this.mode === "list" && this._count + count < bucketThreshold) {
       for (let i = 0; i < count; i++)
         this.list.push(makeDie(sides, opts, source));
-      this._count += count;
+      this.gain(count);
       return;
     }
     this.convert();
@@ -729,7 +753,7 @@ export class DicePool {
       source,
       count,
     );
-    this._count += count;
+    this.gain(count);
   }
 
   /** Duplicate the whole grid `factor`× (Multiply Dice). */
@@ -741,7 +765,7 @@ export class DicePool {
       for (let f = 1; f < factor; f++)
         for (const d of originals) copies.push(cloneDie(d, source));
       for (const d of copies) this.list.push(d);
-      this._count += copies.length;
+      this.gain(copies.length);
       return;
     }
     this.convert();
@@ -762,7 +786,7 @@ export class DicePool {
         source,
         b.count * (factor - 1),
       );
-    this._count *= factor;
+    this.gain(this._count * (factor - 1));
   }
 
   /** Grow every die `steps` rungs — Refinement run backwards, for an affliction

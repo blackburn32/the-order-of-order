@@ -1,13 +1,8 @@
 import Phaser from "phaser";
 import { CSS, SERIF } from "../art/palette";
 import { getRun } from "../state/RunState";
-import {
-  AFFLICTION_COPY,
-  afflict,
-  type AfflictionCopy,
-  type AfflictionId,
-} from "../systems/Afflictions";
-import type { ItemDef } from "../systems/Items";
+import { afflict, type AfflictionId } from "../systems/Afflictions";
+import { afflictionCard } from "../systems/Items";
 import {
   createFreshShopCheckpoint,
   saveActiveRun,
@@ -166,7 +161,7 @@ export class TributeScene extends Phaser.Scene {
     y: number,
     scale: number,
   ): void {
-    const card = buildItemCard(this, syntheticDef(id), {
+    const card = buildItemCard(this, afflictionCard(id), {
       locked: false,
       showCaption: false,
       displayScale: scale,
@@ -199,31 +194,4 @@ export class TributeScene extends Phaser.Scene {
       this.slideBackdrop,
     );
   }
-}
-
-/**
- * A drawback dressed as a card.
- *
- * `buildItemCard` wants an `ItemDef`, but a demand has no item behind it — no
- * id in the roster, no price, no theme, nothing to own. The builder reads only
- * the five fields set here, so handing it this is honest rather than a
- * workaround, and it saves the roster a dozen ids that could never be sold.
- *
- * The one effect is not decoration: a cursed card is stamped with the seal of
- * the affliction its effects inflict, so the demand states its drawback the same
- * way a bought card does and gets the same seal for it. The scene applies the
- * affliction itself (see `choose`) — nothing ever runs these effects.
- */
-function syntheticDef(id: AfflictionId): ItemDef {
-  const copy: AfflictionCopy = AFFLICTION_COPY[id];
-  return {
-    // Never read by the card builder; present because the shape requires it.
-    id: "extra_die",
-    name: copy.name,
-    desc: copy.desc,
-    priceBand: "free",
-    rarity: "rare",
-    cursed: true,
-    effects: [{ kind: "afflict", id }],
-  };
 }

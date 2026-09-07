@@ -2,6 +2,7 @@ import { MAX_EXTRA_NUMBERS, WIN_RANK, rankOf } from "../config";
 import { RunState } from "../state/RunState";
 import {
   AFFLICTIONS,
+  AFFLICTION_COPY,
   afflict,
   afflictionsFor,
   blocksGrowth,
@@ -1653,6 +1654,36 @@ export function afflictionOf(def: ItemDef): AfflictionId | null {
   for (const effect of def.effects)
     if (effect.kind === "afflict") return effect.id;
   return null;
+}
+
+/**
+ * A drawback dressed as a card.
+ *
+ * `buildItemCard` wants an `ItemDef`, but a drawback handed over rather than
+ * bought — a King's Demand, the Order of Disorder's parting gift — has no item
+ * behind it: no id in the roster, no price, no theme, nothing to own. The
+ * builder reads only the five fields set here, so handing it this is honest
+ * rather than a workaround, and it saves the roster a dozen ids that could
+ * never be sold.
+ *
+ * The one effect is not decoration: a cursed card is stamped with the seal of
+ * the affliction its effects inflict (see `afflictionOf`), so a granted
+ * drawback states itself the same way a bought card does and gets the same seal
+ * for it. Nothing ever runs these effects — whoever hands the drawback over
+ * afflicts the run itself.
+ */
+export function afflictionCard(id: AfflictionId): ItemDef {
+  const copy = AFFLICTION_COPY[id];
+  return {
+    // Never read by the card builder; present because the shape requires it.
+    id: "extra_die",
+    name: copy.name,
+    desc: copy.desc,
+    priceBand: "free",
+    rarity: "rare",
+    cursed: true,
+    effects: [afflictWith(id)],
+  };
 }
 
 const GROWTH_COUNTERS = new Set<RunCounter>([

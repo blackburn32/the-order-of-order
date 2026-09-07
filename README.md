@@ -55,7 +55,7 @@ share the server on your local network (e.g. to playtest on a phone), run `npm r
 and open the printed network URL.
 
 The global leaderboard is off by default in development; copy `.env.example` to `.env` and fill
-in the LootLocker keys to enable it (see [Global leaderboard](#global-leaderboard-optional)
+in the leaderboard Worker's URL to enable it (see [Global leaderboard](#global-leaderboard-optional)
 below). Without it, everything else runs fully offline.
 
 ### Building for production
@@ -123,40 +123,43 @@ helper), so rotating a device or resizing the browser window reflows the UI live
 
 ### Global leaderboard (optional)
 
-A shared online leaderboard is backed by [LootLocker](https://lootlocker.com) and reached over
-plain `fetch` (see `src/systems/GlobalScores.ts`). Players are anonymous — a per-device UUID
-opens a guest session and doubles as the leaderboard member id, and a 1–3 letter arcade-style
-initials prompt supplies the display name when a run sets a new personal best. Configure it by
-copying `.env.example` to `.env` and filling in the LootLocker keys. When the keys are absent
-the feature disables gracefully and the game runs fully offline against the local Hall of High
-Scores.
+A shared online leaderboard is backed by the Cloudflare Worker in [`worker/`](worker/) and
+reached over plain `fetch` (see `src/systems/GlobalScores.ts`). Players are anonymous — a
+per-device UUID is the board's member id — and a 1–3 letter arcade-style initials prompt
+supplies the display name when a run sets a new personal best. Configure it by copying
+`.env.example` to `.env` and filling in the deployed Worker's URL. When it is absent the feature
+disables gracefully and the game runs fully offline against the local Hall of High Scores.
+
+What makes it worth running our own backend rather than a hosted leaderboard service: **a global
+row carries the run's whole analysis, not just its score.** A finished run's per-roll timeline is
+100–300 KB of JSON, three orders of magnitude past the metadata field of any "submit a score"
+product, so tapping a global row used to show approximate per-item shares and no curves at all.
+Now the analysis goes up gzipped alongside the score and a global row opens exactly the screen a
+local one does.
+
+The split is: **D1** holds the board index (one row per player, their best run), **R2** holds one
+gzipped analysis blob per player, keyed by the same member id so a new personal best overwrites
+both in place. Storage therefore grows with players rather than with runs, and nothing needs
+pruning. The client gzips the blob itself and posts it as opaque bytes with the index fields in
+the query string, so the Worker never parses or decompresses the payload — that keeps a
+submission inside the free plan's 10 ms CPU budget and cuts the upload roughly sevenfold, which
+is what a phone on a slow connection notices.
+
+Setup and deployment live in [`worker/README.md`](worker/README.md).
 
 #### Pointing at a different leaderboard backend
 
-The backend targets are read from three Vite environment variables — the game never hard-codes a
-game or leaderboard, so switching backends (e.g. from a dev project to a production one, or to a
-fresh leaderboard) is purely a matter of updating `.env`:
+Two Vite environment variables, both optional:
 
-| Variable                          | What it targets                                                                         |
-| --------------------------------- | --------------------------------------------------------------------------------------- |
-| `VITE_LOOTLOCKER_GAME_KEY`        | The LootLocker game's public API key (`dev_…` or `prod_…`). Safe to ship in the bundle. |
-| `VITE_LOOTLOCKER_LEADERBOARD_KEY` | The key of the leaderboard within that game to submit to and read from.                 |
-| `VITE_LOOTLOCKER_GAME_VERSION`    | Version string sent with the guest session (defaults to `0.1.0`).                       |
+| Variable                      | What it targets                                                                            |
+| ----------------------------- | ------------------------------------------------------------------------------------------ |
+| `VITE_LEADERBOARD_API`        | Base URL of the deployed Worker, no trailing slash. Absent disables the global board.      |
+| `VITE_LEADERBOARD_SUBMIT_KEY` | Optional, must match the Worker's `SUBMIT_KEY` secret. Ships in the bundle — a bot filter. |
 
-To repoint the leaderboard:
+Vite inlines env vars at build time, so changes to `.env` only take effect on the next
+`npm run dev` / `npm run build` — a running server won't pick them up.
 
-1. In the [LootLocker dashboard](https://console.lootlocker.com), pick (or create) the target
-   game and enable the **Guest** login platform — anonymous sessions won't open without it.
-2. Create a **generic** leaderboard in that game (submissions carry an explicit `member_id`, so
-   the leaderboard must be the generic type, not player-scoped) and copy its key.
-3. Put the game's API key and that leaderboard key into `.env` as the two variables above.
-4. Restart the dev server (or rebuild). Vite inlines env vars at build time, so changes to
-   `.env` only take effect on the next `npm run dev` / `npm run build` — a running server won't
-   pick them up.
-
-The API host (`https://api.lootlocker.io/game`) and the number of rows fetched
-(`GLOBAL_TOP_N`) live as constants in `src/systems/GlobalScores.ts`; change those there if you
-need to target a different host or list length.
+The number of rows fetched (`GLOBAL_TOP_N`) is a constant in `src/systems/GlobalScores.ts`.
 
 ## Gameplay
 
@@ -452,9 +455,13 @@ The Hall of High Scores shows the top runs, each with:
 - The grid of dice they ended with
 
 Runs are ranked by **how far they got first, with total points only breaking ties** between runs
-that reached the same rank. The same ordering is used for the global leaderboard, which packs
-both keys into the one sortable integer LootLocker provides (rank in the high digits, a
-compressed points ordinal in the low ones — see `src/systems/LeaderboardWire.ts`).
+that reached the same rank. The global leaderboard sorts on the same two keys, held as separate
+columns rather than packed into one number. Points ride as an exact decimal string: a run's
+total leaves `Number.MAX_SAFE_INTEGER` behind almost immediately and has no ceiling at all in
+endless (a full ladder run lands near 80 digits, 1000 rolls near 200, 2500 rolls near 550). The
+sort key is therefore `(rank, digit count, decimal)` — for integers written without leading
+zeros the longer number is always the larger one, and equal-length values compare correctly as
+text, which orders arbitrary-length scores exactly.
 
 Scores recorded before the ranks/trials/gold restructure measured a different game and cannot be
 ranked against these, so they are filtered out rather than shown with invented values. The local

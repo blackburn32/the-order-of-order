@@ -22,7 +22,7 @@ import {
   markEndingSeen,
   rollKingsDemands,
 } from "../systems/Endings";
-import { GOLD_PER_INTEREST, INTEREST_CAP } from "../systems/Gold";
+import { GOLD_PER_INTEREST, INTEREST_CAP, spendGold } from "../systems/Gold";
 import {
   applyBoosterChoice,
   applyCouponFreebie,
@@ -432,7 +432,7 @@ function visitShop(
       );
       if (!free && !(stuck && state.gold > price)) break;
     }
-    state.gold -= price;
+    spendGold(state, price);
     offers = rerollShopOffers(state, cardCount, rng, visitWeights);
     recordCurseOffers(record, offers);
   }
@@ -549,7 +549,7 @@ function visitBoosters(
       (offer) => chooseTargets(state, offer, rng) !== null,
     );
     if (!choice) continue;
-    state.gold -= price;
+    spendGold(state, price);
     if (attemptBoosterChoice(state, choice, rng)) {
       purchasesMade += 1;
       if (choice.cursed) record.cursesTaken[choice.id] = state.trial;

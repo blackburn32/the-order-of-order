@@ -20,18 +20,18 @@ import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import {
   getInitials,
   normalizeInitials,
-  PointMap,
   setInitials,
-  submitScore,
+  submissionFromHallEntry,
+  submitRun,
 } from "../systems/GlobalScores";
+import { loadHall } from "../systems/SaveData";
 
 export interface InitialsPromptData {
   score: bigint;
-  /** This run's per-item point attribution, packed into the leaderboard metadata
-   *  (see systems/ItemPoints / GlobalScores.encodeMeta). */
-  dicePoints?: PointMap;
-  itemPoints?: PointMap;
-  /** Whether the run was played on Hard Mode (tags the leaderboard entry). */
+  /** `HallEntry.startedAt` for this run. The submission's per-item attribution
+   *  and roll timeline are read from that entry at confirm time rather than
+   *  carried through the scene transition — see systems/GlobalScores. */
+  startedAt: number;
   rank: number;
   trial: number;
   endless?: boolean;
@@ -50,8 +50,7 @@ export interface InitialsPromptData {
  */
 export class InitialsPromptScene extends Phaser.Scene {
   private score = 0n;
-  private dicePoints: PointMap = {};
-  private itemPoints: PointMap = {};
+  private startedAt = 0;
   private run = { rank: 1, trial: 1, endless: false };
   private returnTo = "Menu";
   private slots: string[] = ["A", "A", "A"];
@@ -68,8 +67,7 @@ export class InitialsPromptScene extends Phaser.Scene {
   init(data: InitialsPromptData): void {
     this.leaving = false;
     this.score = data.score;
-    this.dicePoints = data.dicePoints ?? {};
-    this.itemPoints = data.itemPoints ?? {};
+    this.startedAt = data.startedAt;
     this.run = {
       rank: data.rank,
       trial: data.trial,
@@ -407,14 +405,24 @@ export class InitialsPromptScene extends Phaser.Scene {
     if (this.leaving) return;
     const initials = this.slots.join("");
     setInitials(initials);
+    // The run was filed in the Hall before this prompt opened, so its full
+    // analysis is read from there. A run that somehow isn't there still posts
+    // its score — the board row just carries no analysis.
+    const entry = loadHall().find((e) => e.startedAt === this.startedAt);
+    const run = entry
+      ? submissionFromHallEntry(entry)
+      : {
+          score: this.score,
+          rank: this.run.rank,
+          trial: this.run.trial,
+          endless: this.run.endless,
+          rolls: 0,
+          dicePoints: {},
+          itemPoints: {},
+          history: [],
+        };
     // Fire-and-forget: don't block closing on the network round-trip.
-    void submitScore(
-      this.score,
-      initials,
-      this.dicePoints,
-      this.itemPoints,
-      this.run,
-    );
+    void submitRun(run, initials);
     this.close();
   }
 

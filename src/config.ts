@@ -261,8 +261,20 @@ export const TRIAL_GOALS: bigint[] = buildGoals();
 // 15.5x per rank, which is 2.5x per trial, so endless opens at the rate the run
 // was already climbing rather than handing the player three easy trials as a
 // reward for finishing.
-export const ENDLESS_BASE = 2.5;
-export const ENDLESS_ACCEL = 0.05;
+//
+// Base and acceleration are held as exact integer quantities rather than as the
+// floats they read as, because this multiplier has to come out bit-for-bit
+// identical on every engine the game runs on. A run is replayed from its seed,
+// and `Math.pow` is only implementation-APPROXIMATED by the spec: two devices
+// may disagree about it, and a goal that differs by one is a trial that cleared
+// on one device and failed on the other. See `endlessMultiplierMilli`.
+const ENDLESS_BASE_NUM = 5n;
+const ENDLESS_BASE_DEN = 2n;
+/** The reciprocal of ENDLESS_ACCEL: the exponent climbs by 1/this per trial. */
+const ENDLESS_ACCEL_DEN = 20;
+
+export const ENDLESS_BASE = Number(ENDLESS_BASE_NUM) / Number(ENDLESS_BASE_DEN); // 2.5
+export const ENDLESS_ACCEL = 1 / ENDLESS_ACCEL_DEN; // 0.05
 
 // Optional per-trial override table for the goals (index = trial - 1). The
 // balance simulation sets this to trial alternate difficulty curves without
@@ -280,15 +292,76 @@ export function setTrialGoals(
 // they are memoized rather than recomputed on every HUD update.
 const ENDLESS_CACHE: bigint[] = [];
 
+/** Fixed-point scale for the irrational root below. Thirty digits is far more
+ *  than a per-mille answer needs; it costs nothing and keeps the one truncation
+ *  in this file thirty orders of magnitude away from any rounding boundary. */
+const ROOT_SCALE_DIGITS = 30n;
+const ROOT_SCALE = 10n ** ROOT_SCALE_DIGITS;
+
+/** floor(x ** (1/n)) by Newton's method on integers — no floats to disagree
+ *  about, and it converges in a handful of steps at any scale used here. */
+function integerRoot(x: bigint, n: bigint): bigint {
+  if (x < 2n) return x;
+  let guess = 1n << (BigInt(x.toString(2).length) / n + 1n);
+  for (;;) {
+    const next = ((n - 1n) * guess + x / guess ** (n - 1n)) / n;
+    if (next >= guess) break;
+    guess = next;
+  }
+  while (guess ** n > x) guess -= 1n;
+  while ((guess + 1n) ** n <= x) guess += 1n;
+  return guess;
+}
+
+/** ENDLESS_BASE ** (1 / ENDLESS_ACCEL_DEN), scaled by ROOT_SCALE. The only
+ *  irrational quantity in the ladder, so the only one that has to be truncated
+ *  rather than computed exactly. Derived once, and lazily: a run that never
+ *  reaches endless never pays for it. */
+let accelRoot: bigint | null = null;
+function endlessAccelRoot(): bigint {
+  if (accelRoot === null) {
+    const d = BigInt(ENDLESS_ACCEL_DEN);
+    // Wanted: R with (R / SCALE) ** d === base, so R === (base * SCALE ** d) ** (1/d).
+    accelRoot = integerRoot(
+      (ENDLESS_BASE_NUM * ROOT_SCALE ** d) / ENDLESS_BASE_DEN,
+      d,
+    );
+  }
+  return accelRoot;
+}
+
+/**
+ * The growth multiplier for the `step`-th endless trial (0 being the first past
+ * WIN_TRIAL), as a per-mille integer — what `ENDLESS_BASE ** (1 + step / 20)`
+ * used to be computed as in floating point.
+ *
+ * The exponent is split into a whole part and a fractional one. With
+ * `m = d + step`, `q = floor(m / d)` and `s = m mod d`:
+ *
+ *     base ** (m / d) === (num / den) ** q  ×  root ** s
+ *
+ * The left factor is exact bigint arithmetic; the right is at most `d - 1`
+ * multiplications of the scaled root. So the whole multiplier is a single
+ * rounding of a single exact rational, and identical everywhere.
+ */
+function endlessMultiplierMilli(step: number): bigint {
+  const d = ENDLESS_ACCEL_DEN;
+  const m = d + step;
+  const q = BigInt(Math.floor(m / d));
+  const s = BigInt(m % d);
+  const numerator = ENDLESS_BASE_NUM ** q * endlessAccelRoot() ** s * 1000n;
+  const denominator = ENDLESS_BASE_DEN ** q * ROOT_SCALE ** s;
+  // Round half up, matching the Math.round this replaced.
+  return (2n * numerator + denominator) / (2n * denominator);
+}
+
 function endlessGoal(trial: number): bigint {
   let value =
     ENDLESS_CACHE[ENDLESS_CACHE.length - 1] ?? authoredGoal(WIN_TRIAL);
   for (let t = WIN_TRIAL + ENDLESS_CACHE.length + 1; t <= trial; t++) {
-    const exponent = 1 + (t - 1 - WIN_TRIAL) * ENDLESS_ACCEL;
     // Per-mille integer math so the fractional growth applies exactly to the
     // bigint goal (truncates, like floor).
-    const mult = BigInt(Math.round(Math.pow(ENDLESS_BASE, exponent) * 1000));
-    value = (value * mult) / 1000n;
+    value = (value * endlessMultiplierMilli(t - 1 - WIN_TRIAL)) / 1000n;
     ENDLESS_CACHE.push(value);
   }
   return ENDLESS_CACHE[trial - WIN_TRIAL - 1];

@@ -39,6 +39,7 @@ run.rollHistory.push({
   trial: run.trial,
   score: run.totalScore,
   dice: run.dice.length,
+  gold: run.goldEarned,
   valueByItem: snapshotItemValues(run),
 });
 recordItemAnalysisRun(run, true);

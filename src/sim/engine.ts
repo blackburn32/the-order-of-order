@@ -24,6 +24,7 @@ import {
   GoldBreakdown,
   grantGold,
   rollGoldBreakdown,
+  spendGold,
   trialPayout,
   type TrialPayoutTuning,
   unusedRolls,
@@ -211,7 +212,7 @@ export function resolveRoll(
   let denied: "tollkeeper" | "gamblersCurse" | null = null;
   if (afflictions.rollGoldCost > 0) {
     if (state.gold >= afflictions.rollGoldCost)
-      state.gold -= afflictions.rollGoldCost;
+      spendGold(state, afflictions.rollGoldCost);
     else denied = "tollkeeper";
   }
   if (
@@ -224,12 +225,16 @@ export function resolveRoll(
 
   // Score from the pool's cached roll aggregate — O(distinct faces) in either
   // storage mode. Attribution reads the pool's per-source tallies (below).
+  const rolled = state.dice.agg();
+  // Every die that came up 1, denied or not: an affliction takes a roll's
+  // points, not its dice, and the tally is of what the table showed.
+  state.onesRolled += rolled.valueCounts.get(1) ?? 0;
   const result =
     denied === "tollkeeper"
       ? deniedRoll(state, "tollkeeper", "Toll unpaid")
       : denied === "gamblersCurse"
         ? deniedRoll(state, "gamblersCurse", "Gambler's Curse")
-        : scoreRollHistogram(state, state.dice.agg(), { finalRoll });
+        : scoreRollHistogram(state, rolled, { finalRoll });
   accumulatePoints(state, result, finalRoll);
   state.roll += 1;
   state.score += result.points;

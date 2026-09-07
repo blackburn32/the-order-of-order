@@ -2,7 +2,8 @@ import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { getRun, RunState } from "../state/RunState";
 import { DIE_LADDER, DieSides } from "../systems/Dice";
-import { ITEMS, ItemDef } from "../systems/Items";
+import type { AfflictionId } from "../systems/Afflictions";
+import { afflictionCard, afflictionOf, ITEMS, ItemDef } from "../systems/Items";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { addCamera } from "../ui/camera";
@@ -97,6 +98,13 @@ interface ChipSpec {
   css: string;
 }
 
+/** One card on the item shelf: an owned item with the copies held, or a
+ *  curse the run was handed, which owns nothing and is carried once. */
+interface ShelfEntry {
+  def: ItemDef;
+  copies: number;
+}
+
 interface DiceRow {
   sides: DieSides;
   count: number;
@@ -104,9 +112,10 @@ interface DiceRow {
 }
 
 /**
- * A mid-run inventory: the items bought this run as a shelf of cards, and the
- * grid's dice as a ranked list — one line per die size, with its picture, its
- * count, and the auras riding on it.
+ * A mid-run inventory: the cards this run is carrying as a shelf — everything
+ * bought, and any drawback taken from a story act, which owns nothing but was
+ * still chosen — and the grid's dice as a ranked list, one line per die size,
+ * with its picture, its count, and the auras riding on it.
  *
  * Launched as an overlay on top of the Game or Shop (via `scene.launch`) so the
  * base scene keeps running underneath; its input is disabled while we are open
@@ -577,12 +586,43 @@ export class InventoryScene extends Phaser.Scene {
     );
   }
 
+  /** The standing drawbacks the run carries that no card on the shelf accounts
+   *  for: the King's Demand and the Order of Disorder's parting gift, which are
+   *  taken rather than bought and so leave nothing in `purchases`. A cursed
+   *  card's own drawback is skipped — the card that inflicted it is already on
+   *  the shelf, stating the curse as half of what it does. */
+  private grantedCurses(run: RunState, owned: ItemDef[]): ItemDef[] {
+    const bought = new Set<AfflictionId>();
+    for (const def of owned) {
+      const id = afflictionOf(def);
+      if (id) bought.add(id);
+    }
+    return run.afflictions
+      .filter((id) => !bought.has(id))
+      .map((id) => afflictionCard(id));
+  }
+
+  /** The shelf's cards in the order they are laid out, each with the tally it
+   *  prints. The treasures lead and the curses trail them: the shelf still
+   *  opens with what the collection is proudest of, and a drawback is not that
+   *  — but it was taken, and it is being carried. A granted curse has no roster
+   *  id to count copies against, and is only ever carried once, so it is listed
+   *  as the single card it is. */
+  private shelfEntries(run: RunState): ShelfEntry[] {
+    const owned = run.purchases ?? {};
+    const items = this.ownedItems(run);
+    return [
+      ...items.map((def) => ({ def, copies: owned[def.id] ?? 0 })),
+      ...this.grantedCurses(run, items).map((def) => ({ def, copies: 1 })),
+    ];
+  }
+
   private buildItemShelf(
     track: Phaser.GameObjects.Container,
     area: ContentArea,
     run: RunState,
   ): number {
-    const entries = this.ownedItems(run);
+    const entries = this.shelfEntries(run);
     if (entries.length === 0) {
       return this.emptyMessage(
         track,
@@ -591,7 +631,6 @@ export class InventoryScene extends Phaser.Scene {
       );
     }
 
-    const owned = run.purchases ?? {};
     const minCellW = CARD_W * MIN_READABLE_CARD_SCALE + COL_GAP;
     const cols = Math.max(
       1,
@@ -602,14 +641,14 @@ export class InventoryScene extends Phaser.Scene {
     const cardScale = Math.min((cellW - COL_GAP) / CARD_W, 1);
     const cellH = CARD_H * cardScale + ROW_GAP;
 
-    entries.forEach((def, i) => {
+    entries.forEach((entry, i) => {
       // Rendering at the final size, rather than scaling a full-size card down,
       // keeps the type crisp — see the Codex's gallery.
-      const card = buildItemCard(this, def, {
+      const card = buildItemCard(this, entry.def, {
         locked: false,
         showCaption: false,
         displayScale: cardScale,
-        copies: owned[def.id] ?? 0,
+        copies: entry.copies,
       });
       const row = Math.floor(i / cols);
       // A short last row stays left-aligned with the columns above it rather

@@ -9,6 +9,7 @@ import {
   suppresses,
 } from "./Afflictions";
 import { Die } from "./Dice";
+import { probit } from "./ExactMath";
 import { RunState } from "../state/RunState";
 import {
   DOWNBEAT_MULT,
@@ -159,13 +160,24 @@ export function bucketDice(dice: Die[]): DiceBucket[] {
   return [...map.values()];
 }
 
-/** Box–Muller standard normal. */
+/**
+ * Standard normal, by inverting the normal CDF of one uniform draw.
+ *
+ * This was Box–Muller, which is the obvious way to write it and the wrong way
+ * to write it here: `Math.log` and `Math.cos` are implementation-approximated,
+ * so two engines sampling the same seeded stream can disagree about a bucketed
+ * roll, and every seeded run would only be replayable on the engine that played
+ * it. `probit` is rational polynomials over the central 85% and needs nothing
+ * but `sqrt` and an exact `ln` in the tails — see systems/ExactMath.
+ *
+ * It also costs one draw rather than two, which is the reason a stream position
+ * is not comparable across this change.
+ */
 function gaussian(rng: () => number): number {
   let u = 0;
-  let v = 0;
+  // Never hand probit a zero: the inverse CDF is unbounded there.
   while (u === 0) u = rng();
-  while (v === 0) v = rng();
-  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  return probit(u);
 }
 
 /** Draw from Binomial(n, p). Exact (sum of Bernoulli) for small n so tiny buckets

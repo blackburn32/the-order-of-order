@@ -16,6 +16,10 @@ export interface RollSample {
   score: bigint;
   /** Dice in the pool once the roll's passives had run. */
   dice: number;
+  /** Cumulative gold earned across the whole run so far (`RunState.goldEarned`),
+   *  which — unlike the purse — only ever climbs. Zero on a timeline written
+   *  before gold was sampled. */
+  gold: number;
   /** Cumulative points credited to each item/source at this point in the run.
    *  Optional only for timelines written before item series were recorded. */
   pointsByItem?: Record<string, bigint>;
@@ -58,6 +62,7 @@ function snapshot(state: RunState): RollSample {
     trial: state.trial,
     score: state.totalScore,
     dice: state.dice.length,
+    gold: state.goldEarned,
     pointsByItem,
     diceByItem,
     valueByItem: snapshotItemValues(state),
@@ -95,6 +100,9 @@ export interface SerializedRollSample {
   t: number;
   s: string;
   d: number;
+  /** Cumulative gold earned. Absent on samples written before it was recorded,
+   *  and omitted while it is still zero. */
+  g?: number;
   /** Changes since the preceding sample. Delta encoding avoids repeating every
    *  item id hundreds of times in the active-run and Hall saves. */
   p?: Record<string, string>;
@@ -115,6 +123,7 @@ export function serializeRollHistory(
       s: sample.score.toString(),
       d: sample.dice,
     };
+    if (sample.gold > 0) serialized.g = sample.gold;
     // Both maps are written together. Their absence is the backward-compatible
     // marker for an aggregate-only sample from the previous timeline format.
     if (sample.pointsByItem && sample.diceByItem) {
@@ -180,7 +189,8 @@ export function hydrateRollHistory(value: unknown): RollSample[] {
       !Number.isFinite(sample.d) ||
       (sample.d as number) < 0 ||
       typeof sample.s !== "string" ||
-      !/^\d+$/.test(sample.s)
+      !/^\d+$/.test(sample.s) ||
+      (sample.g !== undefined && !(Number.isFinite(sample.g) && sample.g >= 0))
     ) {
       return [];
     }
@@ -188,6 +198,7 @@ export function hydrateRollHistory(value: unknown): RollSample[] {
       trial: sample.t as number,
       score: BigInt(sample.s),
       dice: sample.d as number,
+      gold: sample.g ?? 0,
     };
 
     const hasPoints = sample.p !== undefined;

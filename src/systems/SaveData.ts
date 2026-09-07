@@ -10,6 +10,7 @@ import {
   type RollSample,
 } from "./RunHistory";
 import { recordItemAnalysisRun, resetItemAnalysis } from "./ItemAnalytics";
+import { recordPlayerStatsRun, resetPlayerStats } from "./PlayerStats";
 
 // Bumped to v2 for the ranks/trials/gold restructure. Runs recorded under the
 // v1 keys measured a different game (ten flat rounds, score-as-currency, Hard
@@ -303,6 +304,7 @@ export function recordRunEnd(
   const best = loadHall()[0];
   const personalBest = !best || compareHallEntries(entry, best) < 0;
   recordItemAnalysisRun(state, won);
+  recordPlayerStatsRun(state, won);
   saveHallEntry(entry);
   recordGameCompleted();
   return { personalBest };
@@ -331,6 +333,7 @@ export function evaluateAndUnlock(state: RunState): ShopItemId[] {
 export function resetAllProgress(): void {
   clearActiveRun();
   resetItemAnalysis();
+  resetPlayerStats();
   try {
     localStorage.removeItem(KEY_PROGRESS);
     localStorage.removeItem(KEY_SCORES);

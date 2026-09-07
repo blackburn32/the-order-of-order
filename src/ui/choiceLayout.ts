@@ -34,6 +34,12 @@ export const MIN_FAN_GAIN = 1.25;
 /** How close two arrangements' card sizes have to be before the shape of the
  *  screen, rather than a hair of size, decides between them. */
 export const CHOICE_SCALE_TIE = 0.99;
+/** How much less of its tightest axis one tied arrangement has to fill before
+ *  it is called the roomier of the two. Under this the two are as good as each
+ *  other and the plainer shape — the single row, the single column — wins, so
+ *  that a hand which already sits comfortably in one line is never broken into
+ *  a ragged grid for a percent of air. */
+export const CHOICE_FILL_MARGIN = 0.05;
 /** Tilt of the outermost card in a fan, and the drop of the lower corners. */
 export const FAN_MAX_TILT_DEG = 6;
 export const FAN_ARC_MAX = 4;
@@ -65,11 +71,19 @@ export interface ChoiceLayout {
  *
  *  Cards stop growing at MAX_CHOICE_SCALE, so on a roomy screen several
  *  arrangements draw exactly the same card, and what should decide between
- *  them is the shape of the screen: the cards spread along the longer side of
- *  the space they are given — a row across a landscape viewport, a stack down
- *  a portrait one — rather than the tie falling to whichever column count was
- *  measured first, which is one, and which put a column of cards down the
- *  middle of every widescreen display. */
+ *  them is the shape of the screen. What that means is how much room the block
+ *  of cards leaves around itself: of two arrangements drawing the same card,
+ *  the better one is whichever presses less hard against the edge it comes
+ *  closest to. That reads as a row across a landscape viewport and a grid down
+ *  a portrait one, and unlike counting rows or columns it knows the difference
+ *  between a tall viewport and a narrow one — a portrait tablet is easily wide
+ *  enough for two or three cards abreast, and the old rule stacked them in a
+ *  single column down the middle anyway, running the stack to the full height
+ *  of the screen.
+ *
+ *  Only a clear win in room counts (CHOICE_FILL_MARGIN); otherwise the tie
+ *  falls to the simpler shape, so a hand that fits in one line stays in one
+ *  line instead of folding into a grid with a hole in its last row. */
 export function planChoiceLayout(
   n: number,
   availW: number,
@@ -79,14 +93,28 @@ export function planChoiceLayout(
   let grid: ChoiceLayout | undefined;
   let fan: ChoiceLayout | undefined;
   // Fewest rows where the space is wider than it is tall, fewest columns
-  // where it is taller than it is wide.
+  // where it is taller than it is wide. Only ever the last word, once room
+  // has failed to separate the two.
   const wide = availW >= availH;
+  /** How much of its tightest axis an arrangement's block of cards takes up.
+   *  1 is flush with the edge of the space, and lower is roomier. */
+  const fill = (a: ChoiceLayout): number => {
+    const blockW = a.fanned
+      ? CARD_W * a.scale * (1 + (a.cols - 1) * a.step) + FAN_BULGE
+      : a.cols * CARD_W * a.scale + (a.cols - 1) * gap;
+    const blockH = a.rows * CARD_H * a.scale + (a.rows - 1) * gap;
+    return Math.max(blockW / availW, blockH / availH);
+  };
   const better = (a: ChoiceLayout, b: ChoiceLayout | undefined): boolean => {
     if (!b) return true;
     const tied =
       a.scale >= b.scale * CHOICE_SCALE_TIE &&
       b.scale >= a.scale * CHOICE_SCALE_TIE;
     if (!tied) return a.scale > b.scale;
+    const roomA = fill(a);
+    const roomB = fill(b);
+    if (roomA + CHOICE_FILL_MARGIN < roomB) return true;
+    if (roomB + CHOICE_FILL_MARGIN < roomA) return false;
     return wide ? a.rows < b.rows : a.cols < b.cols;
   };
   for (let cols = 1; cols <= n; cols++) {

@@ -27,6 +27,7 @@ import {
   itemsInTheme,
 } from "./Items";
 import { addItemValue, ITEM_VALUE_KIND } from "./ItemValue";
+import { spendGold } from "./Gold";
 
 export type { Rarity, ShopItemId } from "./Items";
 
@@ -131,7 +132,15 @@ function listPriceFor(
     Math.max(PRICE_VARIANCE_MIN, marketFactor),
   );
   const copies = state.purchases[def.id] ?? 0;
-  const stack = Math.pow(STACK_FACTOR[def.stackPricing ?? "none"], copies);
+  // Repeated multiplication rather than Math.pow. IEEE multiplication is exactly
+  // specified and so agrees on every engine; Math.pow is only
+  // implementation-approximated, and the two already part company by an ulp from
+  // the fifth explosive copy on. `discountedPrice` then takes a ceiling of this,
+  // so an ulp is a whole gold — a card one device can afford and another cannot.
+  // `copies` is a single-digit number, so the loop costs nothing.
+  const factor = STACK_FACTOR[def.stackPricing ?? "none"];
+  let stack = 1;
+  for (let copy = 0; copy < copies; copy++) stack *= factor;
 
   return PRICE_BANDS[def.priceBand] * stack * market;
 }
@@ -711,7 +720,7 @@ export function applyOffer(
   }
   if (sealedBeforePurchase && def.id !== "sealed_doors")
     addItemValue(state, "sealed_doors", applications - 1);
-  state.gold -= offer.cost;
+  spendGold(state, offer.cost);
   // A card that grew the grid may have pushed it past a cap affliction; the
   // ceiling holds between rolls as well as during them.
   enforceGridCap(state);

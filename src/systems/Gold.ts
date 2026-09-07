@@ -228,3 +228,14 @@ export function grantGold(state: RunState, amount: number): void {
   state.goldEarned += amount;
   if (state.gold > state.peakGold) state.peakGold = state.gold;
 }
+
+/** Take gold off the run, keeping the lifetime spend tally in step. The mirror
+ *  of `grantGold`, and the one way gold ever leaves the purse deliberately —
+ *  shop cards, booster packs, rerolls and the Tollkeeper's levy all come
+ *  through here, so the lifetime stats cannot miss a new way to spend.
+ *  Confiscation by a gold ceiling is not a spend; see `applyGoldCeiling`. */
+export function spendGold(state: RunState, amount: number): void {
+  if (amount <= 0) return;
+  state.gold -= amount;
+  state.goldSpent += amount;
+}

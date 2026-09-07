@@ -3,7 +3,8 @@ dist/
 sim-out/
 .DS_Store
 *.local
-.env
 the-order-of-order.zip
 AGENTS.md
 art-out/
+.wrangler/
+worker/node_modules/

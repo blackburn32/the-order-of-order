@@ -34,9 +34,8 @@ import {
   fetchTopScores,
   getInitials,
   globalScoresEnabled,
-  submitScore,
+  submitRun,
 } from "../systems/GlobalScores";
-import { runToWireOrdinal } from "../systems/LeaderboardWire";
 
 const PRESET_COUNTS = [10, 100, 1000, 1500, 3000, 10000, 100000];
 
@@ -280,10 +279,14 @@ function parseScoreInput(raw: string): bigint | null {
   return null;
 }
 
-/** Submit a large score to the live LootLocker board under the current initials,
- *  then read the top back and report where our exact value landed — a manual
- *  end-to-end check that the int64 ordinal projection round-trips. Reports each
- *  stage through `report` so the async progress is visible in the panel. */
+/** Submit a large score to the live board under the current initials, then read
+ *  the top back and report where our exact value landed — a manual end-to-end
+ *  check that a score far past Number.MAX_SAFE_INTEGER survives the round trip
+ *  as an exact decimal. Reports each stage through `report` so the async
+ *  progress is visible in the panel.
+ *
+ *  No analysis is attached: this posts a synthetic score, not a played run, and
+ *  the board records it as a row with `hasAnalysis` false. */
 async function submitLeaderboardTest(
   raw: string,
   report: (msg: string) => void,
@@ -294,16 +297,26 @@ async function submitLeaderboardTest(
     return;
   }
   if (!globalScoresEnabled()) {
-    report("Leaderboard disabled (LootLocker keys not configured).");
+    report("Leaderboard disabled (VITE_LEADERBOARD_API not configured).");
     return;
   }
-  const devRun = { rank: WIN_RANK, trial: TRIALS_PER_RANK, endless: false };
-  const wire = runToWireOrdinal(devRun.rank, score);
-  report(`Submitting ${score.toString()} (wire ${wire.toString()})…`);
+  report(`Submitting ${score.toString()}…`);
 
-  const ok = await submitScore(score, getInitials() || "DEV", {}, {}, devRun);
+  const ok = await submitRun(
+    {
+      score,
+      rank: WIN_RANK,
+      trial: TRIALS_PER_RANK,
+      endless: false,
+      rolls: 0,
+      dicePoints: {},
+      itemPoints: {},
+      history: [],
+    },
+    getInitials() || "DEV",
+  );
   if (!ok) {
-    report(`Submit FAILED for ${score.toString()} (wire ${wire.toString()}).`);
+    report(`Submit FAILED for ${score.toString()}.`);
     return;
   }
 
@@ -315,13 +328,14 @@ async function submitLeaderboardTest(
   const mine = rows.find((r) => r.isYou && r.score === score);
   if (mine) {
     report(
-      `OK: rank #${mine.rank}, exact score ${mine.score.toString()} round-tripped (wire ${wire.toString()}).`,
+      `OK: board #${mine.rank}, exact score ${mine.score.toString()} round-tripped.`,
     );
   } else {
     const top = rows[0];
     report(
-      `Submitted (wire ${wire.toString()}). Exact row not in top ${rows.length}` +
-        (top ? `; current #1 is ${top.score.toString()}.` : "."),
+      `Submitted, but the exact row is not in the top ${rows.length}` +
+        (top ? `; current #1 is ${top.score.toString()}.` : ".") +
+        " A submission only replaces your row when it beats it.",
     );
   }
 }
