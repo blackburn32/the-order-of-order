@@ -709,8 +709,8 @@ h2 {
 .tenet-grid::before {
   position: absolute;
   top: 34px;
-  right: 12%;
-  left: 12%;
+  right: 0;
+  left: 0;
   height: 1px;
   background: linear-gradient(90deg, var(--teal), var(--gold), var(--violet));
   content: "";
@@ -721,14 +721,6 @@ h2 {
   min-height: 290px;
   padding: 74px 28px 30px;
   border-left: 1px solid var(--rule);
-}
-
-.tenet:nth-child(2) {
-  margin-top: 36px;
-}
-
-.tenet:nth-child(3) {
-  margin-top: 72px;
 }
 
 .tenet-number {
@@ -1070,11 +1062,8 @@ footer a {
     background: linear-gradient(var(--teal), var(--gold), var(--violet));
   }
 
-  .tenet,
-  .tenet:nth-child(2),
-  .tenet:nth-child(3) {
+  .tenet {
     min-height: 0;
-    margin: 0;
     padding: 24px 18px 30px 76px;
     border: 0;
   }

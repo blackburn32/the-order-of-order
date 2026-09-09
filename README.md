@@ -71,6 +71,38 @@ clean typecheck. The contents of `dist/` are fully self-contained (no server, no
 assets) and can be deployed to any static host — GitHub Pages, itch.io, Netlify, an S3 bucket,
 etc. Use `npm run preview` to serve that production build locally and confirm it before deploying.
 
+### Hosting the website on Cloudflare
+
+The production web deployment combines the static marketing site and the game
+into one Cloudflare Worker with static assets:
+
+| URL | Content |
+| --- | --- |
+| `https://the-order-of-order.com/` | Marketing site |
+| `https://the-order-of-order.com/game/` | Browser game |
+
+Build the combined artifact with `npm run build:web`. It writes `site-dist/`,
+including a game build whose Vite base is `/game/`; the other game targets keep
+their existing portable relative base. Preview the complete site locally with
+`npm run preview:web`.
+
+For a first deployment, add the domain to Cloudflare and point the registrar's
+nameservers to Cloudflare. Then authenticate and deploy from the repository root:
+
+```bash
+npm run cloudflare:login
+npm run deploy:web
+```
+
+`wrangler.jsonc` creates the `the-order-of-order-web` Worker and attaches
+`the-order-of-order.com` as its custom domain. Later deploys use the same
+`npm run deploy:web` command.
+
+For automatic deploys, import this repository in **Workers & Pages**, keep the
+root directory at `/`, use `npm run build:web` as the build command, and leave
+the deploy command at its default (`npx wrangler deploy`). The Worker name must
+remain `the-order-of-order-web`, matching `wrangler.jsonc`.
+
 #### Build flags
 
 Build-time switches live in `src/buildFlags.ts` and are set from `VITE_*` env vars, so their

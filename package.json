@@ -9,6 +9,7 @@
     "dev:itch": "vite --mode itch",
     "dev:phone": "vite --mode phone",
     "build": "tsc --noEmit && vite build",
+    "build:web": "node scripts/build-web.mjs",
     "build:itch": "tsc --noEmit && vite build --mode itch",
     "build:phone": "tsc --noEmit && vite build --mode phone",
     "package:itch": "npm run build:itch && node scripts/package-itch.mjs",
@@ -17,6 +18,9 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "preview": "vite preview",
+    "preview:web": "node scripts/build-web.mjs && node node_modules/wrangler/bin/wrangler.js dev",
+    "deploy:web": "node scripts/build-web.mjs && node node_modules/wrangler/bin/wrangler.js deploy",
+    "cloudflare:login": "node node_modules/wrangler/bin/wrangler.js login",
     "capture:marketing": "node scripts/capture-marketing.mjs",
     "capture:marketing:motion": "node scripts/capture-marketing-motion.mjs",
     "sim": "tsx src/sim/runBatch.ts",
@@ -56,6 +60,7 @@
     "tsx": "^4.19.2",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.65.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "wrangler": "^4.130.0"
   }
 }

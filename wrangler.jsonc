@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "the-order-of-order-web",
+  "compatibility_date": "2026-09-09",
+  "workers_dev": true,
+  "preview_urls": true,
+  "assets": {
+    "directory": "./site-dist",
+    "html_handling": "auto-trailing-slash",
+  },
+  "routes": [
+    {
+      "pattern": "the-order-of-order.com",
+      "custom_domain": true,
+    },
+  ],
+}
