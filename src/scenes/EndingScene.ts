@@ -27,6 +27,7 @@ import {
   slideSceneOut,
 } from "../ui/sceneSlide";
 import { bannerButton } from "../ui/widgets";
+import { streamFor } from "../systems/Rng";
 
 /** Fixed sigil brightness for the backdrop. Set at the top of the range rather
  *  than the intro's dim margin light: these are the screens where the Order's
@@ -195,7 +196,10 @@ export class EndingScene extends Phaser.Scene {
           choices:
             this.def.gift === "betrayal"
               ? ["betrayal"]
-              : rollKingsDemands(state),
+              : rollKingsDemands(
+                  state,
+                  streamFor(state.seed, "demands", state.trial),
+                ),
         };
       case "Shop":
         return createFreshShopCheckpoint(state);

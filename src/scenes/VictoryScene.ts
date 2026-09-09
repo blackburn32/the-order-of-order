@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { CSS, SERIF } from "../art/palette";
-import { WIN_RANK } from "../config";
+import { rankOf, WIN_RANK } from "../config";
 import { getRun } from "../state/RunState";
 import { toNumberPointMap } from "../systems/ItemPoints";
 import { beginRun } from "../systems/Tutorial";
@@ -17,6 +17,7 @@ import { takePendingSubmission } from "../systems/GlobalScores";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { finalizeRun } from "../systems/RunEnd";
 import { AmbientLayer } from "../ui/AmbientLayer";
+import { streamFor } from "../systems/Rng";
 import {
   createFreshShopCheckpoint,
   saveActiveRun,
@@ -241,7 +242,13 @@ export class VictoryScene extends Phaser.Scene {
    *  drawbacks they imposed on the way through. */
   private continueRun(): void {
     const state = getRun(this.registry);
-    continueEndless(state);
+    // Endless opens on a fresh Boss Trial assignment, and it is drawn from the
+    // seed like every other one — keyed by the rank being entered, which is one
+    // past the trial the run is still sitting on.
+    continueEndless(
+      state,
+      streamFor(state.seed, "boss", rankOf(state.trial + 1)),
+    );
     // The winning Boss Trial still earned its shop and boon. Endless begins
     // only after the player has had the same post-trial shopping opportunity
     // as every other clear.

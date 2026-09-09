@@ -17,6 +17,8 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "preview": "vite preview",
+    "capture:marketing": "node scripts/capture-marketing.mjs",
+    "capture:marketing:motion": "node scripts/capture-marketing-motion.mjs",
     "sim": "tsx src/sim/runBatch.ts",
     "balance": "tsx src/sim/runBatch.ts",
     "items:check": "tsx src/sim/itemCheck.ts",
@@ -32,6 +34,7 @@
     "history:check": "tsx src/sim/runHistoryCheck.ts",
     "stats:check": "tsx src/sim/playerStatsCheck.ts",
     "math:check": "tsx src/sim/exactMathCheck.ts",
+    "rng:check": "tsx src/sim/rngCheck.ts",
     "benchmark": "tsx src/sim/benchmark.ts",
     "expert:check": "tsx src/sim/expertCheck.ts",
     "expert:tune": "tsx src/sim/expertTune.ts"

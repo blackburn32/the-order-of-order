@@ -74,6 +74,7 @@ import {
 import { GridArea } from "../ui/gridLayout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
+import { streamFor } from "../systems/Rng";
 import {
   clampZoom,
   computeVisibleDiceCards,
@@ -2202,8 +2203,22 @@ export class GameScene extends Phaser.Scene {
     // only as many rolls left as it still needs points, those rolls come up 1
     // on every die (see tutorialForcesRoll).
     const forced = tutorialForcesRoll(this.registry, this.state);
+    // Written down as it happens. Whether a roll is rigged depends on how far
+    // the player has got through the tutorial's callouts, which no replay can
+    // work out from the run's state, so the run has to carry the answer. Keyed
+    // like the stream itself, and deduplicated because a reload before the roll
+    // resolves brings us back here with `roll` unchanged.
+    const rollKey = `${this.state.trial}:${this.state.roll}`;
+    if (forced && !this.state.forcedRolls.includes(rollKey))
+      this.state.forcedRolls.push(rollKey);
+    // This roll's dice, named by where it sits in the run rather than by how
+    // many numbers have been drawn before it: `roll` counts rolls COMPLETED, so
+    // it is the index of the one about to be made, and resolveRoll advances it.
+    // A reload mid-tumble therefore re-makes this same roll rather than dealing
+    // a different one (see systems/Rng).
+    const diceRng = streamFor(this.state.seed, "roll", rollKey);
     const rollDice = () =>
-      rollPool(this.state, this.state.dice, forced ? () => 0 : Math.random);
+      rollPool(this.state, this.state.dice, forced ? () => 0 : diceRng);
     rollDice();
     // ...and its opening roll is not allowed to be a hot one either: clearing
     // the Lesser Trial immediately would skip the steps that come after the
@@ -2452,7 +2467,14 @@ export class GameScene extends Phaser.Scene {
       defected,
       culled,
       denied,
-    } = resolveRoll(s);
+    } = resolveRoll(
+      s,
+      // A separate stream from the dice above, not a continuation of it: taking
+      // both from one generator would work, but it would have to be handed
+      // across the tumble animation, and a stream that can be rebuilt from saved
+      // state alone is one less thing a reload can lose.
+      streamFor(s.seed, "roll", `${s.trial}:${s.roll}:resolve`),
+    );
     // Resolve and unlock evaluation form one committed gameplay transaction.
     // Save it before presenting any effects so a reload during the presentation
     // returns after this roll rather than charging/scoring it again.
@@ -2950,7 +2972,7 @@ export class GameScene extends Phaser.Scene {
     // The engine decides win/lose/advance, pays out the gold and runs the
     // trial-start passives on advance; the scene handles audio, banners, and
     // scene transitions around it.
-    const outcome = resolveTrialEnd(s);
+    const outcome = resolveTrialEnd(s, streamFor(s.seed, "trialEnd", s.trial));
     if (outcome.phase === "victory") {
       this.checkUnlocks();
       saveActiveRun(this.registry, {

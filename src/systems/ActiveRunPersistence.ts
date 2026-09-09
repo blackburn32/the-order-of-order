@@ -4,6 +4,7 @@ import { Preferences } from "@capacitor/preferences";
 import type Phaser from "phaser";
 import type { RarityWeights } from "../config";
 import { newRun, setRun, type RunState } from "../state/RunState";
+import { isSeed, legacySeed, streamFor } from "./Rng";
 import type { TrialEndOutcome } from "../sim/engine";
 import { AFFLICTIONS, type AfflictionId } from "./Afflictions";
 import { BOSS_MODIFIERS } from "./Boss";
@@ -82,6 +83,11 @@ export interface ShopCheckpointState {
   boonSpent: boolean;
   purchasesMade: number;
   rerollsThisVisit: number;
+  /** Packs opened so far this visit. Unlike the counters above it earns no
+   *  gameplay rule of its own — it exists to name the stream each pack's cards
+   *  are drawn from, so re-opening a shop deals the same pack twice rather than
+   *  a fresh one (see systems/Rng). */
+  packsOpenedThisVisit: number;
   couponFreebieClaimedThisVisit: boolean;
   pickerOffer?: ShopOffer;
   pickedIndices: number[];
@@ -360,6 +366,28 @@ export function hydrateRunState(value: unknown): RunState | null {
   // `rollsTaken` is what spaces the samples, so it may never outlive them: a
   // save with no readable timeline restarts the count along with the series.
   if (hydrated.rollHistory.length === 0) hydrated.rollsTaken = 0;
+  // The seed decides every roll the rest of this run will make, so a save that
+  // carries a bad one is not repairable by falling back to a fresh seed: the
+  // dice would change under a player mid-run. An unreadable seed fails the whole
+  // hydration, exactly as a malformed grid does. A save from before seeds
+  // existed carries none at all, which is not a failure — it gets a seed derived
+  // from when the run began, so reloading it twice cannot produce two runs.
+  if (value.seed === undefined) {
+    hydrated.seed = legacySeed(hydrated.startedAt);
+  } else if (!isSeed(value.seed)) {
+    return null;
+  } else {
+    hydrated.seed = value.seed;
+  }
+  // The generic pass above copied `forcedRolls` in as whatever the save held, so
+  // check the shape here: these keys go straight into stream lookups, and a
+  // non-string among them would quietly rig the wrong roll.
+  if (
+    !hydrated.forcedRolls.every(
+      (key) => typeof key === "string" && /^\d+:\d+$/.test(key),
+    )
+  )
+    return null;
   hydrated.trialRollGold = {
     titheBowl: value.trialRollGold.titheBowl,
     luckyCoin: value.trialRollGold.luckyCoin,
@@ -610,6 +638,10 @@ function hydrateCheckpoint(value: unknown): ResumableCheckpoint | null {
     typeof value.boonSpent !== "boolean" ||
     !isNonNegativeInteger(value.purchasesMade) ||
     !isNonNegativeInteger(value.rerollsThisVisit) ||
+    // Absent in a save from before packs named their own stream; such a visit
+    // simply resumes as though no pack had been opened yet.
+    (value.packsOpenedThisVisit !== undefined &&
+      !isNonNegativeInteger(value.packsOpenedThisVisit)) ||
     typeof value.couponFreebieClaimedThisVisit !== "boolean" ||
     (value.pickerOffer !== undefined && !validOffer(value.pickerOffer)) ||
     !Array.isArray(value.pickedIndices) ||
@@ -635,6 +667,7 @@ function cloneShopCheckpoint(
     boonSpent: checkpoint.boonSpent,
     purchasesMade: checkpoint.purchasesMade,
     rerollsThisVisit: checkpoint.rerollsThisVisit,
+    packsOpenedThisVisit: checkpoint.packsOpenedThisVisit ?? 0,
     couponFreebieClaimedThisVisit: checkpoint.couponFreebieClaimedThisVisit,
     pickerOffer: checkpoint.pickerOffer
       ? cloneOffer(checkpoint.pickerOffer)
@@ -874,17 +907,25 @@ export function createFreshShopCheckpoint(
   const boonSpent = state.boonNextShop;
   const checkpoint: { scene: "Shop" } & ShopCheckpointState = {
     scene: "Shop",
+    // Keyed by the trial the shop opens after, and by a reroll count of zero:
+    // this is the visit's first shelf, and rerollShopOffers takes it from there.
     offers: rollShopOffers(
       state,
       state.ownedLedger ? 5 : 3,
-      Math.random,
+      streamFor(state.seed, "shop", `${state.trial}:0`),
       visitWeights,
     ),
-    packs: rollBoosterOffers(state, 2, boonSpent),
+    packs: rollBoosterOffers(
+      state,
+      2,
+      boonSpent,
+      streamFor(state.seed, "packs", state.trial),
+    ),
     visitWeights,
     boonSpent,
     purchasesMade: 0,
     rerollsThisVisit: 0,
+    packsOpenedThisVisit: 0,
     couponFreebieClaimedThisVisit: false,
     pickedIndices: [],
   };

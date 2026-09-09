@@ -47,6 +47,7 @@ import { addItemValue, recordRunItemPurchase } from "../systems/ItemValue";
 import { spendGold } from "../systems/Gold";
 import { buildRichCopy, isMarked } from "../ui/richCopy";
 import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
+import { streamFor } from "../systems/Rng";
 import {
   createFreshShopCheckpoint,
   saveActiveRun,
@@ -146,12 +147,27 @@ interface CarouselLayout {
   arcStep: number;
 }
 
+interface ShopBackdrop {
+  felt: Phaser.GameObjects.Image;
+  ambient: AmbientLayer;
+  titleGlow: Phaser.GameObjects.Image;
+}
+
 export class ShopScene extends Phaser.Scene {
   private state!: RunState;
   private offers: ShopOffer[] = [];
   private cardGroup!: Phaser.GameObjects.Container;
   private pickGroup?: Phaser.GameObjects.Container;
   private packGroup?: Phaser.GameObjects.Container;
+  // The pack screen after its choice has been taken: no longer live (nothing in
+  // it is interactive, `packGroup` has already let go of it), just the shade and
+  // the cards left behind, animating off the shop that was rebuilt underneath
+  // it. Held here because the rebuild deals a fresh carousel camera, which has
+  // to be told to ignore it like everything else outside the card track.
+  private packOutro?: Phaser.GameObjects.Container;
+  // The pack screen's heading, held so the send-off can take it down with the
+  // cards rather than leaving it to cross-fade against the shop's own title.
+  private packTitle?: Phaser.GameObjects.Text;
   private packs: BoosterOffer[] = [];
   private packChoices?: ShopOffer[];
   private openingPack?: BoosterOffer;
@@ -176,7 +192,10 @@ export class ShopScene extends Phaser.Scene {
   private carouselBuyButton?: Phaser.GameObjects.Container;
   private carouselBuyLabel?: Phaser.GameObjects.Text;
   private carouselBuyPlate?: Phaser.GameObjects.Rectangle;
-  private purchaseAnimating = false;
+  // Set while the offer row is mid-animation — a card being carried off by a
+  // purchase, or the whole shelf being swept away for a reroll. Card input is
+  // refused for the duration: the row it would act on is already leaving.
+  private shelfAnimating = false;
   private pendingCarouselPan = 0;
   private dragDistance = 0;
   private carouselInput?: {
@@ -195,15 +214,32 @@ export class ShopScene extends Phaser.Scene {
   private tutorialCallout?: CalloutHandle;
   private purchasesMade = 0;
   private rerollsThisVisit = 0;
+  private packsOpenedThisVisit = 0;
   private couponFreebieClaimedThisVisit = false;
-  // The cards are dealt onto the table once, when the shop opens. Resizes and
-  // the die-picker sub-screen rebuild the same offers, and re-dealing them
-  // there would read as a new shop rather than the one already being read.
+  // Whether the shop has been laid out once already this visit. Gates the
+  // whole layout's entrance — the panel arrives when the visit opens and stays
+  // put through every rebuild after it. What the cards themselves do on a
+  // given rebuild is `dealPending`.
   private dealt = false;
+  // Set for the one build whose offer cards deal in — the visit's first, and
+  // the rebuild that follows a reroll's sweep — along with the lead-in that
+  // deal waits out first. The opening build lets the panel arrive before the
+  // cards land on it; a reroll's sweep has already cleared the table, so its
+  // deal follows straight on. Both are cleared by `build`.
+  private dealPending = false;
+  private dealLeadIn = 0;
   // Whether this visit is the one bought by a Boss Trial clear (drives the
   // header note; the odds themselves were already applied by rollShopOffers).
   private boonSpent = false;
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+  // The felt, the ambient sigil and the glow behind the title. Every rebuild
+  // inside a visit — a purchase, a reroll, the die picker closing — hands the
+  // same three objects back rather than dealing new ones: the layer picks its
+  // sigil at random and spins it on a loop, so rebuilding it swaps the glyph
+  // and restarts the spin, which reads as a new room rather than a new row of
+  // cards. Only a resize (and the scene itself restarting) drops it, since
+  // these are sized to the viewport.
+  private backdrop?: ShopBackdrop;
   private initialCheckpoint?: { scene: "Shop" } & ShopCheckpointState;
 
   constructor() {
@@ -228,11 +264,14 @@ export class ShopScene extends Phaser.Scene {
     this.initialCheckpoint = undefined;
     this.purchasesMade = checkpoint.purchasesMade;
     this.rerollsThisVisit = checkpoint.rerollsThisVisit;
+    this.packsOpenedThisVisit = checkpoint.packsOpenedThisVisit ?? 0;
     this.couponFreebieClaimedThisVisit =
       checkpoint.couponFreebieClaimedThisVisit;
     this.dealt = false;
+    this.dealPending = true;
+    this.dealLeadIn = 140;
     this.pendingCarouselPan = 0;
-    this.purchaseAnimating = false;
+    this.shelfAnimating = false;
     this.visitWeights = { ...checkpoint.visitWeights };
     this.boonSpent = checkpoint.boonSpent;
     this.offers = checkpoint.offers.map((offer) => ({ ...offer }));
@@ -257,9 +296,13 @@ export class ShopScene extends Phaser.Scene {
     this.pickedIndices = [...checkpoint.pickedIndices];
     this.packFan = undefined;
     // The scene instance is reused across restarts, but Phaser destroys all
-    // non-main cameras on shutdown — these fields would otherwise dangle.
+    // non-main cameras and every game object on shutdown — these fields would
+    // otherwise dangle.
     this.carouselCamera = undefined;
     this.calloutCamera = undefined;
+    this.packOutro = undefined;
+    this.packTitle = undefined;
+    this.backdrop = undefined;
 
     this.saveCheckpoint();
     this.build();
@@ -279,8 +322,12 @@ export class ShopScene extends Phaser.Scene {
 
     const off = onResizeCoalesced(this, () => {
       this.pickGroup = undefined; // drop the shrink-picker sub-screen; back to the offer cards
+      // The pack screen's send-off goes with the rest of the display list below,
+      // so the fresh camera must not be handed the husk to ignore.
+      this.packOutro = undefined;
       this.teardownCarouselInput();
       destroyAllChildren(this);
+      this.backdrop = undefined; // sized to the old viewport
       this.build();
       if (this.packChoices && this.openingPack) this.showBoosterChoices(false);
       if (this.pickerOffer) {
@@ -311,6 +358,7 @@ export class ShopScene extends Phaser.Scene {
       boonSpent: this.boonSpent,
       purchasesMade: this.purchasesMade,
       rerollsThisVisit: this.rerollsThisVisit,
+      packsOpenedThisVisit: this.packsOpenedThisVisit,
       couponFreebieClaimedThisVisit: this.couponFreebieClaimedThisVisit,
       pickerOffer: this.pickerOffer,
       pickedIndices: this.pickedIndices,
@@ -320,12 +368,35 @@ export class ShopScene extends Phaser.Scene {
   private build(): void {
     const W = this.scale.width;
     const H = this.scale.height;
-    const felt = addFelt(this);
-    const ambient = new AmbientLayer(this, { ring: true });
+    const { felt, ambient, titleGlow } = (this.backdrop ??= this.buildBackdrop(
+      W,
+      H,
+    ));
     ambient.setPosition(W / 2, H / 2);
     ambient.setArea(W, H);
     ambient.setProgress(0.62, false);
 
+    this.buildCards();
+    const footerLinks = buildRunFooterLinks(this, "Shop");
+    this.slideBackdrop = [felt, ambient, titleGlow, ...footerLinks];
+    this.dealt = true;
+    this.dealPending = false;
+    this.dealLeadIn = 0;
+    // The carousel camera must ignore literally everything except `track`
+    // (built inside buildCards -> buildCarousel) — otherwise it renders the
+    // *entire* scene, unclipped-by-content, into its own small viewport rect.
+    this.carouselCamera?.ignore(this.slideBackdrop);
+    this.carouselCamera?.ignore(this.cardGroup);
+    if (this.packOutro) this.carouselCamera?.ignore(this.packOutro);
+    this.renderShopTutorial();
+  }
+
+  /** The art the visit stands on, built once and handed back to every rebuild
+   *  that follows within the visit — see `backdrop`. Sized to the viewport, so
+   *  a resize is the one rebuild that does deal a new one. */
+  private buildBackdrop(W: number, H: number): ShopBackdrop {
+    const felt = addFelt(this);
+    const ambient = new AmbientLayer(this, { ring: true });
     const titleGlow = this.add
       .image(
         W / 2,
@@ -348,16 +419,7 @@ export class ShopScene extends Phaser.Scene {
         ease: "Sine.easeInOut",
       });
     }
-    this.buildCards();
-    const footerLinks = buildRunFooterLinks(this, "Shop");
-    this.slideBackdrop = [felt, ambient, titleGlow, ...footerLinks];
-    this.dealt = true;
-    // The carousel camera must ignore literally everything except `track`
-    // (built inside buildCards -> buildCarousel) — otherwise it renders the
-    // *entire* scene, unclipped-by-content, into its own small viewport rect.
-    this.carouselCamera?.ignore(this.slideBackdrop);
-    this.carouselCamera?.ignore(this.cardGroup);
-    this.renderShopTutorial();
+    return { felt, ambient, titleGlow };
   }
 
   /** First-game tutorial: a callout over the loose cards and the boosters,
@@ -1556,7 +1618,7 @@ export class ShopScene extends Phaser.Scene {
       !button ||
       !button.visible ||
       this.selectedCarouselIndex === undefined ||
-      this.purchaseAnimating
+      this.shelfAnimating
     ) {
       return false;
     }
@@ -1584,7 +1646,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private selectCarouselCard(index: number): void {
-    if (this.purchaseAnimating || !this.carouselCards[index]) return;
+    if (this.shelfAnimating || !this.carouselCards[index]) return;
     if (this.selectedCarouselIndex === index) {
       this.deselectCarouselCard(false);
       return;
@@ -1667,7 +1729,7 @@ export class ShopScene extends Phaser.Scene {
 
   private confirmCarouselPurchase(): void {
     const index = this.selectedCarouselIndex;
-    if (index === undefined || this.purchaseAnimating) return;
+    if (index === undefined || this.shelfAnimating) return;
     const entry = this.carouselCards[index];
     if (!entry || !this.canBuy(entry.offer)) {
       audio.deny();
@@ -1683,7 +1745,7 @@ export class ShopScene extends Phaser.Scene {
    * and outward, exposing the focused card's full text and silhouette. */
   private focusCarouselCard(index: number, force = false): void {
     if (
-      this.purchaseAnimating ||
+      this.shelfAnimating ||
       (this.carouselDragging && !force) ||
       !this.carouselLayout ||
       this.focusedCarouselIndex === index
@@ -1725,8 +1787,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private clearCarouselFocus(): void {
-    if (this.purchaseAnimating || this.focusedCarouselIndex === undefined)
-      return;
+    if (this.shelfAnimating || this.focusedCarouselIndex === undefined) return;
     this.focusedCarouselIndex = undefined;
     this.carouselCards.forEach((entry) => {
       this.tweens.killTweensOf(entry.card);
@@ -1747,18 +1808,25 @@ export class ShopScene extends Phaser.Scene {
   }
 
   /** Lift and dissolve the purchased card, while the cards left in the fan
-   * slide into the geometry they will occupy after the shop rebuild. */
+   * slide into the geometry they will occupy after the shop rebuild.
+   *
+   * `burstLayer` re-parents the gold burst into a container instead of leaving
+   * it loose on the display list, for a card taken from a pack: the burst is
+   * emitted at depth 60, which is under the pack screen's shade, and the outro
+   * that follows outlives the sparks — so they ride along inside the overlay
+   * that is being animated off rather than being drawn behind it. */
   private animateCardPurchase(
     offer: ShopOffer,
     card: Phaser.GameObjects.Container,
     onComplete: () => void,
+    burstLayer?: Phaser.GameObjects.Container,
   ): void {
-    if (!fx.motion || this.purchaseAnimating) {
+    if (!fx.motion || this.shelfAnimating) {
       onComplete();
       return;
     }
 
-    this.purchaseAnimating = true;
+    this.shelfAnimating = true;
     this.teardownCarouselInput();
     this.offerCards.forEach((candidate) => candidate.disableInteractive());
     this.tweens.killTweensOf(card);
@@ -1784,7 +1852,8 @@ export class ShopScene extends Phaser.Scene {
       speed: 230,
       lifespan: 720,
     });
-    if (burst && cam) cam.ignore(burst);
+    if (burst && burstLayer) burstLayer.add(burst);
+    else if (burst && cam) cam.ignore(burst);
 
     const layout = this.carouselLayout;
     const purchasedInFan = this.carouselCards.some(
@@ -1850,7 +1919,7 @@ export class ShopScene extends Phaser.Scene {
       duration: 420,
       ease: "Back.easeIn",
       onComplete: () => {
-        this.purchaseAnimating = false;
+        this.shelfAnimating = false;
         onComplete();
       },
     });
@@ -2176,25 +2245,93 @@ export class ShopScene extends Phaser.Scene {
 
   /** Deal the offers onto the table rather than having them appear on it:
    *  each card drops in from below with a slight tilt, staggered along the
-   *  row. Runs only on the shop's first build — see `dealt`. */
+   *  row. Runs on the builds that put a new shelf up — the visit's first and
+   *  the one after a reroll — and not on the rebuilds that put the same offers
+   *  back (a resize, the die picker, the card left standing after a
+   *  purchase). See `dealPending`. */
   private dealIn(card: Phaser.GameObjects.Container, index: number): void {
-    if (!fx.on || this.dealt) return;
+    if (!fx.on || !this.dealPending) return;
     const restY = card.y;
     const restRotation = card.rotation;
     // Unaffordable cards rest dimmed, so tween to whatever alpha the card was
     // given rather than assuming 1.
     const restAlpha = card.alpha;
-    card.setAlpha(0).setY(restY + 46);
+    // The fan poses cards by container scale, but always at 1 at rest, so the
+    // landing pop can be tweened back to a flat 1 in either layout.
+    card
+      .setAlpha(0)
+      .setY(restY + 46)
+      .setScale(0.92);
     if (fx.motion) card.setRotation(Phaser.Math.FloatBetween(-0.08, 0.08));
     this.tweens.add({
       targets: card,
       y: restY,
       alpha: restAlpha,
       rotation: restRotation,
+      scaleX: 1,
+      scaleY: 1,
       duration: 320,
-      delay: index * 70,
+      delay: this.dealLeadIn + index * 70,
       ease: "Cubic.easeOut",
     });
+  }
+
+  /** Clear the shelf ahead of the reroll that replaces it: the standing offers
+   *  are gathered up off the table, scooped from the end of the row back to
+   *  its start, so the new hand is dealt onto bare felt instead of blinking in
+   *  over the old one. The rebuild waits on the last card actually landing —
+   *  a timer sized to the nominal run cuts the slowest cards off half-faded,
+   *  since a tween's delay only starts ticking on the frame after it is added.
+   *  A backstop timer covers the case a tween never reports at all: a resize
+   *  mid-sweep destroys the very cards being tweened, and the rebuild those
+   *  cards are waiting for still has to happen. */
+  private sweepShelf(
+    cards: Phaser.GameObjects.Container[],
+    onComplete: () => void,
+  ): void {
+    if (!fx.on || cards.length === 0) {
+      onComplete();
+      return;
+    }
+    this.shelfAnimating = true;
+    this.teardownCarouselInput();
+    this.offerCards.forEach((candidate) => candidate.disableInteractive());
+    const stagger = 34;
+    const duration = 190;
+    let landed = 0;
+    let swept = false;
+    const finish = () => {
+      if (swept) return;
+      swept = true;
+      this.shelfAnimating = false;
+      onComplete();
+    };
+    cards.forEach((card, index) => {
+      this.tweens.killTweensOf(card);
+      this.tweens.add({
+        targets: card,
+        y: card.y + 20,
+        scaleX: card.scaleX * 0.88,
+        scaleY: card.scaleY * 0.88,
+        rotation: fx.motion
+          ? card.rotation + Phaser.Math.FloatBetween(-0.07, 0.07)
+          : card.rotation,
+        alpha: 0,
+        duration,
+        // Scooped from the far end of the row back towards the dealer, against
+        // the direction the deal that follows runs in.
+        delay: (cards.length - 1 - index) * stagger,
+        ease: "Cubic.easeIn",
+        onComplete: () => {
+          landed += 1;
+          if (landed === cards.length) finish();
+        },
+      });
+    });
+    this.time.delayedCall(
+      duration + (cards.length - 1) * stagger + 250,
+      finish,
+    );
   }
 
   /** Slow gold pulse around a rare card, so rarity is legible before the
@@ -2230,6 +2367,9 @@ export class ShopScene extends Phaser.Scene {
 
   private openPack(pack: BoosterOffer, origin: PackOrigin): void {
     if (pack.sold || this.openingPack || this.counterClosed()) return;
+    // A pack opened over a shelf that is mid-sweep would be torn down by the
+    // rebuild the sweep is on its way to running.
+    if (this.shelfAnimating) return;
     const price = boosterPrice(this.state, pack);
     if (this.state.gold < price) {
       audio.deny();
@@ -2243,7 +2383,13 @@ export class ShopScene extends Phaser.Scene {
       this.state,
       pack,
       this.state.ownedLedger ? 5 : 3,
-      Math.random,
+      // Keyed by which pack of the visit this is, and by the pack itself, so two
+      // different packs opened in the same visit cannot deal the same cards.
+      streamFor(
+        this.state.seed,
+        "booster",
+        `${this.state.trial}:${this.packsOpenedThisVisit}:${pack.id}`,
+      ),
       this.visitWeights,
     );
     if (choices.length === 0) {
@@ -2252,6 +2398,9 @@ export class ShopScene extends Phaser.Scene {
     }
     spendGold(this.state, price);
     pack.sold = true;
+    // Counted only once the pack is actually bought: a pack that turned up empty
+    // returned above without drawing, and must not shift the next pack's stream.
+    this.packsOpenedThisVisit += 1;
     this.openingPack = pack;
     this.openingPackCost = price;
     this.packChoices = choices;
@@ -2344,6 +2493,7 @@ export class ShopScene extends Phaser.Scene {
       )
       .setOrigin(0.5);
     objects.push(title);
+    this.packTitle = title;
 
     const n = this.packChoices.length;
     const gap = 14;
@@ -2616,6 +2766,14 @@ export class ShopScene extends Phaser.Scene {
       if (offer.id === "coupon_book") {
         applyCouponFreebie(this.state, this.offers);
       }
+      // Taken before the pack's state is dropped: the send-off animates the very
+      // cards the choice was made from, and the overlay they stand in.
+      const overlay = this.packGroup;
+      const chosenCard = this.offerCards.get(offer);
+      const leftBehind = this.packChoices
+        .filter((candidate) => candidate !== offer)
+        .map((candidate) => this.offerCards.get(candidate))
+        .filter((card): card is Phaser.GameObjects.Container => !!card);
       this.packChoices = undefined;
       this.openingPack = undefined;
       this.openingPackCost = undefined;
@@ -2623,11 +2781,107 @@ export class ShopScene extends Phaser.Scene {
       this.pickedIndices = [];
       this.packGroup = undefined;
       this.packFan = undefined;
+      const title = this.packTitle;
+      this.packTitle = undefined;
       this.saveCheckpoint();
-      this.rebuildShop();
+      this.closePackScreen(offer, overlay, chosenCard, leftBehind, title);
       return;
     }
     this.completePurchase(offer);
+  }
+
+  /** Carry the chosen card off on the same lift-and-dissolve a loose card takes,
+   *  and send the pack screen after it: the cards that weren't taken drop away,
+   *  the shop is rebuilt behind the shade, and the shade lifts off it.
+   *
+   *  Rebuilding under cover is the point of the ordering — the new gold, the
+   *  sold pack and the item just claimed are all in place before any of them is
+   *  visible, so the shop is revealed rather than seen to change. The carousel
+   *  camera comes back up with the shade going down for the same reason: it
+   *  paints over the main camera's pass, shade included, so it cannot simply be
+   *  switched on (this is `showBoosterChoices`' opening fade run backwards).
+   *
+   *  A pick that detoured through the die picker comes back to the pack screen
+   *  for its send-off, exactly as a loose card returns to the shelf for its —
+   *  see `completePurchase`. */
+  private closePackScreen(
+    offer: ShopOffer,
+    overlay: Phaser.GameObjects.Container | undefined,
+    chosen: Phaser.GameObjects.Container | undefined,
+    leftBehind: Phaser.GameObjects.Container[],
+    title: Phaser.GameObjects.Text | undefined,
+  ): void {
+    if (this.pickGroup) {
+      this.pickGroup.destroy();
+      this.pickGroup = undefined;
+      overlay?.setVisible(true);
+    }
+    if (!fx.motion || !overlay || !chosen || this.shelfAnimating) {
+      this.rebuildShop();
+      return;
+    }
+
+    // The hand empties from the outside in while the taken card is still in the
+    // air, rather than waiting behind the shade until it lifts.
+    leftBehind.forEach((card, index) => {
+      this.tweens.killTweensOf(card);
+      this.tweens.add({
+        targets: card,
+        y: card.y + 46,
+        scaleX: card.scaleX * 0.9,
+        scaleY: card.scaleY * 0.9,
+        alpha: 0,
+        duration: 260,
+        delay: 90 + index * 45,
+        ease: "Cubic.easeIn",
+      });
+    });
+    // The heading goes with them: left to fade out under the shade, it would
+    // cross the shop's own title on the way and read as two screens at once.
+    if (title) {
+      this.tweens.add({
+        targets: title,
+        alpha: 0,
+        y: title.y - 18,
+        duration: 240,
+        delay: 90,
+        ease: "Cubic.easeIn",
+      });
+    }
+
+    this.animateCardPurchase(
+      offer,
+      chosen,
+      () => {
+        this.packOutro = overlay;
+        this.rebuildShop([overlay]);
+        const cam = this.carouselCamera;
+        if (cam) {
+          cam.visible = true;
+          cam.alpha = 0;
+          this.tweens.add({
+            targets: cam,
+            alpha: 1,
+            duration: 320,
+            ease: "Sine.easeInOut",
+          });
+        }
+        // Fading the container fades the shade and whatever is left standing in
+        // it in one pass; the shade stays interactive to the last frame, which
+        // keeps a mis-tap off a shop that is still arriving.
+        this.tweens.add({
+          targets: overlay,
+          alpha: 0,
+          duration: 320,
+          ease: "Sine.easeInOut",
+          onComplete: () => {
+            overlay.destroy();
+            this.packOutro = undefined;
+          },
+        });
+      },
+      overlay,
+    );
   }
 
   /** Which dice a given offer may target. */
@@ -2968,12 +3222,19 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private rerollStore(): void {
+    if (this.shelfAnimating) return;
     const freeByBell = rerollIsFree(this.state, this.rerollsThisVisit);
     const price = freeByBell ? 0 : rerollCost(this.rerollsThisVisit);
     if (this.state.gold < price) {
       audio.deny();
       return;
     }
+    // The cards standing right now, taken before `offers` is replaced: they
+    // are swept off the table, and the shelf that replaces them is dealt onto
+    // it once they are gone.
+    const leaving = this.offers
+      .map((offer) => this.offerCards.get(offer))
+      .filter((card): card is Phaser.GameObjects.Container => !!card);
     spendGold(this.state, price);
     if (freeByBell)
       addItemValue(
@@ -2987,7 +3248,14 @@ export class ShopScene extends Phaser.Scene {
     this.offers = rerollShopOffers(
       this.state,
       this.state.ownedLedger ? 5 : 3,
-      Math.random,
+      // Keyed by the reroll this is, so the shelf a player paid for is the shelf
+      // they get back after a reload — and so paying for a third reroll can
+      // never quietly re-deal the second.
+      streamFor(
+        this.state.seed,
+        "shop",
+        `${this.state.trial}:${this.rerollsThisVisit}`,
+      ),
       this.visitWeights,
       !this.couponFreebieClaimedThisVisit,
     );
@@ -2995,18 +3263,33 @@ export class ShopScene extends Phaser.Scene {
     this.pickerOffer = undefined;
     this.pickedIndices = [];
     this.saveCheckpoint();
-    this.rebuildShop();
+    this.dealPending = true;
+    this.dealLeadIn = 0;
+    this.sweepShelf(leaving, () => this.rebuildShop());
   }
 
-  private rebuildShop(): void {
+  /** Redraw the shop around whatever just changed — a purchase, a reroll, the
+   *  die picker closing. The backdrop is left standing: only the shop on top
+   *  of it is being rebuilt. `keep` spares anything else that has to outlive the
+   *  rebuild, which is the pack screen's outro animating off the new shop. */
+  private rebuildShop(
+    keep: readonly Phaser.GameObjects.GameObject[] = [],
+  ): void {
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
     this.removeCalloutCamera();
     this.pickGroup = undefined;
     this.packGroup = undefined;
+    this.packTitle = undefined;
     this.track = undefined;
     this.teardownCarouselInput();
-    destroyAllChildren(this);
+    const backdrop = this.backdrop;
+    destroyAllChildren(this, [
+      ...(backdrop
+        ? [backdrop.felt, backdrop.ambient, backdrop.titleGlow]
+        : []),
+      ...keep,
+    ]);
     this.build();
   }
 

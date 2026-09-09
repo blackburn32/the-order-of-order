@@ -2,6 +2,7 @@ import type Phaser from "phaser";
 import { newRun, setRun, type RunState } from "../state/RunState";
 import { loadProgress, loadSettings, saveSettings } from "./SaveData";
 import { beginRun as initializeRun } from "../sim/engine";
+import { randomSeed, streamFor } from "./Rng";
 import { goalFor } from "./Boss";
 import { trialRollTarget } from "./Trial";
 import { PHONE_BUILD } from "../buildFlags";
@@ -265,10 +266,16 @@ export function tutorialBlocksScore(
 export function beginRun(scene: Phaser.Scene): void {
   // Freeze shop eligibility at run start. Unlocks earned during this run are
   // still saved and announced, but only the next run's snapshot can offer them.
-  const state = newRun(loadProgress().unlocked);
-  initializeRun(state);
+  const state = newRun(loadProgress().unlocked, randomSeed());
+  // The run's first random decision, and so the first to be drawn from the seed
+  // rather than from Math.random: rank 1's boss assignment.
+  initializeRun(state, streamFor(state.seed, "boss", 1));
   setRun(scene.registry, state);
   beginTutorial(scene.registry);
+  // Recorded on the run, not just in the registry: the registry copy is what
+  // the tutorial spends as the player works through it, while this is the fact
+  // that the run was played under one at all, and it has to outlive the run.
+  state.tutorialArmed = getTutorial(scene.registry).active;
   saveActiveRun(scene.registry, { scene: "TrialOverview" });
   scene.scene.start("TrialOverview");
 }

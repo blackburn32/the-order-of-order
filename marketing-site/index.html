@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Build one d6 into an impossible scoring engine across ten ranks in The Order of Order, a free browser-based dice deckbuilder roguelike."
+    />
+    <meta name="theme-color" content="#0d0a12" />
+    <meta property="og:title" content="The Order of Order" />
+    <meta
+      property="og:description"
+      content="A sacred discipline. An unreasonable number of dice. Play the free open beta in your browser."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://the-order-of-order.com/" />
+    <meta property="og:site_name" content="The Order of Order" />
+    <meta
+      property="og:image"
+      content="https://the-order-of-order.com/assets/og.jpg"
+    />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="A settled die addressing a vast and diverse order within a sacred geometric diagram"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="The Order of Order" />
+    <meta
+      name="twitter:description"
+      content="A sacred discipline. An unreasonable number of dice. Play the free open beta in your browser."
+    />
+    <meta
+      name="twitter:image"
+      content="https://the-order-of-order.com/assets/og.jpg"
+    />
+    <meta
+      name="twitter:image:alt"
+      content="A settled die addressing a vast and diverse order within a sacred geometric diagram"
+    />
+    <link rel="canonical" href="https://the-order-of-order.com/" />
+    <title>The Order of Order — A Free Dice Deckbuilder Roguelike</title>
+    <link rel="stylesheet" href="styles.css" />
+    <!-- Synchronous and tiny: it only marks whether scripting and motion are
+         available, and it has to do that before the first paint so nothing
+         appears and then hides itself again. -->
+    <script src="js/boot.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <a class="mini-mark" href="#top" aria-label="The Order of Order home">
+        <span class="mini-die" aria-hidden="true">1</span>
+        <span>The Order of Order</span>
+      </a>
+      <a
+        class="button button-small"
+        href="https://blackout32.itch.io/the-order-of-order?utm_source=the-order-of-order.com&amp;utm_medium=website&amp;utm_campaign=open_beta&amp;utm_content=header"
+        >Play Free in Browser</a
+      >
+      <div class="scroll-progress" aria-hidden="true"><i></i></div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <img
+          class="hero-art"
+          src="assets/hero-congregation.jpg"
+          width="1600"
+          height="901"
+          alt="A small settled die at the center of a sacred diagram, watched by a vast congregation"
+          fetchpriority="high"
+          data-parallax="0.1"
+        />
+        <div class="hero-shade" aria-hidden="true"></div>
+        <div
+          class="sigil-field hero-sigil"
+          data-sigil="0"
+          data-sigil-ring
+          data-parallax="0.06"
+          aria-hidden="true"
+        ></div>
+        <div class="mote-host" data-motes="30" aria-hidden="true"></div>
+        <div class="hero-light" aria-hidden="true"></div>
+        <div class="hero-copy">
+          <p class="eyebrow">A dice-building roguelike</p>
+          <h1>
+            <span class="title-small">The</span>
+            <span class="title-line">Order <i>of</i></span>
+            <span class="title-line title-gold">Order</span>
+          </h1>
+          <p class="hero-tagline">
+            A sacred discipline. An unreasonable number of dice.
+          </p>
+          <p class="hero-summary">
+            Start with one d6. Buy rule-changing cards, build impossible scoring
+            combinations, and climb ten ranks of increasingly unreasonable
+            Trials.
+          </p>
+          <div class="hero-actions">
+            <a
+              class="button"
+              href="https://blackout32.itch.io/the-order-of-order?utm_source=the-order-of-order.com&amp;utm_medium=website&amp;utm_campaign=open_beta&amp;utm_content=hero"
+              >Play Free in Browser</a
+            >
+            <a class="text-link" href="#gameplay"
+              >See how it plays <span aria-hidden="true">↓</span></a
+            >
+          </div>
+          <p class="hero-note">
+            Free open beta · Mouse or touchscreen · No account required
+          </p>
+        </div>
+      </section>
+
+      <section class="gameplay-section" id="gameplay">
+        <div class="gameplay-copy" data-reveal>
+          <p class="section-kicker">Make chance obey</p>
+          <h2>One humble d6 becomes a screen-filling engine.</h2>
+          <p>
+            Start with one die, and only 1s score. Between Trials, buy cards
+            that add dice, unlock new scoring faces, reshape the grid, and
+            compound the whole roll. By the final ranks, one click can send an
+            entire congregation into motion.
+          </p>
+          <dl class="run-facts" data-reveal-group>
+            <div data-reveal>
+              <dt data-countup>10</dt>
+              <dd>ranks to victory</dd>
+            </div>
+            <div data-reveal>
+              <dt data-countup>3</dt>
+              <dd>Trials per rank</dd>
+            </div>
+            <div data-reveal>
+              <dt data-countup>15–20</dt>
+              <dd>minutes for a full run</dd>
+            </div>
+          </dl>
+        </div>
+        <figure class="game-window" data-reveal>
+          <div class="window-rule" aria-hidden="true">
+            <i></i><i></i><i></i>
+          </div>
+          <video
+            class="motion-media"
+            poster="assets/gameplay-late-grid.png"
+            width="1600"
+            height="900"
+            autoplay
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            aria-label="Four rolls in a row, the grid growing after each one as Genesis creates new dice"
+          >
+            <source src="assets/gameplay-grid-growth.webm" type="video/webm" />
+          </video>
+          <img
+            class="motion-fallback"
+            src="assets/gameplay-late-grid.png"
+            width="1600"
+            height="900"
+            alt="Late-run gameplay showing a large grid of differently shaped dice"
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption>
+            The "Genesis" doctrine creates new dice every roll!
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="proclamation" id="rite">
+        <div data-reveal>
+          <p class="section-kicker">The founding miracle</p>
+          <h2>The dice of the realm never stop turning.</h2>
+          <p class="lede">
+            Then one came to rest. It held one face, one thought, one mind, for
+            nearly three miraculous seconds. That day, The Order of Order was
+            founded to spread the miracle.
+          </p>
+        </div>
+        <div
+          class="settling-study"
+          data-reveal
+          aria-label="An unsettled die cycles through faces before settling on one"
+        >
+          <div
+            class="sigil-field study-sigil"
+            data-sigil="1"
+            aria-hidden="true"
+          ></div>
+          <div class="mote-host" data-motes="9" aria-hidden="true"></div>
+          <div class="study-label">Where once there was uncertainty,</div>
+          <div class="unsettled-die" aria-hidden="true">
+            <span>2</span><span>5</span><span>3</span><span>6</span>
+            <span>1</span><span>4</span><span>6</span><span>2</span>
+          </div>
+          <div class="study-arrow" aria-hidden="true">→</div>
+          <div class="settled-die" aria-hidden="true">1</div>
+          <div class="study-note">now only order remains.</div>
+        </div>
+      </section>
+
+      <section class="doctrine">
+        <div
+          class="sigil-field doctrine-sigil"
+          data-sigil="2"
+          data-sigil-ring
+          data-parallax="0.05"
+          aria-hidden="true"
+        ></div>
+        <div class="section-heading" data-reveal>
+          <p class="section-kicker">Questionable doctrine</p>
+          <h2>Every card rewrites what a roll can mean.</h2>
+          <p>
+            Make new faces score. Shrink dice toward certainty. Duplicate whole
+            die sizes. Build feedback loops that turn one fortunate result into
+            a congregation.
+          </p>
+        </div>
+        <figure class="doctrine-reel" data-reveal>
+          <video
+            class="motion-media"
+            poster="assets/shop-loop-wide.png"
+            width="1600"
+            height="900"
+            autoplay
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            aria-label="One visit to the in-game shop: two cards bought, the shelf rerolled, a booster pack opened and a card claimed from it, another card bought, and the shelf rerolled again"
+          >
+            <source src="assets/shop-loop.webm" type="video/webm" />
+          </video>
+          <img
+            class="motion-fallback"
+            src="assets/shop-loop-wide.png"
+            width="1600"
+            height="900"
+            alt="The in-game shop offering three loose cards and two sealed booster packs"
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption>
+            Select doctrine. Exchange coin. Reroll the shelf and break a seal.
+          </figcaption>
+        </figure>
+        <div class="offering-spread" data-reveal-group>
+          <figure class="offering-card" data-reveal data-tilt>
+            <img
+              src="assets/card-two-newcomers.png"
+              width="650"
+              height="850"
+              alt="The in-game Two Newcomers card: Add two d6 to your grid."
+              loading="lazy"
+              decoding="async"
+            />
+          </figure>
+          <figure class="offering-card" data-reveal data-tilt>
+            <img
+              src="assets/card-like-minds.png"
+              width="650"
+              height="850"
+              alt="The in-game Like Minds card: Choose a die size; every die of that size is duplicated."
+              loading="lazy"
+              decoding="async"
+            />
+          </figure>
+          <figure class="offering-card" data-reveal data-tilt>
+            <img
+              src="assets/card-resonance.png"
+              width="650"
+              height="850"
+              alt="The in-game Resonance card: Double every point you earn."
+              loading="lazy"
+              decoding="async"
+            />
+          </figure>
+        </div>
+      </section>
+
+      <section class="tenets" aria-labelledby="tenets-title">
+        <div class="section-heading" data-reveal>
+          <p class="section-kicker">The approved curriculum</p>
+          <h2 id="tenets-title">Roll. Settle. Improve the institution.</h2>
+        </div>
+        <figure class="tenet-reel" data-reveal>
+          <video
+            class="motion-media"
+            poster="assets/gameplay-late-grid.png"
+            width="1600"
+            height="900"
+            autoplay
+            muted
+            loop
+            playsinline
+            preload="metadata"
+            aria-label="Three rolls of a late-game congregation of dice: each one tumbles, settles and scores, with a pause between them"
+          >
+            <source src="assets/gameplay-late-grid.webm" type="video/webm" />
+          </video>
+          <img
+            class="motion-fallback"
+            src="assets/gameplay-late-grid.png"
+            width="1600"
+            height="900"
+            alt="A late-game congregation of dice ready to roll"
+            loading="lazy"
+            decoding="async"
+          />
+          <figcaption>
+            One click. One hundred and sixty-eight opinions.
+          </figcaption>
+        </figure>
+        <div class="tenet-grid" data-reveal-group>
+          <article class="tenet" data-reveal>
+            <p class="tenet-number">I</p>
+            <h3>Teach them to settle</h3>
+            <p>
+              Roll sacred scoring numbers to meet each Trial’s goal. At first,
+              only ones understand the assignment.
+            </p>
+          </article>
+          <article class="tenet" data-reveal>
+            <p class="tenet-number">II</p>
+            <h3>Build the Order</h3>
+            <p>
+              Add dice, rewrite scoring rules, and assemble combinations that
+              turn a quiet roll into an avalanche.
+            </p>
+          </article>
+          <article class="tenet" data-reveal>
+            <p class="tenet-number">III</p>
+            <h3>Endure examination</h3>
+            <p>
+              Clear Lesser, Greater, and Boss Trials. The curriculum is not
+              designed around your comfort.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="characters">
+        <div class="section-heading compact" data-reveal>
+          <p class="section-kicker">Distinguished members</p>
+          <h2>The Order is accepting students.</h2>
+          <p>Literacy is helpful. Remaining still is mandatory.</p>
+        </div>
+        <div class="character-roster" data-reveal-group>
+          <figure data-reveal data-tilt>
+            <img
+              src="assets/character-novice.jpg"
+              width="480"
+              height="640"
+              alt="A nervous d6 novice carrying a satchel"
+              decoding="async"
+            />
+            <figcaption>
+              <b>The novice</b
+              ><span>Has prepared for every outcome except one.</span>
+            </figcaption>
+          </figure>
+          <figure data-reveal data-tilt>
+            <img
+              src="assets/character-scholar.jpg"
+              width="480"
+              height="640"
+              alt="A triangular d4 scholar studying a small book"
+              decoding="async"
+            />
+            <figcaption>
+              <b>The scholar</b
+              ><span>Currently proving that three is sufficient.</span>
+            </figcaption>
+          </figure>
+          <figure data-reveal data-tilt>
+            <img
+              src="assets/character-messenger.jpg"
+              width="480"
+              height="640"
+              alt="A formal royal die messenger carrying a sealed letter"
+              decoding="async"
+            />
+            <figcaption>
+              <b>The messenger</b
+              ><span>Brings the Crown’s warmest administrative regards.</span>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="bosses">
+        <div
+          class="sigil-field boss-sigil"
+          data-sigil="2"
+          data-sigil-ring
+          data-parallax="0.05"
+          aria-hidden="true"
+        ></div>
+        <div class="boss-intro" data-reveal>
+          <p class="section-kicker">Advanced instruction</p>
+          <h2>Every Boss Trial objects to your methods.</h2>
+          <p>
+            Each rank announces its objection in advance. You may prepare a
+            response. It will not be graded kindly.
+          </p>
+        </div>
+        <div class="boss-list" data-reveal-group>
+          <article data-reveal>
+            <span class="objection-seal" aria-hidden="true">½</span>
+            <div>
+              <h3>The Eclipse</h3>
+              <p>
+                Your multiplier is halved. Enlightenment continues at a reduced
+                rate.
+              </p>
+            </div>
+          </article>
+          <article data-reveal>
+            <span class="objection-seal" aria-hidden="true">0</span>
+            <div>
+              <h3>The Drought</h3>
+              <p>
+                No dice are added this Trial. Please work with the congregation
+                provided.
+              </p>
+            </div>
+          </article>
+          <article data-reveal>
+            <span class="objection-seal small" aria-hidden="true">9⁄10</span>
+            <div>
+              <h3>The Toll</h3>
+              <p>
+                A tenth of your dice score nothing. Their absence has been
+                recorded.
+              </p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="realm">
+        <div class="realm-copy" data-reveal>
+          <p class="section-kicker">Outside interests</p>
+          <h2>The realm is taking notice.</h2>
+          <p>
+            Settled dice hold meetings. Roads run straight. Fields are planted
+            on schedule. Consensus, once discovered, has proved alarmingly
+            practical.
+          </p>
+        </div>
+        <blockquote data-reveal>
+          “The Crown congratulates the Order on its recent growth and looks
+          forward to discussing a modest, permanent contribution.”
+          <cite>Office of His Majesty’s Accounts</cite>
+        </blockquote>
+      </section>
+
+      <section class="final-cta">
+        <div
+          class="sigil-field final-sigil"
+          data-sigil="0"
+          data-sigil-ring
+          aria-hidden="true"
+        ></div>
+        <div class="mote-host" data-motes="20" aria-hidden="true"></div>
+        <div class="seal" data-reveal aria-hidden="true"><span>1</span></div>
+        <p class="section-kicker" data-reveal>Enrollment is open</p>
+        <h2 data-reveal>The dice are still rolling.</h2>
+        <p>Teach them better.</p>
+        <a
+          class="button"
+          href="https://blackout32.itch.io/the-order-of-order?utm_source=the-order-of-order.com&amp;utm_medium=website&amp;utm_campaign=open_beta&amp;utm_content=final_cta"
+          >Play Free in Browser</a
+        >
+        <small>Free open beta · About 15–20 minutes for a full run</small>
+      </section>
+    </main>
+
+    <footer>
+      <p>© 2026 The Order of Order</p>
+      <a href="https://github.com/blackburn32/the-order-of-order"
+        >View the source on GitHub</a
+      >
+    </footer>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>

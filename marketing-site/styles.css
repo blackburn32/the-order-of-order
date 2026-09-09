@@ -1,0 +1,1832 @@
+:root {
+  --felt-deep: #0d0a12;
+  --felt: #161226;
+  --felt-light: #221a38;
+  --parchment: #e9d8a6;
+  --parchment-dark: #cdb27a;
+  --ivory: #f3ead2;
+  --ink: #2a1f14;
+  --ink-soft: #5a4a2e;
+  --gold: #c9a227;
+  --gold-light: #e6c65a;
+  --wax: #8a1f2b;
+  --teal: #4f7f78;
+  --violet: #9a4fc9;
+  --orange: #a4552f;
+  --rule: rgba(201, 162, 39, 0.3);
+  --serif: Georgia, "Palatino Linotype", "Times New Roman", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  background: var(--felt-deep);
+}
+
+body {
+  margin: 0;
+  color: var(--ivory);
+  background:
+    repeating-radial-gradient(
+      circle at 23% 17%,
+      rgba(255, 255, 255, 0.014) 0 1px,
+      transparent 1px 5px
+    ),
+    radial-gradient(
+      circle at 50% 0%,
+      rgba(74, 58, 112, 0.18),
+      transparent 40rem
+    ),
+    var(--felt-deep);
+  font-family: var(--serif);
+  line-height: 1.55;
+}
+
+a {
+  color: inherit;
+}
+
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 100;
+  padding: 10px 14px;
+  color: var(--ink);
+  background: var(--ivory);
+  transform: translateY(-160%);
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+.site-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px clamp(18px, 4vw, 64px);
+  border-bottom: 1px solid rgba(201, 162, 39, 0.14);
+  background: linear-gradient(
+    180deg,
+    rgba(9, 7, 13, 0.93),
+    rgba(9, 7, 13, 0.75)
+  );
+  backdrop-filter: blur(12px);
+}
+
+.mini-mark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--parchment);
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-decoration: none;
+  letter-spacing: 0.05em;
+}
+
+.mini-die {
+  position: relative;
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 2px solid var(--gold);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--ivory);
+  font-size: 1rem;
+  transform: rotate(-2deg);
+}
+
+.button {
+  display: inline-flex;
+  min-height: 50px;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 22px;
+  border: 1px solid var(--gold-light);
+  border-radius: 4px;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--gold-light), var(--gold));
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.3),
+    inset 0 1px rgba(255, 255, 255, 0.42);
+  font-weight: 700;
+  text-decoration: none;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.button:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 12px 34px rgba(0, 0, 0, 0.4),
+    0 0 24px rgba(230, 198, 90, 0.18);
+}
+
+.button:focus-visible,
+.text-link:focus-visible,
+.mini-mark:focus-visible,
+footer a:focus-visible {
+  outline: 3px solid var(--ivory);
+  outline-offset: 4px;
+}
+
+.button-small {
+  min-height: 38px;
+  padding: 7px 15px;
+  font-size: 0.84rem;
+}
+
+.hero {
+  position: relative;
+  display: flex;
+  min-height: min(940px, 100svh);
+  align-items: flex-start;
+  overflow: hidden;
+  border-bottom: 1px solid var(--rule);
+}
+
+.hero-art,
+.hero-shade {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.hero-art {
+  object-fit: cover;
+  object-position: center;
+}
+
+.hero-shade {
+  background:
+    linear-gradient(
+      90deg,
+      rgba(8, 6, 12, 0.92) 0%,
+      rgba(8, 6, 12, 0.66) 31%,
+      rgba(8, 6, 12, 0.1) 68%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(8, 6, 12, 0.53) 0%,
+      transparent 42%,
+      rgba(8, 6, 12, 0.04) 72%,
+      var(--felt-deep) 100%
+    );
+}
+
+.hero-copy {
+  position: relative;
+  z-index: 2;
+  width: min(630px, calc(100% - 36px));
+  margin: clamp(126px, 16vh, 190px) 0 100px clamp(24px, 7vw, 110px);
+  text-align: left;
+}
+
+.eyebrow,
+.section-kicker {
+  margin: 0 0 15px;
+  color: var(--gold-light);
+  font-size: clamp(0.78rem, 1vw, 0.9rem);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  color: var(--ivory);
+  font-size: clamp(4.7rem, 8.5vw, 8rem);
+  line-height: 0.76;
+  letter-spacing: -0.055em;
+  text-shadow: 0 4px 35px rgba(0, 0, 0, 0.92);
+}
+
+h1 span {
+  display: block;
+}
+
+h1 .title-small {
+  margin: 0 0 0.72em 0.16em;
+  color: var(--parchment-dark);
+  font-size: 0.19em;
+  line-height: 1;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+}
+
+h1 .title-line {
+  white-space: nowrap;
+}
+
+h1 .title-line i {
+  display: inline-grid;
+  width: 1.95em;
+  height: 1.95em;
+  place-items: center;
+  vertical-align: 0.38em;
+  margin-left: 0.18em;
+  border: 2px solid var(--gold-light);
+  border-radius: 50%;
+  color: var(--ivory);
+  background: var(--wax);
+  font-size: 0.18em;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+h1 .title-gold {
+  color: var(--gold-light);
+}
+
+.hero-tagline {
+  max-width: 510px;
+  margin: 30px 0 0;
+  color: var(--parchment);
+  font-size: clamp(1.25rem, 2vw, 1.65rem);
+  font-style: italic;
+  line-height: 1.35;
+  text-shadow: 0 2px 16px #000;
+}
+
+.hero-summary {
+  max-width: 560px;
+  margin: 18px 0 0;
+  color: rgba(243, 234, 210, 0.82);
+  font-size: 1.02rem;
+}
+
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 23px;
+  margin-top: 26px;
+}
+
+.text-link {
+  color: var(--parchment);
+  text-underline-offset: 5px;
+}
+
+.hero-note {
+  margin: 18px 0 0;
+  color: rgba(243, 234, 210, 0.65);
+  font-size: 0.8rem;
+  letter-spacing: 0.055em;
+}
+
+h2 {
+  margin: 0;
+  color: var(--ivory);
+  font-size: clamp(2.45rem, 5.3vw, 4.8rem);
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+}
+
+.gameplay-section {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(380px, 0.75fr);
+  gap: clamp(44px, 8vw, 116px);
+  align-items: center;
+  padding: clamp(86px, 11vw, 150px) max(18px, calc((100vw - 1180px) / 2));
+  border-bottom: 1px solid var(--rule);
+  background:
+    radial-gradient(
+      circle at 78% 50%,
+      rgba(138, 31, 43, 0.18),
+      transparent 30rem
+    ),
+    var(--felt-light);
+}
+
+.gameplay-copy h2 {
+  max-width: 710px;
+}
+
+.gameplay-copy > p:last-of-type,
+.section-heading > p:last-child,
+.boss-intro > p:last-child,
+.realm-copy > p:last-child {
+  color: var(--parchment);
+  font-size: 1.1rem;
+}
+
+.run-facts {
+  display: flex;
+  gap: clamp(24px, 4vw, 48px);
+  margin: 40px 0 0;
+}
+
+.run-facts div {
+  display: flex;
+  max-width: 120px;
+  flex-direction: column;
+}
+
+.run-facts dt {
+  color: var(--gold-light);
+  font-size: clamp(1.8rem, 3.2vw, 2.7rem);
+  line-height: 1;
+}
+
+.run-facts dd {
+  margin: 8px 0 0;
+  color: var(--parchment-dark);
+  font-size: 0.78rem;
+  line-height: 1.25;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.game-window {
+  position: relative;
+  width: min(100%, 440px);
+  margin: 0 auto;
+  padding: 8px;
+  border: 1px solid var(--gold);
+  border-radius: 12px;
+  background: var(--felt-deep);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.52);
+  transform: rotate(1.2deg);
+}
+
+.game-window::before,
+.game-window::after {
+  position: absolute;
+  z-index: -1;
+  border: 1px solid rgba(201, 162, 39, 0.18);
+  content: "";
+}
+
+.game-window::before {
+  inset: -18px 23px;
+}
+
+.game-window::after {
+  inset: 20px -18px;
+}
+
+.game-window img,
+.game-window video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 610px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+
+.motion-fallback {
+  display: none !important;
+}
+
+.window-rule {
+  display: flex;
+  gap: 5px;
+  padding: 4px 2px 10px;
+}
+
+.window-rule i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+  opacity: 0.5;
+}
+
+.game-window figcaption {
+  padding: 10px 8px 5px;
+  color: var(--parchment-dark);
+  font-size: 0.8rem;
+  font-style: italic;
+  text-align: center;
+}
+
+.proclamation,
+.tenets,
+.characters,
+.bosses,
+.realm,
+.final-cta {
+  width: min(1180px, calc(100% - 36px));
+  margin-inline: auto;
+}
+
+.proclamation {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: clamp(50px, 9vw, 130px);
+  align-items: center;
+  padding: clamp(105px, 13vw, 180px) 0;
+}
+
+.lede {
+  max-width: 700px;
+  margin: 28px 0 0;
+  color: var(--parchment);
+  font-size: clamp(1.1rem, 2vw, 1.4rem);
+}
+
+.settling-study {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  grid-template-rows: auto 1fr auto;
+  gap: 18px;
+  place-items: center;
+  min-height: 380px;
+  padding: 38px;
+  border: 1px solid var(--rule);
+  background:
+    radial-gradient(circle, rgba(201, 162, 39, 0.11) 0 1px, transparent 2px) 0
+      0 / 22px 22px,
+    linear-gradient(145deg, rgba(34, 26, 56, 0.84), rgba(13, 10, 18, 0.95));
+}
+
+.settling-study::before,
+.settling-study::after {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 250px;
+  height: 250px;
+  border: 1px solid rgba(201, 162, 39, 0.22);
+  border-radius: 50%;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
+.settling-study::after {
+  width: 190px;
+  height: 190px;
+  border-style: dashed;
+}
+
+.study-label,
+.study-note {
+  z-index: 2;
+  grid-column: 1 / -1;
+  color: var(--parchment-dark);
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.unsettled-die,
+.settled-die {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  width: 96px;
+  height: 96px;
+  place-items: center;
+  border: 5px double var(--gold);
+  border-radius: 14px;
+  color: var(--ink);
+  background: var(--ivory);
+  font-size: 2.2rem;
+}
+
+/* Matches how a die actually rattles in the game (see DieSprite.beginTumble):
+   a continuous sine on rotation alone — no hop, since position there is owned
+   by the grid — at roughly 4Hz and a few degrees either side. Two sines of
+   different periods are superposed, the fast one on the `rotate` property and
+   the slow one on `transform`, because a single frequency reads as a metronome
+   where the game reads as a rattle: in game every die draws its own amplitude,
+   rate, and phase, so no two move together. `alternate` halves each duration,
+   so the fast oscillation is a 260ms round trip and the slow one 740ms. */
+.unsettled-die {
+  rotate: -6deg;
+  animation:
+    unrest 130ms cubic-bezier(0.37, 0, 0.63, 1) infinite alternate,
+    unrest-drift 370ms cubic-bezier(0.37, 0, 0.63, 1) infinite alternate;
+}
+
+/* One face per 70ms, the game's tumble tick. Eight faces rather than the four
+   the cycle needs keeps the churn from reading as a short repeating loop. */
+.unsettled-die span {
+  position: absolute;
+  opacity: 0;
+  animation: faces 560ms steps(1, end) infinite;
+}
+
+.unsettled-die span:nth-child(2) {
+  animation-delay: 70ms;
+}
+.unsettled-die span:nth-child(3) {
+  animation-delay: 140ms;
+}
+.unsettled-die span:nth-child(4) {
+  animation-delay: 210ms;
+}
+.unsettled-die span:nth-child(5) {
+  animation-delay: 280ms;
+}
+.unsettled-die span:nth-child(6) {
+  animation-delay: 350ms;
+}
+.unsettled-die span:nth-child(7) {
+  animation-delay: 420ms;
+}
+.unsettled-die span:nth-child(8) {
+  animation-delay: 490ms;
+}
+
+.settled-die {
+  box-shadow: 0 0 35px rgba(230, 198, 90, 0.25);
+}
+
+.study-arrow {
+  z-index: 2;
+  color: var(--gold-light);
+  font-size: 2rem;
+}
+
+@keyframes faces {
+  0%,
+  12.49% {
+    opacity: 1;
+  }
+  12.5%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes unrest {
+  from {
+    rotate: -5.5deg;
+  }
+  to {
+    rotate: 5.5deg;
+  }
+}
+
+@keyframes unrest-drift {
+  from {
+    transform: rotate(-3deg);
+  }
+  to {
+    transform: rotate(3deg);
+  }
+}
+
+.doctrine {
+  padding: clamp(100px, 12vw, 160px) max(18px, calc((100vw - 1180px) / 2));
+  color: var(--ink);
+  background:
+    linear-gradient(rgba(233, 216, 166, 0.95), rgba(233, 216, 166, 0.95)),
+    repeating-linear-gradient(
+      3deg,
+      transparent 0 5px,
+      rgba(42, 31, 20, 0.04) 5px 6px
+    );
+}
+
+.doctrine .section-kicker {
+  color: var(--wax);
+}
+
+.doctrine h2 {
+  max-width: 870px;
+  color: var(--ink);
+}
+
+.doctrine .section-heading > p:last-child {
+  max-width: 760px;
+  color: var(--ink-soft);
+}
+
+.section-heading {
+  max-width: 850px;
+  margin-bottom: 58px;
+}
+
+.section-heading.compact {
+  margin-inline: auto;
+  text-align: center;
+}
+
+.doctrine-reel,
+.tenet-reel {
+  overflow: hidden;
+  max-width: 920px;
+  margin: -10px auto 72px;
+  border: 1px solid rgba(201, 162, 39, 0.72);
+  border-radius: 10px;
+  background: var(--felt-deep);
+  box-shadow: 0 24px 58px rgba(42, 31, 20, 0.28);
+}
+
+.doctrine-reel video,
+.doctrine-reel img,
+.tenet-reel video,
+.tenet-reel img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+.doctrine-reel figcaption,
+.tenet-reel figcaption {
+  padding: 12px 18px 14px;
+  color: var(--parchment-dark);
+  font-size: 0.82rem;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+.doctrine-reel figcaption {
+  color: var(--parchment);
+}
+
+.tenet-reel {
+  max-width: 860px;
+  margin-top: -18px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+}
+
+.offering-spread {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(4px, 1.8vw, 22px);
+  align-items: start;
+  max-width: 1040px;
+  margin-inline: auto;
+}
+
+.offering-card {
+  --card-rot: -1deg;
+  margin: 0;
+  filter: drop-shadow(8px 13px 4px rgba(42, 31, 20, 0.18));
+  transform: rotate(var(--card-rot));
+}
+
+.offering-card:nth-child(2) {
+  --card-rot: 0.7deg;
+  margin-top: 34px;
+}
+
+.offering-card:nth-child(3) {
+  --card-rot: -0.35deg;
+  margin-top: 7px;
+}
+
+.offering-card img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.tenets,
+.characters,
+.bosses {
+  padding: clamp(100px, 12vw, 155px) 0;
+}
+
+.tenet-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+.tenet-grid::before {
+  position: absolute;
+  top: 34px;
+  right: 12%;
+  left: 12%;
+  height: 1px;
+  background: linear-gradient(90deg, var(--teal), var(--gold), var(--violet));
+  content: "";
+}
+
+.tenet {
+  position: relative;
+  min-height: 290px;
+  padding: 74px 28px 30px;
+  border-left: 1px solid var(--rule);
+}
+
+.tenet:nth-child(2) {
+  margin-top: 36px;
+}
+
+.tenet:nth-child(3) {
+  margin-top: 72px;
+}
+
+.tenet-number {
+  position: absolute;
+  top: 14px;
+  left: 28px;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  margin: 0;
+  border: 1px solid var(--gold);
+  border-radius: 50%;
+  color: var(--gold-light);
+  background: var(--felt-deep);
+}
+
+.tenet h3,
+.boss-list h3 {
+  margin: 0;
+  color: var(--ivory);
+  font-size: 1.55rem;
+}
+
+.tenet p:last-child,
+.boss-list p {
+  color: var(--parchment-dark);
+}
+
+.characters {
+  border-top: 1px solid var(--rule);
+}
+
+.character-roster {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: clamp(16px, 3vw, 34px);
+}
+
+.character-roster figure {
+  margin: 0;
+}
+
+.character-roster figure:nth-child(2) {
+  margin-top: 54px;
+}
+
+.character-roster img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 4;
+  border: 1px solid var(--gold);
+  object-fit: cover;
+  box-shadow: 0 17px 45px rgba(0, 0, 0, 0.32);
+}
+
+.character-roster figcaption {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px 3px 0;
+  color: var(--parchment-dark);
+}
+
+.character-roster figcaption b {
+  color: var(--ivory);
+  font-size: 1.15rem;
+}
+
+.bosses {
+  position: relative;
+  display: grid;
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: clamp(54px, 9vw, 120px);
+  align-items: start;
+  border-top: 1px solid var(--rule);
+}
+
+.boss-intro {
+  position: sticky;
+  top: 110px;
+}
+
+.boss-intro h2 {
+  font-size: clamp(2.7rem, 5vw, 4.6rem);
+}
+
+.boss-list {
+  border-top: 1px solid var(--rule);
+}
+
+.boss-list article {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 24px;
+  padding: 32px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+.objection-seal {
+  display: grid;
+  width: 70px;
+  height: 70px;
+  place-items: center;
+  border: 1px solid var(--gold);
+  border-radius: 50%;
+  color: var(--gold-light);
+  font-size: 1.8rem;
+  box-shadow:
+    inset 0 0 0 7px var(--felt-deep),
+    inset 0 0 0 8px rgba(201, 162, 39, 0.35);
+}
+
+.objection-seal.small {
+  font-size: 1.15rem;
+}
+
+.boss-list p {
+  margin-bottom: 0;
+}
+
+.realm {
+  display: grid;
+  grid-template-columns: 1fr 0.85fr;
+  gap: clamp(50px, 9vw, 120px);
+  align-items: center;
+  width: 100%;
+  max-width: none;
+  padding: clamp(90px, 12vw, 150px) max(18px, calc((100vw - 1180px) / 2));
+  color: var(--ink);
+  background: var(--parchment);
+}
+
+.realm h2 {
+  color: var(--ink);
+}
+
+.realm .section-kicker {
+  color: var(--wax);
+}
+
+.realm-copy > p:last-child {
+  color: var(--ink-soft);
+}
+
+.realm blockquote {
+  margin: 0;
+  padding: 38px;
+  border: 2px solid var(--wax);
+  outline: 1px solid rgba(86, 16, 25, 0.35);
+  outline-offset: -9px;
+  background: rgba(243, 234, 210, 0.66);
+  box-shadow: 7px 9px 0 rgba(42, 31, 20, 0.1);
+  font-size: clamp(1.25rem, 2.4vw, 1.8rem);
+  font-style: italic;
+  transform: rotate(0.6deg);
+}
+
+.realm cite {
+  display: block;
+  margin-top: 28px;
+  color: var(--wax);
+  font-size: 0.75rem;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.final-cta {
+  position: relative;
+  padding: clamp(120px, 15vw, 190px) 0;
+  text-align: center;
+}
+
+.final-cta > p:not(.section-kicker) {
+  margin: 17px 0 31px;
+  color: var(--parchment);
+  font-size: 1.3rem;
+}
+
+.final-cta small {
+  display: block;
+  margin-top: 18px;
+  color: rgba(233, 216, 166, 0.68);
+}
+
+.seal {
+  display: grid;
+  width: 104px;
+  height: 104px;
+  place-items: center;
+  margin: 0 auto 36px;
+  border: 2px solid var(--gold);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 10px var(--felt-deep),
+    0 0 0 11px rgba(201, 162, 39, 0.4);
+}
+
+.seal span {
+  display: grid;
+  width: 50px;
+  height: 50px;
+  place-items: center;
+  border: 4px double var(--gold);
+  color: var(--ink);
+  background: var(--ivory);
+  font-size: 1.7rem;
+  transform: rotate(-3deg);
+}
+
+footer {
+  display: flex;
+  justify-content: space-between;
+  padding: 30px max(18px, calc((100vw - 1180px) / 2));
+  border-top: 1px solid var(--rule);
+  color: rgba(233, 216, 166, 0.68);
+  font-size: 0.84rem;
+}
+
+footer a {
+  text-underline-offset: 4px;
+}
+
+@media (max-width: 820px) {
+  .site-header {
+    padding: 12px 16px;
+  }
+
+  .mini-mark > span:last-child {
+    display: none;
+  }
+
+  .hero {
+    min-height: auto;
+    flex-direction: column;
+    padding-top: 62px;
+    background: var(--felt-deep);
+  }
+
+  .hero-copy {
+    order: 1;
+    width: min(650px, calc(100% - 36px));
+    margin: 48px auto 34px;
+    text-align: center;
+  }
+
+  .hero-art {
+    position: relative;
+    order: 2;
+    height: auto;
+    aspect-ratio: 1.18 / 1;
+    object-position: center 66%;
+  }
+
+  .hero-shade {
+    display: none;
+  }
+
+  h1 {
+    font-size: clamp(4.4rem, 18vw, 7rem);
+  }
+
+  h1 .title-small {
+    margin-left: 0;
+  }
+
+  .hero-tagline,
+  .hero-summary {
+    margin-inline: auto;
+  }
+
+  .hero-actions {
+    justify-content: center;
+  }
+
+  .gameplay-section,
+  .proclamation,
+  .bosses,
+  .realm {
+    grid-template-columns: 1fr;
+  }
+
+  .game-window {
+    transform: none;
+  }
+
+  .proclamation {
+    text-align: center;
+  }
+
+  .lede {
+    margin-inline: auto;
+  }
+
+  .settling-study {
+    width: min(500px, 100%);
+    margin-inline: auto;
+  }
+
+  .tenet-grid,
+  .character-roster {
+    grid-template-columns: 1fr;
+  }
+
+  .offering-spread {
+    display: flex;
+    width: calc(100% + 36px);
+    margin-inline: -18px;
+    padding: 10px 18px 28px;
+    gap: 8px;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-color: var(--wax) transparent;
+  }
+
+  .doctrine-reel,
+  .tenet-reel {
+    margin-bottom: 50px;
+  }
+
+  .offering-card,
+  .offering-card:nth-child(2),
+  .offering-card:nth-child(3) {
+    --card-rot: 0deg;
+    flex: 0 0 min(78vw, 330px);
+    margin: 0;
+    scroll-snap-align: center;
+  }
+
+  .tenet-grid::before {
+    top: 18px;
+    bottom: 18px;
+    left: 21px;
+    width: 1px;
+    height: auto;
+    background: linear-gradient(var(--teal), var(--gold), var(--violet));
+  }
+
+  .tenet,
+  .tenet:nth-child(2),
+  .tenet:nth-child(3) {
+    min-height: 0;
+    margin: 0;
+    padding: 24px 18px 30px 76px;
+    border: 0;
+  }
+
+  .tenet-number {
+    top: 18px;
+    left: 0;
+  }
+
+  .character-roster {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .character-roster figure:nth-child(2) {
+    margin-top: 28px;
+  }
+
+  .character-roster figcaption span {
+    display: none;
+  }
+
+  .boss-intro {
+    position: static;
+  }
+}
+
+@media (max-width: 560px) {
+  .button-small {
+    min-height: 36px;
+    padding-inline: 12px;
+    font-size: 0.76rem;
+  }
+
+  .hero-copy {
+    margin-top: 40px;
+  }
+
+  h1 {
+    font-size: clamp(4rem, 21vw, 6.2rem);
+  }
+
+  .hero-actions {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .hero-note {
+    font-size: 0.76rem;
+  }
+
+  .run-facts {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  .run-facts div {
+    max-width: none;
+  }
+
+  .settling-study {
+    min-height: 320px;
+    padding-inline: 20px;
+  }
+
+  .unsettled-die,
+  .settled-die {
+    width: 76px;
+    height: 76px;
+  }
+
+  .character-roster {
+    gap: 8px;
+  }
+
+  .character-roster figcaption {
+    font-size: 0.8rem;
+    text-align: center;
+  }
+
+  .boss-list article {
+    grid-template-columns: 68px 1fr;
+    gap: 17px;
+  }
+
+  .objection-seal {
+    width: 58px;
+    height: 58px;
+  }
+
+  .realm blockquote {
+    padding: 28px;
+  }
+
+  footer {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  .hero {
+    display: flex;
+    min-height: 100svh;
+    padding: 54px 0 20px;
+  }
+
+  .hero-art {
+    position: absolute;
+    height: 100%;
+    aspect-ratio: auto;
+    object-position: center 58%;
+  }
+
+  .hero-shade {
+    display: block;
+    background: linear-gradient(
+      90deg,
+      rgba(8, 6, 12, 0.94),
+      rgba(8, 6, 12, 0.63) 55%,
+      rgba(8, 6, 12, 0.08)
+    );
+  }
+
+  .hero-copy {
+    width: min(510px, calc(100% - 32px));
+    margin: 18px 0 18px 5vw;
+    text-align: left;
+  }
+
+  h1 {
+    font-size: clamp(3.1rem, 12vh, 4.6rem);
+  }
+
+  h1 .title-small {
+    margin-bottom: 0.45em;
+    margin-left: 0.16em;
+  }
+
+  .hero-tagline {
+    margin: 16px 0 0;
+    font-size: 1rem;
+  }
+
+  .hero-summary,
+  .hero-note,
+  .text-link {
+    display: none;
+  }
+
+  .hero-actions {
+    justify-content: flex-start;
+    margin-top: 16px;
+  }
+
+  .hero-actions .button {
+    min-height: 39px;
+    padding-block: 8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-media {
+    display: none !important;
+  }
+
+  .motion-fallback {
+    display: block !important;
+  }
+
+  html {
+    scroll-behavior: auto;
+  }
+
+  .button {
+    transition: none;
+  }
+
+  .unsettled-die {
+    animation: none;
+    rotate: -5deg;
+    transform: none;
+  }
+
+  .unsettled-die span {
+    display: none;
+    animation: none;
+  }
+
+  .unsettled-die span:first-child {
+    display: block;
+    opacity: 1;
+  }
+}
+
+/* ===========================================================================
+   Ornament
+   ---------------------------------------------------------------------------
+   Turning sigils, drifting motes, and the small motions that carry them.
+
+   None of this is load-bearing. `js/boot.js` puts `has-js` and `js-motion` on
+   the root element before the first paint, and every rule below is gated on
+   one of them, so a visitor without scripting — or one who has asked for
+   reduced motion — gets the same finished page with nothing hidden behind an
+   animation that will never run.
+   =========================================================================== */
+
+/* --------------------------------------------------------------- the sigils */
+
+/* The two periods are the game's own (see AmbientLayer): deliberately unequal,
+   so the pair reads as two independent mechanisms rather than one rigid object
+   reflected. */
+@keyframes sigil-turn {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@keyframes sigil-counter-turn {
+  to {
+    rotate: -360deg;
+  }
+}
+
+.sigil-field {
+  --sigil-span: 62vmin;
+  --sigil-alpha: 0.11;
+  --sigil-x: 50%;
+  --sigil-y: 50%;
+  /* Clear felt between the sigil's outermost stroke and the ring's innermost
+     one, solved the way the game solves it: sigil ink reaches 0.969 of its box
+     and ring ink starts at 0.75 of its own, so a gap of 0.09 spans puts the
+     ring at (0.969 + 0.18) / 0.75. */
+  --ring-scale: 1.53;
+  position: absolute;
+  z-index: 0;
+  overflow: hidden;
+  inset: 0;
+  color: var(--gold-light);
+  pointer-events: none;
+  translate: var(--sigil-shift-x, 0px)
+    calc(var(--parallax, 0px) + var(--sigil-shift-y, 0px));
+}
+
+.sigil-field svg {
+  position: absolute;
+  top: var(--sigil-y);
+  left: var(--sigil-x);
+  width: var(--sigil-span);
+  height: var(--sigil-span);
+  margin: calc(var(--sigil-span) / -2) 0 0 calc(var(--sigil-span) / -2);
+  opacity: var(--sigil-alpha);
+}
+
+.sigil-field .sigil-ring {
+  width: calc(var(--sigil-span) * var(--ring-scale));
+  height: calc(var(--sigil-span) * var(--ring-scale));
+  margin: calc(var(--sigil-span) * var(--ring-scale) / -2) 0 0
+    calc(var(--sigil-span) * var(--ring-scale) / -2);
+  opacity: calc(var(--sigil-alpha) * 0.8);
+}
+
+/* No `will-change`: a rotate animation is composited on its own, and hinting
+   it here would keep all nine marks — most of them far off screen — promoted
+   to their own layer for the life of the page. */
+.js-motion .sigil-field .sigil-mark {
+  animation: sigil-turn 120s linear infinite;
+}
+
+.js-motion .sigil-field .sigil-ring {
+  animation: sigil-counter-turn 165s linear infinite;
+}
+
+.hero-sigil {
+  /* Concentric with the diagram already painted into the hero art, so the two
+     read as one mechanism with a live outer half rather than two rings that
+     missed each other. */
+  --sigil-span: min(112vh, 1180px);
+  --sigil-x: 49%;
+  --sigil-y: 63%;
+  --sigil-alpha: 0.13;
+  z-index: 1;
+  mix-blend-mode: screen;
+}
+
+.study-sigil {
+  --sigil-span: 320px;
+  --sigil-alpha: 0.26;
+}
+
+/* The one parchment section that carries a mark. Drawn in the wax red the
+   doctrine already uses for its kicker, not gold: gold on parchment is
+   invisible. */
+.doctrine-sigil {
+  --sigil-span: min(80vh, 720px);
+  --sigil-x: 84%;
+  --sigil-y: 34%;
+  --sigil-alpha: 0.14;
+  color: var(--wax);
+}
+
+.boss-sigil {
+  --sigil-span: min(74vh, 640px);
+  --sigil-x: 82%;
+  --sigil-alpha: 0.07;
+}
+
+.final-sigil {
+  --sigil-span: min(78vh, 700px);
+  --sigil-y: 38%;
+  --sigil-alpha: 0.16;
+}
+
+/* The real mark supersedes the two plain circles the study drew for itself. */
+.has-js .settling-study::before,
+.has-js .settling-study::after {
+  display: none;
+}
+
+/* --------------------------------------------------------------- the motes */
+
+.mote-host {
+  position: absolute;
+  z-index: 0;
+  overflow: hidden;
+  inset: 0;
+  pointer-events: none;
+}
+
+.hero .mote-host {
+  z-index: 1;
+}
+
+.mote-field {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Content that would otherwise fall behind a backdrop layer. Both layers are
+   positioned, so static siblings need a positioned context of their own to
+   paint above them. */
+.final-cta > *:not(.sigil-field):not(.mote-host),
+.doctrine > *:not(.sigil-field),
+.bosses > *:not(.sigil-field) {
+  position: relative;
+  z-index: 1;
+}
+
+.doctrine {
+  position: relative;
+  overflow: hidden;
+}
+
+.boss-intro {
+  z-index: 1;
+}
+
+/* --------------------------------------------------------- the hero's light */
+
+.hero-light {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  opacity: 0;
+  background: radial-gradient(
+    circle 24rem at var(--pointer-x, 50%) var(--pointer-y, 42%),
+    rgba(255, 217, 119, 0.15),
+    transparent 68%
+  );
+  mix-blend-mode: screen;
+  pointer-events: none;
+  transition: opacity 900ms ease;
+}
+
+.hero.has-pointer-light .hero-light {
+  opacity: 1;
+}
+
+.js-motion .hero-art {
+  translate: 0 var(--parallax, 0px);
+  scale: 1.06;
+}
+
+/* ------------------------------------------------------- arrival on scroll */
+
+.js-motion [data-reveal] {
+  opacity: 0;
+  /* `translate` rather than `transform`: several of these elements already
+     carry a resting rotation, and the separate property composes with it. */
+  translate: 0 26px;
+  transition:
+    opacity 780ms cubic-bezier(0.2, 0.7, 0.25, 1) var(--reveal-delay, 0ms),
+    translate 780ms cubic-bezier(0.2, 0.7, 0.25, 1) var(--reveal-delay, 0ms);
+}
+
+.js-motion [data-reveal].is-revealed {
+  opacity: 1;
+  translate: none;
+}
+
+/* The objection swings into its seal rather than fading in with the text. */
+.js-motion .boss-list article .objection-seal {
+  rotate: -75deg;
+  scale: 0.82;
+  transition:
+    rotate 900ms cubic-bezier(0.2, 0.7, 0.25, 1) 120ms,
+    scale 900ms cubic-bezier(0.2, 0.7, 0.25, 1) 120ms,
+    box-shadow 260ms ease;
+}
+
+.js-motion .boss-list article.is-revealed .objection-seal {
+  rotate: none;
+  scale: 1;
+}
+
+.objection-seal {
+  transition: box-shadow 260ms ease;
+}
+
+.boss-list article:hover .objection-seal {
+  box-shadow:
+    inset 0 0 0 7px var(--felt-deep),
+    inset 0 0 0 8px rgba(201, 162, 39, 0.35),
+    0 0 26px rgba(230, 198, 90, 0.35);
+}
+
+/* ------------------------------------------------------- the title's flash */
+
+@keyframes title-sheen {
+  0%,
+  64% {
+    background-position: 135% 0;
+  }
+  100% {
+    background-position: -35% 0;
+  }
+}
+
+.js-motion h1 .title-gold {
+  background: linear-gradient(
+    100deg,
+    var(--gold-light) 0%,
+    var(--gold-light) 40%,
+    #fff4cf 50%,
+    var(--gold-light) 60%,
+    var(--gold-light) 100%
+  );
+  background-clip: text;
+  background-size: 240% 100%;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: title-sheen 7s ease-in-out 1.6s infinite;
+}
+
+/* ------------------------------------------------------------- the buttons */
+
+.button {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.button::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  background: linear-gradient(
+    104deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.5) 50%,
+    transparent 60%
+  );
+  content: "";
+  pointer-events: none;
+  translate: -150% 0;
+}
+
+@keyframes button-sheen {
+  from {
+    translate: -150% 0;
+  }
+  to {
+    translate: 150% 0;
+  }
+}
+
+/* Idles most of the cycle, then crosses: a periodic catch of light on the one
+   button the page actually wants pressed. */
+@keyframes button-sheen-idle {
+  0%,
+  76% {
+    translate: -150% 0;
+  }
+  100% {
+    translate: 150% 0;
+  }
+}
+
+.js-motion .button:hover::after {
+  animation: button-sheen 720ms ease-out;
+}
+
+.js-motion .hero-actions .button::after,
+.js-motion .final-cta .button::after {
+  animation: button-sheen-idle 6.5s ease-in-out 2.4s infinite;
+}
+
+@keyframes hint-drop {
+  0%,
+  62%,
+  100% {
+    translate: 0 0;
+  }
+  78% {
+    translate: 0 5px;
+  }
+}
+
+.js-motion .text-link span {
+  display: inline-block;
+  animation: hint-drop 2.6s ease-in-out infinite;
+}
+
+/* -------------------------------------------------------------- the header */
+
+.site-header {
+  transition:
+    box-shadow 300ms ease,
+    border-color 300ms ease;
+}
+
+.site-header.is-scrolled {
+  border-bottom-color: rgba(201, 162, 39, 0.32);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.45);
+}
+
+.scroll-progress {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  overflow: hidden;
+  height: 2px;
+}
+
+.scroll-progress i {
+  display: block;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--teal),
+    var(--gold-light),
+    var(--violet)
+  );
+  box-shadow: 0 0 12px rgba(230, 198, 90, 0.55);
+  transform: scaleX(var(--progress, 0));
+  transform-origin: left center;
+}
+
+/* The mark rolls when you point at it: `initMiniDie` in js/flourish.js turns
+   it another whole revolution and cycles the face while the turn plays out.
+   The turn is driven from JS rather than a `:hover` rule so each pass carries
+   on forwards instead of unwinding when the pointer leaves. Keep MINI_DIE_ROLL_MS
+   there in step with the duration below. */
+.mini-die {
+  transition: rotate 700ms cubic-bezier(0.2, 0.7, 0.25, 1);
+}
+
+/* ------------------------------------------------- the cards and portraits */
+
+.js-motion .offering-card {
+  transform: perspective(1000px) rotate(var(--card-rot))
+    rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+  transition:
+    transform 260ms ease,
+    scale 260ms ease,
+    filter 260ms ease;
+}
+
+.js-motion .offering-card:hover {
+  scale: 1.04;
+  filter: drop-shadow(8px 16px 10px rgba(42, 31, 20, 0.26))
+    drop-shadow(0 0 22px rgba(201, 162, 39, 0.4));
+}
+
+.js-motion .character-roster figure img {
+  transform: perspective(900px) rotateX(var(--tilt-x, 0deg))
+    rotateY(var(--tilt-y, 0deg));
+  transition:
+    transform 280ms ease,
+    box-shadow 280ms ease,
+    border-color 280ms ease;
+}
+
+.js-motion .character-roster figure:hover img {
+  border-color: var(--gold-light);
+  box-shadow:
+    0 17px 45px rgba(0, 0, 0, 0.32),
+    0 0 30px rgba(230, 198, 90, 0.28);
+}
+
+.game-window {
+  transition:
+    transform 420ms cubic-bezier(0.2, 0.7, 0.25, 1),
+    box-shadow 420ms ease;
+}
+
+.js-motion .game-window:hover {
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.52),
+    0 0 42px rgba(201, 162, 39, 0.22);
+  transform: rotate(0deg);
+}
+
+/* The three window dots wake one after another, like a machine reporting in. */
+@keyframes rule-blink {
+  0%,
+  70%,
+  100% {
+    opacity: 0.5;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+
+.js-motion .window-rule i {
+  animation: rule-blink 3.6s ease-in-out infinite;
+}
+
+.js-motion .window-rule i:nth-child(2) {
+  animation-delay: 0.35s;
+}
+
+.js-motion .window-rule i:nth-child(3) {
+  animation-delay: 0.7s;
+}
+
+/* --------------------------------------------------------- the study, lit */
+
+@keyframes settled-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 32px rgba(230, 198, 90, 0.24);
+  }
+  50% {
+    box-shadow: 0 0 58px rgba(230, 198, 90, 0.52);
+  }
+}
+
+.js-motion .settled-die {
+  animation: settled-glow 3.4s ease-in-out infinite;
+}
+
+/* The curriculum's rule drifts along its own gradient. */
+@keyframes rule-flow {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.js-motion .tenet-grid::before {
+  background: linear-gradient(
+    90deg,
+    var(--teal),
+    var(--gold),
+    var(--violet),
+    var(--teal)
+  );
+  background-size: 200% 100%;
+  animation: rule-flow 14s linear infinite;
+}
+
+.tenet-number {
+  transition: box-shadow 260ms ease;
+}
+
+.tenet:hover .tenet-number {
+  box-shadow: 0 0 22px rgba(230, 198, 90, 0.35);
+}
+
+/* ----------------------------------------------------------- the last seal */
+
+@keyframes seal-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 10px var(--felt-deep),
+      0 0 0 11px rgba(201, 162, 39, 0.4),
+      0 0 30px rgba(230, 198, 90, 0.12);
+  }
+  50% {
+    box-shadow:
+      0 0 0 10px var(--felt-deep),
+      0 0 0 11px rgba(201, 162, 39, 0.75),
+      0 0 60px rgba(230, 198, 90, 0.34);
+  }
+}
+
+.js-motion .seal {
+  animation: seal-glow 5s ease-in-out infinite;
+}
+
+@media (max-width: 820px) {
+  .hero-sigil {
+    --sigil-span: min(130vw, 620px);
+    --sigil-x: 50%;
+    --sigil-y: 30%;
+    --sigil-alpha: 0.1;
+  }
+
+  .boss-sigil {
+    --sigil-x: 60%;
+  }
+
+  .doctrine-sigil {
+    --sigil-x: 72%;
+    --sigil-alpha: 0.1;
+  }
+
+  .study-sigil {
+    --sigil-span: 260px;
+  }
+
+  .js-motion .hero-art {
+    scale: 1;
+  }
+}
+
+/* A last stop for anyone whose preference changes after load: the root class
+   goes with it, but these keep every running animation parked even if a rule
+   above is ever written without its gate. */
+@media (prefers-reduced-motion: reduce) {
+  .sigil-field svg,
+  .window-rule i,
+  .settled-die,
+  .seal,
+  .tenet-grid::before,
+  h1 .title-gold,
+  .button::after,
+  .text-link span {
+    animation: none !important;
+  }
+
+  .mote-field,
+  .hero-light {
+    display: none;
+  }
+
+  [data-reveal] {
+    opacity: 1 !important;
+    translate: none !important;
+  }
+}

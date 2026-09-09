@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>The Order of Order — Capture Studio</title>
+    <link rel="stylesheet" href="/src/capture/capture.css" />
+  </head>
+  <body>
+    <main class="studio-shell">
+      <aside class="studio-controls" aria-label="Capture controls">
+        <div class="studio-heading">
+          <span class="studio-kicker">Development tool</span>
+          <h1>Capture Studio</h1>
+          <p>Real game components, posed for repeatable marketing captures.</p>
+        </div>
+
+        <label>
+          <span>Preset</span>
+          <select id="capture-preset"></select>
+        </label>
+
+        <label>
+          <span>Frame</span>
+          <select id="capture-format">
+            <option value="wide">16:9 — landscape</option>
+            <option value="square">1:1 — square</option>
+            <option value="portrait">4:5 — portrait</option>
+            <option value="card">13:17 — card cutout</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Backdrop</span>
+          <select id="capture-backdrop">
+            <option value="felt">Felt and geometry</option>
+            <option value="parchment">Parchment</option>
+            <option value="transparent">Transparent</option>
+          </select>
+        </label>
+
+        <div class="studio-actions">
+          <button id="capture-restart" type="button">Restart preset</button>
+          <button id="capture-play" type="button">Play animation</button>
+          <button id="capture-download" type="button" class="primary">
+            Download PNG
+          </button>
+          <button id="capture-clean" type="button">Open clean preview</button>
+        </div>
+
+        <div class="studio-readout" aria-live="polite">
+          <span id="capture-status">Preparing renderer…</span>
+          <code id="capture-size"></code>
+        </div>
+
+        <div class="studio-notes">
+          <strong>Shortcuts</strong>
+          <span><kbd>R</kbd> restart · <kbd>P</kbd> download PNG</span>
+          <span
+            >Automated output goes to <code>art-out/game-captures</code>.</span
+          >
+        </div>
+      </aside>
+
+      <section class="stage-wrap" aria-label="Capture preview">
+        <div id="capture-stage" data-format="wide"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/capture/main.ts"></script>
+  </body>
+</html>

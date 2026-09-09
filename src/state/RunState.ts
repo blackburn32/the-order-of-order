@@ -9,6 +9,7 @@ import { STARTING_GOLD } from "../systems/Gold";
 import type { ShopItemId } from "../systems/Items";
 import type { RollSample } from "../systems/RunHistory";
 import type { ItemPurchaseEvent } from "../systems/ItemValue";
+import { randomSeed } from "../systems/Rng";
 
 export interface RunState {
   // Ladder position. `trial` runs straight through the whole run (1..30 for the
@@ -60,6 +61,27 @@ export interface RunState {
   extraPoints: number; // +1 per stack each time a die scores
   extraNumberCount: number; // 0..3
   startedAt: number; // epoch ms, for the Hall of High Scores
+  // The run's randomness, in one 32-bit number. Every random decision the run
+  // makes draws from a stream named off this seed rather than from a running
+  // sequence (see systems/Rng), which is what lets a reloaded save carry on with
+  // the dice it would have had, and what lets a finished run be replayed from
+  // its record. Reproducing a run needs this AND `shopUnlocks` below: the seed
+  // fixes the dice, the snapshot fixes which cards the shop was drawing from.
+  seed: number;
+  // Whether the run began with the tutorial armed. The tutorial rigs dice (see
+  // systems/Tutorial), so a run played under it is not a run the seed alone
+  // describes — this is what tells a replay to rig them the same way.
+  tutorialArmed: boolean;
+  // The rolls the tutorial actually forced to come up all ones, as the same
+  // `trial:roll` keys the dice streams are named by.
+  //
+  // Recorded rather than recomputed, because it is the one thing about a run
+  // that is NOT a function of its state: `tutorialForcesRoll` asks whether the
+  // tutorial is still active, and the tutorial ends when the player has dismissed
+  // its last callout. Two players holding identical runs can therefore have
+  // dismissed their way to different answers, and only the run that happened
+  // knows which rolls were rigged.
+  forcedRolls: string[];
   bonusRollsThisRound: number; // Overtime — consumed at trial end
   bonusRollsPerRound: number; // Metronome — permanent
   ownedLedger: boolean;
@@ -181,7 +203,10 @@ export interface RunState {
   rollHistory: RollSample[];
 }
 
-export function newRun(shopUnlocks: readonly ShopItemId[] = []): RunState {
+export function newRun(
+  shopUnlocks: readonly ShopItemId[] = [],
+  seed = 0,
+): RunState {
   return {
     trial: 1,
     endless: false,
@@ -207,6 +232,13 @@ export function newRun(shopUnlocks: readonly ShopItemId[] = []): RunState {
     extraPoints: 0,
     extraNumberCount: 0,
     startedAt: Date.now(),
+    // Deliberately 0 rather than a fresh random seed: `newRun` is also how
+    // hydration gets its field defaults and how a card's description is
+    // rendered, and neither should burn a seed. The one place a run really
+    // begins (Tutorial.beginRun) passes one in.
+    seed,
+    tutorialArmed: false,
+    forcedRolls: [],
     bonusRollsThisRound: 0,
     bonusRollsPerRound: 0,
     ownedLedger: false,
@@ -290,7 +322,11 @@ export function setRun(
 export function getRun(registry: Phaser.Data.DataManager): RunState {
   let state = registry.get(KEY) as RunState | undefined;
   if (!state) {
-    state = newRun();
+    // Defensive: every real entry point sets a run before any scene asks for
+    // one. It still gets a rolled seed rather than the zero default, because if
+    // this path is ever reached it is a run somebody is actually playing, and
+    // two players reaching it should not be handed the same game.
+    state = newRun([], randomSeed());
     registry.set(KEY, state);
   }
   return state;

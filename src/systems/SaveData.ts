@@ -4,6 +4,7 @@ import { clearActiveRun } from "./ActiveRunPersistence";
 import type { DiceStack } from "./DicePool";
 import { windfallFactor } from "./Dice";
 import { ITEMS, meetsCriterion, ShopItemId } from "./Items";
+import { isSeed } from "./Rng";
 import {
   hydrateRollHistory,
   serializeRollHistory,
@@ -47,6 +48,19 @@ export interface HallEntry {
   // matches one-for-one until a very long run thins it.
   history?: RollSample[];
   rolls?: number;
+  // What it would take to play this run again — on this machine or anyone
+  // else's. `seed` fixes every roll, shop shelf and boss the run met (see
+  // systems/Rng); `unlocks` is the snapshot of owned cards the run's shop was
+  // drawing from, which is the other half of the answer and the half that
+  // differs between players. Both optional: entries recorded before seeds
+  // existed still load, and simply cannot be replayed.
+  seed?: number;
+  unlocks?: ShopItemId[];
+  // The third thing a replay needs, and the one that is not a property of the
+  // seed at all: whether the run was played under the tutorial, and which of its
+  // rolls the tutorial rigged (see RunState.forcedRolls).
+  tutorialArmed?: boolean;
+  forcedRolls?: string[];
 }
 
 export interface Settings {
@@ -59,6 +73,8 @@ export interface Settings {
   // effect tier and the OS reduce-motion preference.
   visualEffects: boolean;
 }
+
+const itemIds: ReadonlySet<string> = new Set(ITEMS.map((item) => item.id));
 
 export function loadHall(): HallEntry[] {
   try {
@@ -96,10 +112,34 @@ export function loadHall(): HallEntry[] {
         itemPoints: bigintMap(entry.itemPoints),
         history: hydrateRollHistory(entry.history),
         rolls: Number(entry.rolls ?? 0),
+        seed: isSeed(entry.seed) ? entry.seed : undefined,
+        unlocks: knownItemIds(entry.unlocks),
+        tutorialArmed: Boolean(entry.tutorialArmed),
+        forcedRolls: rollKeys(entry.forcedRolls),
       }));
   } catch {
     return [];
   }
+}
+
+/** Rigged-roll keys as read back off storage, or off another player's shared
+ *  run. Anything not shaped like `trial:roll` is dropped rather than trusted. */
+function rollKeys(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter(
+    (key): key is string => typeof key === "string" && /^\d+:\d+$/.test(key),
+  );
+}
+
+/** The unlock snapshot as read back off storage — or off another player's
+ *  shared run, which is why unknown ids are dropped rather than trusted. An id
+ *  this build has never heard of cannot be offered by its shop anyway, and a
+ *  replay is better off honest about the cards it can actually deal. */
+function knownItemIds(value: unknown): ShopItemId[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter(
+    (id): id is ShopItemId => typeof id === "string" && itemIds.has(id),
+  );
 }
 
 function bigintMap(value: unknown): Record<string, bigint> | undefined {
@@ -298,6 +338,12 @@ export function recordRunEnd(
       valueByItem: sample.valueByItem ? { ...sample.valueByItem } : undefined,
     })),
     rolls: state.rollsTaken,
+    seed: state.seed,
+    // The run-start snapshot, not today's unlocks: what the shop could offer is
+    // frozen when a run begins, so this is the list a replay has to be given.
+    unlocks: [...state.shopUnlocks],
+    tutorialArmed: state.tutorialArmed,
+    forcedRolls: [...state.forcedRolls],
   };
   // "Personal best" now means beating the top of the Hall on its own terms —
   // rank first, score second — not merely out-scoring it.

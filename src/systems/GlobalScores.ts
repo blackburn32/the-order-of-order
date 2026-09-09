@@ -24,6 +24,8 @@
 // gameplay — the feature just goes quiet and the local Hall keeps working.
 
 import type { HallEntry } from "./SaveData";
+import { ITEMS, type ShopItemId } from "./Items";
+import { isSeed } from "./Rng";
 import {
   hydrateRollHistory,
   serializeRollHistory,
@@ -35,6 +37,10 @@ const API = (import.meta.env.VITE_LEADERBOARD_API ?? "").replace(/\/+$/, "");
 const SUBMIT_KEY = import.meta.env.VITE_LEADERBOARD_SUBMIT_KEY ?? "";
 
 export const GLOBAL_TOP_N = 100;
+
+/** Ids this build knows, for filtering an unlock list that arrived over the
+ *  network. See `decodeAnalysis`. */
+const itemIds: ReadonlySet<string> = new Set(ITEMS.map((item) => item.id));
 
 const KEY_PLAYER_ID = "ooo_player_id_v1";
 const KEY_INITIALS = "ooo_initials_v1";
@@ -80,6 +86,15 @@ export interface RunSubmission {
   dicePoints: Record<string, bigint>;
   itemPoints: Record<string, bigint>;
   history: readonly RollSample[];
+  /** What another machine would need to play this exact run: the seed that fixes
+   *  its dice, and the unlock snapshot that fixes what its shop could offer.
+   *  Absent on a run recorded before seeds existed. */
+  seed?: number;
+  unlocks?: readonly ShopItemId[];
+  /** And whether the tutorial was rigging its dice, plus which rolls it rigged.
+   *  Without these a tutorial run replays into a different run entirely. */
+  tutorialArmed?: boolean;
+  forcedRolls?: readonly string[];
 }
 
 /** What a global row's analysis unpacks into — the same shape the local Hall
@@ -89,6 +104,13 @@ export interface GlobalRunAnalysis {
   itemPoints: PointMap;
   history: RollSample[];
   rolls: number;
+  /** The seed and unlock snapshot the run was played under, when the uploader
+   *  had them. Together they are what makes someone else's board row a run you
+   *  can sit down and play rather than only a number to look at. */
+  seed?: number;
+  unlocks?: ShopItemId[];
+  tutorialArmed?: boolean;
+  forcedRolls?: string[];
 }
 
 /** True only when the API base is configured; otherwise the whole feature is
@@ -197,6 +219,14 @@ interface AnalysisBlob {
   item: Record<string, string>;
   rolls: number;
   history: SerializedRollSample[];
+  /** Added after v1 shipped, and deliberately WITHOUT a version bump: `v` is
+   *  checked for equality, so raising it would make every older client reject
+   *  every newer blob. Optional fields are the compatible way to grow this —
+   *  an older client parses the blob and ignores what it does not know. */
+  seed?: number;
+  unlocks?: string[];
+  tutorial?: boolean;
+  forced?: string[];
 }
 
 function encodeAnalysis(run: RunSubmission): string {
@@ -208,6 +238,12 @@ function encodeAnalysis(run: RunSubmission): string {
     item: decimals(run.itemPoints),
     rolls: run.rolls,
     history: serializeRollHistory(run.history),
+    seed: run.seed,
+    unlocks: run.unlocks ? [...run.unlocks] : undefined,
+    // Omitted entirely for the ordinary case, which is every run after a
+    // player's first: an absent flag reads as "nothing was rigged".
+    tutorial: run.tutorialArmed || undefined,
+    forced: run.forcedRolls?.length ? [...run.forcedRolls] : undefined,
   };
   return JSON.stringify(blob);
 }
@@ -231,6 +267,21 @@ function decodeAnalysis(text: string): GlobalRunAnalysis | null {
     rolls: Number.isFinite(parsed.rolls)
       ? Number(parsed.rolls)
       : Math.max(0, history.length - 1),
+    // Both are absent on any blob uploaded before seeds existed, and neither is
+    // trusted: this arrived over the network from another player's device.
+    seed: isSeed(parsed.seed) ? parsed.seed : undefined,
+    unlocks: Array.isArray(parsed.unlocks)
+      ? parsed.unlocks.filter(
+          (id): id is ShopItemId => typeof id === "string" && itemIds.has(id),
+        )
+      : undefined,
+    tutorialArmed: parsed.tutorial === true,
+    forcedRolls: Array.isArray(parsed.forced)
+      ? parsed.forced.filter(
+          (key): key is string =>
+            typeof key === "string" && /^\d+:\d+$/.test(key),
+        )
+      : undefined,
   };
 }
 
@@ -316,6 +367,10 @@ export function submissionFromHallEntry(entry: HallEntry): RunSubmission {
     dicePoints: entry.dicePoints ?? {},
     itemPoints: entry.itemPoints ?? {},
     history: entry.history ?? [],
+    seed: entry.seed,
+    unlocks: entry.unlocks,
+    tutorialArmed: entry.tutorialArmed,
+    forcedRolls: entry.forcedRolls,
   };
 }
 

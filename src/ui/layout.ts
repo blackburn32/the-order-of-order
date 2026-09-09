@@ -37,10 +37,19 @@ export function onResizeCoalesced(
  * alive and still registered with the scene's input plugin — where they go on
  * being hit-tested by every camera, at coordinates from a layout that is no
  * longer on screen, and swallow presses meant for the rebuilt UI.
+ *
+ * `keep` spares objects the rebuild means to hand straight back: slow
+ * background art whose tweens (or randomised texture) would visibly restart if
+ * the rebuild dealt a new one. Anything kept stays where it is in the display
+ * list, so a backdrop kept this way stays a backdrop.
  */
-export function destroyAllChildren(scene: Phaser.Scene): void {
+export function destroyAllChildren(
+  scene: Phaser.Scene,
+  keep: readonly Phaser.GameObjects.GameObject[] = [],
+): void {
   // Over a copy: destroy() removes the object from the list being iterated.
-  for (const child of [...scene.children.list]) child.destroy();
+  for (const child of [...scene.children.list])
+    if (!keep.includes(child)) child.destroy();
 }
 
 /**
