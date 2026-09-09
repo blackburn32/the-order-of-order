@@ -18,6 +18,7 @@
     "format:check": "prettier --check .",
     "lint": "eslint .",
     "preview": "vite preview",
+    "dev:web": "node scripts/dev-web.mjs",
     "preview:web": "node scripts/build-web.mjs && node node_modules/wrangler/bin/wrangler.js dev",
     "deploy:web": "node scripts/build-web.mjs && node node_modules/wrangler/bin/wrangler.js deploy",
     "cloudflare:login": "node node_modules/wrangler/bin/wrangler.js login",

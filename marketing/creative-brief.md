@@ -4,8 +4,7 @@
 
 - Public status: free open beta
 - Primary call to action: **Play the Open Beta**
-- Current destination: <https://blackout32.itch.io/the-order-of-order>
-- Primary surfaces: standalone website, itch.io, and a future Steam page
+- Primary surfaces: standalone website, itch.io, future steam page and phone app
 - Standalone domain: <https://the-order-of-order.com>
 - Typical winning run: 15–20 minutes; longer for a first-time reader
 - Spoiler boundary: Boss modifiers, late grids, and the King are safe. Never reveal

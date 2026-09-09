@@ -86,6 +86,16 @@ including a game build whose Vite base is `/game/`; the other game targets keep
 their existing portable relative base. Preview the complete site locally with
 `npm run preview:web`.
 
+To work on the combined site, run `npm run dev:web`. It serves the same layout
+at [http://localhost:5174](http://localhost:5174) — marketing at `/`, game at
+`/game/` — from the sources rather than from `site-dist/`, so there is no build
+step between an edit and the browser. The game keeps the hot module replacement
+of `npm run dev`; saving anything under `marketing-site/` reloads the page.
+Set `PORT` to move it off 5174 (`npm run dev` stays free on 5173). Unlike
+`npm run preview:web`, this does not run Wrangler, so the `_headers` and
+`_redirects` rules are not applied — only the `/game` → `/game/` redirect is
+mirrored. Check anything that depends on those headers with `npm run preview:web`.
+
 For a first deployment, add the domain to Cloudflare and point the registrar's
 nameservers to Cloudflare. Then authenticate and deploy from the repository root:
 
