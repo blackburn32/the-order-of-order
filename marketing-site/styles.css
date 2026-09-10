@@ -672,9 +672,12 @@ h2 {
 
 .offering-card {
   --card-rot: -1deg;
+  --fan-shift-x: 0%;
+  --fan-shift-y: 0%;
   margin: 0;
   filter: drop-shadow(8px 13px 4px rgba(42, 31, 20, 0.18));
-  transform: rotate(var(--card-rot));
+  transform: translate(var(--fan-shift-x), var(--fan-shift-y))
+    rotate(var(--card-rot));
 }
 
 .offering-card:nth-child(2) {
@@ -772,7 +775,7 @@ h2 {
   display: block;
   width: 100%;
   height: auto;
-  aspect-ratio: 3 / 4;
+  aspect-ratio: 1 / 1;
   border: 1px solid var(--gold);
   object-fit: cover;
   box-shadow: 0 17px 45px rgba(0, 0, 0, 0.32);
@@ -846,7 +849,8 @@ h2 {
 .realm {
   display: grid;
   grid-template-columns: 1fr 0.85fr;
-  gap: clamp(50px, 9vw, 120px);
+  column-gap: clamp(50px, 9vw, 120px);
+  row-gap: clamp(54px, 7vw, 88px);
   align-items: center;
   width: 100%;
   max-width: none;
@@ -891,9 +895,48 @@ h2 {
   text-transform: uppercase;
 }
 
+.realm-reel {
+  grid-column: 1 / -1;
+  width: min(100%, 1040px);
+  margin: 0 auto;
+}
+
+.realm-window {
+  padding: 8px;
+  border: 1px solid var(--gold);
+  border-radius: 12px;
+  background: var(--felt-deep);
+  box-shadow:
+    0 30px 75px rgba(42, 31, 20, 0.26),
+    8px 10px 0 rgba(42, 31, 20, 0.1);
+}
+
+.realm-window img,
+.realm-window video {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border: 1px solid rgba(201, 162, 39, 0.3);
+  border-radius: 5px;
+  object-fit: cover;
+}
+
+.realm-window figcaption {
+  padding: 11px 8px 5px;
+  color: var(--parchment-dark);
+  font-size: 0.8rem;
+  font-style: italic;
+  text-align: center;
+}
+
 .final-cta {
+  /* Held as variables because the sigil centres itself on the seal, and the
+     seal's centre is the top padding plus half its own height. */
+  --final-cta-pad: clamp(120px, 15vw, 190px);
+  --seal-size: 104px;
   position: relative;
-  padding: clamp(120px, 15vw, 190px) 0;
+  padding: var(--final-cta-pad) 0;
   text-align: center;
 }
 
@@ -911,8 +954,8 @@ h2 {
 
 .seal {
   display: grid;
-  width: 104px;
-  height: 104px;
+  width: var(--seal-size);
+  height: var(--seal-size);
   place-items: center;
   margin: 0 auto 36px;
   border: 2px solid var(--gold);
@@ -1006,6 +1049,10 @@ footer a {
     grid-template-columns: 1fr;
   }
 
+  .realm-reel {
+    grid-column: 1;
+  }
+
   .game-window {
     transform: none;
   }
@@ -1029,14 +1076,16 @@ footer a {
   }
 
   .offering-spread {
-    display: flex;
+    /* Match the shop's compact hand: three readable cards share the width,
+       overlap into a shallow arc, and keep their shadows inside the viewport. */
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    isolation: isolate;
+    overflow-x: clip;
     width: calc(100% + 36px);
     margin-inline: -18px;
-    padding: 10px 18px 28px;
-    gap: 8px;
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-    scrollbar-color: var(--wax) transparent;
+    padding: 10px 18px 38px;
+    gap: 0;
   }
 
   .doctrine-reel,
@@ -1047,10 +1096,78 @@ footer a {
   .offering-card,
   .offering-card:nth-child(2),
   .offering-card:nth-child(3) {
-    --card-rot: 0deg;
-    flex: 0 0 min(78vw, 330px);
+    width: min(46vw, 330px);
     margin: 0;
-    scroll-snap-align: center;
+  }
+
+  .offering-card:nth-child(1) {
+    --card-rot: -5deg;
+    z-index: 1;
+    justify-self: start;
+    margin-top: clamp(9px, 1.8vw, 15px);
+  }
+
+  .offering-card:nth-child(2) {
+    --card-rot: 0deg;
+    z-index: 2;
+    justify-self: center;
+  }
+
+  .offering-card:nth-child(3) {
+    --card-rot: 5deg;
+    z-index: 1;
+    justify-self: end;
+    margin-top: clamp(9px, 1.8vw, 15px);
+  }
+
+  @media (hover: hover) {
+    .offering-spread:has(.offering-card:hover) .offering-card:hover {
+      --card-rot: 0deg;
+      --fan-shift-y: -3%;
+      z-index: 3;
+    }
+
+    .offering-spread:has(.offering-card:nth-child(1):hover)
+      .offering-card:nth-child(2) {
+      --card-rot: 3deg;
+      --fan-shift-x: 30%;
+      --fan-shift-y: 3%;
+    }
+
+    .offering-spread:has(.offering-card:nth-child(1):hover)
+      .offering-card:nth-child(3) {
+      --card-rot: 8deg;
+      --fan-shift-x: 12%;
+      --fan-shift-y: 1.5%;
+    }
+
+    .offering-spread:has(.offering-card:nth-child(2):hover)
+      .offering-card:nth-child(1) {
+      --card-rot: -8deg;
+      --fan-shift-x: -30%;
+      --fan-shift-y: 3%;
+    }
+
+    .offering-spread:has(.offering-card:nth-child(2):hover)
+      .offering-card:nth-child(3) {
+      --card-rot: 8deg;
+      --fan-shift-x: 30%;
+      --fan-shift-y: 3%;
+    }
+
+    .offering-spread:has(.offering-card:nth-child(3):hover)
+      .offering-card:nth-child(1) {
+      --card-rot: -8deg;
+      --fan-shift-x: -12%;
+      --fan-shift-y: 1.5%;
+    }
+
+    .offering-spread:has(.offering-card:nth-child(3):hover)
+      .offering-card:nth-child(2) {
+      --card-rot: -3deg;
+      --fan-shift-x: -30%;
+      --fan-shift-y: 3%;
+    }
   }
 
   .tenet-grid::before {
@@ -1085,8 +1202,14 @@ footer a {
     display: none;
   }
 
+  /* Stacked, the intro sits directly above the list, so it wants no sticky
+     offset. `position` alone will not do it: `.bosses > *:not(.sigil-field)`
+     wins on specificity and forces `relative` back on, which would leave
+     `top: 110px` sliding the copy down over the first objection. Clearing the
+     offset itself is what restores the row gap. */
   .boss-intro {
     position: static;
+    top: auto;
   }
 }
 
@@ -1373,7 +1496,8 @@ footer a {
 
 .final-sigil {
   --sigil-span: min(78vh, 700px);
-  --sigil-y: 38%;
+  /* Concentric with the seal: the die sits in the middle of the mark. */
+  --sigil-y: calc(var(--final-cta-pad) + var(--seal-size) / 2);
   --sigil-alpha: 0.16;
 }
 
@@ -1636,7 +1760,8 @@ footer a {
 /* ------------------------------------------------- the cards and portraits */
 
 .js-motion .offering-card {
-  transform: perspective(1000px) rotate(var(--card-rot))
+  transform: perspective(1000px)
+    translate(var(--fan-shift-x), var(--fan-shift-y)) rotate(var(--card-rot))
     rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
   transition:
     transform 260ms ease,

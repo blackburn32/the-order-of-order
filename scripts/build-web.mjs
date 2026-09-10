@@ -37,7 +37,13 @@ await cp(marketingRoot, outputRoot, {
     if (!pathFromMarketingRoot) return true;
 
     const [topLevelName] = pathFromMarketingRoot.split(sep);
-    return topLevelName !== "dist" && pathFromMarketingRoot !== "README.md";
+    // `art-src` holds illustration masters; only their built derivatives in
+    // `assets` are served. See scripts/build-character-art.mjs.
+    return (
+      topLevelName !== "dist" &&
+      topLevelName !== "art-src" &&
+      pathFromMarketingRoot !== "README.md"
+    );
   },
 });
 

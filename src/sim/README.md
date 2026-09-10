@@ -36,7 +36,7 @@ npm run expert:tune              # the expert's knobs, swept against those runs
 Open the resulting `sim-out/report.html` in any browser (no server needed).
 
 **On timing.** The expert series measures every card it considers by rolling it
-out, so it costs about 1.3s per run against 0.01s for the other nine — a default
+out, so it costs about 1.3s per run against 0.01s for the other ten — a default
 1,000-run batch spends roughly twenty minutes there and seconds everywhere else.
 That is the price of having the report contain a shopper that plays well, which
 is exactly the blind spot the rest of this file is about. Use `--runs` freely
@@ -59,8 +59,9 @@ strategy tile also carries `rolls per clear` and `cleared on roll 1`.
 **Cursed cards** reports exposure, take rate, and win correlation for every
 curse. The bot appraises the real boon and affliction against its current grid,
 economy, roll budget, and remaining ladder; all main-series shoppers use a 0.5
-appetite. `curse:check` reruns the field at appetite 0 and 1 to expose curses
-that no reasonable run accepts or that dominate every alternative.
+appetite, bar the player, whose rule 11 declines every cursed card without
+appraising it. `curse:check` reruns the field at appetite 0 and 1 to expose
+curses that no reasonable run accepts or that dominate every alternative.
 
 Per-trial roll traces are what the goal tuner designs from; they are recorded
 only when `SimConfig.traceRolls` is set, since a number per roll per trial per
@@ -68,7 +69,7 @@ run is far too much memory for a full batch to carry by default.
 
 ## Strategies compared
 
-Ten series, chosen so the field resembles how the game is actually played
+Eleven series, chosen so the field resembles how the game is actually played
 rather than bracketing it. There is no "never buy" baseline: with gold split out
 from score, hoarding it forever buys nothing, so a no-buy run measures a game
 nobody is playing.
@@ -99,6 +100,13 @@ build exists before they begin banking; from rank 4 onward each keeps a
 whole build. Theme membership is a total `Record` in
 `systems/Items.ts` (`ITEM_THEMES`), so adding an item without theming it is a
 compile error.
+
+**Judged** — the two that shop on their own opinion rather than on price or
+theme. Both are held out of the pooled fields the goal curve is designed
+against, and both have a section of their own below:
+
+- **Expert** — appraises every card by playing it out (`expert.ts`).
+- **Player** — follows one written plan of twelve rules (`player.ts`).
 
 ## Measuring the field against a run you actually played
 
@@ -149,12 +157,13 @@ setting persists across reloads, and production builds never read it.
 `expert.ts` is the strategy that plays well, and it is the field the goal curve
 should be designed against once you are happy with it.
 
-The other eight decide what to buy from a card's **price** (greedy, thrifty) or
-its **theme**, and none of them decides where to point a card that needs a die —
-`bot.chooseTargets` picks a valid target uniformly at random. The expert asks the
-question a player asks instead, literally: it buys each candidate on a throwaway
-copy of the run (`cloneRun.ts`), plays the next four trials out on it, and keeps
-the card that moved the score most per gold (`appraise.ts`).
+The seven price-and-theme series decide what to buy from a card's **price**
+(greedy, thrifty) or its **theme**, and none of them decides where to point a
+card that needs a die — `bot.chooseTargets` picks a valid target uniformly at
+random. The expert asks the question a player asks instead, literally: it buys
+each candidate on a throwaway copy of the run (`cloneRun.ts`), plays the next
+four trials out on it, and keeps the card that moved the score most per gold
+(`appraise.ts`).
 
 Nothing in it encodes an opinion about which items are good. An item rebalanced
 in `Items.ts` changes the bot's behaviour on the next run with no edit here, and
@@ -167,6 +176,59 @@ lets three roll-outs stand in for thirty.
 Over 192 matched runs it reaches trial **15.4** and wins 16 of them, at about
 1.3s a run against 0.01s for the rest of the field — which is why it is not in
 the default pooled fields.
+
+## The player shopper
+
+`player.ts` is the other strategy that plays well, and it gets there the
+opposite way. Where the expert measures every card and holds no opinion, the
+player holds nothing but opinions: it is one person's plan for the game, written
+down as twelve numbered rules and implemented rule by rule at the top of the
+file. Buy recurring dice creation in the opening shop, then economy; bank from
+the fifth shop; duplicate the grid; walk the Rollplayer and the Centurion down
+to a d1 so their multiplier fires on every roll; reroll aggressively; never take
+a curse or a card that changes a trial's length.
+
+It is not a themed bot with extra steps. The plan crosses swarm, economy,
+multiplier and precision and refuses cards inside each of them, so it is a
+ranking (`playerRank`) rather than an `ITEM_THEMES` filter, and four of its
+rules live in seams the themed bots never touch: which die a size-naming card is
+pointed at (rules 5 and 6), whether a shelf is worth rerolling (rule 7), how
+much gold to keep back (rules 3 and 8), and which of the King's demands to
+accept (rule 12). Those are the optional hooks on `Strategy` — `chooseTargets`,
+`wantsReroll`, `accepts`, `rank`, `chooseDemand` — which default to the
+field-wide behaviour when a strategy leaves them off, as all seven of the
+price-and-theme bots do.
+
+Its median grid crosses rule 4's 200 dice around trial 11 and compounds from
+there — 277 dice at trial 11, 1,917 at 13, 20M at 24 — and both special dice end
+the run walked all the way down to a d1, so their ×2 and ×4 fire on every roll.
+That shape is what the plan is built to produce, and the reason it is held out
+of the pooled fields alongside the expert.
+
+**How good is it, exactly.** Measured on a _shared_ seed stream rather than each
+series' own — 300 runs over two base seeds, so the only difference between two
+columns is the shopping — it wins **14.3%** against the expert's **7.0%**
+(z = 2.91, p ≈ 0.004) and the field's 0.7–4.0%, at the field's 0.01s a run
+rather than the expert's 1.3s.
+
+Read that with its companion number, though: it does **not** get further. Median
+trial reached is tied with the expert, and run for run on the same game the two
+are close to a coin flip (player further 112, expert further 91, tied 97). The
+plan is higher variance, not uniformly stronger — it converts into outright
+victories about twice as often while dying along the ladder at much the same
+rate. Comparing the two on their own seed offsets, as `SIM_SERIES` does, is not
+a fair fight in either direction; use a shared stream for any claim about which
+shops better.
+
+The expert also holds an advantage no win rate shows. It encodes no opinion
+about which items are good, so a rebalance in `Items.ts` changes its behaviour
+on the next run with no edit. The player's twelve rules name specific cards, and
+retuning The Open Gate or Like Minds is a reason to revisit the plan.
+
+The value of having both is that they disagree for legible reasons. The expert
+finds synergies nobody wrote down; the player is a hypothesis about what a
+person actually does, and a rule of it that measures badly is a rule to argue
+with rather than a bug.
 
 | knob                            | default | what it does                                      |
 | ------------------------------- | ------- | ------------------------------------------------- |
@@ -352,11 +414,12 @@ one axis at a time keeps the table readable and two crossed answers whether the
 knobs interact. Bot-made fixtures (`sample-*`) are skipped by default: measuring
 this bot against a bot is measuring it against itself.
 
-`series.ts` keeps the expert **out** of `SHOPPER_SERIES` and `SMART_SERIES` on
-purpose. Every shipped goal was designed against the price-and-theme field, and
-quietly adding a stronger shopper to that pool would move the whole curve as a
-side effect of a file being edited. `EXPERT_SERIES` is there to point a tuner at
-it deliberately.
+`series.ts` keeps the expert and the player **out** of `SHOPPER_SERIES` and
+`SMART_SERIES` on purpose. Every shipped goal was designed against the
+price-and-theme field, and quietly adding a stronger shopper to that pool would
+move the whole curve as a side effect of a file being edited. `EXPERT_SERIES`
+and `PLAYER_SERIES` are there to point a tuner at one deliberately, as
+`FIELD=expert` and `FIELD=player`.
 
 ## Designing the smart-field survival curve
 
@@ -521,13 +584,14 @@ crosses the bucket threshold.
 | `cloneRun.ts`           | A run a hypothesis may ruin. Not the save path — see the file for why.                           |
 | `appraise.ts`           | Capacity measured by rolling it out; what a card is worth, and which die it wants.               |
 | `expert.ts`             | The appraising shopper. The only strategy that measures anything.                                |
+| `player.ts`             | The written plan: twelve numbered rules, and the ranking and hooks that carry them out.          |
 | `expertCheck.ts`        | Appraiser assertions: clone isolation, shared seeds, and that cards land on the right die.       |
 | `engine.ts`             | Pure trial-loop rules shared with `GameScene` (roll → score → grow, trial-end win/lose/advance). |
 | `bot.ts`                | Strategies, die-target selection, `simulateRun`, per-run unlock and boss tracking.               |
 | `stats.ts`              | Aggregates `RunRecord[]` into the report's numbers.                                              |
 | `report.ts`             | Renders `BatchStats` to one self-contained HTML file (inline SVG charts).                        |
 | `config.ts`             | `DEFAULT_CONFIG` + the editable `unlockedAtStart`.                                               |
-| `series.ts`             | The nine series, their seed offsets, and `seriesConfig`.                                         |
+| `series.ts`             | The eleven series, their seed offsets, the named fields, and `seriesConfig`.                     |
 | `localStorageShim.ts`   | In-memory `localStorage` + seeded `Math.random` for Node/reproducibility.                        |
 | `runBatch.ts`           | CLI entry (`npm run sim`).                                                                       |
 | `smartSurvivalCurve.ts` | Shipped tuner: designs absolute survival checkpoints from the smart field.                       |

@@ -25,6 +25,27 @@ with `node scripts/capture-marketing.mjs` and motion with
 `node scripts/capture-marketing-motion.mjs --out marketing-site/assets`.
 Character and hero illustrations remain art-direction concepts.
 
+## Character roster art
+
+`art-src/characters/` holds the illustration masters; it is excluded from the
+deployed build. `npm run art:characters` re-exports each master as the three
+WebP widths the roster's `srcset` asks for, named `<stem>-<width>.webp`.
+
+Masters must be **square** and at least **1200px** on a side (2400px preferred).
+The roster renders at `aspect-ratio: 1 / 1` with `object-fit: cover`, so an
+off-ratio master is centre-cropped rather than letterboxed.
+
+The grid stays three columns at every breakpoint, so the image never renders
+wider than **371 CSS px** — the width it reaches once the container caps at
+1180px, and holds at from 1216px up. That is 742 device pixels at 2x and 1113 at
+3x, which the 1200w variant covers. Note that `.character-roster` sets
+`grid-template-columns` twice inside the same `@media (max-width: 820px)` block;
+the later rule wins, so the earlier single-column declaration has no effect.
+
+The files currently in `assets/` are placeholders upscaled from the old 480x640
+concepts — the only reason `--allow-upscale` exists. Real masters will not need
+that flag; if the script asks for it, the delivery is too small.
+
 The canonical and Open Graph metadata target `https://the-order-of-order.com/`.
 
 ## Ornament

@@ -64,6 +64,16 @@ const CLIPS = [
     bitrate: 3_500_000,
     leadInMs: 200,
   },
+  {
+    id: "gameplay-multitude-zoom",
+    durationMs: 17_500,
+    fps: 30,
+    bitrate: 3_500_000,
+    leadInMs: 300,
+    // The reel begins at the game's maximum camera zoom. Bake dice faces and
+    // labels at 3x so that magnification has real source detail to reveal.
+    captureArtScale: 3,
+  },
 ];
 
 /** How often to force a keyframe. VP8 would otherwise emit one and then coast,
@@ -126,6 +136,8 @@ try {
       url.searchParams.set("clean", "1");
       url.searchParams.set("preset", clip.id);
       url.searchParams.set("format", "wide");
+      if (clip.captureArtScale)
+        url.searchParams.set("captureArtScale", String(clip.captureArtScale));
       // Chromium can expose partially cleared triangles when a frame is taken
       // from Phaser's WebGL backbuffer. Motion captures use Phaser's 2D renderer
       // so every captured frame is complete.

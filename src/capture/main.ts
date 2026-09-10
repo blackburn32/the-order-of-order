@@ -7,6 +7,13 @@ import { fx } from "../systems/Effects";
 import { CaptureCursorScene } from "./CaptureCursor";
 import { CaptureScene } from "./CaptureScene";
 import {
+  DICE_ZOOM_DURATION_MS,
+  diceZoomProgress,
+  playDiceZoomReel,
+  prepareDiceZoom,
+  resetDiceZoomReel,
+} from "./diceZoomReel";
+import {
   playRollReel,
   resetRollReel,
   rollReelDuration,
@@ -179,6 +186,7 @@ function renderCurrentPreset(): void {
   ready = false;
   resetShopLoop();
   resetRollReel();
+  resetDiceZoomReel();
   status.textContent = "Rendering…";
   downloadButton.disabled = true;
   playButton.disabled = currentPreset.kind === "stage";
@@ -194,6 +202,7 @@ function renderCurrentPreset(): void {
     installGameplayFixture(game, currentPreset.id);
     game.scene.start("Game");
     window.setTimeout(() => {
+      if (captureScript(currentPreset) === "dice-zoom") prepareDiceZoom(game);
       game.events.once(Phaser.Core.Events.POST_RENDER, () => {
         game.events.emit("capture-content-ready", currentPreset.id);
       });
@@ -267,6 +276,15 @@ function openCleanPreview(): void {
 
 function playCurrentPreset(): void {
   if (!ready) return;
+  if (captureScript(currentPreset) === "dice-zoom") {
+    void playDiceZoomReel(game, (label) => {
+      status.textContent = label;
+    }).then(() => {
+      const { error } = diceZoomProgress();
+      status.textContent = error ? `Zoom reel failed — ${error}` : "Reel done";
+    });
+    return;
+  }
   const reel = rollReelFor(currentPreset);
   if (reel) {
     void playRollReel(game, reel, (label) => {
@@ -414,11 +432,14 @@ window.__captureStudio = {
   get playDurationMs() {
     if (captureScript(currentPreset) === "shop-loop")
       return SHOP_LOOP_DURATION_MS;
+    if (captureScript(currentPreset) === "dice-zoom")
+      return DICE_ZOOM_DURATION_MS;
     const reel = rollReelFor(currentPreset);
     return reel ? rollReelDuration(reel) : null;
   },
   get script() {
     if (captureScript(currentPreset) === "shop-loop") return shopLoopProgress();
+    if (captureScript(currentPreset) === "dice-zoom") return diceZoomProgress();
     return rollReelFor(currentPreset) ? rollReelProgress() : null;
   },
   render(presetId, backdrop) {

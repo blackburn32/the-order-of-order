@@ -300,6 +300,36 @@ export class AmbientLayer extends Phaser.GameObjects.Container {
     if (this.ringSpin) this.ringSpin.timeScale = 1 + eased * 4;
   }
 
+  /**
+   * Hold decorative motion at one deterministic pose for a looped capture.
+   * Gameplay never calls this: the zoom reel needs its closing frame to match
+   * its opening frame, while still leaving scene-level LOD tweens enabled.
+   */
+  freezeForCapture(): void {
+    this.spin?.remove();
+    this.spin = undefined;
+    this.ringSpin?.remove();
+    this.ringSpin = undefined;
+    this.sigil.setRotation(0);
+    this.ring?.setRotation(0);
+
+    this.morphStart?.remove();
+    this.morphStart = undefined;
+    this.morphCleanup?.remove();
+    this.morphCleanup = undefined;
+    this.scene.tweens.killTweensOf(this.sigil);
+    if (this.ring) this.scene.tweens.killTweensOf(this.ring);
+    this.morphSigil?.destroy();
+    this.morphRing?.destroy();
+    this.morphSigil = undefined;
+    this.morphRing = undefined;
+
+    for (const mote of this.motes) {
+      this.scene.tweens.killTweensOf(mote);
+      mote.setAlpha(0.18);
+    }
+  }
+
   private scatterMotes(): void {
     if (this.motes.length === 0) return;
     const halfW = this.areaW / 2;

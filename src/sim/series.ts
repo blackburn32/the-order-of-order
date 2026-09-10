@@ -29,6 +29,7 @@ const OFFSETS: Record<StrategyName, number> = {
   economy: 47_514,
   tempo: 55_433,
   expert: 63_352,
+  player: 71_271,
 };
 
 function series(
@@ -48,6 +49,7 @@ function series(
 
 export const SIM_SERIES: SimulationSeries[] = [
   series("expert", "Expert · measured value", "all"),
+  series("player", "Player · the written plan", "all"),
   series("greedy", "Greedy · base only", "none"),
   series("greedy", "Greedy · all unlocked", "all"),
   series("thrifty", "Thrifty · base only", "none"),
@@ -73,11 +75,26 @@ export const EXPERT_SERIES = SIM_SERIES.filter(
   (series) => series.strategy === "expert",
 );
 
+/** The player on its own — a written plan rather than an appraisal, and the
+ *  only series that is a claim about how a person plays (see sim/player.ts).
+ *
+ *  Held out of the pooled fields for the same reason as the expert: it shops
+ *  better than the price-and-theme field every shipped goal was designed
+ *  against, so folding it in would move the whole curve as a side effect. Point
+ *  a tuner at it deliberately, with `FIELD=player`. */
+export const PLAYER_SERIES = SIM_SERIES.filter(
+  (series) => series.strategy === "player",
+);
+
+/** The two series that shop on judgement rather than on price or theme, and so
+ *  are excluded from every pooled field below. */
+const APPRAISERS: readonly StrategyName[] = ["expert", "player"];
+
 /** Every series is a shopper now — there is no no-buy baseline to exclude — so
  *  the pooled field the goal curve is designed against is simply all of them,
- *  less the expert (see above). */
+ *  less the two appraisers (see above). */
 export const SHOPPER_SERIES = SIM_SERIES.filter(
-  (series) => series.strategy !== "expert",
+  (series) => !APPRAISERS.includes(series.strategy),
 );
 
 /** Coherent, fully unlocked shoppers used to set the survival curve. Base-pool
@@ -87,7 +104,7 @@ export const SMART_SERIES = SIM_SERIES.filter(
   (series) =>
     series.id.endsWith("-all") &&
     series.strategy !== "economy" &&
-    series.strategy !== "expert",
+    !APPRAISERS.includes(series.strategy),
 );
 
 /**
@@ -101,7 +118,9 @@ export const SMART_SERIES = SIM_SERIES.filter(
  *             and what every shipped goal was designed against).
  *   `expert`  the appraising shopper alone — a curve for people who play the
  *             way it does, and a harder ladder for everyone who does not.
- *   `shopper` every series but the expert, base pools included.
+ *   `player`  the written plan alone (sim/player.ts) — a curve for people who
+ *             play the way its twelve rules do.
+ *   `shopper` every series but the two appraisers, base pools included.
  *
  * A curve designed against a stronger field is a harder game for weaker builds,
  * which is a design call and not a mechanical one. See sim/README.md.
@@ -113,11 +132,13 @@ export function tunerField(): SimulationSeries[] {
       return SMART_SERIES;
     case "expert":
       return EXPERT_SERIES;
+    case "player":
+      return PLAYER_SERIES;
     case "shopper":
       return SHOPPER_SERIES;
     default:
       throw new Error(
-        `FIELD=${name} is not a field. Use smart, expert or shopper.`,
+        `FIELD=${name} is not a field. Use smart, expert, player or shopper.`,
       );
   }
 }

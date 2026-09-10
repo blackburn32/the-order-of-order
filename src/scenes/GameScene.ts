@@ -80,6 +80,7 @@ import {
   computeVisibleDiceCards,
   computeWindowedView,
   fitGridZoom,
+  GRID_WHEEL_ZOOM_RATE,
   GridFocus,
   gridDetailLevel,
   GridDetailLevel,
@@ -291,6 +292,29 @@ interface Layout {
   button: { x: number; y: number; scale: number };
 }
 
+interface RetiringDiceCard {
+  card: DiceSummaryCard;
+  region: VisibleDiceCard;
+  /** Joining children need to cross-fade over their new parent; a splitting
+   * parent stays behind the children emerging from it. */
+  foreground: boolean;
+}
+
+const CARD_PARTITION_TRANSITION_MS = 280;
+const DICE_CARD_TRANSITION_MS = 340;
+
+function diceCardContains(
+  outer: VisibleDiceCard,
+  inner: VisibleDiceCard,
+): boolean {
+  return (
+    outer.region.rowStart <= inner.region.rowStart &&
+    outer.region.rowEnd >= inner.region.rowEnd &&
+    outer.region.colStart <= inner.region.colStart &&
+    outer.region.colEnd >= inner.region.colEnd
+  );
+}
+
 export class GameScene extends Phaser.Scene {
   private state!: RunState;
   // Keyed by index into state.dice. Only indices inside the current viewport
@@ -298,8 +322,14 @@ export class GameScene extends Phaser.Scene {
   private sprites!: Map<number, DieSprite>;
   private cards!: Map<string, DiceSummaryCard>;
   private cardRegions!: Map<string, VisibleDiceCard>;
+  /** Cards from the preceding LOD partition, kept just long enough to visibly
+   * join their parent instead of disappearing on the boundary frame. */
+  private retiringCards!: Set<RetiringDiceCard>;
   private cardDataDirty = false;
   private gridContainer!: Phaser.GameObjects.Container;
+  private diceContainer!: Phaser.GameObjects.Container;
+  private cardContainer!: Phaser.GameObjects.Container;
+  private diceLayerTween?: Phaser.Tweens.Tween;
   // Only created once the grid goes windowed: a second camera whose viewport
   // is clipped to the grid area (native scissor clipping) and whose own
   // scroll/zoom drives pan/zoom, instead of a GameObject mask — Phaser 4's
@@ -418,6 +448,7 @@ export class GameScene extends Phaser.Scene {
     this.sprites = new Map();
     this.cards = new Map();
     this.cardRegions = new Map();
+    this.retiringCards = new Set();
     this.cardDataDirty = false;
     this.viewport = { scrollX: 0, scrollY: 0, zoom: 1 };
     this.gridDetail = "full";
@@ -427,6 +458,7 @@ export class GameScene extends Phaser.Scene {
     this.recenterOnSigil = false;
     // Phaser destroyed the tween along with the previous run's display list.
     this.gridGlide = undefined;
+    this.diceLayerTween = undefined;
     // The scene instance is reused across restarts, but Phaser destroys all
     // non-main cameras on shutdown — these fields would otherwise dangle.
     this.gridCamera = undefined;
@@ -443,6 +475,9 @@ export class GameScene extends Phaser.Scene {
     this.trialUnlocks = [...this.trialUnlocks];
     this.bossCalloutHeld = true;
     this.gridContainer = this.add.container(0, 0);
+    this.diceContainer = this.add.container(0, 0);
+    this.cardContainer = this.add.container(0, 0);
+    this.gridContainer.add([this.diceContainer, this.cardContainer]);
     // Recreated each build: routes new banners through the overlay camera so
     // they composite above the windowed grid, just like other popups.
     this.banners = new BannerStack(this, (objs) => this.overlay(objs));
@@ -1254,6 +1289,30 @@ export class GameScene extends Phaser.Scene {
     return { x: this.scale.width / 2, y: this.scale.height / 2 };
   }
 
+  /** Freeze only continuously looping room decoration for the marketing reel.
+   * LOD and camera tweens remain enabled, so the capture still uses the game's
+   * real animated zoom and card transitions. */
+  prepareZoomCaptureLoop(): void {
+    this.ambient?.freezeForCapture();
+    this.stopSealBreathe();
+    this.setSealScale(this.sealScale);
+  }
+
+  /** Finish the capture-only jump from the fixture's fitted card view to the
+   * reel's close-up opening pose. That setup jump must not leak its normal LOD
+   * cross-fade into frame one; the same transition remains enabled when the
+   * scripted camera later crosses the boundary in either direction. */
+  settleZoomCaptureOpening(): void {
+    this.diceLayerTween?.remove();
+    this.diceLayerTween = undefined;
+    this.diceContainer.setAlpha(1);
+    for (const card of this.cards.values()) card.destroy();
+    for (const retiring of this.retiringCards) retiring.card.destroy();
+    this.cards.clear();
+    this.cardRegions.clear();
+    this.retiringCards.clear();
+  }
+
   /** Build the full-room sigil and motes. It joins the felt in main-scene
    * chrome, while the transparent grid camera composites dice over it. */
   private buildAmbient(): void {
@@ -1330,7 +1389,12 @@ export class GameScene extends Phaser.Scene {
     this.viewport.scrollY = view.scrollY;
     const visible = view.visible;
     const scale = view.scale;
-    this.gridDetail = gridDetailLevel(view.equivalentDice, this.gridDetail);
+    const previousDetail = this.gridDetail;
+    this.gridDetail = gridDetailLevel(view.equivalentDice, previousDetail);
+    const enteringCards =
+      !firstLayout && previousDetail !== "cards" && this.gridDetail === "cards";
+    const leavingCards =
+      !firstLayout && previousDetail === "cards" && this.gridDetail !== "cards";
 
     setCameraViewport(
       cam,
@@ -1354,8 +1418,18 @@ export class GameScene extends Phaser.Scene {
     const easingCards = from?.detail === "cards" && this.gridDetail === "cards";
 
     if (this.gridDetail === "cards") {
-      for (const sprite of this.sprites.values()) sprite.destroy();
-      this.sprites.clear();
+      if (enteringCards) {
+        // A fast reversal can meet cards still fading out from the preceding
+        // boundary. They are obsolete copies of the partition about to be
+        // rebuilt, so release them before revealing the authoritative set.
+        for (const retiring of this.retiringCards) retiring.card.destroy();
+        this.retiringCards.clear();
+      }
+      if (enteringCards && fx.motion && this.sprites.size > 0) {
+        this.fadeDiceLayerOut();
+      } else if (!this.diceLayerTween) {
+        this.destroyDiceSprites();
+      }
       // The animation rebuilds the card grid at every pose the camera moves
       // through, beginning with the one it is on right now — so laying out the
       // destination partition here would be building a card set that the same
@@ -1363,13 +1437,35 @@ export class GameScene extends Phaser.Scene {
       // card relayout. `easeGridCards` does this job instead, refreshing on
       // its opening pass.
       if (!easingCards) {
-        this.syncDiceCards(n, view, countChanged || this.cardDataDirty);
+        this.syncDiceCards(
+          n,
+          view,
+          countChanged || this.cardDataDirty,
+          enteringCards && fx.motion,
+        );
       }
       this.cardDataDirty = false;
     } else {
-      for (const card of this.cards.values()) card.destroy();
-      this.cards.clear();
-      this.cardRegions.clear();
+      if (leavingCards && fx.motion) {
+        this.retireCardsIntoDice(view);
+        this.fadeDiceLayerIn();
+      } else {
+        for (const card of this.cards.values()) card.destroy();
+        this.cards.clear();
+        this.cardRegions.clear();
+        if (!fx.motion) {
+          for (const retiring of this.retiringCards) retiring.card.destroy();
+          this.retiringCards.clear();
+        }
+      }
+      for (const retiring of this.retiringCards) {
+        retiring.card.setPosition(retiring.region.x, retiring.region.y);
+        retiring.card.setLayout(
+          retiring.region.width,
+          retiring.region.height,
+          view.zoom,
+        );
+      }
       this.cardDataDirty = false;
 
       const visibleIndices = new Set(visible.map((v) => v.index));
@@ -1404,7 +1500,7 @@ export class GameScene extends Phaser.Scene {
           const die = this.state.dice.dieAt(index);
           if (!die) continue;
           sprite = new DieSprite(this, x, y, die);
-          this.gridContainer.add(sprite);
+          this.diceContainer.add(sprite);
           this.sprites.set(index, sprite);
           // Camera.ignore() only snapshots a Container's *current* children, so
           // Each sprite opts out of the main and overlay cameras individually as
@@ -1445,12 +1541,10 @@ export class GameScene extends Phaser.Scene {
     // the wrong size — it has to be rebuilt at each pose the camera passes
     // through instead, which is exactly what a pinch-zoom already does.
     //
-    // Everything else cuts, and deliberately: a growth that crosses between
-    // the two representations has changed what the player is looking at rather
-    // than how it is framed, and one that lands among dice too numerous to
-    // move individually would jump them into their new cells and only then
-    // slide the camera over them — a lurch followed by a drift, which reads
-    // worse than the honest cut this has always been.
+    // Growth reflows that cross representations still cut their *camera* move:
+    // one that lands among dice too numerous to move individually would jump
+    // them into new cells and only then slide the camera over them. The visual
+    // representation change itself is independently cross-faded above.
     if (!from) return;
     if (easingCards) {
       this.easeGridCards(cam, n, from, view, recenter);
@@ -1460,6 +1554,67 @@ export class GameScene extends Phaser.Scene {
     ) {
       this.glideGridCamera(cam, view, from);
     }
+  }
+
+  /** Cross-fade the dense raw grid as one layer. Thousands of per-die tweens
+   * would cost more than the representation switch they are meant to hide. */
+  private fadeDiceLayerOut(): void {
+    this.diceLayerTween?.remove();
+    this.diceLayerTween = this.tweens.add({
+      targets: this.diceContainer,
+      alpha: 0,
+      duration: DICE_CARD_TRANSITION_MS,
+      ease: "Cubic.easeInOut",
+      onComplete: () => {
+        this.diceLayerTween = undefined;
+        this.destroyDiceSprites();
+        this.diceContainer.setAlpha(1);
+      },
+    });
+  }
+
+  /** Reveal the raw grid beneath the summary cards that are dissolving away. */
+  private fadeDiceLayerIn(): void {
+    this.diceLayerTween?.remove();
+    // A quick reversal can reuse dice midway through their fade-out; continue
+    // from that opacity instead of flashing them fully transparent again.
+    if (this.sprites.size === 0) this.diceContainer.setAlpha(0);
+    this.diceLayerTween = this.tweens.add({
+      targets: this.diceContainer,
+      alpha: 1,
+      duration: DICE_CARD_TRANSITION_MS,
+      ease: "Cubic.easeInOut",
+      onComplete: () => {
+        this.diceLayerTween = undefined;
+      },
+    });
+  }
+
+  private destroyDiceSprites(): void {
+    for (const sprite of this.sprites.values()) sprite.destroy();
+    this.sprites.clear();
+  }
+
+  /** Keep the last card partition over the arriving dice for one short beat. */
+  private retireCardsIntoDice(view: WindowedView): void {
+    for (const retiring of this.retiringCards) retiring.card.destroy();
+    this.retiringCards.clear();
+    for (const [key, card] of this.cards) {
+      const region = this.cardRegions.get(key);
+      if (!region) {
+        card.destroy();
+        continue;
+      }
+      const retiring = { card, region, foreground: true };
+      this.retiringCards.add(retiring);
+      card.setLayout(region.width, region.height, view.zoom);
+      card.animateDeparture(0, 0, 1.08, DICE_CARD_TRANSITION_MS, () => {
+        this.retiringCards.delete(retiring);
+        card.destroy();
+      });
+    }
+    this.cards.clear();
+    this.cardRegions.clear();
   }
 
   /**
@@ -1476,16 +1631,66 @@ export class GameScene extends Phaser.Scene {
     n: number,
     view: WindowedView,
     refreshData: boolean,
+    representationArrival = false,
   ): void {
     const regions = computeVisibleDiceCards(n, view);
     const visibleKeys = new Set(regions.map((region) => region.key));
-    for (const [key, card] of this.cards) {
-      if (!visibleKeys.has(key)) {
-        card.destroy();
-        this.cards.delete(key);
-        this.cardRegions.delete(key);
-      }
+
+    // Retired cards still belong to their old world regions, but their outer
+    // scale must keep tracking the live camera while their inner surface moves.
+    for (const retiring of this.retiringCards) {
+      const { card, region } = retiring;
+      card.setPosition(region.x, region.y);
+      card.setLayout(region.width, region.height, view.zoom);
     }
+
+    const previous = [...this.cards].map(([key, card]) => ({
+      key,
+      card,
+      region: this.cardRegions.get(key),
+    }));
+    const leaving = previous.filter(({ key }) => !visibleKeys.has(key));
+    const entering = regions.filter((region) => !this.cards.has(region.key));
+    const oldPartition = previous[0]?.key.split(":", 1)[0];
+    const newPartition = regions[0]?.key.split(":", 1)[0];
+    const partitionChanged =
+      fx.motion &&
+      leaving.length > 0 &&
+      entering.length > 0 &&
+      oldPartition !== undefined &&
+      newPartition !== undefined &&
+      oldPartition !== newPartition;
+
+    for (const { key, card, region } of leaving) {
+      this.cards.delete(key);
+      this.cardRegions.delete(key);
+      if (!partitionChanged || !region) {
+        card.destroy();
+        continue;
+      }
+
+      const joinedParent = entering.find((candidate) =>
+        diceCardContains(candidate, region),
+      );
+      const splitsIntoChildren = entering.some((candidate) =>
+        diceCardContains(region, candidate),
+      );
+      const toX = joinedParent ? (joinedParent.x - region.x) * view.zoom : 0;
+      const toY = joinedParent ? (joinedParent.y - region.y) * view.zoom : 0;
+      const retiring = { card, region, foreground: joinedParent !== undefined };
+      this.retiringCards.add(retiring);
+      card.animateDeparture(
+        toX,
+        toY,
+        splitsIntoChildren ? 1.12 : 0.58,
+        CARD_PARTITION_TRANSITION_MS,
+        () => {
+          this.retiringCards.delete(retiring);
+          card.destroy();
+        },
+      );
+    }
+
     for (const region of regions) {
       let card = this.cards.get(region.key);
       if (!card) {
@@ -1499,10 +1704,25 @@ export class GameScene extends Phaser.Scene {
           region.height,
           view.zoom,
         );
-        this.gridContainer.add(card);
+        this.cardContainer.add(card);
         this.cards.set(region.key, card);
         this.cameras.main.ignore(card);
         this.overlayCamera?.ignore(card);
+
+        if (partitionChanged) {
+          const splitParent = leaving.find(
+            (candidate) =>
+              candidate.region && diceCardContains(candidate.region, region),
+          )?.region;
+          card.animateArrival(
+            splitParent ? (splitParent.x - region.x) * view.zoom : 0,
+            splitParent ? (splitParent.y - region.y) * view.zoom : 0,
+            splitParent ? 0.58 : 0.78,
+            CARD_PARTITION_TRANSITION_MS,
+          );
+        } else if (representationArrival) {
+          card.animateArrival(0, 0, 0.88, DICE_CARD_TRANSITION_MS);
+        }
       } else {
         if (refreshData) {
           card.setSummary(this.state.dice.summarizeRegion(region.region));
@@ -1516,6 +1736,13 @@ export class GameScene extends Phaser.Scene {
       }
       card.setPosition(region.x, region.y);
       this.cardRegions.set(region.key, region);
+    }
+
+    // New parents are constructed after their children. Put joining children
+    // back above that parent so their convergence remains visible. Splitting
+    // parents deliberately remain underneath their arriving children.
+    for (const retiring of this.retiringCards) {
+      if (retiring.foreground) this.cardContainer.bringToTop(retiring.card);
     }
   }
 
@@ -1848,6 +2075,18 @@ export class GameScene extends Phaser.Scene {
       worldX: number;
       worldY: number;
     } | null = null;
+    // One wheel gesture owns one screen/world anchor through both directions.
+    // Keeping it across a quick reversal is what lets a pull-back to the
+    // centered one-card pose return to the exact die the cursor started over.
+    let wheelAnchor:
+      | {
+          screen: { x: number; y: number };
+          world: { x: number; y: number };
+          at: number;
+        }
+      | undefined;
+    const WHEEL_GESTURE_GAP_MS = 1200;
+    const WHEEL_ANCHOR_SLOP = 8;
 
     const inBounds = (p: Phaser.Input.Pointer) => {
       const a = this.layout.grid;
@@ -2006,19 +2245,29 @@ export class GameScene extends Phaser.Scene {
     ) => {
       if (!inBounds(p)) return;
       this.finishGridGlide();
-      const area = this.layout.grid;
-
-      // Keep the same point of the grid centered through the zoom change.
-      const center = {
-        x: area.x + area.width / 2,
-        y: area.y + area.height / 2,
-      };
+      const screen = { x: p.x, y: p.y };
+      const now = this.time.now;
+      const keepsGesture =
+        wheelAnchor &&
+        now - wheelAnchor.at <= WHEEL_GESTURE_GAP_MS &&
+        Phaser.Math.Distance.Between(
+          screen.x,
+          screen.y,
+          wheelAnchor.screen.x,
+          wheelAnchor.screen.y,
+        ) <= WHEEL_ANCHOR_SLOP;
+      if (!keepsGesture) {
+        wheelAnchor = { screen, world: worldAt(screen.x, screen.y), at: now };
+      }
+      const anchor = wheelAnchor;
+      if (!anchor) return;
+      anchor.at = now;
       // Multiplicative wheel steps remain useful at the tiny zoom values needed
       // to fit grids containing hundreds of thousands of dice.
       zoomAround(
-        this.viewport.zoom * Math.exp(-dy * 0.0015),
-        center,
-        worldAt(center.x, center.y),
+        this.viewport.zoom * Math.exp(-dy * GRID_WHEEL_ZOOM_RATE),
+        anchor.screen,
+        anchor.world,
       );
     };
 

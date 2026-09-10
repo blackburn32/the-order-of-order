@@ -51,6 +51,12 @@ the studio publishes that script's length as `playDurationMs` and its outcome as
 `script`. The other motion presets name none: their `play()` triggers a single
 interaction and the recorder times them itself.
 
+`gameplay-multitude-zoom` installs an exact 100,489-die bucketed run, begins at
+the game's maximum grid zoom, and drives the real wheel handler out to its
+one-card minimum and back. The clip therefore exercises GameScene's own camera,
+LOD thresholds, spatial summaries, and `DiceSummaryCard` merging rather than a
+marketing-only imitation of them.
+
 A pointer travels between the controls and clicks them, drawn by
 `CaptureCursor.ts`. It is a scene of its own above the one it points at: the
 shop rebuilds its whole display list on every purchase and every reroll, and a

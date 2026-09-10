@@ -26,7 +26,18 @@ const FELT_SIZE = 1024;
  * display size that is exactly the designed one rather than nearly it. `DPR` is
  * already capped at 3, so this is too.
  */
-const ART_SCALE = Math.ceil(DPR);
+// Capture Studio can ask the small dice assets for extra source resolution
+// without supersampling the entire 1600x900 scene. This keeps close-zoom reel
+// faces and baked type labels crisp while leaving normal device memory policy
+// entirely governed by DPR. The override is deliberately capped at the same
+// ceiling as DPR and is only set by the capture scripts.
+const requestedCaptureArtScale = Number(
+  new URLSearchParams(window.location.search).get("captureArtScale"),
+);
+const CAPTURE_ART_SCALE = Number.isFinite(requestedCaptureArtScale)
+  ? Phaser.Math.Clamp(Math.ceil(requestedCaptureArtScale), 1, 3)
+  : 1;
+const ART_SCALE = Math.max(Math.ceil(DPR), CAPTURE_ART_SCALE);
 
 /**
  * What each texture is baked at, and the whole of the decision about which ones

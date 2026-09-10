@@ -86,6 +86,8 @@ try {
       url.searchParams.set("preset", preset.id);
       url.searchParams.set("format", format);
       url.searchParams.set("backdrop", backdrop);
+      if (preset.id === "gameplay-multitude-zoom")
+        url.searchParams.set("captureArtScale", "3");
 
       const page = await browser.newPage({
         viewport,

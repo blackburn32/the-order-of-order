@@ -1,7 +1,7 @@
 import type Phaser from "phaser";
 import { rollPool } from "../sim/engine";
 import { newRun, setRun, type RunState } from "../state/RunState";
-import { DicePool } from "../systems/DicePool";
+import { DicePool, type DiceStack } from "../systems/DicePool";
 import { DIE_LADDER, makeDie, type Die, type DieSides } from "../systems/Dice";
 import { ITEMS, type ShopItemId } from "../systems/Items";
 import { afflictionOf } from "../systems/Items";
@@ -23,7 +23,7 @@ export interface CapturePreset {
   /** The performance `play()` runs, for a preset that does more than trigger a
    *  single interaction. A scripted preset publishes its own length and its
    *  outcome to the recorder; see `shopLoop.ts` and `rollReel.ts`. */
-  script?: "shop-loop" | "grid-growth" | "late-grid";
+  script?: "shop-loop" | "grid-growth" | "late-grid" | "dice-zoom";
 }
 
 export const CAPTURE_PRESETS = [
@@ -102,6 +102,15 @@ export const CAPTURE_PRESETS = [
     defaultFormat: "wide",
     readyDelayMs: 700,
     script: "late-grid",
+  },
+  {
+    id: "gameplay-multitude-zoom",
+    label: "Motion — 100,489-die zoom",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 900,
+    script: "dice-zoom",
   },
   {
     id: "gameplay-eclipse",
@@ -241,6 +250,18 @@ function baseGameplayRun(): RunState {
 
 export function gameplayRun(presetId: CapturePresetId): RunState {
   const run = baseGameplayRun();
+  if (presetId === "gameplay-multitude-zoom") {
+    run.trial = 29;
+    run.roll = 2;
+    run.dice = DicePool.fromStacks(multitudeStacks());
+    run.scoringNumbers = [1, 2, 3, 4, 5, 6];
+    run.extraNumberCount = 5;
+    run.score = 8_482_116n;
+    run.trialScore = run.score;
+    run.totalScore = 91_704_228n;
+    rollPool(run, run.dice, streamFor(run.seed, "roll", "multitude"));
+    return run;
+  }
   if (presetId === "gameplay-grid-growth") {
     run.trial = 14;
     run.roll = 1;
@@ -278,6 +299,78 @@ export function gameplayRun(presetId: CapturePresetId): RunState {
   run.totalScore = 89_471n;
   alignToReelClose(run, LATE_GRID_REEL.rolls);
   return run;
+}
+
+/** A compact, bucket-backed fixture for the zoom reel. Deterministic short
+ * stacks mix die types throughout the grid instead of laying each type down as
+ * one enormous band. Their counts total 100,489 exactly; GameScene still
+ * expands only the on-screen window and summarizes the rest through the same
+ * DiceSummaryCard path used in a live run. */
+function multitudeStacks(): DiceStack[] {
+  const total = 100_489;
+  // Keep several complete rows around the exact geometric midpoint at
+  // one-die granularity. That is the opening camera's window, so neighbours
+  // there genuinely vary die-by-die instead of exposing the storage chunks
+  // used to keep the other hundred thousand cheap to summarize.
+  const detailedStart = 49_000;
+  const detailedEnd = 51_500;
+  const stacks: DiceStack[] = [];
+  let remaining = total;
+  let state = 0x100489;
+  let previous: DieSides | undefined;
+  const random = () => {
+    state = Math.imul(state ^ (state >>> 15), 1 | state);
+    state ^= state + Math.imul(state ^ (state >>> 7), 61 | state);
+    return ((state ^ (state >>> 14)) >>> 0) / 4294967296;
+  };
+
+  while (remaining > 0) {
+    const position = total - remaining;
+    const detailed = position >= detailedStart && position < detailedEnd;
+    const randomCount = 32 + Math.floor(random() * 65);
+    const count = detailed
+      ? 1
+      : Math.min(
+          remaining,
+          position < detailedStart
+            ? Math.min(randomCount, detailedStart - position)
+            : randomCount,
+        );
+    const roll = random();
+    let sides: DieSides =
+      roll < 0.38
+        ? 6
+        : roll < 0.54
+          ? 4
+          : roll < 0.67
+            ? 8
+            : roll < 0.77
+              ? 10
+              : roll < 0.85
+                ? 2
+                : roll < 0.92
+                  ? 20
+                  : roll < 0.97
+                    ? 100
+                    : 1;
+    if (sides === previous) {
+      const index = DIE_LADDER.indexOf(sides);
+      sides =
+        DIE_LADDER[(index + 1 + Math.floor(random() * 3)) % DIE_LADDER.length];
+    }
+    const index = stacks.length;
+    stacks.push({
+      sides,
+      count,
+      maxFaceBonus: index % 17 === 0 ? 1 : 0,
+      loaded: sides > 1 && index % 29 === 0,
+      wildFace: index % 43 === 0,
+      source: "extra_die",
+    });
+    previous = sides;
+    remaining -= count;
+  }
+  return stacks;
 }
 
 export function installGameplayFixture(

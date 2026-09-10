@@ -16,7 +16,7 @@ import {
 } from "../systems/Items";
 import { toNumberPointMap } from "../systems/ItemPoints";
 import { activeBosses, BossModifierId, goalFor } from "../systems/Boss";
-import { afflict } from "../systems/Afflictions";
+import { afflict, type AfflictionId } from "../systems/Afflictions";
 import {
   endingAfterTrial,
   markEndingSeen,
@@ -60,6 +60,15 @@ import {
   expertWantsReroll,
   type ExpertOptions,
 } from "./expert";
+import {
+  playerAccepts,
+  playerChooseDemand,
+  playerChooseTargets,
+  playerGoldFloor,
+  playerOrder,
+  playerRank,
+  playerWantsReroll,
+} from "./player";
 
 export type StrategyName =
   | "greedy"
@@ -69,7 +78,8 @@ export type StrategyName =
   | "precision"
   | "economy"
   | "tempo"
-  | "expert";
+  | "expert"
+  | "player";
 
 /** One trial's result, captured the moment it completes — goal met or rolls run
  *  out — and before the score resets. `trialScore` is the peak reached. */
@@ -144,13 +154,18 @@ const TARGET_SAMPLE_LIMIT = 4096;
 function pick<T>(arr: T[], rng: () => number): T {
   return arr[Math.floor(rng() * arr.length)];
 }
+
+/** Which die, or dice, a needs-a-die offer is pointed at. Empty for an offer
+ *  that needs no target; null is "no die on this grid is eligible". */
+export type DieTargets = { index?: number; indices?: number[] };
+
 /** Choose valid die target(s) for an offer, or null if none are eligible.
  *  Mirrors the dev panel's auto-target logic but with random valid picks. */
 function chooseTargets(
   state: RunState,
   offer: ShopOffer,
   rng: () => number,
-): { index?: number; indices?: number[] } | null {
+): DieTargets | null {
   if (!offer.needsTarget) return {};
   const dice = state.dice;
   switch (offer.id) {
@@ -181,25 +196,41 @@ function chooseTargets(
   }
 }
 
+/** Where this strategy points a needs-a-die card. Most of the field has no
+ *  opinion and takes a random valid die; a strategy whose plan depends on which
+ *  die is named supplies its own (see sim/player.ts, rules 5 and 6). */
+function targetsFor(
+  strategy: Strategy,
+  state: RunState,
+  offer: ShopOffer,
+  rng: () => number,
+): DieTargets | null {
+  return strategy.chooseTargets
+    ? strategy.chooseTargets(state, offer, rng)
+    : chooseTargets(state, offer, rng);
+}
+
 /** Attempt to buy one offer, resolving its die target(s). Returns whether the
  *  purchase went through (applyOffer only charges on success). */
 function attemptBuy(
+  strategy: Strategy,
   state: RunState,
   offer: ShopOffer,
   rng: () => number,
 ): boolean {
   if (!canAfford(state, offer)) return false;
-  const targets = chooseTargets(state, offer, rng);
+  const targets = targetsFor(strategy, state, offer, rng);
   if (!targets) return false;
   return applyOffer(state, offer, targets.index, targets.indices);
 }
 
 function attemptBoosterChoice(
+  strategy: Strategy,
   state: RunState,
   offer: ShopOffer,
   rng: () => number,
 ): boolean {
-  const targets = chooseTargets(state, offer, rng);
+  const targets = targetsFor(strategy, state, offer, rng);
   if (!targets) return false;
   return applyBoosterChoice(state, offer, targets.index, targets.indices);
 }
@@ -225,8 +256,61 @@ export interface Strategy {
     rng: () => number,
     purchasesMade: number,
     record: RunRecord,
-    curseAppetite: number,
+    strategy: Strategy,
   ): number;
+
+  // The hooks below are the seams a bot needs when its plan is not expressible
+  // as "which cards on the shelf". Every one is optional and every one has a
+  // field-wide default, so leaving them off is what the price-driven and themed
+  // bots do. Only the expert and the player fill any of them in.
+
+  /** Whether this card may be taken at all, on the shelf or out of a booster.
+   *  Defaults to `acceptsCurse` — appraise the curse against the appetite. */
+  accepts?(state: RunState, offer: ShopOffer, curseAppetite: number): boolean;
+  /** How much this bot wants a card, for the choices made outside `visit` — a
+   *  booster's reveals, and whether a shelf is worth rerolling away. Higher is
+   *  better. Defaults to the card's price band. */
+  rank?(state: RunState, offer: ShopOffer): number;
+  /** Which die a needs-a-die card is pointed at. Defaults to a random valid
+   *  die, which is what a bot with no opinion about the grid should do. */
+  chooseTargets?(
+    state: RunState,
+    offer: ShopOffer,
+    rng: () => number,
+  ): DieTargets | null;
+  /** Whether to buy another shelf. Defaults to rerolling only when the reroll
+   *  is free or nothing on the table can be bought (see `visitShop`). */
+  wantsReroll?(
+    state: RunState,
+    offers: ShopOffer[],
+    free: boolean,
+    price: number,
+    curseAppetite: number,
+  ): boolean;
+  /** Which of the King's demands to accept. Defaults to the least risky. */
+  chooseDemand?(
+    state: RunState,
+    demands: readonly AfflictionId[],
+  ): AfflictionId | undefined;
+  /** Gold to keep banked on this visit, for a bot whose reserve is a decision
+   *  rather than a constant. Defaults to the flat `goldFloor`. */
+  floorFor?(state: RunState, offers: readonly ShopOffer[]): number;
+}
+
+/** The shelf, as the booster row sees it: packs are bought before the loose
+ *  cards are shopped, so a reserve rule that exempts a particular shelf cannot
+ *  reach this far. Passed to `floorFor` in place of offers nobody has read yet. */
+const NO_SHELF: readonly ShopOffer[] = [];
+
+/** How much gold this bot keeps back on this visit. */
+function floorFor(
+  strategy: Strategy,
+  state: RunState,
+  offers: readonly ShopOffer[],
+): number {
+  return strategy.floorFor
+    ? strategy.floorFor(state, offers)
+    : strategy.goldFloor;
 }
 
 /** Cheapest first — maximises the number of cards bought per visit. */
@@ -239,25 +323,37 @@ function byCostDescending(offers: ShopOffer[]): ShopOffer[] {
   return [...offers].sort((a, b) => b.cost - a.cost);
 }
 
+/** Whether this bot will take the card, through its own rule if it has one. */
+function accepts(
+  strategy: Strategy,
+  state: RunState,
+  offer: ShopOffer,
+  curseAppetite: number,
+): boolean {
+  return strategy.accepts
+    ? strategy.accepts(state, offer, curseAppetite)
+    : acceptsCurse(state, offer, curseAppetite);
+}
+
 /**
  * Spend down the visit, keeping `floor` gold banked. Buys in the order given,
  * re-checking affordability each time because a purchase changes what is left.
  * Returns the gold spent.
  */
 function spendDown(
+  strategy: Strategy,
   state: RunState,
   ordered: ShopOffer[],
   floor: number,
   rng: () => number,
-  curseAppetite: number,
   purchasesMade: number,
   record: RunRecord,
 ): number {
   for (const offer of ordered) {
     if (shopClosed(state, purchasesMade)) break;
-    if (!acceptsCurse(state, offer, curseAppetite)) continue;
+    if (!accepts(strategy, state, offer, strategy.curseAppetite)) continue;
     if (state.gold - offer.cost < floor) continue;
-    if (attemptBuy(state, offer, rng)) {
+    if (attemptBuy(strategy, state, offer, rng)) {
       purchasesMade += 1;
       if (offer.cursed) record.cursesTaken[offer.id] = state.trial;
       if (discountsShopPrices(offer.id)) repriceOffers(state, ordered);
@@ -277,7 +373,7 @@ function themedVisit(theme: ItemTheme, floor: number) {
     rng: () => number,
     purchasesMade: number,
     record: RunRecord,
-    curseAppetite: number,
+    strategy: Strategy,
   ): number => {
     // A coherent build has to exist before it can earn interest. Spend for
     // survival through the opening three ranks, then begin keeping the build's
@@ -286,11 +382,11 @@ function themedVisit(theme: ItemTheme, floor: number) {
     const inTheme = offers.filter((o) => ITEM_THEMES[o.id].includes(theme));
     const rest = offers.filter((o) => !ITEM_THEMES[o.id].includes(theme));
     purchasesMade = spendDown(
+      strategy,
       state,
       byCostAscending(inTheme),
       visitFloor,
       rng,
-      curseAppetite,
       purchasesMade,
       record,
     );
@@ -298,11 +394,11 @@ function themedVisit(theme: ItemTheme, floor: number) {
     // when it did not.
     repriceOffers(state, rest);
     return spendDown(
+      strategy,
       state,
       byCostAscending(rest),
       visitFloor,
       rng,
-      curseAppetite,
       purchasesMade,
       record,
     );
@@ -330,13 +426,13 @@ export const STRATEGIES: Record<StrategyName, Strategy> = {
     theme: null,
     goldFloor: 0,
     curseAppetite: 0.5,
-    visit(state, offers, rng, purchasesMade, record) {
+    visit(state, offers, rng, purchasesMade, record, strategy) {
       return spendDown(
+        strategy,
         state,
         byCostDescending(offers),
         0,
         rng,
-        this.curseAppetite,
         purchasesMade,
         record,
       );
@@ -347,13 +443,13 @@ export const STRATEGIES: Record<StrategyName, Strategy> = {
     theme: null,
     goldFloor: 0,
     curseAppetite: 0.5,
-    visit(state, offers, rng, purchasesMade, record) {
+    visit(state, offers, rng, purchasesMade, record, strategy) {
       return spendDown(
+        strategy,
         state,
         byCostAscending(offers),
         0,
         rng,
-        this.curseAppetite,
         purchasesMade,
         record,
       );
@@ -373,8 +469,41 @@ export const STRATEGIES: Record<StrategyName, Strategy> = {
     theme: null,
     goldFloor: 0,
     curseAppetite: 0.5,
+    wantsReroll: expertWantsReroll,
     visit(_state, _offers, _rng, purchasesMade) {
       return purchasesMade;
+    },
+  },
+  // The player follows one written plan across three themes; every hook it
+  // fills in is one of that plan's twelve rules. See sim/player.ts.
+  player: {
+    name: "player",
+    // Booster packs are chosen by theme, and the plan's engine is the grid.
+    // The reveals inside the pack are chosen by `rank`, not by this.
+    theme: "swarm",
+    // Rules 3 and 8 make the reserve a function of the visit rather than a
+    // constant, so the real answer is `floorFor` below; this is the fallback
+    // the interface requires and nothing reads it.
+    goldFloor: 0,
+    // Rule 11 refuses every cursed card outright, so no appetite applies.
+    curseAppetite: 0,
+    accepts: playerAccepts,
+    rank: playerRank,
+    chooseTargets: (state, offer) => playerChooseTargets(state, offer),
+    wantsReroll: (state, offers, free, price) =>
+      playerWantsReroll(state, offers, free, price),
+    chooseDemand: playerChooseDemand,
+    floorFor: playerGoldFloor,
+    visit(state, offers, rng, purchasesMade, record, strategy) {
+      return spendDown(
+        strategy,
+        state,
+        playerOrder(state, offers),
+        floorFor(strategy, state, offers),
+        rng,
+        purchasesMade,
+        record,
+      );
     },
   },
 };
@@ -414,21 +543,28 @@ function visitShop(
 
   // Reroll only while it is free (Dealer's Bell) or while nothing on the table
   // is affordable and the reroll itself is — a bot that rerolled on preference
-  // would be measuring its own taste rather than the economy. The expert is the
-  // one exception, and says so out loud: see `expertWantsReroll`.
+  // would be measuring its own taste rather than the economy. The two bots that
+  // shop on preference say so out loud, through `Strategy.wantsReroll`: see
+  // `expertWantsReroll` and `playerWantsReroll`.
   for (let attempt = 0; attempt < MAX_REROLLS_PER_VISIT; attempt++) {
     const free = rerollIsFree(state, attempt);
     const price = free ? 0 : rerollCost(attempt);
-    if (strategy.name === "expert") {
+    if (strategy.wantsReroll) {
       if (
-        !expertWantsReroll(state, offers, free, price, strategy.curseAppetite)
+        !strategy.wantsReroll(
+          state,
+          offers,
+          free,
+          price,
+          strategy.curseAppetite,
+        )
       )
         break;
     } else {
       const stuck = offers.every(
         (o) =>
           !canAfford(state, o) ||
-          !acceptsCurse(state, o, strategy.curseAppetite),
+          !accepts(strategy, state, o, strategy.curseAppetite),
       );
       if (!free && !(stuck && state.gold > price)) break;
     }
@@ -476,14 +612,7 @@ function visitShop(
   if (state.hasCouponBook && !offers.some((offer) => offer.freeByCoupon)) {
     applyCouponFreebie(state, offers, rng);
   }
-  strategy.visit(
-    state,
-    offers,
-    rng,
-    purchasesMade,
-    record,
-    strategy.curseAppetite,
-  );
+  strategy.visit(state, offers, rng, purchasesMade, record, strategy);
   return before - state.gold;
 }
 
@@ -516,10 +645,11 @@ function visitBoosters(
     return strategy.name === "greedy" ? -delta : delta;
   });
 
+  const floor = floorFor(strategy, state, NO_SHELF);
   for (const pack of ordered) {
     if (shopClosed(state, purchasesMade)) break;
     const price = boosterPrice(state, pack);
-    if (state.gold - price < strategy.goldFloor) continue;
+    if (state.gold - price < floor) continue;
     const choices = openBooster(
       state,
       pack,
@@ -530,27 +660,32 @@ function visitBoosters(
     recordCurseOffers(record, choices);
     if (choices.length === 0) continue;
     const acceptable = choices.filter((offer) =>
-      acceptsCurse(state, offer, strategy.curseAppetite),
+      accepts(strategy, state, offer, strategy.curseAppetite),
     );
     if (acceptable.length === 0) continue;
-    const preferred = strategy.theme
-      ? acceptable.filter((offer) =>
-          ITEM_THEMES[offer.id].includes(strategy.theme!),
-        )
-      : acceptable;
+    // A bot with its own ranking judges the whole reveal with it — narrowing to
+    // one theme first would throw away the Ledger to keep a third d6.
+    const preferred =
+      strategy.theme && !strategy.rank
+        ? acceptable.filter((offer) =>
+            ITEM_THEMES[offer.id].includes(strategy.theme!),
+          )
+        : acceptable;
     const pool = preferred.length > 0 ? preferred : acceptable;
     // Once the pack has been paid for every revealed card costs the same
     // (nothing), so even the thrifty shopper takes the strongest band rather
     // than confusing the card's old shop price with a second charge.
-    const orderedChoices = [...pool].sort(
-      (a, b) => PRICE_BANDS[b.priceBand] - PRICE_BANDS[a.priceBand],
-    );
+    const worth = (offer: ShopOffer) =>
+      strategy.rank
+        ? strategy.rank(state, offer)
+        : PRICE_BANDS[offer.priceBand];
+    const orderedChoices = [...pool].sort((a, b) => worth(b) - worth(a));
     const choice = orderedChoices.find(
-      (offer) => chooseTargets(state, offer, rng) !== null,
+      (offer) => targetsFor(strategy, state, offer, rng) !== null,
     );
     if (!choice) continue;
     spendGold(state, price);
-    if (attemptBoosterChoice(state, choice, rng)) {
+    if (attemptBoosterChoice(strategy, state, choice, rng)) {
       purchasesMade += 1;
       if (choice.cursed) record.cursesTaken[choice.id] = state.trial;
       break;
@@ -684,7 +819,7 @@ export function simulateRun(
         record.outcome = "gameOver";
         break;
       }
-      applyStoryAfterTrial(state, end.completedTrial, rng);
+      applyStoryAfterTrial(state, end.completedTrial, rng, strategy);
       if (cfg.stopAfterTrial !== undefined && point.trial >= cfg.stopAfterTrial)
         break;
 
@@ -718,19 +853,26 @@ export function simulateRun(
 
 /** Apply the two story drawbacks the live scenes place between a clear and its
  * shop. The bot chooses the least risky writ from the same rolled demand set a
- * player sees, then receives Betrayal automatically. */
+ * player sees — unless its plan ranks the demands itself (`chooseDemand`) —
+ * then receives Betrayal automatically. */
 function applyStoryAfterTrial(
   state: RunState,
   completedTrial: number,
   rng: () => number,
+  strategy: Strategy,
 ): void {
   const ending = endingAfterTrial(completedTrial, state.endingsSeen);
   if (!ending) return;
   markEndingSeen(state, ending.id);
   if (ending.gift === "kingsDemands") {
-    const demand = rollKingsDemands(state, rng)
-      .slice()
-      .sort((a, b) => afflictionRisk(state, a) - afflictionRisk(state, b))[0];
+    const demands = rollKingsDemands(state, rng);
+    const demand = strategy.chooseDemand
+      ? strategy.chooseDemand(state, demands)
+      : demands
+          .slice()
+          .sort(
+            (a, b) => afflictionRisk(state, a) - afflictionRisk(state, b),
+          )[0];
     if (demand) {
       afflict(state, demand);
       state.kingsDemand = demand;

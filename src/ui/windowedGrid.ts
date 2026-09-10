@@ -5,6 +5,8 @@ import { GridArea } from "./gridLayout";
 export const WINDOW_THRESHOLD = 1500;
 
 const WINDOWED_CELL = 60;
+/** Exponential sensitivity shared by live wheel input and capture tooling. */
+export const GRID_WHEEL_ZOOM_RATE = 0.0015;
 // How far in the player may zoom. Deliberately well above FIT_MAX_ZOOM: a
 // handful of dice already fits the area at the fit cap, so without extra
 // headroom a small grid would open fully zoomed in with nowhere to go.
@@ -26,10 +28,14 @@ const FIT_PADDING = 8;
 // keeps the arithmetic sane for absurd inputs.
 const MIN_ZOOM = 1e-12;
 const CARD_TARGET_SCREEN_SIZE = 112;
-// Zoom-out headroom past the point where the grid becomes one card, as a
-// factor on that zoom. One halving: enough that the last merge happens with
-// room to spare rather than exactly at the limit.
-const ONE_CARD_HEADROOM = 2;
+// The final summary card fills roughly sixty percent of the full viewport in
+// either roomy landscape or portrait: their grid frames occupy about 88–92%
+// of the screen, so 68% of that clear frame lands close to 60% overall.
+const FINAL_CARD_FRAME_FRACTION = 0.68;
+// Begin growing summary-card targets over the last three zoom halvings. Their
+// regions then merge progressively into the large final card instead of
+// jumping from a field of 112px cards to one card at the minimum.
+const FINAL_CARD_APPROACH_HALVINGS = 3;
 const LOD_HYSTERESIS = 0.9;
 
 export const GRID_LOD_THRESHOLDS = {
@@ -87,6 +93,7 @@ export interface GridFocus {
 export interface WindowedView {
   scale: number;
   zoom: number;
+  minZoom: number;
   virtualW: number;
   virtualH: number;
   scrollX: number; // clamped to the virtual grid's bounds
@@ -120,22 +127,24 @@ export interface VisibleDiceCard {
 }
 
 /**
- * How far out the player may zoom: far enough that the whole grid has
- * condensed into a single summary card, plus one halving of headroom.
+ * How far out the player may zoom: the point where the whole grid has
+ * condensed into one summary card occupying about sixty percent of the frame.
  *
  * Card regions double in size as the camera pulls back (see
  * `computeVisibleDiceCards`), so every grid — a handful of dice or a hundred
- * million — ends its zoom-out as one card. That is the point where there is
- * nothing further to see, and stopping there keeps a pull-back from carrying
- * on into empty felt with the whole run a speck in the middle of it.
+ * million — ends its zoom-out as one readable card. There is nothing further
+ * to reveal after that merge, so the card itself defines the minimum instead
+ * of continuing to shrink into empty felt until its copy no longer fits.
  */
 export function minGridZoom(n: number, frame: GridArea): number {
   const cols = gridColumns(n, frame);
   const rows = Math.max(1, Math.ceil(Math.max(1, n) / cols));
-  const span = Math.max(cols, rows);
   return Math.max(
     MIN_ZOOM,
-    CARD_TARGET_SCREEN_SIZE / (span * WINDOWED_CELL * ONE_CARD_HEADROOM),
+    Math.min(
+      (frame.width * FINAL_CARD_FRAME_FRACTION) / (cols * WINDOWED_CELL),
+      (frame.height * FINAL_CARD_FRAME_FRACTION) / (rows * WINDOWED_CELL),
+    ),
   );
 }
 
@@ -324,7 +333,8 @@ export function computeWindowedView(
   const cols = gridColumns(n, frame);
   const rows = Math.ceil(n / cols);
   const cell = WINDOWED_CELL; // fixed; the camera's zoom provides the visual zoom
-  const zoom = clampZoom(view.zoom, n, frame);
+  const minZoom = minGridZoom(n, frame);
+  const zoom = clamp(view.zoom, minZoom, MAX_ZOOM);
   const contentW = cols * cell;
   const contentH = rows * cell;
   // How much virtual space is visible through the camera at this zoom.
@@ -401,6 +411,7 @@ export function computeWindowedView(
   return {
     scale,
     zoom,
+    minZoom,
     virtualW,
     virtualH,
     scrollX,
@@ -427,7 +438,7 @@ export function computeVisibleDiceCards(
   view: WindowedView,
 ): VisibleDiceCard[] {
   const rawCellScreenSize = view.cell * view.zoom;
-  const idealCells = CARD_TARGET_SCREEN_SIZE / rawCellScreenSize;
+  const idealCells = summaryCardTargetScreenSize(view) / rawCellScreenSize;
   const regionCells = Math.max(
     1,
     2 ** Math.round(Math.log2(Math.max(1, idealCells))),
@@ -512,6 +523,30 @@ export function computeVisibleDiceCards(
     }
   }
   return cards;
+}
+
+/** Summary regions normally aim for compact 112px cards. Near the minimum,
+ * their target grows geometrically until it equals the complete grid's final
+ * on-screen span; the existing power-of-two partitioner then performs each
+ * merge on the way down and naturally arrives at one large readable card. */
+function summaryCardTargetScreenSize(view: WindowedView): number {
+  const finalTarget = Math.max(
+    view.cols * view.cell * view.minZoom,
+    view.rows * view.cell * view.minZoom,
+  );
+  const approach = 2 ** FINAL_CARD_APPROACH_HALVINGS;
+  const progress = clamp(
+    Math.log2((view.minZoom * approach) / view.zoom) /
+      FINAL_CARD_APPROACH_HALVINGS,
+    0,
+    1,
+  );
+  return (
+    CARD_TARGET_SCREEN_SIZE *
+    (Math.max(CARD_TARGET_SCREEN_SIZE, finalTarget) /
+      CARD_TARGET_SCREEN_SIZE) **
+      progress
+  );
 }
 
 /** Number of near-equal card regions on one virtual-grid axis. This is the

@@ -60,6 +60,12 @@ const MIN_ROW_HEIGHT = 11;
  * enormous text textures as camera zoom approaches zero.
  */
 export class DiceSummaryCard extends Phaser.GameObjects.Container {
+  /**
+   * The card's painted surface is separate from its world-space anchor. The
+   * outer container keeps cancelling the grid camera zoom, while this inner
+   * container is free to glide/fade between summary regions at LOD boundaries.
+   */
+  private surface: Phaser.GameObjects.Container;
   private background: Phaser.GameObjects.Rectangle;
   private title: Phaser.GameObjects.Text;
   private specials: Phaser.GameObjects.Text;
@@ -83,6 +89,7 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
     zoom: number,
   ) {
     super(scene, x, y);
+    this.surface = scene.add.container(0, 0);
     this.background = scene.add.rectangle(0, 0, 1, 1, COLORS.feltLight, 0.96);
     this.title = scene.add
       .text(0, 0, "", {
@@ -110,7 +117,8 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
       })
       .setOrigin(0.5)
       .setVisible(false);
-    this.add([this.background, this.title, this.specials, this.more]);
+    this.surface.add([this.background, this.title, this.specials, this.more]);
+    this.add(this.surface);
     scene.add.existing(this);
 
     this.setSummary(summary);
@@ -399,10 +407,54 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
     }
   }
 
+  /** Reveal a freshly split card from the screen-space position of its parent. */
+  animateArrival(
+    fromX: number,
+    fromY: number,
+    fromScale: number,
+    duration: number,
+  ): void {
+    this.scene.tweens.killTweensOf(this.surface);
+    this.surface.setPosition(fromX, fromY).setScale(fromScale).setAlpha(0);
+    this.scene.tweens.add({
+      targets: this.surface,
+      x: 0,
+      y: 0,
+      scaleX: 1,
+      scaleY: 1,
+      alpha: 1,
+      duration,
+      ease: "Cubic.easeOut",
+    });
+  }
+
+  /** Carry an obsolete card into its joined parent before releasing it. */
+  animateDeparture(
+    toX: number,
+    toY: number,
+    toScale: number,
+    duration: number,
+    onComplete: () => void,
+  ): void {
+    this.scene.tweens.killTweensOf(this.surface);
+    this.scene.tweens.add({
+      targets: this.surface,
+      x: toX,
+      y: toY,
+      scaleX: toScale,
+      scaleY: toScale,
+      alpha: 0,
+      duration,
+      ease: "Cubic.easeInOut",
+      onComplete,
+    });
+  }
+
   /** Tweens outlive their targets, and a card is destroyed whenever the camera
    *  crosses a region boundary — which a roll's flash can easily still be
    *  running across. */
   override destroy(fromScene?: boolean): void {
+    this.scene?.tweens.killTweensOf(this.surface);
     for (const row of this.rows.values()) {
       this.scene?.tweens.killTweensOf(row.icon);
       this.scene?.tweens.killTweensOf(row.border);
@@ -533,7 +585,7 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
       })
       .setOrigin(0, 0.5);
     container.add([icon, label]);
-    this.add(container);
+    this.surface.add(container);
     return {
       container,
       icon,
