@@ -1,5 +1,16 @@
 import Phaser from "phaser";
-import { artImage } from "../art/textures";
+import { artBakeScale, artImage } from "../art/textures";
+import {
+  DIE_CENTER,
+  FACE_OFFSET_Y,
+  LABEL_OFFSET_Y,
+  drawDieBody,
+  drawDiePip,
+  drawDieStrike,
+  faceLabelStyle,
+  faceNumeralOffset,
+  faceNumeralStyle,
+} from "../art/dieArt";
 import { drawEffectBorder } from "./dieBorder";
 import { Die } from "../systems/Dice";
 
@@ -14,6 +25,27 @@ const SPAWN_START_SCALE = 0.3;
  *  count, not so much that its face stops being readable — the player is meant
  *  to see the 1 it wasted, which is the whole sting of the affliction. */
 const INERT_ALPHA = 0.5;
+
+/**
+ * How far past its baked resolution a die may be drawn before it swaps to the
+ * live Graphics/Text it is baked from (see `setMagnification`).
+ *
+ * Not 1. A bilinear upscale of a few percent is invisible, and a threshold that
+ * tight would hand the sharp path every die in a grid sitting a hair over its
+ * bake for no gain the player can see. A quarter over is about where the gold
+ * border starts to read as soft rather than as antialiased.
+ */
+const SHARP_THRESHOLD = 1.25;
+
+/**
+ * Ceiling on the resolution a live glyph is rasterized at.
+ *
+ * The face numeral is designed at 34px, so this is a ~550px canvas per die —
+ * past the point where more resolution is visible at any sane viewing distance,
+ * and a guard against a pathological zoom asking for a canvas the size of a
+ * texture atlas.
+ */
+const MAX_SHARP_RESOLUTION = 16;
 
 /** A die in the grid: ivory body, baked face (pips/numeral), type label. */
 export class DieSprite extends Phaser.GameObjects.Container {
@@ -43,6 +75,26 @@ export class DieSprite extends Phaser.GameObjects.Container {
   // Whether this die is currently struck out. Held because the pop-in and the
   // pulse both write `alpha`, and an inert die does not rest at 1.
   private inert = false;
+  // The face currently shown, so a swap between the two representations below
+  // can hand the new one the value the old one was displaying.
+  private faceValue: number | null = null;
+
+  // The live, resolution-independent counterparts of the baked children above,
+  // built only once this die is drawn large enough to need them — see
+  // setMagnification. A die that never leaves the baked path never pays for
+  // them, which is the whole reason they are not created up front.
+  private sharpBody?: Phaser.GameObjects.Graphics;
+  private sharpFace?: Phaser.GameObjects.Text;
+  private sharpLabel?: Phaser.GameObjects.Text;
+  private sharpStrike?: Phaser.GameObjects.Graphics;
+  private sharpMarker?: Phaser.GameObjects.Graphics;
+  // Whether this die is drawn past what its baked art can serve. Starts false:
+  // until told otherwise a die is at its designed size under an unzoomed
+  // camera, which is how every screen outside the grid draws one.
+  private sharp = false;
+  // Resolution the live glyphs were last rasterized at, so a pan that leaves
+  // the magnification alone does not re-render every face on screen.
+  private sharpResolution = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number, die: Die) {
     super(scene, x, y);
@@ -63,10 +115,8 @@ export class DieSprite extends Phaser.GameObjects.Container {
 
     // Over the face, under the effect border, so a die that is both inert and
     // flashing still reads as struck out. Built for every die rather than on
-    // demand for the few that need it: Camera.ignore() only snapshots a
-    // Container's *current* children (see the windowed grid camera in
-    // GameScene), so a child added later would leak into the cameras this
-    // sprite has opted out of.
+    // demand: it is one Image sharing the atlas every die is already batching
+    // with, and an affliction can strike any die in the grid.
     this.strikeImage = artImage(scene, 0, 0, "die-atlas", "strike");
     this.strikeImage.setVisible(false);
     this.add(this.strikeImage);
@@ -91,7 +141,8 @@ export class DieSprite extends Phaser.GameObjects.Container {
   setInert(inert: boolean): void {
     if (inert === this.inert) return;
     this.inert = inert;
-    this.strikeImage.setVisible(inert);
+    this.strikeImage.setVisible(!this.sharp && inert);
+    this.sharpStrike?.setVisible(this.sharp && inert);
     this.setAlpha(inert ? INERT_ALPHA : 1);
   }
 
@@ -99,17 +150,150 @@ export class DieSprite extends Phaser.GameObjects.Container {
   refreshType(): void {
     this.bodyImage.setTexture(`die-${this.die.sides}`);
     this.typeImage.setFrame(`label-d${this.die.sides}`);
+    if (this.sharp) this.drawSharp();
     this.showFace(this.die.value > 0 ? this.die.value : null);
   }
 
-  /** Show a face value; null hides the face (unrolled die). Just a frame
-   *  swap on the baked atlas — no GameObjects created or destroyed. */
+  /** Show a face value; null hides the face (unrolled die). On the baked path
+   *  this is just a frame swap on the shared atlas — no GameObjects created or
+   *  destroyed, which is what keeps a rolling grid cheap. */
   showFace(value: number | null): void {
+    this.faceValue = value;
     if (value === null) {
       this.faceImage.setVisible(false);
+      this.sharpFace?.setVisible(false);
+      return;
+    }
+    if (this.sharp && this.sharpFace) {
+      this.sharpFace.setVisible(true).setText(String(value));
       return;
     }
     this.faceImage.setVisible(true).setFrame(`face-${this.die.sides}-${value}`);
+  }
+
+  /**
+   * Tell this die how large it is about to be drawn, in device pixels per
+   * designed pixel — its layout scale, times the grid camera's magnification,
+   * times `DPR`.
+   *
+   * Past its baked resolution a die stops drawing itself from `die-N` and
+   * `die-atlas` and draws the same shapes and glyphs live instead. Graphics and
+   * Text are vector sources the renderer resolves at the camera's own scale, so
+   * they are exact at any zoom, where a baked texture can only be a bilinear
+   * upscale of a fixed grid of texels.
+   *
+   * Baking higher is not the alternative it looks like. The grid's zoom floor
+   * is derived from the viewport (see `minGridZoom`), so a lone die on a desktop
+   * monitor is already drawn six times its designed size and a larger screen
+   * simply asks for more — there is no fixed scale that covers it. The atlas is
+   * the binding constraint either way: 151 faces on a 76px grid is a 988px
+   * texture at 1:1, and the scale this would need puts it past both
+   * `MAX_TEXTURE_SIZE` and any sane memory budget. Drawing live costs nothing
+   * until a die is actually large, and a large die is one the viewport can only
+   * fit a few of.
+   */
+  setMagnification(magnification: number): void {
+    // One decision for the whole die rather than one per child: the body and
+    // the glyphs come from different textures, and `fitAtlasScale` can bake the
+    // atlas a step below the bodies, but a vector body carrying a soft numeral
+    // would read worse than either side of the swap taken cleanly.
+    const baked = Math.min(
+      artBakeScale(`die-${this.die.sides}`),
+      artBakeScale("die-atlas"),
+    );
+    const sharp = magnification > baked * SHARP_THRESHOLD;
+    const resolution = sharp
+      ? Phaser.Math.Clamp(Math.ceil(magnification), 1, MAX_SHARP_RESOLUTION)
+      : 0;
+    if (sharp === this.sharp && resolution === this.sharpResolution) return;
+
+    this.sharp = sharp;
+    this.sharpResolution = resolution;
+    if (sharp) this.buildSharp();
+    this.applyRepresentation();
+  }
+
+  /** Build the live children, once, the first time this die needs them. */
+  private buildSharp(): void {
+    if (this.sharpBody) return;
+    const scene = this.scene;
+
+    // The baked body is a 96x96 texture drawn centred, so the design space
+    // `drawDieBody` works in starts a half-die up and to the left of the
+    // sprite's own origin.
+    this.sharpBody = scene.add.graphics();
+    this.sharpBody.setPosition(-DIE_CENTER, -DIE_CENTER);
+
+    // Both glyphs are placed where their baked frames put them: the label's
+    // canvas centres on the frame centre, the numeral's is pushed down by the
+    // offset that lands its *ink* there (see `drawSharp`).
+    this.sharpLabel = scene.add.text(0, LABEL_OFFSET_Y, "", {}).setOrigin(0.5);
+    this.sharpFace = scene.add.text(0, 0, "", {}).setOrigin(0.5);
+
+    this.sharpStrike = scene.add.graphics();
+    drawDieStrike(this.sharpStrike);
+
+    if (this.marker) {
+      this.sharpMarker = scene.add.graphics();
+      this.sharpMarker.setPosition(this.marker.x, this.marker.y);
+      drawDiePip(this.sharpMarker);
+    }
+
+    this.addSharp();
+  }
+
+  /** Add the live children, in the baked children's own stacking order. */
+  private addSharp(): void {
+    this.add(
+      [
+        this.sharpBody,
+        this.sharpLabel,
+        this.sharpFace,
+        this.sharpMarker,
+        this.sharpStrike,
+      ].filter((child) => child !== undefined),
+    );
+    // They were appended above the effect border, which is drawn over every
+    // other part of the die.
+    this.bringToTop(this.effectBorder);
+  }
+
+  /** Redraw the live children for the current die type and resolution. */
+  private drawSharp(): void {
+    const sides = this.die.sides;
+    const resolution = Math.max(1, this.sharpResolution);
+
+    if (this.sharpBody) {
+      this.sharpBody.clear();
+      drawDieBody(this.sharpBody, sides);
+    }
+
+    this.sharpLabel
+      ?.setStyle(faceLabelStyle(sides, 1, resolution))
+      .setText(`d${sides}`);
+
+    this.sharpFace
+      ?.setStyle(faceNumeralStyle(1, resolution))
+      .setY(FACE_OFFSET_Y + faceNumeralOffset(sides));
+  }
+
+  /** Show exactly one of the two representations. */
+  private applyRepresentation(): void {
+    const sharp = this.sharp;
+    if (sharp) this.drawSharp();
+
+    this.bodyImage.setVisible(!sharp);
+    this.typeImage.setVisible(!sharp);
+    this.marker?.setVisible(!sharp);
+    this.sharpBody?.setVisible(sharp);
+    this.sharpLabel?.setVisible(sharp);
+    this.sharpMarker?.setVisible(sharp);
+
+    this.strikeImage.setVisible(!sharp && this.inert);
+    this.sharpStrike?.setVisible(sharp && this.inert);
+
+    // Re-runs the face through whichever path is now live.
+    this.showFace(this.faceValue);
   }
 
   /**

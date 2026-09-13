@@ -54,6 +54,30 @@ const MIN_ICON_SIZE = 9;
 const MIN_LABEL_SIZE = 7;
 const MIN_ROW_HEIGHT = 11;
 
+/** Row art and type are capped against the card's own size, so a compact card
+ *  keeps exactly the sizes it has today and a large one grows smoothly out of
+ *  them instead of leaving most of its felt empty. The lower bounds are what a
+ *  card up to ~285px keeps; the terms below only overtake them above that. */
+const COMPACT_ICON_SIZE = 40;
+const COMPACT_LABEL_SIZE = 13;
+const GENEROUS_ICON_SIZE = 84;
+const GENEROUS_LABEL_SIZE = 30;
+const ICON_SIZE_PER_CARD = 0.14;
+const LABEL_SIZE_PER_CARD = 0.045;
+const GENEROUS_TITLE_SIZE = 30;
+const GENEROUS_SPECIALS_SIZE = 18;
+// Felt a packed row takes, as a multiple of its icon. Rows sit this far apart
+// as one centred block rather than spreading to the card's full height.
+const PACKED_ROW_PITCH = 1.5;
+// A handful of die sizes reads as a list rather than as a squat two-column
+// block, so a card holding no more than this many takes one column — provided
+// it is tall enough to give each of them a row worth reading. A compact card
+// is not, and keeps the two columns it has always had.
+const LIST_MAX_DIE_SIZES = 4;
+const SINGLE_COLUMN_MIN_ROW_HEIGHT = 34;
+// Felt between two packed columns, as a multiple of the icon size.
+const PACKED_COLUMN_GAP = 1.5;
+
 /**
  * A spatial summary rendered in screen-space even though its position lives in
  * grid-world coordinates. Keeping text at ordinary font sizes avoids generating
@@ -224,7 +248,7 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
       .setStrokeStyle(2, COLORS.gold, 0.72);
 
     const titleSize = Math.round(
-      Phaser.Math.Clamp(screenHeight * 0.12, 10, 15),
+      Phaser.Math.Clamp(screenHeight * 0.12, 10, GENEROUS_TITLE_SIZE),
     );
     if (this.title.style.fontSize !== `${titleSize}px`)
       this.title.setFontSize(titleSize);
@@ -232,7 +256,7 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
     fitToWidth(this.title, cardWidth - ROW_PAD * 2);
 
     const specialsSize = Math.round(
-      Phaser.Math.Clamp(screenHeight * 0.075, 7, 10),
+      Phaser.Math.Clamp(screenHeight * 0.075, 7, GENEROUS_SPECIALS_SIZE),
     );
     if (this.specials.style.fontSize !== `${specialsSize}px`)
       this.specials.setFontSize(specialsSize);
@@ -243,14 +267,21 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
     const contentBottom =
       cardHeight / 2 - (this.specials.visible ? specialsSize + 11 : 6);
     const contentHeight = Math.max(12, contentBottom - contentTop);
+    const caps = rowSizeCaps(cardWidth, contentHeight);
 
-    // Two columns only when the labels survive the halved width. A count wide
-    // enough to be squeezed is exactly the one that used to run over the top of
-    // the next die along, so it takes the whole card instead.
+    // A few die sizes on a roomy card read as a list; more than that, or a card
+    // with no height to spare, keeps the two columns. The second column is in
+    // any case only worth taking if the labels survive the halved width — a
+    // count wide enough to be squeezed is exactly the one that used to run over
+    // the top of the next die along.
+    const listFits =
+      sides.length <= LIST_MAX_DIE_SIZES &&
+      contentHeight / Math.max(1, sides.length) >= SINGLE_COLUMN_MIN_ROW_HEIGHT;
     const columns =
+      !listFits &&
       sides.length > 2 &&
       screenWidth >= 150 &&
-      this.labelsFitIn(2, sides, cardWidth, contentHeight)
+      this.labelsFitIn(2, sides, cardWidth, contentHeight, caps)
         ? 2
         : 1;
 
@@ -259,27 +290,74 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
     this.more.setVisible(hiddenCount > 0);
 
     const rowCount = laidOutRowCount(shown.length, hiddenCount, columns);
-    const metrics = rowMetrics(columns, rowCount, cardWidth, contentHeight);
-    const rowHeight = contentHeight / rowCount;
+    const metrics = rowMetrics(
+      columns,
+      rowCount,
+      cardWidth,
+      contentHeight,
+      caps,
+    );
+    // Rows sit at a pitch tied to their own icons, as one block in the middle
+    // of the content area, rather than spreading to the card's full height.
+    const rowHeight = Math.min(
+      contentHeight / rowCount,
+      metrics.iconSize * PACKED_ROW_PITCH,
+    );
+    const rowsTop = contentTop + (contentHeight - rowHeight * rowCount) / 2;
     const iconSize = metrics.iconSize;
     const scale = iconSize / 96;
 
     for (const [side, row] of this.rows)
       row.container.setVisible(shown.includes(side));
 
+    // The labels are fitted first: their widths are what centre the rows, so
+    // icon and text together stay inside the column at any count. Each column
+    // is centred on its widest row and every icon in it shares that x, so the
+    // dice line up instead of stepping in and out with the count beside them.
+    const columnContentWidth = new Array<number>(columns).fill(0);
+    shown.forEach((side, index) => {
+      const row = this.rows.get(side);
+      if (!row) return;
+      this.fitLabel(row, metrics.labelSize, metrics.labelRoom);
+      const column = index % columns;
+      columnContentWidth[column] = Math.max(
+        columnContentWidth[column],
+        iconSize + ICON_GAP + row.label.width * row.label.scaleX,
+      );
+    });
+
+    // Packed columns sit against each other in the middle of the card rather
+    // than each centring itself in its own half, which on a wide card opens a
+    // gutter wider than the rows themselves. The gutter is whatever felt is
+    // left over once the columns have their content: a card whose labels
+    // already reach the edge of their column has none to give, and asking for
+    // it anyway is what pushed the outer dice past the card's border.
+    const contentTotal = columnContentWidth.reduce((a, b) => a + b, 0);
+    const columnGap =
+      columns > 1
+        ? Phaser.Math.Clamp(
+            (cardWidth - ROW_PAD * 2 - contentTotal) / (columns - 1),
+            0,
+            iconSize * PACKED_COLUMN_GAP,
+          )
+        : 0;
+    const columnCenter = (column: number): number => {
+      const total = contentTotal + columnGap * (columns - 1);
+      let left = -total / 2;
+      for (let i = 0; i < column; i++)
+        left += columnContentWidth[i] + columnGap;
+      return left + columnContentWidth[column] / 2;
+    };
+
     shown.forEach((side, index) => {
       const row = this.rows.get(side);
       if (!row) return;
       const column = index % columns;
       const rowIndex = Math.floor(index / columns);
-      const x = -cardWidth / 2 + metrics.columnWidth * (column + 0.5);
-      const y = contentTop + rowHeight * (rowIndex + 0.5);
+      const x = columnCenter(column);
+      const y = rowsTop + rowHeight * (rowIndex + 0.5);
 
-      // The label is fitted first: its final width is what centres the row, so
-      // icon and text together stay inside the column at any count.
-      this.fitLabel(row, metrics.labelSize, metrics.labelRoom);
-      const contentWidth =
-        iconSize + ICON_GAP + row.label.width * row.label.scaleX;
+      const contentWidth = columnContentWidth[column];
       const iconX = -contentWidth / 2 + iconSize / 2;
 
       row.container.setPosition(x, y);
@@ -302,8 +380,8 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
       if (this.more.style.fontSize !== `${metrics.labelSize}px`)
         this.more.setFontSize(metrics.labelSize);
       this.more.setPosition(
-        -cardWidth / 2 + metrics.columnWidth * ((index % columns) + 0.5),
-        contentTop + rowHeight * (Math.floor(index / columns) + 0.5),
+        columnCenter(index % columns),
+        rowsTop + rowHeight * (Math.floor(index / columns) + 0.5),
       );
       fitToWidth(this.more, metrics.columnWidth - ROW_PAD * 2);
     }
@@ -545,6 +623,7 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
     sides: number[],
     cardWidth: number,
     contentHeight: number,
+    caps: RowSizeCaps,
   ): boolean {
     const shown = this.sidesShownIn(columns, sides, contentHeight);
     const rowCount = laidOutRowCount(
@@ -552,7 +631,13 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
       sides.length - shown.length,
       columns,
     );
-    const metrics = rowMetrics(columns, rowCount, cardWidth, contentHeight);
+    const metrics = rowMetrics(
+      columns,
+      rowCount,
+      cardWidth,
+      contentHeight,
+      caps,
+    );
     for (const side of shown) {
       const row = this.rows.get(side);
       if (!row) continue;
@@ -604,6 +689,28 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
   }
 }
 
+interface RowSizeCaps {
+  icon: number;
+  label: number;
+}
+
+/** How large a row's die and count may grow on a card of this size. */
+function rowSizeCaps(cardWidth: number, contentHeight: number): RowSizeCaps {
+  const side = Math.min(cardWidth, contentHeight);
+  return {
+    icon: Phaser.Math.Clamp(
+      side * ICON_SIZE_PER_CARD,
+      COMPACT_ICON_SIZE,
+      GENEROUS_ICON_SIZE,
+    ),
+    label: Phaser.Math.Clamp(
+      side * LABEL_SIZE_PER_CARD,
+      COMPACT_LABEL_SIZE,
+      GENEROUS_LABEL_SIZE,
+    ),
+  };
+}
+
 /** Rows the content area is divided into, counting the `+N MORE` line as one. */
 function laidOutRowCount(
   shown: number,
@@ -620,6 +727,7 @@ function rowMetrics(
   rowCount: number,
   cardWidth: number,
   contentHeight: number,
+  caps: RowSizeCaps,
 ): {
   columnWidth: number;
   iconSize: number;
@@ -634,7 +742,7 @@ function rowMetrics(
   const iconSize = Phaser.Math.Clamp(
     Math.min(rowHeight - 3, columnWidth * 0.34, inner * 0.45),
     MIN_ICON_SIZE,
-    40,
+    caps.icon,
   );
   return {
     columnWidth,
@@ -645,7 +753,7 @@ function rowMetrics(
       Phaser.Math.Clamp(
         Math.min(iconSize * 0.42, rowHeight * 0.62),
         MIN_LABEL_SIZE,
-        13,
+        caps.label,
       ),
     ),
     labelRoom: Math.max(6, inner - iconSize - ICON_GAP),

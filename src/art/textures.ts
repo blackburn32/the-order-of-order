@@ -1,5 +1,16 @@
 import Phaser from "phaser";
-import { COLORS, CSS, DIE_BORDER, SERIF } from "./palette";
+import { COLORS } from "./palette";
+import { polygonPoints } from "./geometry";
+import {
+  DIE_SIZE,
+  FACE_CELL,
+  drawDieBody,
+  drawDiePip,
+  drawDieStrike,
+  faceLabelStyle,
+  faceNumeralOffset,
+  faceNumeralStyle,
+} from "./dieArt";
 import { DPR } from "../renderQuality";
 import { DIE_LADDER } from "../systems/Dice";
 import type { AfflictionId } from "../systems/Afflictions";
@@ -62,6 +73,11 @@ const BAKE_SCALE: Record<string, number> = {
   plaque: ART_SCALE,
   seal: ART_SCALE,
   btn: ART_SCALE,
+  "btn-text": ART_SCALE,
+  "btn-callout": ART_SCALE,
+  "btn-corners": ART_SCALE,
+  "btn-corners-vine": ART_SCALE,
+  "btn-corners-scroll": ART_SCALE,
   banner: ART_SCALE,
   "pip-gold": ART_SCALE,
   "die-atlas": ART_SCALE,
@@ -112,6 +128,19 @@ function fitAtlasScale(scene: Phaser.Scene, span: number): number {
  */
 export function artScale(key: string, scale = 1): number {
   return scale / bakeScale(key);
+}
+
+/**
+ * Texture pixels `key` holds per designed pixel — the magnification at which it
+ * stops being a 1:1 reproduction and starts being an upscale.
+ *
+ * Exported for `ui/DieSprite`, which draws its die live rather than from these
+ * textures once the grid magnifies it past this. Reads the live value rather
+ * than `ART_SCALE` because `fitAtlasScale` can lower the dice atlas a step to
+ * fit the hardware's `MAX_TEXTURE_SIZE`.
+ */
+export function artBakeScale(key: string): number {
+  return bakeScale(key);
 }
 
 /** `scene.add.image`, drawn at the size the texture was designed at whatever
@@ -166,6 +195,9 @@ export function buildTextures(scene: Phaser.Scene): void {
   buildPlaque(scene);
   buildSeal(scene);
   buildButton(scene);
+  buildTextButton(scene);
+  buildCalloutButton(scene);
+  buildCornerButtons(scene);
   buildPanel(scene);
   buildBanner(scene);
   buildSpark(scene);
@@ -1133,147 +1165,24 @@ function buildFelt(scene: Phaser.Scene): void {
   tex.refresh();
 }
 
-const DIE_CENTER = 48;
-
-/** Regular-polygon vertices, pointy-top by default. */
-function polygonPoints(
-  cx: number,
-  cy: number,
-  radius: number,
-  sides: number,
-  rotationDeg = -90,
-): Phaser.Math.Vector2[] {
-  const pts: Phaser.Math.Vector2[] = [];
-  for (let i = 0; i < sides; i++) {
-    const angle = Phaser.Math.DegToRad(rotationDeg + (360 / sides) * i);
-    pts.push(
-      new Phaser.Math.Vector2(
-        cx + radius * Math.cos(angle),
-        cy + radius * Math.sin(angle),
-      ),
-    );
-  }
-  return pts;
-}
-
 /**
- * One 96×96 ivory body per die type, shaped by side count so the grid reads
- * at a glance: d1/d2 coin, d4 triangle, d6 square, d8/d10 octagon, d20+ hex.
+ * One 96x96 ivory body per die type. The shapes themselves live in `art/dieArt`,
+ * because `ui/DieSprite` draws the same paths live when a die is magnified past
+ * what this bake can serve.
  */
 function buildDice(scene: Phaser.Scene): void {
   for (const sides of DIE_LADDER) {
     const g = scene.add.graphics();
-    const border = DIE_BORDER[sides];
-    const cx = DIE_CENTER;
-
-    if (sides <= 2) {
-      // Coin: sits a touch high so the "d1"/"d2" label below has clear air.
-      const scy = 42;
-      g.fillStyle(COLORS.ivory, 1);
-      g.fillCircle(cx, scy, 36);
-      g.fillStyle(0xffffff, 0.1);
-      g.fillEllipse(cx - 9, scy - 12, 26, 15);
-      g.lineStyle(5, border, 1);
-      g.strokeCircle(cx, scy, 33.5);
-    } else if (sides === 4) {
-      // Point-up triangle, flat base, so the label sits clear beneath it.
-      const pts = polygonPoints(cx, 44, 46, 3, -90);
-      g.fillStyle(COLORS.ivory, 1);
-      g.fillPoints(pts, true);
-      g.fillStyle(0xffffff, 0.1);
-      g.fillEllipse(cx - 8, 34, 24, 14);
-      g.lineStyle(5, border, 1);
-      g.strokePoints(pts, true, true);
-    } else if (sides === 6) {
-      g.fillStyle(COLORS.ivory, 1);
-      g.fillRoundedRect(0, 0, 96, 96, 18);
-      g.fillStyle(0x000000, 0.08);
-      g.fillRoundedRect(6, 58, 84, 32, { tl: 0, tr: 0, bl: 14, br: 14 });
-      g.lineStyle(5, border, 1);
-      g.strokeRoundedRect(2.5, 2.5, 91, 91, 16);
-    } else if (sides === 8 || sides === 10) {
-      const pts = polygonPoints(cx, 40, 40, 8, -90 - 22.5);
-      g.fillStyle(COLORS.ivory, 1);
-      g.fillPoints(pts, true);
-      g.fillStyle(0xffffff, 0.1);
-      g.fillEllipse(cx - 9, 28, 24, 14);
-      g.lineStyle(5, border, 1);
-      g.strokePoints(pts, true, true);
-    } else {
-      // d20+: flat-top/flat-bottom hex, the classic "d20 icon" silhouette.
-      const pts = polygonPoints(cx, 40, 43, 6, 0);
-      g.fillStyle(COLORS.ivory, 1);
-      g.fillPoints(pts, true);
-      g.fillStyle(0xffffff, 0.1);
-      g.fillEllipse(cx - 9, 28, 24, 14);
-      g.lineStyle(5, border, 1);
-      g.strokePoints(pts, true, true);
-    }
-
-    bakeGraphics(g, `die-${sides}`, 96, 96);
+    drawDieBody(g, sides);
+    bakeGraphics(g, `die-${sides}`, DIE_SIZE, DIE_SIZE);
   }
 }
 
 function buildPips(scene: Phaser.Scene): void {
   const g = scene.add.graphics();
-  g.fillStyle(COLORS.gold, 1);
-  g.fillCircle(6, 6, 5);
+  g.translateCanvas(6, 6);
+  drawDiePip(g);
   bakeGraphics(g, "pip-gold", 12, 12);
-}
-
-/** The cell one baked face or type label occupies, in designed pixels. */
-const FACE_CELL = 76;
-
-/** Type sizes the atlas is designed at, in designed pixels. */
-const FACE_NUMERAL_PX = 34;
-const FACE_LABEL_PX = 13;
-
-/** The cross an inert die wears, in the die's own 96-unit design space: how far
- *  each arm reaches from the die's center, and how thick it is drawn. Sized to
- *  cross the body with a margin inside its rounded corners, and to stay clear of
- *  the `FACE_CELL` the atlas packs it into. */
-const STRIKE_REACH = 30;
-const STRIKE_WIDTH = 6;
-
-/**
- * Phaser sizes a Text object's canvas from a fixed reference string
- * (`TextStyle.testString`, `"|MÉqgy"`) via `actualBoundingBoxAscent/Descent`,
- * not the string actually being rendered — so a digit-only glyph (no
- * descenders, and usually a shorter ascent than "É") ends up ink-off-center
- * within that canvas, and `setOrigin(0.5)` only centers the *canvas*, not
- * the glyph. Measure both against the real font to compute the exact draw
- * offset that lands the glyph's own ink at the target point, instead of
- * guessing a fixed pixel nudge.
- */
-function numeralYOffset(
-  fontSize: number,
-  bold: boolean,
-  liftFraction: number,
-): number {
-  const canvas = document.createElement("canvas");
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return 0;
-  ctx.font = `${bold ? "bold " : ""}${fontSize}px ${SERIF}`;
-
-  const ref = ctx.measureText("|MÉqgy"); // matches Phaser's TextStyle.testString
-  const refAscent = ref.actualBoundingBoxAscent;
-  const refDescent = ref.actualBoundingBoxDescent;
-
-  const digits = ctx.measureText("0123456789");
-  const digitAscent = digits.actualBoundingBoxAscent;
-  const digitDescent = digits.actualBoundingBoxDescent;
-
-  const canvasCenter = (refAscent + refDescent) / 2;
-  const glyphCenter = refAscent - (digitAscent - digitDescent) / 2;
-  const inkCenteringOffset = canvasCenter - glyphCenter;
-
-  // Ink-centering alone still read as slightly low — nudge further up by a
-  // fraction of the digit's own rendered height for a more pleasing (if not
-  // strictly mathematical) center.
-  const numberHeight = digitAscent + digitDescent;
-  const opticalLift = numberHeight * liftFraction;
-
-  return inkCenteringOffset - opticalLift;
 }
 
 /**
@@ -1328,46 +1237,22 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
   // until render() runs, so every throwaway must survive until then.
   const throwaways: Phaser.GameObjects.GameObject[] = [];
 
-  // `resolution: 1`, against `installHighResolutionText`'s default of `DPR`.
-  // That default is for text drawn straight to the screen, where the camera
-  // magnifies it; here the glyph is already being rendered at `scale` times its
-  // designed size into a target that is one atlas pixel to one texture pixel.
-  // Asking for `DPR` on top of that would rasterize each Text at another factor
-  // of three and then minify it back down, and a 3:1 bilinear minification with
-  // no mipmap samples 4 of every 9 texels — a *worse* face than drawing it 1:1.
-  const numeralStyle = {
-    fontFamily: SERIF,
-    fontSize: `${FACE_NUMERAL_PX * scale}px`,
-    color: CSS.ink,
-    fontStyle: "bold",
-    resolution: 1,
-  };
-  const numeralOffset = numeralYOffset(FACE_NUMERAL_PX * scale, true, 0.15);
-  const numeralOffsetD6 = numeralYOffset(FACE_NUMERAL_PX * scale, true, 0);
-
+  // The glyphs are baked at `resolution: 1` — see `faceNumeralStyle`, which
+  // carries the reasoning, since `DieSprite` asks the same style for the
+  // opposite resolution when it draws a face live.
   for (const face of faces) {
     const { cx, cy } = placeAt(face.name);
-    const offset = face.sides === 6 ? numeralOffsetD6 : numeralOffset;
     const numeral = scene.add
-      .text(0, 0, String(face.value), numeralStyle)
+      .text(0, 0, String(face.value), faceNumeralStyle(scale, 1))
       .setOrigin(0.5);
-    rt.draw(numeral, cx, cy + offset);
+    rt.draw(numeral, cx, cy + faceNumeralOffset(face.sides, scale));
     throwaways.push(numeral);
   }
 
   for (const label of labels) {
     const { cx, cy } = placeAt(label.name);
-    // The d6 label sits inside the light ivory die body, so dark soft ink reads
-    // well. Every other die puts its label below the shape on the dark felt,
-    // where that same ink is nearly invisible — use a light parchment tone there.
-    const color = label.sides === 6 ? CSS.inkSoft : CSS.parchment;
     const text = scene.add
-      .text(0, 0, `d${label.sides}`, {
-        fontFamily: SERIF,
-        fontSize: `${FACE_LABEL_PX * scale}px`,
-        color,
-        resolution: 1,
-      })
+      .text(0, 0, `d${label.sides}`, faceLabelStyle(label.sides, scale, 1))
       .setOrigin(0.5);
     rt.draw(text, cx, cy);
     throwaways.push(text);
@@ -1375,11 +1260,9 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
 
   {
     const { cx, cy } = placeAt("strike");
-    const reach = STRIKE_REACH * scale;
     const strike = scene.add.graphics();
-    strike.lineStyle(STRIKE_WIDTH * scale, COLORS.waxRed, 1);
-    strike.lineBetween(-reach, -reach, reach, reach);
-    strike.lineBetween(reach, -reach, -reach, reach);
+    strike.setScale(scale);
+    drawDieStrike(strike);
     rt.draw(strike, cx, cy);
     throwaways.push(strike);
   }
@@ -1440,11 +1323,146 @@ export const BUTTON_HEIGHT = 70;
 /** Parchment banner button. */
 function buildButton(scene: Phaser.Scene): void {
   const g = scene.add.graphics();
+  g.fillStyle(COLORS.ink, 0.62);
+  g.fillRoundedRect(4, 7, BUTTON_WIDTH - 8, BUTTON_HEIGHT - 8, 11);
+  g.fillStyle(COLORS.parchmentDark, 1);
+  g.fillRoundedRect(1, 1, BUTTON_WIDTH - 2, BUTTON_HEIGHT - 7, 11);
   g.fillStyle(COLORS.parchment, 1);
-  g.fillRoundedRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT, 10);
-  g.lineStyle(3, COLORS.ink, 0.85);
-  g.strokeRoundedRect(4, 4, 332, 62, 8);
+  g.fillRoundedRect(4, 3, BUTTON_WIDTH - 8, BUTTON_HEIGHT - 11, 8);
+  g.lineStyle(2, COLORS.goldLight, 0.82);
+  g.strokeRoundedRect(3, 2, BUTTON_WIDTH - 6, BUTTON_HEIGHT - 9, 9);
+  g.lineStyle(2, COLORS.ink, 0.78);
+  g.strokeRoundedRect(8, 7, BUTTON_WIDTH - 16, BUTTON_HEIGHT - 19, 6);
+  g.lineStyle(1, COLORS.ivory, 0.52);
+  g.lineBetween(16, 10, BUTTON_WIDTH - 16, 10);
   bakeGraphics(g, "btn", BUTTON_WIDTH, BUTTON_HEIGHT);
+}
+
+/** Invisible full-size surface for text-only controls and their hit target. */
+function buildTextButton(scene: Phaser.Scene): void {
+  const g = scene.add.graphics();
+  // A nearly transparent fill gives generateTexture real bounds without
+  // painting a visible panel over the menu's animated sigil.
+  g.fillStyle(0xffffff, 0.001);
+  g.fillRect(0, 0, BUTTON_WIDTH, BUTTON_HEIGHT);
+  bakeGraphics(g, "btn-text", BUTTON_WIDTH, BUTTON_HEIGHT);
+}
+
+/** A quiet inset wrapper for an action printed on a parchment callout. */
+function buildCalloutButton(scene: Phaser.Scene): void {
+  const g = scene.add.graphics();
+  g.fillStyle(COLORS.parchmentDark, 0.22);
+  g.fillRoundedRect(24, 9, BUTTON_WIDTH - 48, BUTTON_HEIGHT - 18, 6);
+  g.lineStyle(2, COLORS.inkSoft, 0.82);
+  g.strokeRoundedRect(24, 9, BUTTON_WIDTH - 48, BUTTON_HEIGHT - 18, 6);
+  g.lineStyle(1, COLORS.gold, 0.58);
+  g.lineBetween(34, 14, BUTTON_WIDTH - 34, 14);
+  bakeGraphics(g, "btn-callout", BUTTON_WIDTH, BUTTON_HEIGHT);
+}
+
+type CornerOrnament = "diamond" | "vine" | "scroll";
+
+/**
+ * One open manuscript frame with three degrees of corner ornament. The center
+ * remains completely transparent; the full texture is only the generous hit
+ * target that makes these delicate marks behave like a normal button.
+ */
+function buildCornerButton(
+  scene: Phaser.Scene,
+  key: string,
+  ornament: CornerOrnament,
+): void {
+  const g = scene.add.graphics();
+  const inset = 24;
+  const run = ornament === "diamond" ? 42 : 48;
+  const top = 11;
+  const bottom = BUTTON_HEIGHT - 11;
+  const leftInner = inset + run;
+  const rightInner = BUTTON_WIDTH - inset - run;
+
+  g.lineStyle(1.5, COLORS.gold, 0.78);
+  for (const y of [top, bottom]) {
+    g.lineBetween(inset, y, leftInner, y);
+    g.lineBetween(BUTTON_WIDTH - inset, y, rightInner, y);
+  }
+  g.lineBetween(inset, top, inset, top + 15);
+  g.lineBetween(inset, bottom, inset, bottom - 15);
+  g.lineBetween(BUTTON_WIDTH - inset, top, BUTTON_WIDTH - inset, top + 15);
+  g.lineBetween(
+    BUTTON_WIDTH - inset,
+    bottom,
+    BUTTON_WIDTH - inset,
+    bottom - 15,
+  );
+
+  if (ornament === "diamond") {
+    g.fillStyle(COLORS.goldLight, 0.92);
+    for (const y of [top, bottom]) {
+      g.fillTriangle(
+        leftInner + 1,
+        y,
+        leftInner + 6,
+        y - 3,
+        leftInner + 6,
+        y + 3,
+      );
+      g.fillTriangle(
+        rightInner - 1,
+        y,
+        rightInner - 6,
+        y - 3,
+        rightInner - 6,
+        y + 3,
+      );
+    }
+    g.fillCircle(inset, BUTTON_HEIGHT / 2, 2);
+    g.fillCircle(BUTTON_WIDTH - inset, BUTTON_HEIGHT / 2, 2);
+  } else if (ornament === "vine") {
+    g.lineStyle(1.25, COLORS.goldLight, 0.76);
+    for (const y of [top, bottom]) {
+      const towardCenter = y === top ? 1 : -1;
+      g.lineBetween(leftInner - 14, y, leftInner - 6, y + towardCenter * 8);
+      g.lineBetween(leftInner - 7, y, leftInner + 1, y + towardCenter * 6);
+      g.lineBetween(rightInner + 14, y, rightInner + 6, y + towardCenter * 8);
+      g.lineBetween(rightInner + 7, y, rightInner - 1, y + towardCenter * 6);
+      g.fillStyle(COLORS.goldLight, 0.86);
+      g.fillCircle(leftInner + 2, y, 2.5);
+      g.fillCircle(rightInner - 2, y, 2.5);
+    }
+  } else {
+    g.lineStyle(1.3, COLORS.goldLight, 0.78);
+    for (const y of [top, bottom]) {
+      const cy = y === top ? y + 8 : y - 8;
+      g.strokeCircle(leftInner, cy, 8);
+      g.strokeCircle(rightInner, cy, 8);
+      g.fillStyle(COLORS.waxRed, 0.82);
+      g.fillCircle(leftInner, cy, 2);
+      g.fillCircle(rightInner, cy, 2);
+    }
+    g.lineStyle(1, COLORS.gold, 0.52);
+    g.lineBetween(inset - 7, top + 8, inset, top + 8);
+    g.lineBetween(inset - 7, bottom - 8, inset, bottom - 8);
+    g.lineBetween(
+      BUTTON_WIDTH - inset + 7,
+      top + 8,
+      BUTTON_WIDTH - inset,
+      top + 8,
+    );
+    g.lineBetween(
+      BUTTON_WIDTH - inset + 7,
+      bottom - 8,
+      BUTTON_WIDTH - inset,
+      bottom - 8,
+    );
+  }
+
+  bakeGraphics(g, key, BUTTON_WIDTH, BUTTON_HEIGHT);
+}
+
+function buildCornerButtons(scene: Phaser.Scene): void {
+  buildCornerButton(scene, "btn-corners", "diamond");
+  buildCornerButton(scene, "btn-corners-vine", "vine");
+  buildCornerButton(scene, "btn-corners-scroll", "scroll");
 }
 
 /** Large parchment panel (shop, hall, settings). */

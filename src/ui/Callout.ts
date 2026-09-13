@@ -211,6 +211,8 @@ export function showCallout(
       "Continue",
       () => opts.onContinue!(),
       btnMaxW,
+      undefined,
+      { style: "callout", tone: "ink" },
     );
     btn.setDepth(BUTTON_DEPTH);
     objects.push(btn);

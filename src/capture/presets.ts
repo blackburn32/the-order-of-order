@@ -121,6 +121,14 @@ export const CAPTURE_PRESETS = [
     // Hold until the entrance and announcement have reached full opacity.
     readyDelayMs: 900,
   },
+  {
+    id: "gameplay-famine",
+    label: "Gameplay — Famine disabled cards",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 900,
+  },
 ] as const satisfies readonly CapturePreset[];
 
 export type CapturePresetId = (typeof CAPTURE_PRESETS)[number]["id"];
@@ -283,6 +291,28 @@ export function gameplayRun(presetId: CapturePresetId): RunState {
     run.bossModifiers = ["eclipse"];
     run.bossesCleared = 5;
     run.dice = DicePool.fromDice(gridDice(72, 0xec11a5e));
+    run.score = 184n;
+    run.trialScore = run.score;
+    run.totalScore = 12_804n;
+    return run;
+  }
+  if (presetId === "gameplay-famine") {
+    run.trial = 18;
+    run.roll = 2;
+    run.bossModifiers = ["famine"];
+    run.bossesCleared = 5;
+    run.dice = DicePool.fromDice(gridDice(72, 0xfa11e0));
+    run.extraPoints = 2;
+    run.keenEdge = 1;
+    run.hasSnakeEyes = true;
+    run.ownedUnique = ["amplifier", "snake_eyes"];
+    run.purchases = {
+      extra_die: 8,
+      amplifier: 1,
+      extra_point: 2,
+      keen_edge: 1,
+      snake_eyes: 1,
+    };
     run.score = 184n;
     run.trialScore = run.score;
     run.totalScore = 12_804n;

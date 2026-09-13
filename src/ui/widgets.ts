@@ -35,6 +35,22 @@ const BUTTON_LABEL_PAD = 28;
  *  `maxWidth` confines it. */
 const BUTTON_SCREEN_MARGIN = 32;
 
+export type BannerButtonStyle =
+  | "parchment"
+  | "text"
+  | "callout"
+  | "corners"
+  | "corners-vine"
+  | "corners-scroll";
+
+export interface BannerButtonOptions {
+  style?: BannerButtonStyle;
+  /** Ink is for controls that sit on parchment; light is for the felt table. */
+  tone?: "light" | "ink";
+  /** Gives the first or most important action a little more typographic weight. */
+  primary?: boolean;
+}
+
 /** Reduce a text object's actual font size until it fits `maxWidth`; a no-op
  *  when it already does. Baking at the final size avoids the fractional object
  *  scale that can make glyph edges look soft. */
@@ -56,15 +72,11 @@ export function fitTextWidth(
   return text;
 }
 
-/** Parchment banner button with hover/press feedback. Pass `maxWidth` to resize
- *  it when it would be wider than the space available (e.g. a narrow settings
- *  panel); without one it still stays inside the viewport. Pass `maxHeight`
- *  where the vertical room is what runs out first — a column of buttons on a
- *  short viewport, or a stack whose pitch is a fraction of the viewport height
- *  — and the button shrinks to that budget, label and all, rather than
- *  overflowing the screen or lapping the button below it. The background is
- *  resized, while the label is re-rendered at its final font size instead of
- *  fractionally scaling the whole container and blurring the text. */
+/** Text-only action control with hover/press feedback and a full-size invisible
+ *  hit target. The older parchment and review styles remain available through
+ *  `options.style`. Pass `maxWidth` or `maxHeight` where layout space runs out;
+ *  the hit target and label shrink together, with the label re-rendered at its
+ *  final font size instead of fractionally scaling into a blur. */
 export function bannerButton(
   scene: Phaser.Scene,
   x: number,
@@ -73,14 +85,41 @@ export function bannerButton(
   onClick: () => void,
   maxWidth?: number,
   maxHeight?: number,
+  options: BannerButtonOptions = {},
 ): Phaser.GameObjects.Container {
   // `artImage`, not `scene.add.image`: the parchment is baked above layout
   // resolution, and every measurement below — the button's own width, the
   // height budget, the label's font size — is taken off the image, so it has to
   // be the size the art was designed at rather than the pixels it is stored in.
-  const img = artImage(scene, 0, 0, "btn");
+  const style = options.style ?? "text";
+  const subtle = style !== "parchment";
+  const textureKey =
+    style === "text"
+      ? "btn-text"
+      : style === "callout"
+        ? "btn-callout"
+        : style === "corners"
+          ? "btn-corners"
+          : style === "corners-vine"
+            ? "btn-corners-vine"
+            : style === "corners-scroll"
+              ? "btn-corners-scroll"
+              : "btn";
+  const img = artImage(scene, 0, 0, textureKey);
+  const textColor = subtle
+    ? options.tone === "ink"
+      ? CSS.ink
+      : options.primary
+        ? CSS.goldLight
+        : CSS.parchment
+    : CSS.ink;
   const text = scene.add
-    .text(0, 0, label, { fontFamily: SERIF, fontSize: "26px", color: CSS.ink })
+    .text(0, 0, label, {
+      fontFamily: SERIF,
+      fontSize: subtle ? "24px" : "26px",
+      color: textColor,
+      fontStyle: options.primary ? "bold" : "normal",
+    })
     .setOrigin(0.5);
   const container = scene.add.container(x, y, [img, text]);
   const contentW = Math.max(img.displayWidth, text.width + BUTTON_LABEL_PAD);
@@ -94,18 +133,76 @@ export function bannerButton(
   const displayScale = Math.min(1, limit / contentW, heightScale);
   const displayW = img.displayWidth * displayScale;
   const displayH = img.displayHeight * displayScale;
-  const labelPad = Math.max(12, BUTTON_LABEL_PAD * displayScale);
+  const labelPad = Math.max(
+    12,
+    (subtle ? 94 : BUTTON_LABEL_PAD) * displayScale,
+  );
 
   img.setDisplaySize(displayW, displayH);
-  text.setFontSize(Math.max(13, Math.round(26 * displayScale)));
+  const baseFontSize = subtle ? 24 : 26;
+  text.setFontSize(Math.max(13, Math.round(baseFontSize * displayScale)));
   fitTextWidth(text, Math.max(1, displayW - labelPad));
+  const hoverRule =
+    style === "text" ? scene.add.graphics().setAlpha(0) : undefined;
+  if (hoverRule) {
+    const halfRule = Math.min(
+      text.width / 2 + 8,
+      Math.max(12, displayW / 2 - 42),
+    );
+    hoverRule.lineStyle(1.5, COLORS.goldLight, 0.9);
+    hoverRule.lineBetween(
+      -halfRule,
+      text.y + text.height / 2 + 5,
+      halfRule,
+      text.y + text.height / 2 + 5,
+    );
+    // Added after the label so legacy callers can continue treating child 1
+    // as the mutable text object (Settings' confirmation copy does this).
+    container.add(hoverRule);
+  }
   container.setSize(displayW, displayH);
   container.setInteractive({ useHandCursor: true });
-  container.on("pointerover", () => img.setTint(0xfff2c8));
-  container.on("pointerout", () => img.clearTint());
+  let pressed = false;
+  const hoverTint = style === "callout" ? 0xffedc0 : 0xfff2c8;
+  const pressedTint = style === "text" ? 0xffffff : 0xdfc47f;
+  const showHoverRule = (alpha: number, duration: number) => {
+    if (!hoverRule) return;
+    if (!fx.motion) {
+      hoverRule.setAlpha(alpha);
+      return;
+    }
+    scene.tweens.killTweensOf(hoverRule);
+    scene.tweens.add({
+      targets: hoverRule,
+      alpha,
+      duration,
+      ease: "Quad.easeOut",
+    });
+  };
+  container.on("pointerover", () => {
+    img.setTint(hoverTint);
+    showHoverRule(1, 90);
+  });
+  container.on("pointerout", () => {
+    pressed = false;
+    img.clearTint();
+    showHoverRule(0, 110);
+  });
   container.on("pointerdown", () => {
+    pressed = true;
     audio.click();
+    img.setTint(pressedTint);
+  });
+  container.on("pointerup", () => {
+    if (!pressed) return;
+    pressed = false;
+    img.setTint(hoverTint);
     onClick();
+  });
+  container.on("pointerupoutside", () => {
+    pressed = false;
+    img.clearTint();
+    showHoverRule(0, 90);
   });
   return container;
 }
@@ -140,13 +237,14 @@ export function stackBannerButtons(
   column: { cx: number; width: number },
   band: { top: number; height: number },
   actions: BannerAction[],
+  options: BannerButtonOptions = {},
 ): Phaser.GameObjects.Container[] {
   const gaps = Math.max(1, actions.length - 1);
   const share = Math.max(
     1,
     (band.height - STACK_GAP_MIN * gaps) / Math.max(1, actions.length),
   );
-  const buttons = actions.map((action) =>
+  const buttons = actions.map((action, index) =>
     bannerButton(
       scene,
       column.cx,
@@ -155,6 +253,7 @@ export function stackBannerButtons(
       action.onClick,
       column.width,
       share,
+      { ...options, primary: options.primary && index === 0 },
     ),
   );
   const stackH = buttons.reduce((sum, button) => sum + button.height, 0);

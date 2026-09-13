@@ -4,7 +4,13 @@ import { COLORS, CSS, SERIF } from "../art/palette";
 import { artImage, artScale, bossSigilTexture } from "../art/textures";
 import { getRun, type RunState } from "../state/RunState";
 import type { Die } from "../systems/Dice";
-import { moldDiceCount, type ShopItemId } from "../systems/Items";
+import {
+  itemDisabledDuringTrialByAffliction,
+  ITEMS,
+  moldDiceCount,
+  type ItemDef,
+  type ShopItemId,
+} from "../systems/Items";
 import { sourceLabel } from "../systems/ItemPoints";
 import {
   activeBoss,
@@ -28,6 +34,7 @@ import {
   setCameraViewport,
   setCameraZoom,
 } from "../ui/camera";
+import { DPR } from "../renderQuality";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { rivalScore } from "../systems/Rival";
@@ -48,6 +55,7 @@ import { AmbientLayer } from "../ui/AmbientLayer";
 import { DieSprite } from "../ui/DieSprite";
 import { DiceSummaryCard, type CardEffectChance } from "../ui/DiceSummaryCard";
 import { formatScore } from "../ui/formatScore";
+import { buildItemCard } from "../ui/itemCard";
 import {
   addFelt,
   floatText,
@@ -110,6 +118,74 @@ const SEAL_RADIUS = 85;
 /** Gap between the boss pills — horizontal along a ribbon, vertical when they
  *  stack down the compact seal rail. */
 const BOSS_PILL_GAP = 4;
+
+interface DisabledCardOverlayLayout {
+  placement: "header-right" | "upper-right-stack";
+  x: number;
+  y: number;
+  scale: number;
+  stepX: number;
+  stepY: number;
+  alpha: number;
+}
+
+/** Use the otherwise empty shoulder to the right of the centred HUD when the
+ * entire card group fits there at a readable size. */
+function disabledCardHeaderLayout(
+  count: number,
+  viewportW: number,
+  hudWidth: number,
+  hudY: number,
+  hudH: number,
+): DisabledCardOverlayLayout | undefined {
+  if (count <= 0) return undefined;
+  const gap = 5;
+  const inset = 14;
+  const room = (viewportW - hudWidth) / 2 - inset * 2;
+  const scale = Math.min(
+    0.2,
+    (room - gap * (count - 1)) / (260 * count),
+    (hudH - 8) / 340,
+  );
+  // Below this point the card names cease to be useful. Let the responsive
+  // corner stack overlap the grid instead of squeezing them into the header.
+  if (scale < 0.15) return undefined;
+  const cardW = 260 * scale;
+  const groupW = count * cardW + (count - 1) * gap;
+  return {
+    placement: "header-right",
+    x: viewportW - inset - groupW + cardW / 2,
+    y: hudY,
+    scale,
+    stepX: cardW + gap,
+    stepY: 0,
+    alpha: 0.8,
+  };
+}
+
+/** Small-screen fallback: stagger the crossed cards over the upper-right edge
+ * of the playfield rather than claiming any layout space. */
+function disabledCardOverlayLayout(
+  count: number,
+  gridFrame: GridArea,
+  compact: boolean,
+): DisabledCardOverlayLayout | undefined {
+  if (count <= 0) return undefined;
+  const scale = compact ? 0.16 : 0.2;
+  const cardW = 260 * scale;
+  const cardH = 340 * scale;
+  const inset = compact ? 5 : 10;
+
+  return {
+    placement: "upper-right-stack",
+    x: gridFrame.x + gridFrame.width - inset - cardW / 2,
+    y: gridFrame.y + inset + cardH / 2,
+    scale,
+    stepX: compact ? -6 : -9,
+    stepY: compact ? cardH * 0.48 : cardH * 0.54,
+    alpha: 0.74,
+  };
+}
 
 /** Pixels the felt bleeds past the viewport, so a camera shake never drags a
  *  bare edge into frame. */
@@ -270,6 +346,7 @@ interface HudCell {
 interface Layout {
   hud: Record<HudStatKey, HudCell>;
   bossRibbon?: { x: number; y: number; w: number; h: number; compact: boolean };
+  disabledCards?: DisabledCardOverlayLayout;
   footer: { numbersY: number; settingsY: number; split: boolean };
   /** The gold rule closing the interface strip off from the playfield. It sits
    *  in the air between the last piece of top chrome — the HUD, or the boss
@@ -668,6 +745,7 @@ export class GameScene extends Phaser.Scene {
     const H = this.scale.height;
     const margin = 16;
     const bosses = activeBosses(this.state);
+    const disabledCount = this.disabledBossItems().length;
     const portrait = isPortrait(this);
     // Too short to stack the grid above the seal: the two sit side by side
     // instead, seal on the right. See the compact branch below.
@@ -699,6 +777,13 @@ export class GameScene extends Phaser.Scene {
       hud[stat.key] = { x: cursorX + w / 2, y: hudY, w, h: cellH };
       cursorX += w + gapX;
     }
+    const headerDisabledCards = disabledCardHeaderLayout(
+      disabledCount,
+      W,
+      hudWidth,
+      hudY,
+      cellH,
+    );
     const hudBottom = hudMargin + cellH;
     // The closing rule tracks the strip rather than the screen: on a wide
     // monitor a full-bleed line would float away from the 600px-capped stats
@@ -750,9 +835,18 @@ export class GameScene extends Phaser.Scene {
       const sealSize = Math.min(railW - 12, railBottom - sealTop - 8);
       const scale = Phaser.Math.Clamp(sealSize / (SEAL_RADIUS * 2), 0.5, 1);
 
+      const gridFrame = {
+        x: margin,
+        y: gridTop,
+        width: Math.max(80, railLeft - 12 - margin),
+        height: Math.max(60, gridBottom - gridTop),
+      };
       return {
         hud,
         bossRibbon,
+        disabledCards:
+          headerDisabledCards ??
+          disabledCardOverlayLayout(disabledCount, gridFrame, true),
         footer,
         // Compact landscape hangs the boss ribbon off the seal rail, so the
         // HUD is the only thing above the rule.
@@ -763,12 +857,7 @@ export class GameScene extends Phaser.Scene {
           width: W,
           height: Math.max(60, gridBottom - gridTop),
         },
-        gridFrame: {
-          x: margin,
-          y: gridTop,
-          width: Math.max(80, railLeft - 12 - margin),
-          height: Math.max(60, gridBottom - gridTop),
-        },
+        gridFrame,
         button: {
           x: railLeft + railW / 2,
           y: (sealTop + railBottom) / 2,
@@ -801,9 +890,18 @@ export class GameScene extends Phaser.Scene {
     const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14, scale: 1 };
     const gridBottom = button.y - SEAL_RADIUS - 16;
 
+    const gridFrame = {
+      x: portrait ? margin : W * 0.06,
+      y: gridTop,
+      width: portrait ? W - margin * 2 : W * 0.88,
+      height: Math.max(60, gridBottom - gridTop),
+    };
     return {
       hud,
       bossRibbon,
+      disabledCards:
+        headerDisabledCards ??
+        disabledCardOverlayLayout(disabledCount, gridFrame, false),
       footer,
       // A Boss Trial pushes the rule below the ribbon: the modifiers presiding
       // over the round are part of the header, not of the table.
@@ -817,12 +915,7 @@ export class GameScene extends Phaser.Scene {
         width: W,
         height: Math.max(60, H - footerH - gridTop),
       },
-      gridFrame: {
-        x: portrait ? margin : W * 0.06,
-        y: gridTop,
-        width: portrait ? W - margin * 2 : W * 0.88,
-        height: Math.max(60, gridBottom - gridTop),
-      },
+      gridFrame,
       button,
     };
   }
@@ -904,6 +997,7 @@ export class GameScene extends Phaser.Scene {
 
     const bossRibbon = this.buildBossRibbon(layout);
     if (bossRibbon) items.push(bossRibbon);
+    items.push(...this.buildDisabledBossCards(layout));
 
     items.push(this.buildHudDivider(layout));
 
@@ -1038,6 +1132,68 @@ export class GameScene extends Phaser.Scene {
 
     container.add(pills.map((pill) => pill.container));
     return container;
+  }
+
+  /** Owned cards whose live effects one of this Boss Trial's afflictions is
+   * currently suppressing. `purchases` is the inventory's source of truth, so
+   * an unlocked-but-unowned card never appears here. */
+  private disabledBossItems(): ItemDef[] {
+    const bosses = activeBosses(this.state);
+    if (bosses.length === 0) return [];
+    return ITEMS.filter(
+      (def) =>
+        (this.state.purchases[def.id] ?? 0) > 0 &&
+        bosses.some((boss) =>
+          itemDisabledDuringTrialByAffliction(def, boss.id),
+        ),
+    );
+  }
+
+  /** Terse item-card faces retain the collection's parchment, rarity, and name
+   * at thumbnail scale. A dark wash and wax-red X make their disabled state
+   * legible before the player can read the title. */
+  private buildDisabledBossCards(
+    sceneLayout: Layout,
+  ): Phaser.GameObjects.Container[] {
+    const defs = this.disabledBossItems();
+    const layout = sceneLayout.disabledCards;
+    if (!layout || defs.length === 0) return [];
+    const cardW = 260 * layout.scale;
+    const cardH = 340 * layout.scale;
+
+    return defs.map((def, index) => {
+      const x = layout.x + layout.stepX * index;
+      const y = layout.y + layout.stepY * index;
+      const card = buildItemCard(this, def, {
+        locked: false,
+        copies: this.state.purchases[def.id] ?? 1,
+        showCaption: false,
+        displayScale: layout.scale,
+        compactType: true,
+        terse: true,
+      })
+        .setPosition(x, y)
+        .setAlpha(layout.alpha);
+
+      if (layout.placement === "upper-right-stack")
+        card.setRotation(index % 2 === 0 ? -0.035 : 0.035);
+
+      card.add(this.add.rectangle(0, 0, cardW, cardH, COLORS.feltDark, 0.3));
+      const cross = this.add.graphics();
+      const inset = Math.max(3, 18 * layout.scale);
+      const left = -cardW / 2 + inset;
+      const right = cardW / 2 - inset;
+      const upper = -cardH / 2 + inset;
+      const lower = cardH / 2 - inset;
+      cross.lineStyle(Math.max(4, 22 * layout.scale), COLORS.feltDark, 0.72);
+      cross.lineBetween(left, upper, right, lower);
+      cross.lineBetween(right, upper, left, lower);
+      cross.lineStyle(Math.max(2, 11 * layout.scale), COLORS.waxRed, 1);
+      cross.lineBetween(left, upper, right, lower);
+      cross.lineBetween(right, upper, left, lower);
+      card.add(cross);
+      return card;
+    });
   }
 
   /** One modifier's pill. Built in two steps, because a row of them has to
@@ -1502,9 +1658,10 @@ export class GameScene extends Phaser.Scene {
           sprite = new DieSprite(this, x, y, die);
           this.diceContainer.add(sprite);
           this.sprites.set(index, sprite);
-          // Camera.ignore() only snapshots a Container's *current* children, so
-          // Each sprite opts out of the main and overlay cameras individually as
-          // it is created; it renders only through the clipped grid camera.
+          // A die renders only through the clipped grid camera. Ignoring the
+          // sprite sets `cameraFilter` on the Container itself, so the whole
+          // subtree is skipped — including the children a die builds later when
+          // it is drawn large (see DieSprite.setMagnification).
           this.cameras.main.ignore(sprite);
           this.overlayCamera?.ignore(sprite);
         } else {
@@ -1518,6 +1675,11 @@ export class GameScene extends Phaser.Scene {
         }
         sprite.setPosition(x, y);
         sprite.setScale(scale);
+        // What the camera is about to do to this die's art. The grid's zoom
+        // floor comes from the viewport, so on a large screen a small grid is
+        // magnified well past what the dice textures were baked at, and the die
+        // draws itself live instead.
+        sprite.setMagnification(scale * view.zoom * DPR);
         sprite.setInert(index < inertCount);
         if (!animate || !from) continue;
         // Three kinds of die end up here: one that was already on screen and

@@ -9,6 +9,7 @@ import {
   addFelt,
   bannerButton,
   BannerAction,
+  BannerButtonStyle,
   fitTextWidth,
   showBanner,
   stackBannerButtons,
@@ -38,6 +39,25 @@ const CURSOR_GLOW_EASING = 0.16;
 /** Felt left showing between the stacked menu buttons once the viewport is
  *  short enough that the pitch, not the parchment, is what confines them. */
 const STACKED_BUTTON_GAP = 8;
+
+/**
+ * Keeps the proposed menu treatments live in one build so they can be
+ * compared without maintaining throwaway branches. Examples:
+ *   ?buttonStyle=text
+ *   ?buttonStyle=corners
+ *   ?buttonStyle=corners-vine
+ *   ?buttonStyle=corners-scroll
+ */
+function menuButtonStyle(): BannerButtonStyle {
+  const value = new URLSearchParams(window.location.search).get("buttonStyle");
+  if (
+    value === "corners" ||
+    value === "corners-vine" ||
+    value === "corners-scroll"
+  )
+    return value;
+  return "text";
+}
 
 export class MenuScene extends Phaser.Scene {
   private cursorGlow?: Phaser.GameObjects.Image;
@@ -254,8 +274,12 @@ export class MenuScene extends Phaser.Scene {
     // rather than letting each one lap the next.
     const btnGap = Math.min(84, H * 0.12);
     const startY = H * 0.48;
+    const buttonStyle = menuButtonStyle();
     const buttons = compact
-      ? stackBannerButtons(this, columns.right, columns, actions)
+      ? stackBannerButtons(this, columns.right, columns, actions, {
+          style: buttonStyle,
+          primary: true,
+        })
       : actions.map((action, i) =>
           bannerButton(
             this,
@@ -265,34 +289,47 @@ export class MenuScene extends Phaser.Scene {
             action.onClick,
             undefined,
             btnGap - STACKED_BUTTON_GAP,
+            { style: buttonStyle, primary: i === 0 },
           ),
         );
 
     if (!itemsUnlocked) {
       const itemsBtn = buttons[2];
       itemsBtn.setAlpha(0.55);
-      // A padlock pinned to the left of the button, vertically centered, so it
-      // doesn't shove the centered label off-center. Both the glyph and its
-      // inset ride the button's own scale — the button shrinks to fit a short
-      // viewport, and a fixed 24px lock would end up taller than the parchment
-      // it sits on and far enough in to collide with the label.
+      // A padlock pinned just left of the bare label, or into the left edge of
+      // an ornamented button, so it never shoves the centered label off-center.
+      // The glyph rides the button's own scale — a fixed 24px lock would end up
+      // taller than the control on a short viewport.
       const img = itemsBtn.getAt(0) as Phaser.GameObjects.Image;
       // Off the parchment's *displayed* height, not its object scale: the
       // texture is baked above layout resolution (see art/textures), so a
       // full-size button already carries a fractional `scaleY`.
+      const label = itemsBtn.getAt(1) as Phaser.GameObjects.Text;
       const lockSize = Math.max(
         12,
         Math.round((24 * img.displayHeight) / BUTTON_HEIGHT),
       );
       const lock = this.add
-        .text(-img.displayWidth / 2 + lockSize, 0, "\u{1F512}", {
-          fontFamily: SERIF,
-          fontSize: `${lockSize}px`,
-          color: CSS.ink,
-        })
+        .text(
+          buttonStyle === "text"
+            ? -label.width / 2 - lockSize * 1.35
+            : -img.displayWidth / 2 + lockSize,
+          0,
+          "\u{1F512}",
+          {
+            fontFamily: SERIF,
+            fontSize: `${lockSize}px`,
+            color: CSS.ink,
+          },
+        )
         .setOrigin(0, 0.5);
       itemsBtn.add(lock);
     }
+
+    // The pointer's ambient light belongs behind the controls now that their
+    // face is bare type. Keeping the button containers above it prevents the
+    // additive bloom from bleaching the letterforms on hover.
+    for (const button of buttons) button.setDepth(2);
 
     // Folded, the tagline closes off the masthead column rather than running
     // the full width under both of them — and wraps rather than shrinking,
@@ -329,7 +366,8 @@ export class MenuScene extends Phaser.Scene {
         .setTint(COLORS.glow)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setDisplaySize(CURSOR_GLOW_SIZE, CURSOR_GLOW_SIZE)
-        .setAlpha(this.cursorGlowActivated ? CURSOR_GLOW_ALPHA : 0);
+        .setAlpha(this.cursorGlowActivated ? CURSOR_GLOW_ALPHA : 0)
+        .setDepth(1);
     }
 
     // Assembled last so the carried light — created at the very end of the

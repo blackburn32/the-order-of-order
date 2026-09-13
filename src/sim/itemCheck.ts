@@ -5,7 +5,13 @@ import {
 } from "../config";
 import { newRun, type RunState } from "../state/RunState";
 import { bossesForRank, goalFor } from "../systems/Boss";
-import { applyTrialStart, enforceGridCap, ITEMS } from "../systems/Items";
+import {
+  applyTrialStart,
+  enforceGridCap,
+  itemDisabledDuringTrialByAffliction,
+  ITEMS,
+  type ShopItemId,
+} from "../systems/Items";
 import { makeDie } from "../systems/Dice";
 import {
   applyBoosterChoice,
@@ -51,6 +57,46 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   const d = makeDie(sides);
   d.value = value;
   return d;
+}
+
+// The Boss Trial HUD crosses out exactly the cards whose live contribution an
+// affliction stops. The mapping follows effect kinds, including trial-time
+// growth passives, while an instant purchase whose dice already exist remains
+// active inventory rather than being retroactively crossed out.
+{
+  const item = (id: ShopItemId) => ITEMS.find((def) => def.id === id)!;
+  check(
+    itemDisabledDuringTrialByAffliction(item("extra_point"), "famine"),
+    "Famine should disable Deeper Stillness",
+  );
+  check(
+    itemDisabledDuringTrialByAffliction(item("keen_edge"), "famine"),
+    "Famine should disable Enlightenment",
+  );
+  check(
+    itemDisabledDuringTrialByAffliction(item("snake_eyes"), "warden"),
+    "Warden should disable Consensus",
+  );
+  check(
+    itemDisabledDuringTrialByAffliction(item("extra_number"), "silence"),
+    "Silence should disable Decree",
+  );
+  check(
+    itemDisabledDuringTrialByAffliction(item("genesis"), "drought"),
+    "Drought should disable trial-time growth cards",
+  );
+  check(
+    !itemDisabledDuringTrialByAffliction(item("extra_die"), "drought"),
+    "Drought should not retroactively disable an instant dice purchase",
+  );
+  check(
+    !itemDisabledDuringTrialByAffliction(item("snake_eyes"), "famine"),
+    "Famine should leave unrelated pattern cards active",
+  );
+  check(
+    !itemDisabledDuringTrialByAffliction(item("amplifier"), "eclipse"),
+    "Eclipse should halve the total without deactivating Amplifier",
+  );
 }
 
 // Lucky Seven multiplies the whole roll, on any value with a 7 written in it.

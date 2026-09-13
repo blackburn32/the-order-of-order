@@ -1646,6 +1646,54 @@ export function itemGrowsGrid(def: ItemDef): boolean {
   );
 }
 
+/**
+ * Whether one affliction switches off something this card would still be doing
+ * during a trial.
+ *
+ * This deliberately follows the same effect vocabulary as the rules instead
+ * of maintaining a second list of item ids for the UI. Instant growth cards
+ * are omitted from `blocksGrowth`: their dice were already added when the card
+ * was bought, so The Drought has nothing left to deactivate. The passive
+ * growth cards are different — they try to pay out during the trial, where the
+ * affliction stops them.
+ */
+export function itemDisabledDuringTrialByAffliction(
+  def: ItemDef,
+  id: AfflictionId,
+): boolean {
+  const affliction = AFFLICTIONS[id];
+
+  if (
+    affliction.blocksGrowth &&
+    def.effects.some(
+      (effect) =>
+        (effect.kind === "incCounter" && GROWTH_COUNTERS.has(effect.counter)) ||
+        (effect.kind === "setFlag" && effect.flag === "hasDoubleTheFun"),
+    )
+  )
+    return true;
+
+  return (affliction.suppress ?? []).some((bonus) =>
+    def.effects.some((effect) => {
+      switch (bonus) {
+        case "extraPoint":
+          return effect.kind === "extraPoint";
+        case "extraNumber":
+          return effect.kind === "extraNumber";
+        case "keenEdge":
+          return effect.kind === "incCounter" && effect.counter === "keenEdge";
+        case "patterns":
+          return (
+            (effect.kind === "incCounter" && effect.counter === "jackpot") ||
+            (effect.kind === "setFlag" &&
+              (effect.flag === "hasSnakeEyes" ||
+                effect.flag === "hasLuckySeven"))
+          );
+      }
+    }),
+  );
+}
+
 /** The standing drawback a card inflicts, read off the effects that actually
  *  inflict it rather than from a second table that could drift from them. Null
  *  for the ordinary cards, which inflict nothing. A cursed card's face is
