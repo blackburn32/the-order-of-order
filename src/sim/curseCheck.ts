@@ -2,14 +2,14 @@
 // of the appetite axis and compares every accepted curse with the baseline win
 // rate of the strategies that accepted it.
 
-import { ITEMS, type ShopItemId } from "../systems/Items";
+import { itemIsCursed, ITEMS, type ShopItemId } from "../systems/Items";
 import { simulateRun, type RunRecord } from "./bot";
 import { DEFAULT_CONFIG } from "./config";
 import { installStorage, seedGlobalRandom } from "./localStorageShim";
 import { seriesConfig, seriesSeed, SIM_SERIES } from "./series";
 
 const runs = Math.max(1, Number(process.env.RUNS ?? DEFAULT_CONFIG.runs) | 0);
-const cursed = ITEMS.filter((def) => def.cursed);
+const cursed = ITEMS.filter((def) => itemIsCursed(def));
 
 const pct = (value: number) => `${(value * 100).toFixed(1)}%`;
 const mean = (values: number[]) =>

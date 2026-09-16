@@ -30,6 +30,8 @@ import {
   slideSceneIn,
   slideSceneOut,
 } from "../ui/sceneSlide";
+import { isRetired } from "../systems/CardReworks";
+import { metaUnlockOwner } from "../systems/Shop";
 import { buildItemCard } from "../ui/itemCard";
 import {
   compactColumns,
@@ -579,9 +581,12 @@ export class ItemsScene extends Phaser.Scene {
     unlocked: Set<string>,
     counts: Record<string, number | undefined>,
   ): ItemDef[] {
-    const isLocked = (def: ItemDef) => !!def.unlock && !unlocked.has(def.id);
+    const isLocked = (def: ItemDef) => itemLocked(def, unlocked);
     const filtering = this.rarityFilter !== "all" || this.themeFilter !== "all";
     const items = ITEMS.filter((def) => {
+      // A prototype is not a card the player can find yet, nor a retired one
+      // any longer.
+      if (def.prototype || isRetired(def.id)) return false;
       if (isLocked(def)) return !filtering;
       if (this.rarityFilter !== "all" && def.rarity !== this.rarityFilter) {
         return false;
@@ -843,7 +848,7 @@ export class ItemsScene extends Phaser.Scene {
     if (!g || g.built.has(index)) return false;
     const def = g.items[index];
     const card = buildItemCard(this, def, {
-      locked: !!def.unlock && !g.unlocked.has(def.id),
+      locked: itemLocked(def, g.unlocked),
       count: g.counts[def.id] ?? 0,
       displayScale: g.cardScale,
     });
@@ -852,7 +857,7 @@ export class ItemsScene extends Phaser.Scene {
       Math.floor(index / g.cols) * g.cellH + g.cellH / 2,
     );
     g.track.add(card);
-    if (!def.unlock || g.unlocked.has(def.id)) {
+    if (!itemLocked(def, g.unlocked)) {
       let pressX = 0;
       let pressY = 0;
       card.setInteractive({ useHandCursor: true });
@@ -903,4 +908,11 @@ export class ItemsScene extends Phaser.Scene {
     this.gridCamera = cam;
     return cam;
   }
+}
+
+/** Whether the collection shows a card locked: the card whose unlock governs it
+ *  — its tree's root, for a tree card — is criterion-gated and not yet earned. */
+function itemLocked(def: ItemDef, unlocked: ReadonlySet<string>): boolean {
+  const owner = metaUnlockOwner(def.id);
+  return !!owner.unlock && !unlocked.has(owner.id);
 }

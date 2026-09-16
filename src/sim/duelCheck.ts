@@ -56,6 +56,9 @@ const BUILDS: Build[] = [
     name: "genesis engine",
     apply: (state) => {
       state.dice.addDice(1, 40);
+      // The Curious copies only a d6 or larger at its highest face, so the
+      // grid needs dice it can copy for both growth passives to run.
+      state.dice.addDice(8, 10);
       state.genesis = 2;
       state.hasDoubleTheFun = true;
     },

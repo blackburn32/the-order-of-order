@@ -31,6 +31,8 @@ npm run curse:check              # appetite 0 vs 1 curse decisions
 npm run pacing:feasibility       # survival-vs-duration frontier, no rule changes
 npm run benchmark                # your exported runs vs the whole field
 npm run expert:tune              # the expert's knobs, swept against those runs
+npm run engines:experiment       # every strategy tree's engine vs the engine-gate curve
+npm run trees:csv                # every strategy tree → sim-out/item-trees.csv
 ```
 
 Open the resulting `sim-out/report.html` in any browser (no server needed).
@@ -421,20 +423,36 @@ move the whole curve as a side effect of a file being edited. `EXPERT_SERIES`
 and `PLAYER_SERIES` are there to point a tuner at one deliberately, as
 `FIELD=expert` and `FIELD=player`.
 
-## Designing the smart-field survival curve
+## The engine-gated curve
 
-`smartSurvivalCurve.ts` is the shipped curve's tuner. It uses the coherent,
-fully unlocked field (all-unlocked greedy/thrifty plus swarm, multiplier,
-precision, and tempo) to set absolute rank-survival checkpoints. Base-pool runs
-and the intentionally weak economy hoarder remain visible in validation, but do
-not make the opening lethal for builds that spend toward power.
+The shipped goals are no longer a table of survival quantiles. Winning is gated
+on building a strategy tree's engine (`systems/ItemTrees`), so `config.ts`
+derives the goals from a growth rate per trial, applied to the goal per roll:
+rank 1 as authored (1, 2, 3), then ×1.6 a trial through rank 3, ×2.2 through
+rank 6 and ×2.4 to the duel (`GOAL_GROWTH_PER_TRIAL`, `engineGateGoals`).
+Asking per roll keeps the 7 / 14 / 18 sawtooth, so a rank's Lesser Trial can ask
+less than the Boss Trial before it.
 
-The current schedule leaves about 65% alive through rank 1, 62% through rank 2,
-and 57% through rank 3, then falls gradually to about 9% entering rank 10. Trial
-1 is deliberately left untouched; its single d6 and seven rolls set a roughly
-72% maximum cohort before shopping begins. Trials 2–9 rise strictly from 2 to
-280 instead of repeating the minimum goal through the opening acts. Every rank
-uses the same 7 / 14 / 18 base-roll cadence.
+The strategy trees (×3 odds for an opened card), the card reworks
+(`systems/CardReworks`) and every tree's cards are the game's rules. The
+`...ForSimulation` setters remain so an experiment can measure a baseline
+without them: `setItemTreesForSimulation(false)` and
+`setCardReworksForSimulation(false)`, restored with `null` and `true`.
+
+`npm run engines:experiment` measures the curve against every tree's builders
+(`MIDDLE=` and `LATE=` move the two later rates). The accepted bar, at
+RUNS≥2000: builders reach the duel ~35-55% of the time, runs with no engine
+~0-2%, builders spend ≥~32% of their rolls in ranks 7-10, and ≲~37% of those
+trials clear in two rolls or fewer.
+
+## The smart-field survival curve (the previous design)
+
+`smartSurvivalCurve.ts` tuned the curve before the engine gate. It uses the
+coherent, fully unlocked field (all-unlocked greedy/thrifty plus swarm,
+multiplier, precision, and tempo) to set absolute rank-survival checkpoints, and
+still runs against whatever goals `config.ts` ships. Its tables paste over
+`TRIAL_GOALS`, which the engine gate now derives, so a pass with it is a study
+rather than a drop-in.
 
 ```bash
 node node_modules/tsx/dist/cli.mjs src/sim/smartSurvivalCurve.ts
@@ -576,38 +594,42 @@ crosses the bucket threshold.
 
 ## Files
 
-| File                    | Role                                                                                             |
-| ----------------------- | ------------------------------------------------------------------------------------------------ |
-| `benchmark.ts`          | An exported run measured against every series at the same trial. Start here.                     |
-| `expertTune.ts`         | The expert's knobs swept against those runs, over a matched seed stream.                         |
-| `importRun.ts`          | Reads a dev-panel run export (or a raw active-run save) back into a `RunState`.                  |
-| `cloneRun.ts`           | A run a hypothesis may ruin. Not the save path — see the file for why.                           |
-| `appraise.ts`           | Capacity measured by rolling it out; what a card is worth, and which die it wants.               |
-| `expert.ts`             | The appraising shopper. The only strategy that measures anything.                                |
-| `player.ts`             | The written plan: twelve numbered rules, and the ranking and hooks that carry them out.          |
-| `expertCheck.ts`        | Appraiser assertions: clone isolation, shared seeds, and that cards land on the right die.       |
-| `engine.ts`             | Pure trial-loop rules shared with `GameScene` (roll → score → grow, trial-end win/lose/advance). |
-| `bot.ts`                | Strategies, die-target selection, `simulateRun`, per-run unlock and boss tracking.               |
-| `stats.ts`              | Aggregates `RunRecord[]` into the report's numbers.                                              |
-| `report.ts`             | Renders `BatchStats` to one self-contained HTML file (inline SVG charts).                        |
-| `config.ts`             | `DEFAULT_CONFIG` + the editable `unlockedAtStart`.                                               |
-| `series.ts`             | The eleven series, their seed offsets, the named fields, and `seriesConfig`.                     |
-| `localStorageShim.ts`   | In-memory `localStorage` + seeded `Math.random` for Node/reproducibility.                        |
-| `runBatch.ts`           | CLI entry (`npm run sim`).                                                                       |
-| `smartSurvivalCurve.ts` | Shipped tuner: designs absolute survival checkpoints from the smart field.                       |
-| `pacingCurve.ts`        | Alternate tuner: designs from uncensored capacity and reports roll tempo.                        |
-| `pacingFeasibility.ts`  | Tests whether one score goal can meet survival and duration targets, without changing rules.     |
-| `economyExperiment.ts`  | Matched-seed payout and item-access experiments; never mutates the live authored values.         |
-| `durationExperiment.ts` | Matched-seed roll-cadence experiments with optional temporary goal compensation.                 |
-| `curseValue.ts`         | State-aware curse boon/risk appraisal used by every bot strategy.                                |
-| `curseCheck.ts`         | Appetite 0/1 curse acceptance and outcome report.                                                |
-| `pacingSweep.ts`        | What every attrition target costs in rolls, for one trial. Read before moving `CLEAR`.           |
-| `tuneCurve.ts`          | Superseded. Fixed-point tuner against censored peaks.                                            |
-| `designTargets.ts`      | Superseded. Single-pass curve designer.                                                          |
-| `validate.ts`           | Re-test a curve with real culling; prints attrition, roll pacing and boss clear rates.           |
-| `endlessCurve.ts`       | Confirms the endless ladder terminates.                                                          |
-| `itemCheck.ts`          | Item + boss-modifier assertions.                                                                 |
-| `trialEndCheck.ts`      | Trial-loop assertions.                                                                           |
-| `runHistoryCheck.ts`    | Run-timeline assertions: what is recorded, and how it survives both saves.                       |
-| `goldCheck.ts`          | Gold-economy assertions.                                                                         |
-| `compareScoring.ts`     | Per-die vs histogram scorer parity + perf timing.                                                |
+| File                     | Role                                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------------------------ |
+| `benchmark.ts`           | An exported run measured against every series at the same trial. Start here.                     |
+| `expertTune.ts`          | The expert's knobs swept against those runs, over a matched seed stream.                         |
+| `importRun.ts`           | Reads a dev-panel run export (or a raw active-run save) back into a `RunState`.                  |
+| `cloneRun.ts`            | A run a hypothesis may ruin. Not the save path — see the file for why.                           |
+| `appraise.ts`            | Capacity measured by rolling it out; what a card is worth, and which die it wants.               |
+| `expert.ts`              | The appraising shopper. The only strategy that measures anything.                                |
+| `player.ts`              | The written plan: twelve numbered rules, and the ranking and hooks that carry them out.          |
+| `expertCheck.ts`         | Appraiser assertions: clone isolation, shared seeds, and that cards land on the right die.       |
+| `engine.ts`              | Pure trial-loop rules shared with `GameScene` (roll → score → grow, trial-end win/lose/advance). |
+| `bot.ts`                 | Strategies, die-target selection, `simulateRun`, per-run unlock and boss tracking.               |
+| `stats.ts`               | Aggregates `RunRecord[]` into the report's numbers.                                              |
+| `report.ts`              | Renders `BatchStats` to one self-contained HTML file (inline SVG charts).                        |
+| `config.ts`              | `DEFAULT_CONFIG` + the editable `unlockedAtStart`.                                               |
+| `series.ts`              | The eleven series, their seed offsets, the named fields, and `seriesConfig`.                     |
+| `localStorageShim.ts`    | In-memory `localStorage` + seeded `Math.random` for Node/reproducibility.                        |
+| `runBatch.ts`            | CLI entry (`npm run sim`).                                                                       |
+| `smartSurvivalCurve.ts`  | Shipped tuner: designs absolute survival checkpoints from the smart field.                       |
+| `pacingCurve.ts`         | Alternate tuner: designs from uncensored capacity and reports roll tempo.                        |
+| `pacingFeasibility.ts`   | Tests whether one score goal can meet survival and duration targets, without changing rules.     |
+| `economyExperiment.ts`   | Matched-seed payout and item-access experiments; never mutates the live authored values.         |
+| `durationExperiment.ts`  | Matched-seed roll-cadence experiments with optional temporary goal compensation.                 |
+| `curseValue.ts`          | State-aware curse boon/risk appraisal used by every bot strategy.                                |
+| `curseCheck.ts`          | Appetite 0/1 curse acceptance and outcome report.                                                |
+| `pacingSweep.ts`         | What every attrition target costs in rolls, for one trial. Read before moving `CLEAR`.           |
+| `tuneCurve.ts`           | Superseded. Fixed-point tuner against censored peaks.                                            |
+| `designTargets.ts`       | Superseded. Single-pass curve designer.                                                          |
+| `validate.ts`            | Re-test a curve with real culling; prints attrition, roll pacing and boss clear rates.           |
+| `endlessCurve.ts`        | Confirms the endless ladder terminates.                                                          |
+| `itemCheck.ts`           | Item + boss-modifier assertions.                                                                 |
+| `trialEndCheck.ts`       | Trial-loop assertions.                                                                           |
+| `runHistoryCheck.ts`     | Run-timeline assertions: what is recorded, and how it survives both saves.                       |
+| `goldCheck.ts`           | Gold-economy assertions.                                                                         |
+| `lessons.ts`             | The Lessons shopper: one strategy tree played toward its engine, as six numbered rules.          |
+| `treeShoppers.ts`        | One written plan per remaining tree (Resonance, Treasury, Canticle, Weighing, Pyre, Hermitage).  |
+| `catechismExperiment.ts` | Every tree's engine against the engine-gate goal curve, on matched seeds; restores every switch. |
+| `exportItemTrees.ts`     | Validates the strategy trees (`systems/ItemTrees`) and writes them to CSV.                       |
+| `compareScoring.ts`      | Per-die vs histogram scorer parity + perf timing.                                                |

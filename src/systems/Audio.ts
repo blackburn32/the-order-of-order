@@ -189,6 +189,14 @@ class AudioBus {
       this.tone(notes[i], 0.22, "triangle", i * 0.07, 0.2);
   }
 
+  /** One step of the roll's multiplier counting up: a short pluck that climbs
+   *  a whole tone per step, so a long run of multipliers is heard rising. */
+  multiply(step: number): void {
+    this.ensure();
+    const freq = 392 * 2 ** (Math.min(step, 12) / 6);
+    this.tone(freq, 0.12, "square", 0, 0.06);
+  }
+
   jackpot(): void {
     this.ensure();
     this.duckMusic(0.3, 0.8, 0.4);

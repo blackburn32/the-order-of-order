@@ -30,7 +30,20 @@ const OFFSETS: Record<StrategyName, number> = {
   tempo: 55_433,
   expert: 63_352,
   player: 71_271,
+  lessons: 79_190,
+  resonance: 87_109,
+  treasury: 95_028,
+  canticle: 102_947,
+  weighing: 110_866,
+  pyre: 118_785,
+  hermitage: 126_704,
 };
+
+/** A strategy's seed offset, for a driver that runs a strategy outside
+ *  SIM_SERIES (the engine experiment) on the same footing as the rest. */
+export function seedOffsetFor(strategy: StrategyName): number {
+  return OFFSETS[strategy];
+}
 
 function series(
   strategy: StrategyName,

@@ -9,6 +9,7 @@ import { STARTING_GOLD } from "../systems/Gold";
 import type { ShopItemId } from "../systems/Items";
 import type { RollSample } from "../systems/RunHistory";
 import type { ItemPurchaseEvent } from "../systems/ItemValue";
+import type { GrowthEngineId } from "../systems/GrowthEngines";
 import { randomSeed } from "../systems/Rng";
 
 export interface RunState {
@@ -32,6 +33,12 @@ export interface RunState {
   // recomputed from `score`) so nothing later in the trial can un-clear it.
   // Reset on advance.
   trialCleared: boolean;
+  // Set as the ladder moves onto a new trial, cleared once that trial's
+  // trial-start passives (The Inner Circle, A Full Choir, The Bloat) have run
+  // — which waits until the trial actually opens, AFTER the shop, so a card
+  // bought there fires on the very next trial. Latched so a resumed save never
+  // runs them twice.
+  trialOpenPending: boolean;
   // Score magnitudes are bigint: with millions of dice and compounding Prism /
   // Last Call multipliers they race past Number.MAX_SAFE_INTEGER within a run.
   score: bigint; // progress toward this trial's goal; resets to 0 every trial
@@ -132,6 +139,55 @@ export interface RunState {
   hasProspector: boolean; // gold per die held, on a clear
   hasReliquary: boolean; // a share on top of every trial's gold payout
   hasPawnbroker: boolean; // every card costs less, flat
+  // The strategy trees' engines (prototypes; see systems/GrowthEngines). Each
+  // engine's rolls are counted by the percent they grew at, keyed by engine:
+  // `growthRollsAt.catechism[12]` is how many rolls The Catechism counted at 12%.
+  // Points grow once per counted roll at its own percent. Counts rather than a
+  // stored factor, so the growth stays one exact integer division however long
+  // the run goes.
+  growthRollsAt: Partial<Record<GrowthEngineId, number[]>>;
+  hasCatechism: boolean; // growth on every roll the whole live grid scored
+  litany: number; // +2% to The Catechism's growth per copy, three copies at most
+  hasResonantHall: boolean; // growth on every roll two cards multiplied
+  harmonics: number; // +2% to The Resonant Hall's growth per copy
+  multitude: number; // a share of The Curious' copies arrive as a pair, per copy
+  hasGildedAltar: boolean; // ×2 per 10 gold held
+  hasEndowment: boolean; // growth from the gold held
+  compoundInterest: number; // +2% to The Endowment's cap per copy
+  abstinence: number; // gold per copy for leaving a shop without buying
+  hasCounterpoint: boolean; // a face only one die shows scores
+  hasCanticle: boolean; // ×2 per unrepeated face beyond the fourth
+  hasPlainsong: boolean; // growth from unrepeated faces
+  descant: number; // +2% to Plainsong's cap per copy
+  fullChoir: number; // a d100 as each trial starts, per copy
+  hasAntiphon: boolean; // Plainsong counts every unrepeated face twice
+  hasChoirmaster: boolean; // removes the dice that repeated a face as a trial ends
+  hasScales: boolean; // the upper half of each die scores its face value
+  gravitas: number; // ×(average die size ÷ 10) per copy
+  hasWeightOfAges: boolean; // growth from the dice showing 50 or higher
+  gravityWell: number; // +2% to The Weight of Ages' cap per copy
+  ancestors: number; // a d100 after every roll, per copy
+  hasAnvil: boolean; // d100s never roll below 50
+  ballastSizes: DieSides[]; // sizes that never roll their lowest two faces
+  hasPyre: boolean; // growth from the faces that burned or shattered
+  kindling: number; // burned faces count double toward The Pyre, per copy
+  everflame: number; // +2% to The Pyre's cap per copy
+  hasBrazier: boolean; // every die that rolled a 1 burns after the roll
+  hasEmbers: boolean; // half the faces The Pyre spends stay for the next roll
+  hasAshenCrown: boolean; // ×2 per 100 faces burned or shattered this run
+  // Faces burned or shattered on the run's own grid, Kindling's doubling
+  // included: what The Ashen Crown reads. Never spent.
+  facesBurned: number;
+  fromTheAshes: number; // a tenth of burned dice return as d100, per copy
+  // Faces burned or shattered since The Pyre last counted a roll, Kindling's
+  // doubling included. Spent by every roll.
+  pyreFaces: number;
+  hasCell: boolean; // ×2 per empty seat below eight dice
+  hasVigil: boolean; // each die's points grow as it scores (see Die.scores)
+  discipline: number; // +2% to The Vigil's growth per copy
+  // Every goal ×this. Only the simulation's reworked grid multipliers move it
+  // (see systems/CardReworks); 1 everywhere else.
+  goalScale: number;
   // Stacking passives — the count of each owned (incremented per purchase), read
   // at their relevant moment (scoring, trial start, trial clear). Unlike the
   // boolean flags above, these items are repeatable and their effects compound.
@@ -215,6 +271,7 @@ export function newRun(
     boonNextShop: false,
     bossesCleared: 0,
     trialCleared: false,
+    trialOpenPending: false,
     score: 0n,
     trialScore: 0n,
     totalScore: 0n,
@@ -272,6 +329,43 @@ export function newRun(
     hasProspector: false,
     hasReliquary: false,
     hasPawnbroker: false,
+    growthRollsAt: {},
+    hasCatechism: false,
+    litany: 0,
+    hasResonantHall: false,
+    harmonics: 0,
+    multitude: 0,
+    hasGildedAltar: false,
+    hasEndowment: false,
+    compoundInterest: 0,
+    abstinence: 0,
+    hasCounterpoint: false,
+    hasCanticle: false,
+    hasPlainsong: false,
+    descant: 0,
+    fullChoir: 0,
+    hasAntiphon: false,
+    hasChoirmaster: false,
+    hasScales: false,
+    gravitas: 0,
+    hasWeightOfAges: false,
+    gravityWell: 0,
+    ancestors: 0,
+    hasAnvil: false,
+    ballastSizes: [],
+    hasPyre: false,
+    kindling: 0,
+    everflame: 0,
+    hasBrazier: false,
+    hasEmbers: false,
+    hasAshenCrown: false,
+    facesBurned: 0,
+    fromTheAshes: 0,
+    pyreFaces: 0,
+    hasCell: false,
+    hasVigil: false,
+    discipline: 0,
+    goalScale: 1,
     pocketChange: 0,
     whetstone: 0,
     dividend: 0,

@@ -4,6 +4,7 @@
 // these variants changes live play.
 
 import {
+  itemIsCursed,
   ITEMS,
   type PriceBand,
   type Rarity,
@@ -65,7 +66,7 @@ function nextRarity(rarity: Rarity): Rarity {
 }
 
 const explosive = ITEMS.filter(
-  (item) => item.stackPricing === "explosive" && !item.cursed,
+  (item) => item.stackPricing === "explosive" && !itemIsCursed(item),
 );
 const explosiveRarityPatches = explosive
   .filter((item) => item.rarity !== "rare")
@@ -344,7 +345,7 @@ function baselineItemSignals(records: RunRecord[]): void {
   );
   const top = records.filter((record) => record.totalScore >= topThreshold);
   const baselineWins = mean(records.map((record) => (record.won ? 1 : 0)));
-  const rows = ITEMS.filter((item) => !item.cursed)
+  const rows = ITEMS.filter((item) => !itemIsCursed(item))
     .map((item) => {
       const buyers = records.filter(
         (record) => (record.purchases[item.id] ?? 0) > 0,

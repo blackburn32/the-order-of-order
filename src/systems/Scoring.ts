@@ -13,6 +13,13 @@ import {
 import { Die } from "./Dice";
 import { RunState } from "../state/RunState";
 import { trialRollTarget } from "./Trial";
+import {
+  groupScores,
+  growRoll,
+  unrepeatedFaces,
+  type GrowthShare,
+  type VigilGroup,
+} from "./GrowthEngines";
 
 /** Jackpot pays this much per full set of scoring dice, per copy owned... */
 export const JACKPOT_POINTS = 25;
@@ -57,6 +64,181 @@ export const OUROBOROS_BONUS = 9n;
 
 /** Hair Trigger's factor on the opening roll of every trial. */
 export const HAIR_TRIGGER_MULT = 10n;
+
+/** The breakdown entries for the points each growth engine added to a roll.
+ *  Like every entry applied after the multiplier their points are not in the
+ *  subtotal: they ride on `RollResult.growth`, and `displayPoints` is what the
+ *  roll's float shows. */
+export function growthModifiers(
+  shares: readonly GrowthShare[],
+): ScoreModifier[] {
+  return shares
+    .filter((share) => share.total > 0n)
+    .map((share) => ({
+      id: share.id,
+      name: share.name,
+      points: 0n,
+      displayPoints: share.total,
+      color: COLORS.goldLight,
+      dice: [],
+      bigPulse: false,
+      float: "aggregate" as const,
+    }));
+}
+
+/** The Gilded Altar doubles a roll for every this much gold held. */
+export const GILDED_ALTAR_GOLD_PER_DOUBLING = 10;
+
+/** The most doublings The Gilded Altar pays (×16). A purse grows every trial,
+ *  so an uncapped Altar compounded once per trial and ended late trials in a
+ *  roll or two; capped, it is the fixed factor its tier asks for. */
+export const GILDED_ALTAR_MAX_DOUBLINGS = 4;
+
+// Sim-only: the engine experiment sweeps the ceiling.
+let gildedAltarMaxDoublings = GILDED_ALTAR_MAX_DOUBLINGS;
+
+/** Sim-only. The Gilded Altar's most doublings; null restores the card's own. */
+export function setGildedAltarMaxDoublingsForSimulation(
+  doublings: number | null,
+): void {
+  gildedAltarMaxDoublings = doublings ?? GILDED_ALTAR_MAX_DOUBLINGS;
+}
+/** The Cell doubles a roll for every seat empty below this many dice. */
+export const CELL_SEATS = 8;
+
+/** The Ashen Crown doubles a roll for every this many faces burned or shattered
+ *  in the run, up to ×16 — The Pyre's fixed factor, paid for by the burning the
+ *  tree does before its engine arrives. */
+export const ASHEN_CROWN_FACES_PER_DOUBLING = 100;
+export const ASHEN_CROWN_MAX_DOUBLINGS = 4;
+
+// Sim-only: the engine experiment sweeps The Ashen Crown's figures.
+let ashenCrownFaces = ASHEN_CROWN_FACES_PER_DOUBLING;
+let ashenCrownMaxDoublings = ASHEN_CROWN_MAX_DOUBLINGS;
+
+/** Sim-only. The Ashen Crown's faces per doubling and most doublings; null
+ *  restores the card's own. */
+export function setAshenCrownForSimulation(
+  facesPerDoubling: number | null,
+  maxDoublings: number | null,
+): void {
+  ashenCrownFaces = facesPerDoubling ?? ASHEN_CROWN_FACES_PER_DOUBLING;
+  ashenCrownMaxDoublings = maxDoublings ?? ASHEN_CROWN_MAX_DOUBLINGS;
+}
+/** The Canticle doubles a roll for every unrepeated face beyond this many. */
+export const CANTICLE_FREE_FACES = 4;
+/** Gravitas multiplies by the grid's mean die size over this, per copy. */
+export const GRAVITAS_SIZE_PER_FACTOR = 10;
+
+/** What the strategy trees' multipliers read off a roll's grid. */
+export interface GridReading {
+  /** Every die, inert ones included. */
+  total: number;
+  /** The sides of every die, summed. */
+  sidesTotal: number;
+  /** Face value -> live dice showing it. */
+  valueCounts: Map<number, number>;
+}
+
+/** One of the strategy trees' multipliers, as a roll found it. */
+export interface TreeMultiplier {
+  /** Modifier id. */
+  id: string;
+  /** The item credited with it. */
+  item: string;
+  name: string;
+  mult: bigint;
+}
+
+/** The strategy trees' multipliers that land on this roll: The Gilded Altar,
+ *  The Cell, The Canticle and Gravitas. One list both scorers and the
+ *  attribution pass read, so the three cannot disagree. */
+export function treeMultipliers(
+  state: RunState,
+  grid: GridReading,
+): TreeMultiplier[] {
+  const out: TreeMultiplier[] = [];
+  const doubling = (id: string, item: string, name: string, times: number) => {
+    if (times > 0) out.push({ id, item, name, mult: 2n ** BigInt(times) });
+  };
+  if (state.hasGildedAltar)
+    doubling(
+      "gildedAltar",
+      "gilded_altar",
+      "The Gilded Altar",
+      Math.min(
+        gildedAltarMaxDoublings,
+        Math.floor(state.gold / GILDED_ALTAR_GOLD_PER_DOUBLING),
+      ),
+    );
+  if (state.hasCell)
+    doubling("cell", "the_cell", "The Cell", CELL_SEATS - grid.total);
+  if (state.hasAshenCrown)
+    doubling(
+      "ashenCrown",
+      "the_ashen_crown",
+      "The Ashen Crown",
+      Math.min(
+        ashenCrownMaxDoublings,
+        Math.floor(state.facesBurned / ashenCrownFaces),
+      ),
+    );
+  if (state.hasCanticle)
+    doubling(
+      "canticle",
+      "the_canticle",
+      "The Canticle",
+      unrepeatedFaces(grid.valueCounts) - CANTICLE_FREE_FACES,
+    );
+  if (state.gravitas > 0 && grid.total > 0) {
+    const factor = Math.floor(
+      grid.sidesTotal / (GRAVITAS_SIZE_PER_FACTOR * grid.total),
+    );
+    if (factor > 1)
+      out.push({
+        id: "gravitas",
+        item: "gravitas",
+        name: "Gravitas",
+        mult: BigInt(factor) ** BigInt(state.gravitas),
+      });
+  }
+  return out;
+}
+
+/** The compounded factor of a roll's tree multipliers. */
+export function treeMultiplierProduct(
+  mults: readonly TreeMultiplier[],
+): bigint {
+  return mults.reduce((product, mult) => product * mult.mult, 1n);
+}
+
+/** One display-only modifier per tree multiplier that landed. */
+export function treeMultiplierModifiers(
+  mults: readonly TreeMultiplier[],
+): ScoreModifier[] {
+  return mults.map((mult) => ({
+    id: mult.id,
+    name: mult.name,
+    points: 0n,
+    mult: mult.mult,
+    color: COLORS.goldLight,
+    dice: [],
+    bigPulse: false,
+    float: "aggregate" as const,
+  }));
+}
+
+/** Counterpoint's dice: live dice alone on their face that scored by no other
+ *  rule. Each pays a scoring die's points. */
+export function counterpointDice(
+  valueCounts: Map<number, number>,
+  scoringValueCounts: Map<number, number>,
+): number {
+  let dice = 0;
+  for (const [value, count] of valueCounts)
+    if (count === 1 && !(scoringValueCounts.get(value) ?? 0)) dice += 1;
+  return dice;
+}
 
 /**
  * Every item whose whole scoring effect is one unconditional factor on the
@@ -250,6 +432,12 @@ export interface RollResult {
   points: bigint; // grand total, after the run multiplier
   multiplier: bigint; // run-wide multiplier applied (Amplifier -> 2)
   modifiers: ScoreModifier[]; // additive and multiplier item effects in display order
+  /** Points growth engines added on top of subtotal × multiplier (see
+   *  systems/GrowthEngines), already included in `points`. Absent or 0n when
+   *  none did. */
+  growth?: bigint;
+  /** That growth, engine by engine. */
+  growthShares?: GrowthShare[];
 }
 
 /** Options that vary a roll's scoring beyond the run state itself. */
@@ -275,6 +463,11 @@ export function scoreRoll(
   const scoringSizes = new Set<number>();
   const seenFaces = new Set<number>();
   const rawValueCounts = new Map<number, number>();
+  const scoringValueCounts = new Map<number, number>();
+  const vigilGroups = new Map<string, VigilGroup>();
+  const scales = state.hasScales;
+  let faceValueBonus = 0;
+  let sidesTotal = 0;
   let rawScoringCount = 0;
   let rawScoringD1Count = 0;
   let extraNumberScoringCount = 0;
@@ -297,21 +490,35 @@ export function scoreRoll(
     // A die's size is a fact about the grid rather than about the roll, so the
     // inert head still counts toward Uniform and the rest of `allSizes`.
     allSizes.add(die.sides);
+    sidesTotal += die.sides;
     if (i < inert) return;
     seenFaces.add(die.value);
     rawValueCounts.set(die.value, (rawValueCounts.get(die.value) ?? 0) + 1);
-    const numberScores = scoringNumbers.includes(die.value);
+    // The Scales: the upper half of a die's faces scores, and the scoring
+    // numbers do not — a sealed maximum then already pays its face.
+    const numberScores = scales
+      ? die.value * 2 > die.sides
+      : scoringNumbers.includes(die.value);
     const windfallHit =
       die.maxFaceBonus > 0 && !die.loaded && die.value === die.sides;
     const royalSealHit =
-      state.royalSealSizes.includes(die.sides) && die.value === die.sides;
+      !scales &&
+      state.royalSealSizes.includes(die.sides) &&
+      die.value === die.sides;
     // A Rollplayer/Centurion die's current highest face is always a scoring
     // face, even when that number has not otherwise been unlocked.
     if (numberScores || die.wildFace || windfallHit || royalSealHit) {
       rawScoringCount += 1;
       scoringSizes.add(die.sides);
-      if (numberScores && die.value !== 1) extraNumberScoringCount += 1;
-      else if (!numberScores && die.wildFace) wildFaceScoringCount += 1;
+      scoringValueCounts.set(
+        die.value,
+        (scoringValueCounts.get(die.value) ?? 0) + 1,
+      );
+      if (scales) faceValueBonus += die.value - 1;
+      groupScores(vigilGroups, die.scores, 1);
+      if (numberScores && die.value !== 1) {
+        if (!scales) extraNumberScoringCount += 1;
+      } else if (!numberScores && die.wildFace) wildFaceScoringCount += 1;
       else if (!numberScores && !die.wildFace && windfallHit)
         windfallScoringCount += 1;
       else if (!numberScores && !die.wildFace && !windfallHit && royalSealHit)
@@ -425,6 +632,20 @@ export function scoreRoll(
     });
   }
 
+  // The Scales pay a scoring die its face; the base point is already counted
+  // under Scoring, so this is the rest of it.
+  if (faceValueBonus > 0) {
+    modifiers.push({
+      id: "scales",
+      name: "The Scales",
+      points: BigInt(faceValueBonus),
+      color: COLORS.goldLight,
+      dice: scoringDice,
+      bigPulse: false,
+      float: "aggregate",
+    });
+  }
+
   // Extra Point / Keen Edge feed the same scoring dice but are surfaced as their
   // own callouts (rather than silently inflating the Scoring total) so the
   // player sees the item earning its keep, like Snake Eyes and Jackpot do.
@@ -490,6 +711,23 @@ export function scoreRoll(
       color: COLORS.goldLight,
       dice: scoringDice,
       bigPulse: true,
+      float: "aggregate",
+    });
+  }
+
+  // Counterpoint: a die alone on its face scores whatever its number, paying
+  // what any scoring die pays.
+  const counterpoint = state.hasCounterpoint
+    ? counterpointDice(valueCounts, scoringValueCounts)
+    : 0;
+  if (counterpoint > 0) {
+    modifiers.push({
+      id: "counterpoint",
+      name: "Counterpoint",
+      points: BigInt(counterpoint * (1 + extraPointsFor(state))),
+      color: COLORS.glow,
+      dice: [],
+      bigPulse: false,
       float: "aggregate",
     });
   }
@@ -570,6 +808,11 @@ export function scoreRoll(
   const downbeatActive = state.downbeat > 0 && isDownbeatRoll(state);
   const hairTriggerActive = state.hasHairTrigger && isFirstRoll(state);
   const luckySevenActive = luckySevenFor(state) && showsASeven(valueCounts);
+  const treeMults = treeMultipliers(state, {
+    total: dice.length,
+    sidesTotal,
+    valueCounts,
+  });
   // The flat multipliers (Amplifier, and every cursed card that sells one),
   // Prism ×3 per copy, Last Call ×4 per copy on the final roll, Lucky Seven ×7
   // on a roll that turned up a seven, Hair Trigger ×10 on a trial's opening
@@ -587,6 +830,7 @@ export function scoreRoll(
       (downbeatActive ? DOWNBEAT_MULT ** BigInt(state.downbeat) : 1n) *
       (hairTriggerActive ? HAIR_TRIGGER_MULT : 1n) *
       (luckySevenActive ? LUCKY_SEVEN_MULT : 1n) *
+      treeMultiplierProduct(treeMults) *
       windfallMult,
   );
 
@@ -594,6 +838,7 @@ export function scoreRoll(
   // additive effects. These entries are display-only; the factors above remain
   // the single source of scoring truth.
   modifiers.push(...flatMultiplierModifiers(state));
+  modifiers.push(...treeMultiplierModifiers(treeMults));
   if (state.prism > 0) {
     modifiers.push({
       id: "prism",
@@ -703,5 +948,13 @@ export function scoreRoll(
     });
   }
 
-  return { points: subtotal * multiplier, multiplier, modifiers };
+  const multiplied = subtotal * multiplier;
+  const { points, shares } = growRoll(state, multiplied, {
+    groups: [...vigilGroups.values()],
+    scoring: rawScoringCount,
+    total: dice.length,
+  });
+  const growth = points - multiplied;
+  modifiers.push(...growthModifiers(shares));
+  return { points, multiplier, modifiers, growth, growthShares: shares };
 }

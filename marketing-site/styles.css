@@ -781,6 +781,12 @@ h2 {
   box-shadow: 0 17px 45px rgba(0, 0, 0, 0.32);
 }
 
+/* Art baked onto a game card: its gold frame runs to the image edge with a
+   corner of 5% of the width, so the border and shadow follow that curve. */
+.character-roster img.card-art {
+  border-radius: 5%;
+}
+
 .character-roster figcaption {
   display: flex;
   flex-direction: column;

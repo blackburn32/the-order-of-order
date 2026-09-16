@@ -214,7 +214,10 @@ export function bossGoldMultMilli(state: RunState): number {
  *  Everything that gates on "did they clear it" must go through here, not
  *  `trialGoal`, or The Hoard and The Reckoning silently do nothing. */
 export function goalFor(state: RunState): bigint {
-  return scaleGoal(trialGoal(state.trial), afflictionsFor(state).goalMultMilli);
+  return scaleByRun(
+    scaleGoal(trialGoal(state.trial), afflictionsFor(state).goalMultMilli),
+    state.goalScale,
+  );
 }
 
 /** Preview a trial's goal without moving RunState. The rank's modifiers change
@@ -224,10 +227,24 @@ export function goalForTrial(state: RunState, trial: number): bigint {
   const ids = isBossTrial(trial)
     ? [...state.afflictions, ...state.bossModifiers]
     : state.afflictions;
-  return scaleGoal(trialGoal(trial), fold(ids).goalMultMilli);
+  return scaleByRun(
+    scaleGoal(trialGoal(trial), fold(ids).goalMultMilli),
+    state.goalScale,
+  );
 }
 
 function scaleGoal(base: bigint, multMilli: number): bigint {
   if (multMilli === 1_000) return base;
   return (base * BigInt(multMilli)) / 1_000n;
+}
+
+/** The run's own goal scale (RunState.goalScale), in 1/1024ths: one IEEE
+ *  multiply and a round, so every engine agrees on the goal. A scale too large
+ *  for that many fractional bits is applied in whole steps. */
+function scaleByRun(goal: bigint, scale: number): bigint {
+  if (scale === 1) return goal;
+  const fixed = Math.round(scale * 1024);
+  return Number.isSafeInteger(fixed)
+    ? (goal * BigInt(fixed)) / 1024n
+    : goal * BigInt(Math.round(scale));
 }

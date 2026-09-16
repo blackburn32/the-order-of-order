@@ -10,16 +10,25 @@
 
 import { DiceAgg, sampleFaceCounts } from "./ScoringHistogram";
 import {
+  canGrow,
   canShrink,
   cloneDie,
   Die,
   DIE_LADDER,
   DieOpts,
   DieSides,
+  faceFloor,
+  faceRange,
   makeDie,
   rollDie,
   windfallFactor,
 } from "./Dice";
+import {
+  addScores,
+  groupScores,
+  scoresKey,
+  type VigilGroup,
+} from "./GrowthEngines";
 
 /** Dice count at which the pool switches from per-die to bucketed storage. Below
  *  this the per-die path is as fast and keeps full fidelity (flashing, targeting);
@@ -57,6 +66,8 @@ interface Bucket {
   wildFace: boolean;
   source: string;
   count: number;
+  /** The Vigil's tally, shared by every die of the bucket (see Die.scores). */
+  scores?: number[];
   lastFaces?: number[];
   lastInertFaces?: number[];
   lastInert?: number;
@@ -82,6 +93,20 @@ export interface DiceStack {
   wildFace: boolean;
   source: string;
   count: number;
+  /** The Vigil's tally; absent for dice that have none. */
+  scores?: number[];
+}
+
+/** The run's rules that change how a die rolls or which faces score, beyond the
+ *  scoring numbers and sealed sizes `roll` already takes. */
+export interface RollRules {
+  /** The Scales: a die scores on the upper half of its faces, paying the face,
+   *  and the scoring numbers no longer score. */
+  scales?: boolean;
+  /** Ballast: sizes that never roll their lowest two faces. */
+  ballastSizes?: readonly DieSides[];
+  /** The Anvil: d100s never roll below 50. */
+  anvil?: boolean;
 }
 
 /** Counts shown by a spatial summary card. Special counts deliberately overlap
@@ -109,12 +134,34 @@ function bucketKey(
   loaded: boolean,
   wildFace: boolean,
   source: string,
+  scores?: readonly number[],
 ): string {
-  return `${sides}|${maxFaceBonus}|${loaded ? 1 : 0}|${wildFace ? 1 : 0}|${source}`;
+  return `${sides}|${maxFaceBonus}|${loaded ? 1 : 0}|${wildFace ? 1 : 0}|${source}|${scoresKey(scores)}`;
+}
+
+/** A copy of a tally worth keeping, or nothing for one that holds no scores —
+ *  so a die or bucket either carries real counts or no field at all. */
+function keptScores(
+  scores: readonly number[] | undefined,
+): number[] | undefined {
+  return scoresKey(scores) ? [...scores!] : undefined;
+}
+
+/** A face histogram sampled over [low, high], laid into an array indexed by
+ *  face - 1 from face 1, so a ballasted size reads like any other. */
+function fromFace(counts: number[], low: number): number[] {
+  return low <= 1 ? counts : [...new Array<number>(low - 1).fill(0), ...counts];
 }
 
 function facesOf(sides: number, loaded: boolean): number {
   return loaded ? Math.max(1, sides - 2) : sides;
+}
+
+/** `value` rounded to one of its two neighbouring integers at random, up with
+ *  the odds of its fraction — a whole count whose expectation is `value`. */
+function roundAtRandom(value: number, rng: () => number): number {
+  const whole = Math.floor(value);
+  return whole + (rng() < value - whole ? 1 : 0);
 }
 
 /**
@@ -177,7 +224,13 @@ export class DicePool {
   private rolledFrom = 0;
   private rolledTo = 0;
   private lastScoringNumbers: number[] = [];
+  private lastScales = false;
+  private lastSealed: ReadonlySet<number> = new Set();
   private rollVersion = 0;
+  // Faces the last breakage pass destroyed (a die's faces are its sides), for
+  // The Pyre; and the dice The Multitude paired on the last Curious pass.
+  private _lastBrokenFaces = 0;
+  private _lastPairs = 0;
 
   private constructor() {}
 
@@ -214,18 +267,20 @@ export class DicePool {
       // Small enough to materialise for full fidelity.
       p.list = [];
       for (const s of p.buckets)
-        for (let i = 0; i < s.count; i++)
-          p.list.push(
-            makeDie(
-              s.sides,
-              {
-                maxFaceBonus: s.maxFaceBonus,
-                loaded: s.loaded,
-                wildFace: s.wildFace,
-              },
-              s.source,
-            ),
+        for (let i = 0; i < s.count; i++) {
+          const die = makeDie(
+            s.sides,
+            {
+              maxFaceBonus: s.maxFaceBonus,
+              loaded: s.loaded,
+              wildFace: s.wildFace,
+            },
+            s.source,
           );
+          const scores = keptScores(s.scores);
+          if (scores) die.scores = scores;
+          p.list.push(die);
+        }
       p.buckets = [];
     }
     return p;
@@ -267,10 +322,12 @@ export class DicePool {
         d.loaded,
         d.wildFace,
         d.source,
+        d.scores,
       );
       const b = map.get(key);
       if (b) b.count += 1;
-      else
+      else {
+        const scores = keptScores(d.scores);
         map.set(key, {
           sides: d.sides,
           maxFaceBonus: d.maxFaceBonus,
@@ -278,7 +335,9 @@ export class DicePool {
           wildFace: d.wildFace,
           source: d.source,
           count: 1,
+          ...(scores ? { scores } : {}),
         });
+      }
     }
     this.buckets = [...map.values()];
     this.list = [];
@@ -292,16 +351,31 @@ export class DicePool {
     wildFace: boolean,
     source: string,
     count: number,
+    scores?: readonly number[],
   ): void {
     if (count <= 0) return;
-    const key = bucketKey(sides, maxFaceBonus, loaded, wildFace, source);
+    const key = bucketKey(
+      sides,
+      maxFaceBonus,
+      loaded,
+      wildFace,
+      source,
+      scores,
+    );
     const b = this.buckets.find(
       (x) =>
-        bucketKey(x.sides, x.maxFaceBonus, x.loaded, x.wildFace, x.source) ===
-        key,
+        bucketKey(
+          x.sides,
+          x.maxFaceBonus,
+          x.loaded,
+          x.wildFace,
+          x.source,
+          x.scores,
+        ) === key,
     );
     if (b) b.count += count;
-    else
+    else {
+      const kept = keptScores(scores);
       this.buckets.push({
         sides,
         maxFaceBonus,
@@ -309,7 +383,9 @@ export class DicePool {
         wildFace,
         source,
         count,
+        ...(kept ? { scores: kept } : {}),
       });
+    }
   }
 
   // --- rolling -------------------------------------------------------------
@@ -326,15 +402,24 @@ export class DicePool {
    * anything downstream needs: they cannot score, cannot complete a pattern,
    * cannot be copied by a growth passive, and cannot be billed by breakage or
    * defection, because none of those look anywhere but at these tallies.
+   *
+   * `rules` carries the run's rules that change a roll itself: The Scales'
+   * face-value scoring and Ballast's floor (see RollRules).
    */
   roll(
     rng: () => number,
     scoringNumbers: number[],
     royalSealSizes: readonly DieSides[] = [],
     inertCount = 0,
+    rules: RollRules = {},
   ): void {
     this.rollVersion += 1;
     this.lastScoringNumbers = scoringNumbers;
+    const scales = rules.scales ?? false;
+    const ballast = new Set<number>(rules.ballastSizes ?? []);
+    const anvil = rules.anvil ?? false;
+    this.lastScales = scales;
+    this.lastSealed = new Set<number>(royalSealSizes);
     const inert = Math.max(0, Math.min(this._count, Math.floor(inertCount)));
     this.rolledFrom = inert;
     this.rolledTo = this._count;
@@ -345,6 +430,8 @@ export class DicePool {
     const windfallFactors = new Set<number>();
     const allSizes = new Set<number>();
     const scoringSizes = new Set<number>();
+    const scoringValueCounts = new Map<number, number>();
+    const vigil = new Map<string, VigilGroup>();
     let scoringCount = 0;
     let scoringD1Count = 0;
     let extraNumberScoringCount = 0;
@@ -352,27 +439,42 @@ export class DicePool {
     let royalSealScoringCount = 0;
     let royalSealBonus = 0;
     let windfallScoringCount = 0;
+    let faceValueBonus = 0;
+    let sidesTotal = 0;
 
     if (this.mode === "list") {
       for (let k = 0; k < this.list.length; k++) {
         const die = this.list[k];
         // Every die rolls, inert or not — the grid shows a face on all of them.
-        rollDie(die, rng);
+        rollDie(die, rng, ballast.has(die.sides), faceFloor(die.sides, anvil));
         // A die's size is a fact about the grid rather than about the roll, so
         // the inert head still counts toward Uniform and the rest of `allSizes`.
         allSizes.add(die.sides);
+        sidesTotal += die.sides;
         if (k < inert) continue;
         valueCounts.set(die.value, (valueCounts.get(die.value) ?? 0) + 1);
         const windfallHit =
           die.maxFaceBonus > 0 && !die.loaded && die.value === die.sides;
-        const royalSealHit = sealed.has(die.sides) && die.value === die.sides;
-        const numberScores = scoring.has(die.value);
+        // Under The Scales a die's maximum already pays its face, so a seal
+        // has nothing left to add.
+        const royalSealHit =
+          !scales && sealed.has(die.sides) && die.value === die.sides;
+        const numberScores = scales
+          ? die.value * 2 > die.sides
+          : scoring.has(die.value);
         if (numberScores || die.wildFace || windfallHit || royalSealHit) {
           scoringCount += 1;
           scoringSizes.add(die.sides);
+          scoringValueCounts.set(
+            die.value,
+            (scoringValueCounts.get(die.value) ?? 0) + 1,
+          );
+          if (scales) faceValueBonus += die.value - 1;
+          groupScores(vigil, die.scores, 1);
           if (die.sides === 1) scoringD1Count += 1;
-          if (numberScores && die.value !== 1) extraNumberScoringCount += 1;
-          else if (!numberScores && die.wildFace) wildFaceScoringCount += 1;
+          if (numberScores && die.value !== 1) {
+            if (!scales) extraNumberScoringCount += 1;
+          } else if (!numberScores && die.wildFace) wildFaceScoringCount += 1;
           else if (!numberScores && !die.wildFace && windfallHit)
             windfallScoringCount += 1;
           else if (
@@ -400,7 +502,13 @@ export class DicePool {
       ) {
         const b = this.buckets[bucketIndex];
         allSizes.add(b.sides);
-        const faces = facesOf(b.sides, b.loaded);
+        sidesTotal += b.sides * b.count;
+        const [low, faces] = faceRange(
+          b.sides,
+          b.loaded,
+          ballast.has(b.sides),
+          faceFloor(b.sides, anvil),
+        );
         // The inert head is a prefix of the grid and the buckets are laid out in
         // grid order, so a bucket's share of it is the overlap of its own index
         // span with [0, inert). The two halves are sampled as separate
@@ -409,12 +517,15 @@ export class DicePool {
         const bucketInert = Math.max(0, Math.min(b.count, inert - bucketStart));
         bucketStart += b.count;
         const bucketLive = b.count - bucketInert;
-        const faceCounts = sampleFaceCounts(bucketLive, faces, rng);
+        const faceCounts = fromFace(
+          sampleFaceCounts(bucketLive, faces - low + 1, rng),
+          low,
+        );
         b.lastFaces = faceCounts;
         b.lastInert = bucketInert;
         b.lastInertFaces =
           bucketInert > 0
-            ? sampleFaceCounts(bucketInert, faces, rng)
+            ? fromFace(sampleFaceCounts(bucketInert, faces - low + 1, rng), low)
             : undefined;
         b.shuffleSeed =
           Math.imul(this.rollVersion, 0x9e3779b1) ^
@@ -426,14 +537,17 @@ export class DicePool {
           if (c === 0) continue;
           valueCounts.set(v, (valueCounts.get(v) ?? 0) + c);
           const windfallHit = b.maxFaceBonus > 0 && !b.loaded && v === b.sides;
-          const royalSealHit = sealed.has(b.sides) && v === b.sides;
-          const numberScores = scoring.has(v);
+          const royalSealHit = !scales && sealed.has(b.sides) && v === b.sides;
+          const numberScores = scales ? v * 2 > b.sides : scoring.has(v);
           if (numberScores || b.wildFace || windfallHit || royalSealHit) {
             bucketScoring += c;
             scoringSizes.add(b.sides);
+            scoringValueCounts.set(v, (scoringValueCounts.get(v) ?? 0) + c);
+            if (scales) faceValueBonus += (v - 1) * c;
             if (b.sides === 1) scoringD1Count += c;
-            if (numberScores && v !== 1) extraNumberScoringCount += c;
-            else if (!numberScores && b.wildFace) wildFaceScoringCount += c;
+            if (numberScores && v !== 1) {
+              if (!scales) extraNumberScoringCount += c;
+            } else if (!numberScores && b.wildFace) wildFaceScoringCount += c;
             else if (!numberScores && !b.wildFace && windfallHit)
               windfallScoringCount += c;
             else if (
@@ -449,6 +563,7 @@ export class DicePool {
         }
         b.lastScoring = bucketScoring;
         b.lastNonScoring = bucketLive - bucketScoring;
+        groupScores(vigil, b.scores, bucketScoring);
         scoringCount += bucketScoring;
         if (bucketScoring > 0)
           scoringBySource.set(
@@ -481,6 +596,10 @@ export class DicePool {
         allSizes,
         scoringSizes,
         windfallMult,
+        scoringValueCounts,
+        faceValueBonus,
+        sidesTotal,
+        vigil: [...vigil.values()],
       },
       scoringBySource,
       windfallTriggers,
@@ -514,15 +633,38 @@ export class DicePool {
 
   // --- growth (engine passives) -------------------------------------------
 
-  /** Double the Fun: every die that rolled a 5 or 6 spawns a copy of itself.
-   *  Returns the number of dice added. Uses the cached roll. */
-  doubleTheFun(): number {
+  /** Double the Fun: every die that rolled a 5 or 6 spawns a copy of itself —
+   *  or, with `highestFaceOnly` (the sim's card rework, systems/CardReworks),
+   *  every d6 or larger that rolled its highest face, each with `chance` of
+   *  being copied. Below a chance of 1 it draws on `rng`: once per die in list
+   *  mode, and once per bucket in bucket mode, where the bucket's expected copies
+   *  are rounded at random. Returns the number of dice added. Uses the cached
+   *  roll.
+   *
+   *  `pairChance` is The Multitude's: the chance a copy arrives with a second,
+   *  credited to that card, drawn per copy in list mode and rounded at random
+   *  per bucket otherwise. How many pairs arrived is `lastPairs`. */
+  doubleTheFun(
+    highestFaceOnly = false,
+    chance = 1,
+    rng: () => number = Math.random,
+    pairChance = 0,
+  ): number {
+    this._lastPairs = 0;
     if (this.mode === "list") {
       const copies: Die[] = [];
       for (let k = this.rolledFrom; k < this.rolledTo; k++) {
         const d = this.list[k];
-        if (d.value === 5 || d.value === 6)
+        const copied = highestFaceOnly
+          ? d.sides >= 6 && d.value === facesOf(d.sides, d.loaded)
+          : d.value === 5 || d.value === 6;
+        if (copied && (chance >= 1 || rng() < chance)) {
           copies.push(cloneDie(d, "double_the_fun"));
+          if (pairChance > 0 && rng() < pairChance) {
+            copies.push(cloneDie(d, "the_multitude"));
+            this._lastPairs += 1;
+          }
+        }
       }
       for (const d of copies) this.list.push(d);
       this.gain(copies.length);
@@ -534,9 +676,16 @@ export class DicePool {
     for (const b of snapshot) {
       const faces = facesOf(b.sides, b.loaded);
       if (!b.lastFaces) continue;
+      const eligible = highestFaceOnly
+        ? b.sides >= 6
+          ? (b.lastFaces[faces - 1] ?? 0)
+          : 0
+        : (faces >= 5 ? (b.lastFaces[4] ?? 0) : 0) +
+          (faces >= 6 ? (b.lastFaces[5] ?? 0) : 0);
       const high =
-        (faces >= 5 ? (b.lastFaces[4] ?? 0) : 0) +
-        (faces >= 6 ? (b.lastFaces[5] ?? 0) : 0);
+        chance >= 1 || eligible === 0
+          ? eligible
+          : roundAtRandom(eligible * chance, rng);
       if (high > 0) {
         this.addBucket(
           b.sides,
@@ -547,10 +696,27 @@ export class DicePool {
           high,
         );
         added += high;
+        const pairs =
+          pairChance > 0 ? roundAtRandom(high * pairChance, rng) : 0;
+        this.addBucket(
+          b.sides,
+          b.maxFaceBonus,
+          b.loaded,
+          b.wildFace,
+          "the_multitude",
+          pairs,
+        );
+        added += pairs;
+        this._lastPairs += pairs;
       }
     }
     this.gain(added);
     return added;
+  }
+
+  /** Dice The Multitude paired on the most recent Curious pass. */
+  get lastPairs(): number {
+    return this._lastPairs;
   }
 
   /** Genesis: each scoring die spawns a copy, capped at `cap` dice total this
@@ -600,9 +766,21 @@ export class DicePool {
   private dieScored(d: Die): boolean {
     // Only valid immediately after a list-mode roll. scoringNumbers captured then.
     return (
-      this.lastScoringNumbers.includes(d.value) ||
+      (this.lastScales
+        ? d.value * 2 > d.sides
+        : this.lastScoringNumbers.includes(d.value)) ||
       d.wildFace ||
       (d.maxFaceBonus > 0 && !d.loaded && d.value === d.sides)
+    );
+  }
+
+  /** Whether a die scored on the last list-mode roll by every rule the roll
+   *  itself counted, sealed maximums included — The Vigil's test, which has to
+   *  name exactly the dice the roll's tallies did. */
+  private scoredOnLastRoll(d: Die): boolean {
+    return (
+      this.dieScored(d) ||
+      (!this.lastScales && this.lastSealed.has(d.sides) && d.value === d.sides)
     );
   }
 
@@ -717,6 +895,7 @@ export class DicePool {
       b.wildFace,
       b.source,
       1,
+      b.scores,
     );
     this.pruneEmpty();
   }
@@ -812,6 +991,7 @@ export class DicePool {
           b.wildFace,
           b.source,
           b.count,
+          b.scores,
         );
       }
     }
@@ -870,6 +1050,7 @@ export class DicePool {
     weight: (b: Bucket) => number,
     spend: (b: Bucket) => void,
   ): number {
+    this._lastBrokenFaces = 0;
     if (count <= 0 || this._count === 0) return 0;
     if (this.mode === "list") {
       // Walk only the dice that were present for the roll, newest first, so the
@@ -881,6 +1062,7 @@ export class DicePool {
         k--
       ) {
         if (!eligible(this.list[k])) continue;
+        this._lastBrokenFaces += this.list[k].sides;
         this.list.splice(k, 1);
         removed += 1;
       }
@@ -888,9 +1070,18 @@ export class DicePool {
       this.rolledTo -= removed;
       return removed;
     }
+    const before = this.buckets.map((b) => ({ b, count: b.count }));
     const removed = this.removeSpread(count, weight);
+    for (const { b, count: was } of before)
+      this._lastBrokenFaces += (was - b.count) * b.sides;
     for (const b of this.buckets) spend(b);
     return removed;
+  }
+
+  /** Faces (a die's sides) the most recent breakage, defection or Brazier pass
+   *  destroyed — what The Pyre counts. */
+  get lastBrokenFaces(): number {
+    return this._lastBrokenFaces;
   }
 
   /** Cull the grid down to `max` dice (a grid-cap affliction). Returns how many
@@ -962,6 +1153,7 @@ export class DicePool {
           b.wildFace,
           b.source,
           b.count,
+          b.scores,
         );
       }
     }
@@ -977,6 +1169,137 @@ export class DicePool {
       for (let s = 0; s < steps; s++) this.stepDown(d);
       return true;
     });
+  }
+
+  /** Grow the die at grid index `i` up `steps` rungs (Ascension). Returns false
+   *  if the index is invalid or the die is already a d100. */
+  growAt(i: number, steps: number): boolean {
+    return this.mutateAt(i, (d) => {
+      if (!canGrow(d)) return false;
+      for (let s = 0; s < steps; s++) this.stepUp(d);
+      return true;
+    });
+  }
+
+  /** Count `times` scores at `percent` on the die at grid index `i`, as though
+   *  it had scored them under The Vigil (Anointing). False if the index is
+   *  invalid. */
+  anointAt(i: number, times: number, percent: number): boolean {
+    return this.mutateAt(i, (d) => {
+      d.scores = addScores(d.scores, percent, times);
+      return true;
+    });
+  }
+
+  // --- The Vigil and The Choirmaster (read the most recent roll) -----------
+
+  /** Count one score at `percent` on every live die that scored on the most
+   *  recent roll (The Vigil). Returns how many dice it counted. */
+  countScores(percent: number): number {
+    if (!this.roll_) return 0;
+    let counted = 0;
+    if (this.mode === "list") {
+      const end = Math.min(this.rolledTo, this.list.length);
+      for (let k = this.rolledFrom; k < end; k++) {
+        const d = this.list[k];
+        if (!this.scoredOnLastRoll(d)) continue;
+        d.scores = addScores(d.scores, percent, 1);
+        counted += 1;
+      }
+      return counted;
+    }
+    for (const b of [...this.buckets]) {
+      const scored = Math.min(b.count, b.lastScoring ?? 0);
+      if (scored <= 0) continue;
+      b.count -= scored;
+      b.lastScoring = 0;
+      this.addBucket(
+        b.sides,
+        b.maxFaceBonus,
+        b.loaded,
+        b.wildFace,
+        b.source,
+        scored,
+        addScores(b.scores, percent, 1),
+      );
+      counted += scored;
+    }
+    this.pruneEmpty();
+    return counted;
+  }
+
+  /** Remove every live die that showed a face another live die also showed on
+   *  the most recent roll (The Choirmaster). Never empties the grid: a roll on
+   *  which every die repeated a face removes nothing. Returns how many went. */
+  removeRepeatedFaces(): number {
+    const counts = this.roll_?.agg.valueCounts;
+    if (!counts) return 0;
+    const repeated = (value: number) => (counts.get(value) ?? 0) >= 2;
+    if (this.mode === "list") {
+      const doomed: number[] = [];
+      const end = Math.min(this.rolledTo, this.list.length);
+      for (let k = this.rolledFrom; k < end; k++)
+        if (repeated(this.list[k].value)) doomed.push(k);
+      if (doomed.length === 0 || doomed.length >= this._count) return 0;
+      for (let j = doomed.length - 1; j >= 0; j--)
+        this.list.splice(doomed[j], 1);
+      this._count -= doomed.length;
+      this.rolledTo -= doomed.length;
+      return doomed.length;
+    }
+    const takes = this.buckets.map((b) => {
+      let shown = 0;
+      b.lastFaces?.forEach((count, index) => {
+        if (repeated(index + 1)) shown += count;
+      });
+      return Math.min(b.count, shown);
+    });
+    const removed = takes.reduce((sum, take) => sum + take, 0);
+    if (removed === 0 || removed >= this._count) return 0;
+    this.buckets.forEach((b, index) => {
+      b.count -= takes[index];
+    });
+    this._count -= removed;
+    this.pruneEmpty();
+    return removed;
+  }
+
+  /** Burn every live die larger than a d1 that showed a 1 on the most recent
+   *  roll (The Brazier). Never empties the grid: a roll on which every die would
+   *  burn burns none. Returns how many burned; their faces are
+   *  `lastBrokenFaces`. */
+  burnOnes(): number {
+    this._lastBrokenFaces = 0;
+    if (!this.roll_) return 0;
+    if (this.mode === "list") {
+      const doomed: number[] = [];
+      const end = Math.min(this.rolledTo, this.list.length);
+      for (let k = this.rolledFrom; k < end; k++)
+        if (this.list[k].sides > 1 && this.list[k].value === 1) doomed.push(k);
+      if (doomed.length === 0 || doomed.length >= this._count) return 0;
+      for (let j = doomed.length - 1; j >= 0; j--) {
+        this._lastBrokenFaces += this.list[doomed[j]].sides;
+        this.list.splice(doomed[j], 1);
+      }
+      this._count -= doomed.length;
+      this.rolledTo -= doomed.length;
+      return doomed.length;
+    }
+    // A bucket's live faces were sampled as it rolled; breakage since may have
+    // taken some of its dice, so a bucket never burns more than it still holds.
+    const takes = this.buckets.map((b) =>
+      b.sides > 1 ? Math.min(b.count, b.lastFaces?.[0] ?? 0) : 0,
+    );
+    const burned = takes.reduce((sum, take) => sum + take, 0);
+    if (burned === 0 || burned >= this._count) return 0;
+    this.buckets.forEach((b, index) => {
+      b.count -= takes[index];
+      this._lastBrokenFaces += takes[index] * b.sides;
+      if (b.lastFaces && takes[index] > 0) b.lastFaces[0] -= takes[index];
+    });
+    this._count -= burned;
+    this.pruneEmpty();
+    return burned;
   }
 
   // --- size-wide shop effects (a whole die size) ---------------------------
@@ -1033,6 +1356,43 @@ export class DicePool {
         b.wildFace,
         b.source,
         count,
+        b.scores,
+      );
+      moved += count;
+    }
+    this.pruneEmpty();
+    return moved;
+  }
+
+  /** Grow every die of `sides` up `steps` rungs (Exaltation). Returns how many
+   *  moved. */
+  growAllOfSize(sides: DieSides, steps: number): number {
+    const i = DIE_LADDER.indexOf(sides);
+    if (i < 0 || !canGrow({ sides })) return 0;
+    const target = DIE_LADDER[Math.min(DIE_LADDER.length - 1, i + steps)];
+    if (this.mode === "list") {
+      let n = 0;
+      for (const d of this.list)
+        if (d.sides === sides) {
+          d.sides = target;
+          d.value = target;
+          n += 1;
+        }
+      return n;
+    }
+    let moved = 0;
+    for (const b of [...this.buckets]) {
+      if (b.sides !== sides) continue;
+      const count = b.count;
+      b.count = 0;
+      this.addBucket(
+        target,
+        b.maxFaceBonus,
+        b.loaded,
+        b.wildFace,
+        b.source,
+        count,
+        b.scores,
       );
       moved += count;
     }
@@ -1074,6 +1434,50 @@ export class DicePool {
     return added;
   }
 
+  // --- removal shop effects ------------------------------------------------
+  // Bought between trials, so the cached roll these leave stale is replaced by
+  // the next roll before anything reads it. Neither guards against emptying the
+  // grid: that is a rule about the card (see Items.applyEffect), not the pool.
+
+  /** Remove the die at grid index `i` (A Dismissal). False if the index is
+   *  invalid. */
+  removeAt(i: number): boolean {
+    if (this.mode === "list") {
+      if (i < 0 || i >= this.list.length) return false;
+      this.list.splice(i, 1);
+      this._count -= 1;
+      return true;
+    }
+    const loc = this.locate(i);
+    if (!loc) return false;
+    loc.bucket.count -= 1;
+    this._count -= 1;
+    this.pruneEmpty();
+    return true;
+  }
+
+  /** Remove every die whose size `pred` selects (The Winnowing,
+   *  Excommunication). Returns how many were removed. */
+  removeSizes(pred: (sides: DieSides) => boolean): number {
+    let removed = 0;
+    if (this.mode === "list") {
+      for (let k = this.list.length - 1; k >= 0; k--) {
+        if (!pred(this.list[k].sides)) continue;
+        this.list.splice(k, 1);
+        removed += 1;
+      }
+    } else {
+      for (const b of this.buckets) {
+        if (!pred(b.sides)) continue;
+        removed += b.count;
+        b.count = 0;
+      }
+      this.pruneEmpty();
+    }
+    this._count -= removed;
+    return removed;
+  }
+
   /** Re-tag every die of `sides` that matches `pred`, moving it to the bucket
    *  produced by `remap`ing its flags. Returns how many changed. */
   private retagSize(
@@ -1113,6 +1517,7 @@ export class DicePool {
         opts.wildFace ?? false,
         b.source,
         count,
+        b.scores,
       );
       changed += count;
     }
@@ -1140,6 +1545,8 @@ export class DicePool {
       },
       bucket.source,
     );
+    const scores = keptScores(bucket.scores);
+    if (scores) die.scores = scores;
     if (!fn(die)) return false;
     bucket.count -= 1;
     this.addBucket(
@@ -1149,6 +1556,7 @@ export class DicePool {
       die.wildFace,
       die.source,
       1,
+      die.scores,
     );
     this.pruneEmpty();
     return true;
@@ -1184,6 +1592,8 @@ export class DicePool {
       bucket.source,
     );
     die.value = this.synthValue(bucket, offset);
+    const scores = keptScores(bucket.scores);
+    if (scores) die.scores = scores;
     return die;
   }
 
@@ -1242,6 +1652,13 @@ export class DicePool {
     if (this.mode === "list")
       return this.list.reduce((n, d) => (canShrink(d) ? n + 1 : n), 0);
     return this.buckets.reduce((n, b) => (b.sides > 1 ? n + b.count : n), 0);
+  }
+
+  /** How many dice can still grow (anything below a d100). */
+  growableCount(): number {
+    if (this.mode === "list")
+      return this.list.reduce((n, d) => (canGrow(d) ? n + 1 : n), 0);
+    return this.buckets.reduce((n, b) => (canGrow(b) ? n + b.count : n), 0);
   }
 
   /** How many dice can still be loaded (sides > 1 and not already loaded). */
@@ -1550,14 +1967,18 @@ export class DicePool {
    *  tiny regardless of grid size. */
   summarize(): DiceStack[] {
     if (this.mode === "bucket") {
-      return this.buckets.map((b) => ({
-        sides: b.sides,
-        maxFaceBonus: b.maxFaceBonus,
-        loaded: b.loaded,
-        wildFace: b.wildFace,
-        source: b.source,
-        count: b.count,
-      }));
+      return this.buckets.map((b) => {
+        const scores = keptScores(b.scores);
+        return {
+          sides: b.sides,
+          maxFaceBonus: b.maxFaceBonus,
+          loaded: b.loaded,
+          wildFace: b.wildFace,
+          source: b.source,
+          count: b.count,
+          ...(scores ? { scores } : {}),
+        };
+      });
     }
     const map = new Map<string, DiceStack>();
     for (const d of this.list) {
@@ -1567,10 +1988,12 @@ export class DicePool {
         d.loaded,
         d.wildFace,
         d.source,
+        d.scores,
       );
       const s = map.get(key);
       if (s) s.count += 1;
-      else
+      else {
+        const scores = keptScores(d.scores);
         map.set(key, {
           sides: d.sides,
           maxFaceBonus: d.maxFaceBonus,
@@ -1578,7 +2001,9 @@ export class DicePool {
           wildFace: d.wildFace,
           source: d.source,
           count: 1,
+          ...(scores ? { scores } : {}),
         });
+      }
     }
     return [...map.values()];
   }

@@ -223,7 +223,8 @@ const freeOffers = [
   offerFor("gamblers_curse", freeShelf),
   offerFor("the_bloat", freeShelf),
 ];
-const paidOffer = offerFor("mult2", freeShelf);
+// Clarity rather than a grid multiplier: The Gathering is a curse now, and free.
+const paidOffer = offerFor("prism", freeShelf);
 check(
   freeOffers.every((offer) => offer.cost === 0) && paidOffer.cost > 0,
   `the shelf holds two free cards and a paid one (${paidOffer.cost}g)`,
@@ -240,7 +241,7 @@ const visit = expertShopVisit(
   { samples: 4, seed: 61 },
 );
 check(
-  visit.taken.some((purchase) => purchase.id === "mult2"),
+  visit.taken.some((purchase) => purchase.id === "prism"),
   `the paid card is still bought (took ${visit.taken.map((p) => p.id).join(", ") || "nothing"})`,
 );
 check(

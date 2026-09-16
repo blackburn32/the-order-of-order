@@ -8,10 +8,13 @@ import {
   snakeEyesFor,
   suppresses,
 } from "./Afflictions";
-import { Die } from "./Dice";
+import { Die, DieSides, faceFloor, faceRange } from "./Dice";
+import type { RollRules } from "./DicePool";
 import { probit } from "./ExactMath";
 import { RunState } from "../state/RunState";
+import { groupScores, growRoll, type VigilGroup } from "./GrowthEngines";
 import {
+  counterpointDice,
   DOWNBEAT_MULT,
   flatMultiplier,
   flatMultiplierModifiers,
@@ -27,6 +30,10 @@ import {
   ScoreModifier,
   ScoreOpts,
   showsASeven,
+  growthModifiers,
+  treeMultiplierModifiers,
+  treeMultiplierProduct,
+  treeMultipliers,
 } from "./Scoring";
 
 /** Aggregate view of a rolled dice grid — everything scoreRoll actually needs,
@@ -54,6 +61,12 @@ export interface DiceAgg {
   scoringSizes: Set<number>; // distinct die sizes that scored this roll
   windfallMult: bigint; // Π of the distinct Rollplayer/Centurion factors that
   // hit their current top face this roll (1n when none did)
+  scoringValueCounts: Map<number, number>; // face value -> LIVE dice showing it
+  // that scored (Counterpoint pays the lone faces that did not)
+  faceValueBonus: number; // under The Scales, face value ABOVE the base point,
+  // summed over every scoring die
+  sidesTotal: number; // the sides of every die in the grid, inert ones included
+  vigil: VigilGroup[]; // the scoring dice carrying The Vigil's score counts
 }
 
 /** O(dice) bridge from the existing per-die array to a DiceAgg. Use this below
@@ -66,7 +79,13 @@ export function aggFromDice(
   scoringNumbers: number[],
   royalSealSizes: readonly number[] = [],
   inertCount = 0,
+  rules: RollRules = {},
 ): DiceAgg {
+  const scales = rules.scales ?? false;
+  const scoringValueCounts = new Map<number, number>();
+  const vigil = new Map<string, VigilGroup>();
+  let faceValueBonus = 0;
+  let sidesTotal = 0;
   const valueCounts = new Map<number, number>();
   let scoringCount = 0;
   let scoringD1Count = 0;
@@ -86,18 +105,29 @@ export function aggFromDice(
     // A die's size is a fact about the grid, not about the roll, so the inert
     // head still counts toward Uniform and the rest of `allSizes`.
     allSizes.add(die.sides);
+    sidesTotal += die.sides;
     if (k < inert) continue;
     valueCounts.set(die.value, (valueCounts.get(die.value) ?? 0) + 1);
     const windfallHit =
       die.maxFaceBonus > 0 && !die.loaded && die.value === die.sides;
-    const royalSealHit = sealed.has(die.sides) && die.value === die.sides;
-    const numberScores = scoring.has(die.value);
+    const royalSealHit =
+      !scales && sealed.has(die.sides) && die.value === die.sides;
+    const numberScores = scales
+      ? die.value * 2 > die.sides
+      : scoring.has(die.value);
     if (numberScores || die.wildFace || windfallHit || royalSealHit) {
       scoringCount += 1;
       scoringSizes.add(die.sides);
+      scoringValueCounts.set(
+        die.value,
+        (scoringValueCounts.get(die.value) ?? 0) + 1,
+      );
+      if (scales) faceValueBonus += die.value - 1;
+      groupScores(vigil, die.scores, 1);
       if (die.sides === 1) scoringD1Count += 1;
-      if (numberScores && die.value !== 1) extraNumberScoringCount += 1;
-      else if (!numberScores && die.wildFace) wildFaceScoringCount += 1;
+      if (numberScores && die.value !== 1) {
+        if (!scales) extraNumberScoringCount += 1;
+      } else if (!numberScores && die.wildFace) wildFaceScoringCount += 1;
       else if (!numberScores && !die.wildFace && windfallHit)
         windfallScoringCount += 1;
       else if (!numberScores && !die.wildFace && !windfallHit && royalSealHit)
@@ -123,6 +153,10 @@ export function aggFromDice(
     allSizes,
     scoringSizes,
     windfallMult,
+    scoringValueCounts,
+    faceValueBonus,
+    sidesTotal,
+    vigil: [...vigil.values()],
   };
 }
 
@@ -222,7 +256,14 @@ export function rollBucketsToAgg(
   scoringNumbers: number[],
   rng: () => number = Math.random,
   royalSealSizes: readonly number[] = [],
+  rules: RollRules = {},
 ): DiceAgg {
+  const scales = rules.scales ?? false;
+  const ballast = new Set<number>(rules.ballastSizes ?? []);
+  const anvil = rules.anvil ?? false;
+  const scoringValueCounts = new Map<number, number>();
+  let faceValueBonus = 0;
+  let sidesTotal = 0;
   const valueCounts = new Map<number, number>();
   let total = 0;
   let scoringCount = 0;
@@ -240,21 +281,30 @@ export function rollBucketsToAgg(
   for (const b of buckets) {
     allSizes.add(b.sides);
     total += b.count;
-    const faces = b.loaded ? Math.max(1, b.sides - 2) : b.sides;
-    const faceCounts = sampleFaceCounts(b.count, faces, rng);
-    for (let v = 1; v <= faces; v++) {
-      const c = faceCounts[v - 1];
+    sidesTotal += b.sides * b.count;
+    const [low, faces] = faceRange(
+      b.sides,
+      b.loaded,
+      ballast.has(b.sides as DieSides),
+      faceFloor(b.sides, anvil),
+    );
+    const faceCounts = sampleFaceCounts(b.count, faces - low + 1, rng);
+    for (let v = low; v <= faces; v++) {
+      const c = faceCounts[v - low];
       if (c === 0) continue;
       valueCounts.set(v, (valueCounts.get(v) ?? 0) + c);
       const windfallHit = b.maxFaceBonus > 0 && !b.loaded && v === b.sides;
-      const royalSealHit = sealed.has(b.sides) && v === b.sides;
-      const numberScores = scoring.has(v);
+      const royalSealHit = !scales && sealed.has(b.sides) && v === b.sides;
+      const numberScores = scales ? v * 2 > b.sides : scoring.has(v);
       if (numberScores || b.wildFace || windfallHit || royalSealHit) {
         scoringCount += c;
         scoringSizes.add(b.sides);
+        scoringValueCounts.set(v, (scoringValueCounts.get(v) ?? 0) + c);
+        if (scales) faceValueBonus += (v - 1) * c;
         if (b.sides === 1) scoringD1Count += c;
-        if (numberScores && v !== 1) extraNumberScoringCount += c;
-        else if (!numberScores && b.wildFace) wildFaceScoringCount += c;
+        if (numberScores && v !== 1) {
+          if (!scales) extraNumberScoringCount += c;
+        } else if (!numberScores && b.wildFace) wildFaceScoringCount += c;
         else if (!numberScores && !b.wildFace && windfallHit)
           windfallScoringCount += c;
         else if (!numberScores && !b.wildFace && !windfallHit && royalSealHit)
@@ -282,7 +332,24 @@ export function rollBucketsToAgg(
     allSizes,
     scoringSizes,
     windfallMult,
+    scoringValueCounts,
+    faceValueBonus,
+    sidesTotal,
+    // A bucket summary carries no score counts; the grid's own pool does.
+    vigil: [],
   };
+}
+
+/** Whether every live die on this roll scored — the roll The Catechism grows on.
+ *  Inert dice are left out, as every count on the aggregate already leaves them
+ *  out: a die the Toll crossed through produced no outcome to fail with. Dice
+ *  that scored only on a number The Silence has muted did not score. */
+export function everyLiveDieScored(state: RunState, agg: DiceAgg): boolean {
+  const live = agg.total - agg.inertCount;
+  const scored =
+    agg.scoringCount -
+    (suppresses(state, "extraNumber") ? agg.extraNumberScoringCount : 0);
+  return live > 0 && scored >= live;
 }
 
 /** Histogram-based twin of scoreRoll. Produces identical point totals from a
@@ -390,6 +457,18 @@ export function scoreRollHistogram(
     });
   }
 
+  if (agg.faceValueBonus > 0) {
+    modifiers.push({
+      id: "scales",
+      name: "The Scales",
+      points: BigInt(agg.faceValueBonus),
+      color: COLORS.goldLight,
+      dice: noDice,
+      bigPulse: false,
+      float: "aggregate",
+    });
+  }
+
   const extraPointBonus = scoringCount * extraPointsFor(state);
   if (extraPointBonus > 0) {
     modifiers.push({
@@ -444,6 +523,21 @@ export function scoreRollHistogram(
       color: COLORS.goldLight,
       dice: noDice,
       bigPulse: true,
+      float: "aggregate",
+    });
+  }
+
+  const counterpoint = state.hasCounterpoint
+    ? counterpointDice(valueCounts, agg.scoringValueCounts)
+    : 0;
+  if (counterpoint > 0) {
+    modifiers.push({
+      id: "counterpoint",
+      name: "Counterpoint",
+      points: BigInt(counterpoint * (1 + extraPointsFor(state))),
+      color: COLORS.glow,
+      dice: noDice,
+      bigPulse: false,
       float: "aggregate",
     });
   }
@@ -516,6 +610,7 @@ export function scoreRollHistogram(
   const downbeatActive = state.downbeat > 0 && isDownbeatRoll(state);
   const hairTriggerActive = state.hasHairTrigger && isFirstRoll(state);
   const luckySevenActive = luckySevenFor(state) && showsASeven(valueCounts);
+  const treeMults = treeMultipliers(state, agg);
   const multiplier = applyMultiplierPenalty(
     state,
     flatMultiplier(state) *
@@ -528,10 +623,12 @@ export function scoreRollHistogram(
       (downbeatActive ? DOWNBEAT_MULT ** BigInt(state.downbeat) : 1n) *
       (hairTriggerActive ? HAIR_TRIGGER_MULT : 1n) *
       (luckySevenActive ? LUCKY_SEVEN_MULT : 1n) *
+      treeMultiplierProduct(treeMults) *
       agg.windfallMult,
   );
 
   modifiers.push(...flatMultiplierModifiers(state));
+  modifiers.push(...treeMultiplierModifiers(treeMults));
   if (state.prism > 0) {
     modifiers.push({
       id: "prism",
@@ -640,5 +737,13 @@ export function scoreRollHistogram(
       float: "aggregate",
     });
   }
-  return { points: subtotal * multiplier, multiplier, modifiers };
+  const multiplied = subtotal * multiplier;
+  const { points, shares } = growRoll(state, multiplied, {
+    groups: agg.vigil,
+    scoring: agg.scoringCount,
+    total: agg.total,
+  });
+  const growth = points - multiplied;
+  modifiers.push(...growthModifiers(shares));
+  return { points, multiplier, modifiers, growth, growthShares: shares };
 }

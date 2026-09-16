@@ -253,7 +253,10 @@ function hydrateDice(value: unknown, everAdded?: unknown): DicePool | null {
       typeof raw.source !== "string" ||
       !raw.source ||
       !isNonNegativeInteger(raw.count) ||
-      raw.count === 0
+      raw.count === 0 ||
+      // The Vigil's per-die tally, on dice that have one.
+      (raw.scores !== undefined &&
+        !(Array.isArray(raw.scores) && raw.scores.every(isNonNegativeInteger)))
     ) {
       return null;
     }
@@ -546,7 +549,6 @@ function hydrateOutcome(value: unknown): TrialEndOutcome | null {
       isNonNegativeInteger(rollGold[key]),
     ) ||
     !isNonNegativeInteger(value.totalGoldEarned) ||
-    !isFiniteNumber(value.diceAdded) ||
     typeof value.insuranceUsed !== "boolean" ||
     typeof value.bossCleared !== "boolean"
   )

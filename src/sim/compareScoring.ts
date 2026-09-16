@@ -45,6 +45,21 @@ function make(patch: Partial<RunState>): RunState {
   return { ...newRun(), ...patch };
 }
 
+/** A percent → count table, as the growth engines and The Vigil store them. */
+function atPercents(counts: Record<number, number>): number[] {
+  const table: number[] = [];
+  for (const [percent, count] of Object.entries(counts)) {
+    while (table.length <= Number(percent)) table.push(0);
+    table[Number(percent)] = count;
+  }
+  return table;
+}
+
+/** A die carrying The Vigil's tally. */
+function withScores(die: Die, scores: number[]): Die {
+  return { ...die, scores };
+}
+
 function scenarios(): Scenario[] {
   const many = (n: number, sides: DieSides, opts = {}) =>
     Array.from({ length: n }, () => makeDie(sides, opts));
@@ -174,6 +189,113 @@ function scenarios(): Scenario[] {
       true,
     ),
 
+    // The Catechism grows the multiplied roll by an exact ratio. A count high
+    // enough to carry the result far past Number precision is where two scorers
+    // rounding differently would part company, and the Eclipse is the one rule
+    // that must not reach it.
+    s("the catechism, grown", many(100, 1), {
+      hasCatechism: true,
+      // 200 rolls at the card's rate, 40 more after each of two Litanies.
+      growthRollsAt: { catechism: atPercents({ 10: 200, 12: 40, 14: 40 }) },
+      litany: 2,
+      extraPoints: 1,
+      prism: 1,
+    }),
+    s("the catechism under the eclipse", [...many(60, 1), ...many(40, 6)], {
+      hasCatechism: true,
+      growthRollsAt: { catechism: atPercents({ 10: 7 }) },
+      trial: 3,
+      bossModifiers: ["eclipse"],
+      hasAmplifier: true,
+    }),
+
+    // Every tree engine at once, each with counts at its own percents: the
+    // engines grow in turn, and both scorers must split the shares identically.
+    s("every growth engine", [...many(40, 6), ...many(20, 100)], {
+      hasCatechism: true,
+      hasResonantHall: true,
+      hasEndowment: true,
+      hasWeightOfAges: true,
+      hasPlainsong: true,
+      hasPyre: true,
+      harmonics: 1,
+      compoundInterest: 3,
+      growthRollsAt: {
+        catechism: atPercents({ 10: 12 }),
+        resonance: atPercents({ 10: 30, 12: 9 }),
+        endowment: atPercents({ 3: 11, 7: 4, 16: 2 }),
+        weight: atPercents({ 1: 50 }),
+        plainsong: atPercents({ 5: 8, 10: 3 }),
+        pyre: atPercents({ 9: 1 }),
+      },
+      prism: 1,
+    }),
+    // The Vigil grows each die by its own tally: a grid of eight, some dice
+    // with scores at two rates and some with none.
+    s(
+      "the vigil",
+      [
+        ...many(3, 6).map((die) =>
+          withScores(die, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12]),
+        ),
+        ...many(2, 4).map((die) =>
+          withScores(die, atPercents({ 10: 4, 12: 30 })),
+        ),
+        ...many(3, 2),
+      ],
+      {
+        hasVigil: true,
+        discipline: 1,
+        scoringNumbers: [1, 2, 3],
+        extraNumberCount: 2,
+        extraPoints: 2,
+        hasCell: true,
+      },
+    ),
+    s(
+      "the vigil past its grid",
+      many(14, 1).map((die) => withScores(die, atPercents({ 10: 9 }))),
+      { hasVigil: true },
+    ),
+    // The Scales: the upper half of every die pays its face, the scoring numbers
+    // are silent, and a seal adds nothing a maximum already pays.
+    s(
+      "the scales",
+      [
+        ...many(60, 20),
+        ...many(30, 100, { maxFaceBonus: true }),
+        ...many(20, 8, { wildFace: true }),
+        ...many(10, 1),
+      ],
+      {
+        hasScales: true,
+        scoringNumbers: [1, 2, 3],
+        extraNumberCount: 2,
+        royalSealSizes: [20],
+        extraPoints: 1,
+        gravitas: 2,
+        hasWeightOfAges: true,
+        growthRollsAt: { weight: atPercents({ 4: 20 }) },
+      },
+    ),
+    s(
+      "counterpoint and the canticle",
+      [...many(24, 100), ...many(12, 20), ...many(6, 6)],
+      {
+        hasCounterpoint: true,
+        hasCanticle: true,
+        extraPoints: 2,
+        royalSealSizes: [6],
+      },
+    ),
+    s("the gilded altar and the cell", many(5, 6), {
+      gold: 37,
+      hasGildedAltar: true,
+      hasCell: true,
+      scoringNumbers: [1, 2, 3, 4],
+      extraNumberCount: 3,
+    }),
+
     // Boss modifiers. Both scorers read them through the shared accessors in
     // systems/Boss, so these cases are what proves a modifier means the same
     // thing on a per-die grid and on a bucketed one.
@@ -278,6 +400,7 @@ function correctness(): boolean {
       state.scoringNumbers,
       state.royalSealSizes,
       inertDiceCount(state, dice.length),
+      { scales: state.hasScales },
     );
     const hist = scoreRollHistogram(state, agg, { finalRoll });
     const streaksAfterHist = [state.scoreStreak, state.momentumStreak];

@@ -4,11 +4,12 @@ import { newRun, setRun, type RunState } from "../state/RunState";
 import { DicePool, type DiceStack } from "../systems/DicePool";
 import { DIE_LADDER, makeDie, type Die, type DieSides } from "../systems/Dice";
 import { ITEMS, type ShopItemId } from "../systems/Items";
-import { afflictionOf } from "../systems/Items";
+import { afflictionOf, itemIsCursed } from "../systems/Items";
 import { createFreshShopCheckpoint } from "../systems/ActiveRunPersistence";
 import { streamFor } from "../systems/Rng";
 import type { ShopOffer } from "../systems/Shop";
 import { LATE_GRID_REEL } from "./rollReel";
+import { isRollCalloutPreset, rollCalloutRun } from "./rollCallouts";
 
 export type CaptureBackdrop = "felt" | "parchment" | "transparent";
 export type CaptureFormat = "wide" | "square" | "portrait" | "card";
@@ -23,7 +24,13 @@ export interface CapturePreset {
   /** The performance `play()` runs, for a preset that does more than trigger a
    *  single interaction. A scripted preset publishes its own length and its
    *  outcome to the recorder; see `shopLoop.ts` and `rollReel.ts`. */
-  script?: "shop-loop" | "grid-growth" | "late-grid" | "dice-zoom";
+  script?:
+    | "shop-loop"
+    | "grid-growth"
+    | "late-grid"
+    | "dice-zoom"
+    | "roll-callout"
+    | "roll-callout-skip";
 }
 
 export const CAPTURE_PRESETS = [
@@ -111,6 +118,53 @@ export const CAPTURE_PRESETS = [
     defaultFormat: "wide",
     readyDelayMs: 900,
     script: "dice-zoom",
+  },
+  // The roll callout at four scales (see rollCallouts.ts), recorded as GIFs by
+  // scripts/capture-roll-callouts.mjs.
+  {
+    id: "roll-callout-few",
+    label: "Roll callout — a few dice, no multiplier",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 700,
+    script: "roll-callout",
+  },
+  {
+    id: "roll-callout-twenty",
+    label: "Roll callout — 20 dice, small multiplier",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 700,
+    script: "roll-callout",
+  },
+  {
+    id: "roll-callout-hundred",
+    label: "Roll callout — 100 dice, moderate multiplier",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 700,
+    script: "roll-callout",
+  },
+  {
+    id: "roll-callout-multitude",
+    label: "Roll callout — 20,000 dice, large multiplier",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 900,
+    script: "roll-callout",
+  },
+  {
+    id: "roll-callout-skip",
+    label: "Roll callout — pressed again mid-callout",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 700,
+    script: "roll-callout-skip",
   },
   {
     id: "gameplay-eclipse",
@@ -257,6 +311,7 @@ function baseGameplayRun(): RunState {
 }
 
 export function gameplayRun(presetId: CapturePresetId): RunState {
+  if (isRollCalloutPreset(presetId)) return rollCalloutRun(presetId);
   const run = baseGameplayRun();
   if (presetId === "gameplay-multitude-zoom") {
     run.trial = 29;
@@ -423,7 +478,7 @@ function captureOffer(id: ShopItemId, state: RunState): ShopOffer {
     needsTarget: item.needsTarget ?? false,
     targetsSize: item.targetsSize ?? false,
     targetCount: item.targetCount,
-    cursed: item.cursed ?? false,
+    cursed: itemIsCursed(item),
     affliction: afflictionOf(item),
   };
 }

@@ -25,6 +25,17 @@ const MODIFIER_ITEM: Record<string, ShopItemId> = {
   dividend: "dividend",
   royalSeal: "royal_seal",
   ouroboros: "ouroboros",
+  scales: "the_scales",
+  counterpoint: "counterpoint",
+};
+
+/** The strategy trees' multipliers (Scoring.treeMultipliers), by modifier id. */
+const TREE_MULTIPLIER_ITEM: Record<string, ShopItemId> = {
+  gildedAltar: "gilded_altar",
+  cell: "the_cell",
+  ashenCrown: "the_ashen_crown",
+  canticle: "the_canticle",
+  gravitas: "gravitas",
 };
 
 /** Persistent multiplier -> the item whose top-face effect carries it. This is
@@ -86,6 +97,15 @@ export function accumulatePoints(
     }
   }
 
+  // Growth rides on top of the multiplied roll, so it is credited whole to the
+  // engines that grew it before the multiplier's share is split below — what
+  // each card's own figure would have grown to the engine, the rest to its
+  // boost.
+  for (const share of result.growthShares ?? []) {
+    add(state.itemPoints, share.item, share.own);
+    add(state.itemPoints, share.boost, share.total - share.own);
+  }
+
   // Run multiplier (Amplifier x2, Prism x3^n, Last Call x4^n on the final roll,
   // and Windfall's Rollplayer/Centurion top-face factors): the amplification it
   // adds over the raw subtotal is split across the active multiplier items in
@@ -138,6 +158,12 @@ export function accumulatePoints(
   if (state.hasLuckySeven) {
     const lucky = result.modifiers.find((m) => m.id === "luckySeven");
     if (lucky?.mult) weights.push(["lucky_seven", lucky.mult - 1n]);
+  }
+  // The trees' multipliers read the roll (the purse, the grid, its faces), so
+  // the roll's own modifier list is what says which of them landed.
+  for (const mod of result.modifiers) {
+    const id = TREE_MULTIPLIER_ITEM[mod.id];
+    if (id && mod.mult) weights.push([id, mod.mult - 1n]);
   }
   // Each distinct card effect that hit its current top face contributes
   // factor - 1, credited independently of the die's post-shrink size.

@@ -115,13 +115,18 @@ check(
     "and at least as much as the trial before it within its own rank",
   );
 
+  // Past rank 1 the curve grows the goal PER ROLL every trial, so a short
+  // Lesser Trial may ask less than the long Boss Trial before it, but never
+  // less for each roll it grants.
   let openingStrictlyRises = true;
-  for (let t = 2; t <= 3 * TRIALS_PER_RANK; t++) {
-    if (trialGoal(t) <= trialGoal(t - 1)) openingStrictlyRises = false;
+  for (let t = TRIALS_PER_RANK + 1; t <= 3 * TRIALS_PER_RANK; t++) {
+    const perRoll = trialGoal(t) * BigInt(rollsForTrial(t - 1));
+    const before = trialGoal(t - 1) * BigInt(rollsForTrial(t));
+    if (perRoll <= before) openingStrictlyRises = false;
   }
   check(
     openingStrictlyRises,
-    "the first three ranks raise the goal on every trial",
+    "ranks 2 and 3 raise the goal per roll on every trial",
   );
 }
 check(

@@ -122,6 +122,32 @@ post-render readiness signal, and writes PNGs to `art-out/game-captures`. Pass
 `--url http://127.0.0.1:5173` to reuse a server that is already running, or
 `--out <directory>` to choose another output folder.
 
+## Roll-callout GIFs
+
+The `roll-callout-*` presets show the roll's score callout
+(`src/ui/rollBreakdown.ts`) at four scales: a few dice at ×1, 20 dice with one
+multiplier, 100 dice with several cards and The Catechism, and 20,000 dice with
+a long climb through stacked cards and two growth engines. Their runs live in
+`rollCallouts.ts`; each reel makes two rolls and waits out the whole callout.
+`roll-callout-skip` presses again mid-count, the way an impatient player does: the
+callout should jump to its total, land the score, and clear as the next roll
+tumbles.
+
+```powershell
+npm run capture:callouts                                  # every GIF
+node scripts/capture-roll-callouts.mjs --preset roll-callout-hundred
+node scripts/capture-roll-callouts.mjs --sheet 5          # plus a contact sheet
+node scripts/capture-roll-callouts.mjs --format portrait  # a 9:16 phone frame
+node node_modules/tsx/dist/cli.mjs src/capture/rollCalloutsProbe.ts
+```
+
+GIFs land in `art-out/roll-callouts/`, encoded in the page by `gifenc` from the
+same stepped clock the WebM recorder uses. `--sheet N` tiles every Nth frame into
+one PNG, which is the quick way to review a take; `--stills N` saves the frames
+themselves. `--fps`, `--width` and `--colors` trade size for smoothness. The
+probe prints each roll's dice, bonuses, multiplier steps and total without a
+browser, and fails if a fixture's trial would clear before the reel ends.
+
 ## Adding a preset
 
 Add its metadata and stable state in `presets.ts`. Element compositions belong

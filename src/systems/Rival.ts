@@ -16,6 +16,7 @@
 import type { RunState } from "../state/RunState";
 import { inertDiceCount, scoringNumbersFor } from "./Afflictions";
 import { DicePool } from "./DicePool";
+import { rollRulesFor } from "./GrowthEngines";
 
 export interface RivalState {
   /** The mirror grid. A copy of the player's as the duel opened, grown and
@@ -50,6 +51,7 @@ export function rollRival(
     scoringNumbersFor(state),
     state.royalSealSizes,
     inertDiceCount(state, rival.dice.length),
+    rollRulesFor(state),
   );
 }
 

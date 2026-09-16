@@ -7,6 +7,7 @@
 
 import { newRun, RunState } from "../state/RunState";
 import {
+  ballastableSizes,
   ITEM_THEMES,
   ITEMS,
   ItemDef,
@@ -15,6 +16,11 @@ import {
   ShopItemId,
 } from "../systems/Items";
 import { toNumberPointMap } from "../systems/ItemPoints";
+import {
+  ENGINE_CARD_TREE,
+  ITEM_TREES,
+  type TreeId,
+} from "../systems/ItemTrees";
 import { activeBosses, BossModifierId, goalFor } from "../systems/Boss";
 import { afflict, type AfflictionId } from "../systems/Afflictions";
 import {
@@ -31,6 +37,8 @@ import {
   BoosterOffer,
   canAfford,
   discountsShopPrices,
+  itemTreesEnabled,
+  leaveShop,
   repriceOffers,
   openBooster,
   PRICE_BANDS,
@@ -69,6 +77,26 @@ import {
   playerRank,
   playerWantsReroll,
 } from "./player";
+import {
+  LESSONS_ON_PATH,
+  lessonsAccepts,
+  lessonsChooseDemand,
+  lessonsChooseTargets,
+  lessonsGoldFloor,
+  lessonsOrder,
+  lessonsRank,
+  lessonsWantsReroll,
+} from "./lessons";
+import {
+  PLAN_ON_PATH,
+  planAccepts,
+  planGoldFloor,
+  planOrder,
+  planRank,
+  planWantsReroll,
+  TREE_PLANS,
+  type TreePlan,
+} from "./treeShoppers";
 
 export type StrategyName =
   | "greedy"
@@ -79,7 +107,14 @@ export type StrategyName =
   | "economy"
   | "tempo"
   | "expert"
-  | "player";
+  | "player"
+  | "lessons"
+  | "resonance"
+  | "treasury"
+  | "canticle"
+  | "weighing"
+  | "pyre"
+  | "hermitage";
 
 /** One trial's result, captured the moment it completes — goal met or rolls run
  *  out — and before the score resets. `trialScore` is the peak reached. */
@@ -186,6 +221,32 @@ function chooseTargets(
         .filter(({ die }) => !state.royalSealSizes.includes(die.sides));
       return groups.length ? { index: pick(groups, rng).firstIndex } : null;
     }
+    case "dismissal":
+    case "a_parting":
+      return dice.length > 1
+        ? { index: Math.floor(rng() * dice.length) }
+        : null;
+    case "winnowing":
+    case "an_offering": {
+      const groups = dice.groups();
+      return new Set(groups.map((group) => group.die.sides)).size > 1
+        ? { index: pick(groups, rng).firstIndex }
+        : null;
+    }
+    case "ascension":
+    case "exaltation": {
+      const groups = dice.groups().filter((group) => group.die.sides < 100);
+      return groups.length ? { index: pick(groups, rng).firstIndex } : null;
+    }
+    case "ballast": {
+      const sizes = ballastableSizes(state);
+      const groups = dice
+        .groups()
+        .filter((group) => sizes.includes(group.die.sides));
+      return groups.length ? { index: pick(groups, rng).firstIndex } : null;
+    }
+    case "anointing":
+      return dice.length ? { index: Math.floor(rng() * dice.length) } : null;
     case "grindstone": {
       // Now a size-wide shrink: pick any one shrinkable die to name its size.
       const idxs = dice.shrinkableIndices(TARGET_SAMPLE_LIMIT);
@@ -323,13 +384,18 @@ function byCostDescending(offers: ShopOffer[]): ShopOffer[] {
   return [...offers].sort((a, b) => b.cost - a.cost);
 }
 
-/** Whether this bot will take the card, through its own rule if it has one. */
+/** Whether this bot will take the card, through its own rule if it has one. A
+ *  run committed to a tree leaves every other tree's engine and boost on the
+ *  shelf: it is measuring one engine, not whichever the shop happened to open. */
 function accepts(
   strategy: Strategy,
   state: RunState,
   offer: ShopOffer,
   curseAppetite: number,
 ): boolean {
+  const committed = committedTrees.get(state)?.tree;
+  const owner = ENGINE_CARD_TREE.get(offer.id);
+  if (committed && owner && owner !== committed) return false;
   return strategy.accepts
     ? strategy.accepts(state, offer, curseAppetite)
     : acceptsCurse(state, offer, curseAppetite);
@@ -420,6 +486,55 @@ function themed(name: StrategyName, theme: ItemTheme, floor: number): Strategy {
   };
 }
 
+/** A shopper that plays one strategy tree toward its engine, by a written plan
+ *  (see sim/treeShoppers.ts). Walks a shelf the way the Lessons shopper does:
+ *  the tree's path at any price, then the rest from what the plan banks. */
+function planned(name: StrategyName, plan: TreePlan): Strategy {
+  return {
+    name,
+    theme: plan.theme,
+    goldFloor: 0,
+    curseAppetite: 0.5,
+    accepts: (state, offer, appetite) =>
+      planAccepts(plan, state, offer, appetite),
+    rank: (state, offer) => planRank(plan, state, offer),
+    chooseTargets: (state, offer, rng) => {
+      const aimed = plan.chooseTargets?.(state, offer);
+      return aimed === undefined ? chooseTargets(state, offer, rng) : aimed;
+    },
+    wantsReroll: (state, offers, free, price) =>
+      planWantsReroll(plan, state, offers, free, price),
+    // Packs are how an engine is most often found, so they are never held back.
+    floorFor: () => 0,
+    visit(state, offers, rng, purchasesMade, record, strategy) {
+      const ordered = planOrder(plan, state, offers);
+      const onPath = ordered.filter(
+        (offer) => planRank(plan, state, offer) >= PLAN_ON_PATH,
+      );
+      purchasesMade = spendDown(
+        strategy,
+        state,
+        onPath,
+        0,
+        rng,
+        purchasesMade,
+        record,
+      );
+      const rest = ordered.filter((offer) => !onPath.includes(offer));
+      repriceOffers(state, rest);
+      return spendDown(
+        strategy,
+        state,
+        planOrder(plan, state, rest),
+        planGoldFloor(plan, state),
+        rng,
+        purchasesMade,
+        record,
+      );
+    },
+  };
+}
+
 export const STRATEGIES: Record<StrategyName, Strategy> = {
   greedy: {
     name: "greedy",
@@ -506,6 +621,60 @@ export const STRATEGIES: Record<StrategyName, Strategy> = {
       );
     },
   },
+  // Plays one strategy tree, The Lessons, toward its engine. Measured by the
+  // engine experiment and held out of the balance report. See sim/lessons.ts.
+  lessons: {
+    name: "lessons",
+    theme: "precision",
+    goldFloor: 0,
+    curseAppetite: 0.5,
+    accepts: lessonsAccepts,
+    rank: lessonsRank,
+    chooseTargets: (state, offer) => lessonsChooseTargets(state, offer),
+    wantsReroll: (state, offers, free, price) =>
+      lessonsWantsReroll(state, offers, free, price),
+    chooseDemand: lessonsChooseDemand,
+    // Packs are how the engine is most often found, so they are never held back.
+    floorFor: () => 0,
+    visit(state, offers, rng, purchasesMade, record, strategy) {
+      // The engine and the cards that make every die score, at any price the
+      // purse covers...
+      const ordered = lessonsOrder(state, offers);
+      const onPath = ordered.filter(
+        (offer) => lessonsRank(state, offer) >= LESSONS_ON_PATH,
+      );
+      purchasesMade = spendDown(
+        strategy,
+        state,
+        onPath,
+        0,
+        rng,
+        purchasesMade,
+        record,
+      );
+      // ...then the rest, re-ranked against the build those purchases made and
+      // bought only from gold the engine is not being saved for.
+      const rest = ordered.filter((offer) => !onPath.includes(offer));
+      repriceOffers(state, rest);
+      return spendDown(
+        strategy,
+        state,
+        lessonsOrder(state, rest),
+        lessonsGoldFloor(state),
+        rng,
+        purchasesMade,
+        record,
+      );
+    },
+  },
+  // One shopper per remaining strategy tree, each measured by the engine
+  // experiment and held out of the balance report. See sim/treeShoppers.ts.
+  resonance: planned("resonance", TREE_PLANS.resonance),
+  treasury: planned("treasury", TREE_PLANS.treasury),
+  canticle: planned("canticle", TREE_PLANS.canticle),
+  weighing: planned("weighing", TREE_PLANS.weighing),
+  pyre: planned("pyre", TREE_PLANS.pyre),
+  hermitage: planned("hermitage", TREE_PLANS.hermitage),
 };
 
 // ---- run driver ------------------------------------------------------------
@@ -522,6 +691,51 @@ function trackUnlocks(
   }
 }
 
+// ---- strategy trees ----------------------------------------------------------
+//
+// While a simulation has the shop honouring the strategy trees (systems/ItemTrees)
+// a shopper that ignored them would never open a gated card on purpose, and the
+// trees would look far harder to exploit than they are to a player who has
+// learned "buy the root, then the tier-2 card". So every shopper without a plan
+// of its own commits, as its run begins, to one tree: its theme's, or for a
+// shopper with no theme one picked by the run's seed among the trees whose root
+// is implemented. It then buys what that tree has opened before anything else.
+
+const THEME_TREE: Partial<Record<ItemTheme, TreeId>> = {
+  swarm: "gathering",
+  multiplier: "resonance",
+  precision: "lessons",
+  economy: "treasury",
+};
+
+const LIVE_IDS: ReadonlySet<string> = new Set(ITEMS.map((item) => item.id));
+const OPENABLE_TREES = ITEM_TREES.filter((tree) =>
+  LIVE_IDS.has(tree.nodes[0].id),
+);
+
+/** Each tree's gated cards: its chain and its branches. */
+const GATED_CARDS = new Map<TreeId, ReadonlySet<string>>(
+  ITEM_TREES.map((tree) => [
+    tree.id,
+    new Set([...tree.nodes, ...tree.branches].map((card) => card.id)),
+  ]),
+);
+
+/** The tree each run in progress has committed to, and its gated cards. */
+const committedTrees = new WeakMap<
+  RunState,
+  { tree: TreeId; gated: ReadonlySet<string> }
+>();
+
+function commitToTree(state: RunState, strategy: Strategy, seed: number): void {
+  if (!itemTreesEnabled() || strategy.rank || strategy.name === "expert")
+    return;
+  const tree =
+    (strategy.theme && THEME_TREE[strategy.theme]) ??
+    OPENABLE_TREES[Math.abs(seed) % OPENABLE_TREES.length].id;
+  committedTrees.set(state, { tree, gated: GATED_CARDS.get(tree)! });
+}
+
 /** Shop between trials: draw the offers, reroll while the bot judges it worth
  *  the gold, then let the strategy spend. Returns the gold spent (purchases and
  *  rerolls together) so the record can track where a run's income went. */
@@ -533,6 +747,7 @@ function visitShop(
   expertOptions: ExpertOptions,
 ): number {
   const before = state.gold;
+  const cardsBefore = cardsBought(state);
   const cardCount = state.ownedLedger ? 5 : 3;
   const boosted = state.boonNextShop;
   const visitWeights = { ...weightsFor(state) };
@@ -596,10 +811,12 @@ function visitShop(
     for (const purchase of visit.taken) {
       if (purchase.cursed) record.cursesTaken[purchase.id] = state.trial;
     }
-    return before - state.gold;
+    const spent = before - state.gold;
+    leaveShop(state, cardsBought(state) > cardsBefore);
+    return spent;
   }
 
-  const purchasesMade = visitBoosters(
+  let purchasesMade = visitBoosters(
     state,
     strategy,
     packs,
@@ -612,8 +829,36 @@ function visitShop(
   if (state.hasCouponBook && !offers.some((offer) => offer.freeByCoupon)) {
     applyCouponFreebie(state, offers, rng);
   }
-  strategy.visit(state, offers, rng, purchasesMade, record, strategy);
-  return before - state.gold;
+  // A run committed to a tree takes what that tree has opened first, at any
+  // price the purse covers, then shops the rest of the shelf as it always does.
+  const path = committedTrees.get(state)?.gated;
+  let shelf = offers;
+  if (path) {
+    const onPath = offers.filter((offer) => path.has(offer.id));
+    purchasesMade = spendDown(
+      strategy,
+      state,
+      byCostDescending(onPath),
+      0,
+      rng,
+      purchasesMade,
+      record,
+    );
+    shelf = offers.filter((offer) => !path.has(offer.id));
+    repriceOffers(state, shelf);
+  }
+  strategy.visit(state, shelf, rng, purchasesMade, record, strategy);
+  const spent = before - state.gold;
+  leaveShop(state, cardsBought(state) > cardsBefore);
+  return spent;
+}
+
+/** Every card the run has taken, however it was taken. */
+function cardsBought(state: RunState): number {
+  return Object.values(state.purchases).reduce(
+    (sum, copies) => sum + (copies ?? 0),
+    0,
+  );
 }
 
 function recordCurseOffers(
@@ -671,7 +916,15 @@ function visitBoosters(
             ITEM_THEMES[offer.id].includes(strategy.theme!),
           )
         : acceptable;
-    const pool = preferred.length > 0 ? preferred : acceptable;
+    // A run committed to a tree takes that tree's card whenever one is revealed.
+    const path = committedTrees.get(state)?.gated;
+    const onPath = path ? acceptable.filter((offer) => path.has(offer.id)) : [];
+    const pool =
+      onPath.length > 0
+        ? onPath
+        : preferred.length > 0
+          ? preferred
+          : acceptable;
     // Once the pack has been paid for every revealed card costs the same
     // (nothing), so even the thrifty shopper takes the strongest band rather
     // than confusing the card's old shop price with a second charge.
@@ -729,6 +982,7 @@ export function simulateRun(
   };
   const state = newRun(cfg.unlockedAtStart);
   beginRun(state, rng);
+  commitToTree(state, strategy, seed);
 
   const record: RunRecord = {
     strategy: strategyName,

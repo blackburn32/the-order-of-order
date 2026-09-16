@@ -28,6 +28,10 @@ export interface Die {
   // copy is credited to the item that spawned it (mult, Genesis, Foundry, Twin,
   // Double the Fun), not the die it was copied from.
   source: string;
+  // The Vigil's tally: `scores[p]` is how many times this die has scored while
+  // The Vigil grew it p% (see systems/GrowthEngines). Absent on a die that has
+  // never scored under it, and never copied — a copy begins with none.
+  scores?: number[];
 }
 
 export interface DieOpts {
@@ -53,11 +57,39 @@ export function makeDie(
   };
 }
 
-export function rollDie(die: Die, rng: () => number = Math.random): number {
-  // Loaded dice never show their top two faces (floored at a single face so a
-  // loaded d2 always rolls 1).
-  const faces = die.loaded ? Math.max(1, die.sides - 2) : die.sides;
-  die.value = 1 + Math.floor(rng() * faces);
+/** The Anvil: the size it holds up, and the lowest face that size may show. */
+export const ANVIL_SIZE = 100;
+export const ANVIL_FLOOR = 50;
+
+/** The lowest face a size may roll under The Anvil; 1 for every other die. */
+export function faceFloor(sides: number, anvil: boolean): number {
+  return anvil && sides === ANVIL_SIZE ? ANVIL_FLOOR : 1;
+}
+
+/** The lowest and highest face a die can roll. Loaded dice never show their top
+ *  two faces (floored at a single face, so a loaded d2 always rolls 1); a
+ *  ballasted size never shows its lowest two (Ballast), a size under a `floor`
+ *  never shows below it (The Anvil), and a die with both keeps what is left,
+ *  which may be a single face. */
+export function faceRange(
+  sides: number,
+  loaded: boolean,
+  ballast = false,
+  floor = 1,
+): [number, number] {
+  const high = loaded ? Math.max(1, sides - 2) : sides;
+  const low = Math.min(Math.max(ballast ? 3 : 1, floor), high);
+  return [low, high];
+}
+
+export function rollDie(
+  die: Die,
+  rng: () => number = Math.random,
+  ballast = false,
+  floor = 1,
+): number {
+  const [low, high] = faceRange(die.sides, die.loaded, ballast, floor);
+  die.value = low + Math.floor(rng() * (high - low + 1));
   return die.value;
 }
 
@@ -71,6 +103,11 @@ export function canShrink(die: Die): boolean {
 
 export function canLoad(die: Die): boolean {
   return die.sides > 1 && !die.loaded;
+}
+
+/** Whether a die can grow a size (anything below a d100). */
+export function canGrow(die: { sides: number }): boolean {
+  return die.sides < 100;
 }
 
 /** Step a die one rung down the ladder (d100 -> d20 -> ... -> d1). */

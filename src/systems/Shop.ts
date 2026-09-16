@@ -16,6 +16,7 @@ import {
   enforceGridCap,
   ITEMS,
   ItemDef,
+  ABSTINENCE_GOLD,
   ItemTheme,
   PriceBand,
   Rarity,
@@ -24,10 +25,13 @@ import {
   StackPricing,
   afflictionOf,
   itemGrowsGrid,
+  itemIsCursed,
   itemsInTheme,
 } from "./Items";
 import { addItemValue, ITEM_VALUE_KIND } from "./ItemValue";
-import { spendGold } from "./Gold";
+import { grantGold, spendGold } from "./Gold";
+import { liveTreeLinks } from "./ItemTrees";
+import { keptOffShelfByReworks } from "./CardReworks";
 
 export type { Rarity, ShopItemId } from "./Items";
 
@@ -124,7 +128,7 @@ function listPriceFor(
   marketFactor: number,
 ): number {
   // The standing drawback is the price of a cursed card.
-  if (def.cursed) return 0;
+  if (itemIsCursed(def)) return 0;
   if (def.priceBand === "free") return 0;
 
   const market = Math.min(
@@ -190,7 +194,7 @@ export function offerFor(
     needsTarget: def.needsTarget ?? false,
     targetsSize: def.targetsSize ?? false,
     targetCount: def.targetCount,
-    cursed: def.cursed ?? false,
+    cursed: itemIsCursed(def),
     affliction: afflictionOf(def),
     freeByCoupon: false,
   };
@@ -202,6 +206,87 @@ function rollMarketFactor(rng: () => number): number {
   return PRICE_VARIANCE_MIN + Math.floor(rng() * steps) / 100;
 }
 
+// Sim-only escape hatch for engines under test (see ItemDef.prototype). A
+// prototype's rules are live — the dev panel can grant one — but the shop only
+// offers it while a simulation has switched this on, and every experiment that
+// does restores it before exiting. The shipping game never calls it. No card is
+// a prototype today: every strategy tree's cards have shipped.
+let prototypesInShop = false;
+
+/** Sim-only. Lets prototype items into the shop pool, and so into boosters. */
+export function setPrototypeItemsForSimulation(enabled: boolean): void {
+  prototypesInShop = enabled;
+}
+
+// The strategy trees (systems/ItemTrees). A card that sits under another is
+// kept out of the shop until that card is owned, and once it opens it is drawn
+// TREE_UPGRADE_WEIGHT times as often as an ordinary card of its tier — better
+// odds, never a guarantee — and marked as an upgrade on the shelf. A tree card's
+// meta unlock is its root's: unlock the root and the whole tree is in play.
+// Cards outside every tree are untouched.
+
+/** How much more often a tree card its parent has opened is drawn. */
+export const TREE_UPGRADE_WEIGHT = 3;
+
+let treeUpgradeWeight: number | null = TREE_UPGRADE_WEIGHT;
+const TREE_LINKS = liveTreeLinks();
+
+/** Sim-only. Draws an opened tree card `upgradeWeight` times as often as an
+ *  ordinary one; false turns the trees off (the shop before them, for a
+ *  baseline) and null restores the game's own odds. */
+export function setItemTreesForSimulation(
+  upgradeWeight: number | false | null,
+): void {
+  treeUpgradeWeight =
+    upgradeWeight === false ? null : (upgradeWeight ?? TREE_UPGRADE_WEIGHT);
+}
+
+/** Whether the shop is honouring the trees — always, unless a simulation has
+ *  turned them off for a baseline. */
+export function itemTreesEnabled(): boolean {
+  return treeUpgradeWeight !== null;
+}
+
+/** Whether the trees keep this card out of the shop: they are on, and it sits
+ *  under a card that has not been bought — or under nothing implemented yet. */
+function lockedByTree(state: RunState, id: ShopItemId): boolean {
+  if (treeUpgradeWeight === null) return false;
+  const link = TREE_LINKS.get(id);
+  if (!link) return false;
+  if (!link.reachable) return true;
+  return !!link.parent && (state.purchases[link.parent] ?? 0) === 0;
+}
+
+/** The card whose meta unlock lets this one into the pool: its tree root while
+ *  the trees are on, itself otherwise. The collection and the end-of-run unlock
+ *  check read the same answer, so a gated card is never announced or shown as
+ *  unlocked on a criterion the shop ignores. */
+export function metaUnlockOwner(id: ShopItemId): ItemDef {
+  const link = treeUpgradeWeight === null ? undefined : TREE_LINKS.get(id);
+  return BY_ID.get((link?.root ?? id) as ShopItemId)!;
+}
+
+/** Whether meta progression lets this card into the pool. */
+function metaUnlocked(it: ItemDef, unlocked: ReadonlySet<string>): boolean {
+  const owner = metaUnlockOwner(it.id);
+  return !owner.unlock || unlocked.has(owner.id);
+}
+
+/** Whether this card is on offer because the run bought the tree card above
+ *  it — the shelf marks it as an upgrade. */
+export function isTreeUpgrade(state: RunState, id: ShopItemId): boolean {
+  if (treeUpgradeWeight === null) return false;
+  const parent = TREE_LINKS.get(id)?.parent;
+  return !!parent && (state.purchases[parent] ?? 0) > 0;
+}
+
+/** A card's draw weight within its tier: a curse below an ordinary card, and a
+ *  tree card its parent has opened above one. */
+export function offerDrawWeight(state: RunState, id: ShopItemId): number {
+  const weight = itemIsCursed(BY_ID.get(id)!) ? CURSE_DRAW_WEIGHT : 1;
+  return isTreeUpgrade(state, id) ? weight * treeUpgradeWeight! : weight;
+}
+
 export function availableIds(state: RunState): ShopItemId[] {
   const unlocked = new Set(state.shopUnlocks);
   // A run that has frozen its grid for good (Locust Idol) is never offered a
@@ -211,10 +296,13 @@ export function availableIds(state: RunState): ShopItemId[] {
   // offered here is always what can actually be bought.
   const frozen = blocksGrowthPermanently(state);
   return (
-    ITEMS.filter((it) => !frozen || !itemGrowsGrid(it))
+    ITEMS.filter((it) => prototypesInShop || !it.prototype)
+      .filter((it) => !frozen || !itemGrowsGrid(it))
       // Criterion-gated items stay out of the pool unless they were unlocked
       // before this run began. Mid-run unlocks become eligible next run.
-      .filter((it) => !it.unlock || unlocked.has(it.id))
+      .filter((it) => metaUnlocked(it, unlocked))
+      .filter((it) => !lockedByTree(state, it.id))
+      .filter((it) => !keptOffShelfByReworks(state, it.id))
       .filter((it) => !(it.unique && state.ownedUnique.includes(it.id)))
       .filter((it) => it.available?.(state) ?? true)
       .map((it) => it.id)
@@ -253,13 +341,14 @@ function groupByTier(ids: ShopItemId[]): Record<Rarity, ShopItemId[]> {
   return groups;
 }
 
-/** Remove and return one id, weighting cursed cards below ordinary cards in
- * the same tier. The pool is mutated just like Array.splice so every reveal is
- * distinct. */
-function takeWeighted(pool: ShopItemId[], rng: () => number): ShopItemId {
-  const weights = pool.map((id) =>
-    BY_ID.get(id)!.cursed ? CURSE_DRAW_WEIGHT : 1,
-  );
+/** Remove and return one id, weighted by `offerDrawWeight` within the tier. The
+ * pool is mutated just like Array.splice so every reveal is distinct. */
+function takeWeighted(
+  pool: ShopItemId[],
+  rng: () => number,
+  state: RunState,
+): ShopItemId {
+  const weights = pool.map((id) => offerDrawWeight(state, id));
   const total = weights.reduce((sum, weight) => sum + weight, 0);
   let roll = Math.min(rng(), 1 - Number.EPSILON) * total;
   let index = pool.length - 1;
@@ -275,7 +364,7 @@ function takeWeighted(pool: ShopItemId[], rng: () => number): ShopItemId {
 
 function removeCurses(groups: Record<Rarity, ShopItemId[]>): void {
   for (const tier of Object.keys(groups) as Rarity[]) {
-    groups[tier] = groups[tier].filter((id) => !BY_ID.get(id)!.cursed);
+    groups[tier] = groups[tier].filter((id) => !itemIsCursed(BY_ID.get(id)!));
   }
 }
 
@@ -304,9 +393,9 @@ function rollOffers(
       }
     }
     if (!pool) break; // nothing eligible left in any tier
-    const id = takeWeighted(pool, rng);
+    const id = takeWeighted(pool, rng, state);
     chosen.push(id);
-    if (BY_ID.get(id)!.cursed) {
+    if (itemIsCursed(BY_ID.get(id)!)) {
       cursesChosen += 1;
       if (cursesChosen >= MAX_CURSES_PER_OFFER_SET) removeCurses(groups);
     }
@@ -508,14 +597,14 @@ export function openBooster(
   const chosen: ShopItemId[] = [];
   let cursesChosen = 0;
   const take = (pool: ShopItemId[]): void => {
-    const id = takeWeighted(pool, rng);
+    const id = takeWeighted(pool, rng, state);
     chosen.push(id);
-    if (BY_ID.get(id)!.cursed) cursesChosen += 1;
+    if (itemIsCursed(BY_ID.get(id)!)) cursesChosen += 1;
   };
   const uncursedOnly = (pool: ShopItemId[]): void => {
     if (cursesChosen < MAX_CURSES_PER_OFFER_SET) return;
     for (let i = pool.length - 1; i >= 0; i--) {
-      if (BY_ID.get(pool[i])!.cursed) pool.splice(i, 1);
+      if (itemIsCursed(BY_ID.get(pool[i])!)) pool.splice(i, 1);
     }
   };
   if (pack.rarity) {
@@ -634,6 +723,16 @@ export function purchasesRemaining(
   purchasesMade: number,
 ): number {
   return afflictionsFor(state).purchaseLimit - purchasesMade;
+}
+
+/** Leave a shop visit. Abstinence pays for one that bought nothing — no card and
+ *  no pack. Returns the gold it paid. */
+export function leaveShop(state: RunState, bought: boolean): number {
+  if (bought || state.abstinence <= 0) return 0;
+  const gold = ABSTINENCE_GOLD * state.abstinence;
+  grantGold(state, gold);
+  addItemValue(state, "abstinence", gold);
+  return gold;
 }
 
 /** Whether an affliction has closed the counter for the rest of this visit. */

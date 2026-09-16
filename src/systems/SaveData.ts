@@ -3,8 +3,10 @@ import type { RunState } from "../state/RunState";
 import { clearActiveRun } from "./ActiveRunPersistence";
 import type { DiceStack } from "./DicePool";
 import { windfallFactor } from "./Dice";
+import { isRetired } from "./CardReworks";
 import { ITEMS, meetsCriterion, ShopItemId } from "./Items";
 import { isSeed } from "./Rng";
+import { metaUnlockOwner } from "./Shop";
 import {
   hydrateRollHistory,
   serializeRollHistory,
@@ -358,12 +360,14 @@ export function recordRunEnd(
 
 /** Evaluate every criterion-gated item against the current run and unlock any
  *  newly-satisfied ones. Returns the ids unlocked by this call (empty if none)
- *  so the caller can announce them. */
+ *  so the caller can announce them. A card that unlocks with its tree's root, or
+ *  is retired, is never announced: its own criterion no longer opens anything. */
 export function evaluateAndUnlock(state: RunState): ShopItemId[] {
   const progress = loadProgress();
   const newlyUnlocked: ShopItemId[] = [];
   for (const item of ITEMS) {
     if (!item.unlock) continue;
+    if (metaUnlockOwner(item.id) !== item || isRetired(item.id)) continue;
     if (progress.unlocked.includes(item.id)) continue;
     if (meetsCriterion(item.unlock, state)) newlyUnlocked.push(item.id);
   }

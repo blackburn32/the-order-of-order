@@ -3,7 +3,13 @@ import { COLORS, CSS, SERIF } from "../art/palette";
 import { afflictionSigilTexture, softenedSigilTexture } from "../art/textures";
 import { newRun } from "../state/RunState";
 import type { AfflictionId } from "../systems/Afflictions";
-import { afflictionOf, describeCriterion, ItemDef } from "../systems/Items";
+import {
+  afflictionOf,
+  describeCriterion,
+  ItemDef,
+  itemIsCursed,
+} from "../systems/Items";
+import { metaUnlockOwner } from "../systems/Shop";
 import { buildRichCopy, inkBox, isMarked } from "./richCopy";
 
 export interface ItemCardOptions {
@@ -97,6 +103,9 @@ const RARITY_COLOR: Record<ItemDef["rarity"], string> = {
 /** A cursed card keeps its strength signal and adds the warning beside it. */
 export const CURSED_LABEL = "CURSED";
 
+/** A tree card its parent opened, next step of a strategy already begun. */
+export const UPGRADE_LABEL = "UPGRADE";
+
 /** How wide the seal is drawn on a card at rest, and where its centre sits.
  *  The sigil's ink stops just inside its own texture, so at this size it lands
  *  a little inside the parchment's ink border (±120) rather than on it. Set low
@@ -187,7 +196,7 @@ export function buildItemCard(
   const img = scene.add.image(0, 0, "card");
   img.setDisplaySize(260 * scale, 340 * scale);
   // A locked card gives nothing away, its curse included.
-  const cursed = (def.cursed ?? false) && !opts.locked;
+  const cursed = itemIsCursed(def) && !opts.locked;
   const afflictionId = cursed ? afflictionOf(def) : null;
   const seal = afflictionId
     ? buildCursedSeal(scene, afflictionId, scale)
@@ -300,9 +309,11 @@ export function buildItemCard(
   // locked). Callers that only want the card art — e.g. the inventory, which
   // shows a run-count badge instead — pass showCaption: false to drop it.
   const showCaption = (opts.showCaption ?? true) && !terse;
+  // A tree card unlocks with its tree's root, so it names the root's criterion.
+  const lockedBy = metaUnlockOwner(def.id).unlock;
   const captionText = opts.locked
-    ? def.unlock
-      ? describeCriterion(def.unlock)
+    ? lockedBy
+      ? describeCriterion(lockedBy)
       : "Locked"
     : `Selected ${opts.count ?? 0} time${opts.count === 1 ? "" : "s"}`;
   const caption = showCaption

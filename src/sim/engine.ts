@@ -33,14 +33,29 @@ import {
   applyMolds,
   applyTrialStart,
   enforceGridCap,
+  feedPyre,
+  MULTITUDE_PAIR_CHANCE,
+  riseFromTheAshes,
   type ShopItemId,
 } from "../systems/Items";
 import { accumulatePoints } from "../systems/ItemPoints";
 import { recordRollSample, seedRollHistory } from "../systems/RunHistory";
 import { deniedRoll, RollResult } from "../systems/Scoring";
-import { scoreRollHistogram } from "../systems/ScoringHistogram";
+import {
+  countGrowth,
+  growthEarned,
+  multipliersLanded,
+  rollRulesFor,
+  vigilActive,
+  vigilPercent,
+} from "../systems/GrowthEngines";
+import {
+  everyLiveDieScored,
+  scoreRollHistogram,
+} from "../systems/ScoringHistogram";
 import { trialRollTarget } from "../systems/Trial";
 import { addItemValue } from "../systems/ItemValue";
+import { cardReworksEnabled, curiousCopyChance } from "../systems/CardReworks";
 
 // Re-exported so GameScene and the bot keep a single import site for the
 // trial loop; the definition lives in systems/Trial to stay importable from the
@@ -61,11 +76,13 @@ export function rollPool(
   pool: DicePool,
   rng: () => number = Math.random,
 ): void {
+  if (pool === state.dice) openTrial(state);
   pool.roll(
     rng,
     scoringNumbersFor(state),
     state.royalSealSizes,
     inertDiceCount(state, pool.length),
+    rollRulesFor(state),
   );
 }
 
@@ -160,9 +177,6 @@ export interface TrialEndOutcome {
   goldForfeited: number;
   rollGold: { titheBowl: number; luckyCoin: number; total: number };
   totalGoldEarned: number;
-  // Net change in grid size from applyTrialStart on advance (0 otherwise):
-  // Foundry's dice, less anything a grid-cap affliction culled.
-  diceAdded: number;
   insuranceUsed: boolean;
   bossCleared: boolean;
 }
@@ -274,6 +288,20 @@ export function resolveRoll(
   );
   state.defectors += passives.defected;
 
+  // What the growth engines earned is read off the player's own roll — after its
+  // passives, so The Pyre sees the dice this roll shattered — and neither the
+  // duel's mirror nor a roll an affliction took can earn it. The counts move
+  // only after the rival has rolled, below: both sides of the duel must score
+  // this roll at the same growth.
+  const earned =
+    denied === null
+      ? growthEarned(state, {
+          everyLiveDieScored: everyLiveDieScored(state, rolled),
+          multipliers: multipliersLanded(result.modifiers),
+          valueCounts: rolled.valueCounts,
+        })
+      : [];
+
   // The rival takes its matching roll last, so the grid it grows from is the one
   // the player's own rules just produced for its mirror. Everything the player's
   // roll suffered, this roll suffers too.
@@ -288,6 +316,14 @@ export function resolveRoll(
     state.rival.roll += 1;
     applyGridPassives(state, state.rival.dice, afflictions, false, rng);
   }
+
+  countGrowth(state, earned);
+  // The Vigil tallies each die that scored on its own grid — the rival's dice
+  // carry tallies of their own — and only while each grid is small enough.
+  if (denied === null && vigilActive(state, rolled.total))
+    state.dice.countScores(vigilPercent(state));
+  if (duel && state.rival && vigilActive(state, state.rival.dice.agg().total))
+    state.rival.dice.countScores(vigilPercent(state));
 
   // The run's timeline, taken last so the sample carries the grid the player is
   // actually left looking at — everything this roll grew, shattered or culled.
@@ -349,8 +385,16 @@ export function applyGridPassives(
   // the millions no longer walks (or reallocates) a giant array. The Drought
   // switches all of it off for its trial.
   const growthBlocked = blocksGrowth(state);
-  const doubleTheFunCount =
-    state.hasDoubleTheFun && !growthBlocked ? pool.doubleTheFun() : 0;
+  const curious = state.hasDoubleTheFun && !growthBlocked;
+  const doubleTheFunCount = curious
+    ? pool.doubleTheFun(
+        cardReworksEnabled(),
+        curiousCopyChance(),
+        rng,
+        MULTITUDE_PAIR_CHANCE * state.multitude,
+      )
+    : 0;
+  const multitudePairs = curious ? pool.lastPairs : 0;
   const genesisCount =
     state.genesis > 0 && !growthBlocked ? pool.genesis(20 * state.genesis) : 0;
   const molds = growthBlocked ? [] : applyMolds(state, pool);
@@ -367,6 +411,26 @@ export function applyGridPassives(
           breakCount(scoringCount, afflictions.dieBreakChance, rng),
         )
       : 0;
+
+  // What breakage burned feeds The Pyre (the player's own grid only), and From
+  // the Ashes returns a share of it as d100s on whichever grid it burned.
+  let ashes = 0;
+  if (broken > 0) {
+    if (pool === state.dice) feedPyre(state, pool.lastBrokenFaces);
+    ashes = riseFromTheAshes(state, pool, broken, growthBlocked, rng);
+  }
+
+  // The Brazier burns every die that showed a 1, on both sides of the duel; as
+  // with breakage, only the player's fire feeds The Pyre. A denied roll showed
+  // nothing to burn.
+  const burned = state.hasBrazier && !denied ? pool.burnOnes() : 0;
+  if (burned > 0) {
+    if (pool === state.dice) {
+      feedPyre(state, pool.lastBrokenFaces);
+      addItemValue(state, "the_brazier", burned);
+    }
+    ashes += riseFromTheAshes(state, pool, burned, growthBlocked, rng);
+  }
 
   // Defection bills the other half of the same roll: the dice that came up with
   // nothing are the ones the Order of Disorder can talk to. A denied roll is not
@@ -397,17 +461,18 @@ export function applyGridPassives(
   // The rival mirrors these passives during the duel, but its copies are not
   // payoff the player's item returned. Count only the player's own pool.
   if (pool === state.dice) {
-    addItemValue(state, "double_the_fun", doubleTheFunCount);
+    addItemValue(state, "double_the_fun", doubleTheFunCount - multitudePairs);
+    addItemValue(state, "the_multitude", multitudePairs);
     addItemValue(state, "genesis", genesisCount);
     for (const mold of molds) addItemValue(state, mold.id, mold.count);
     addItemValue(state, "whetstone", whetstoneShrinks);
   }
 
   return {
-    spawnedCount,
+    spawnedCount: spawnedCount + ashes,
     spawnedBySource: { genesis: genesisCount, molds },
     shrunk,
-    broken,
+    broken: broken + burned,
     defected,
     culled,
   };
@@ -485,7 +550,6 @@ export function resolveTrialEnd(
       goldForfeited: 0,
       rollGold: rollGoldReceipt,
       totalGoldEarned: rollGoldReceipt.total,
-      diceAdded: 0,
       insuranceUsed: false,
       bossCleared: false,
     };
@@ -542,7 +606,6 @@ export function resolveTrialEnd(
       goldForfeited,
       rollGold: rollGoldReceipt,
       totalGoldEarned: goldBreakdown.total + rollGoldReceipt.total,
-      diceAdded: 0,
       insuranceUsed,
       bossCleared,
     };
@@ -564,7 +627,8 @@ export function resolveTrialEnd(
     rng,
     state.bossModifiers,
   );
-  const diceAdded = applyTrialStart(state);
+  singChoirmaster(state);
+  state.trialOpenPending = true;
   prepareDuel(state);
   return {
     phase: "advanced",
@@ -576,7 +640,6 @@ export function resolveTrialEnd(
     goldForfeited,
     rollGold: rollGoldReceipt,
     totalGoldEarned: goldBreakdown.total + rollGoldReceipt.total,
-    diceAdded,
     insuranceUsed,
     bossCleared,
   };
@@ -639,8 +702,39 @@ export function continueEndless(
     rng,
     state.bossModifiers,
   );
-  applyTrialStart(state);
+  singChoirmaster(state);
+  state.trialOpenPending = true;
   prepareDuel(state);
+}
+
+/**
+ * Open the trial the ladder last moved onto: run its trial-start passives (see
+ * Items.applyTrialStart) once, and return the number of dice they added.
+ *
+ * Deliberately not part of resolveTrialEnd. The shop sits between a trial's end
+ * and the next trial's start, so passives run at the end would miss every card
+ * bought there — a first Inner Circle would do nothing until a whole trial
+ * later. The Game scene calls this as it opens a trial; rollPool calls it too,
+ * so no caller can roll a trial's first grid without it. A no-op once done.
+ */
+export function openTrial(state: RunState): number {
+  if (!state.trialOpenPending) return 0;
+  state.trialOpenPending = false;
+  const added = applyTrialStart(state);
+  // The duel's mirror is re-taken here, over the one the ladder stood up as the
+  // last trial ended: that one predates the shop and these passives, and the
+  // rival is meant to hold the very grid the player sits down with. Nothing
+  // reads the rival before the trial opens, and it cannot have rolled yet.
+  if (isMirrorTrial(state.trial)) state.rival = createRival(state);
+  return added;
+}
+
+/** The Choirmaster: as a trial gives way to the next, remove every die that
+ *  repeated a face on the trial's final roll — read before the next trial's
+ *  passives pour anything in. */
+function singChoirmaster(state: RunState): void {
+  if (!state.hasChoirmaster) return;
+  addItemValue(state, "the_choirmaster", state.dice.removeRepeatedFaces());
 }
 
 /** Permanent tempo cards pay once for the next trial when purchased, then once

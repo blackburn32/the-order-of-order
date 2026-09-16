@@ -10,7 +10,7 @@ import {
   type AfflictionId,
 } from "./Afflictions";
 import { goalFor } from "./Boss";
-import { DIE_LADDER, DieOpts, DieSides } from "./Dice";
+import { ANVIL_FLOOR, DIE_LADDER, DieOpts, DieSides } from "./Dice";
 import type { DicePool } from "./DicePool";
 import {
   DEEP_POCKETS_CAP_BONUS,
@@ -19,6 +19,13 @@ import {
   UNUSED_ROLL_GOLD_CAP,
 } from "./Gold";
 import {
+  ASHEN_CROWN_FACES_PER_DOUBLING,
+  ASHEN_CROWN_MAX_DOUBLINGS,
+  CELL_SEATS,
+  GILDED_ALTAR_GOLD_PER_DOUBLING,
+  GILDED_ALTAR_MAX_DOUBLINGS,
+  GRAVITAS_SIZE_PER_FACTOR,
+  CANTICLE_FREE_FACES,
   DOWNBEAT_INTERVAL,
   DOWNBEAT_MULT,
   FLAT_MULTIPLIERS,
@@ -29,6 +36,22 @@ import {
 } from "./Scoring";
 import { trialRollTarget } from "./Trial";
 import { addItemValue } from "./ItemValue";
+import {
+  BOOST_MAX_COPIES,
+  ENGINE_GROWTH_PERCENT,
+  engineGrowthPercent,
+  growthFactorText,
+  GROWTH_TUNING,
+  vigilPercent,
+  type GrowthEngineId,
+} from "./GrowthEngines";
+import {
+  cardReworksEnabled,
+  gridCurseGoalFactor,
+  INNER_CIRCLE_POUR,
+  isGridCurse,
+  REWORK_STACK_CAPS,
+} from "./CardReworks";
 
 export type ShopItemId =
   | "extra_die"
@@ -88,6 +111,53 @@ export type ShopItemId =
   | "prospector"
   | "reliquary"
   | "pawnbroker"
+  // The strategy trees' cards (see systems/ItemTrees).
+  | "the_catechism"
+  | "litany"
+  | "dismissal"
+  | "winnowing"
+  | "excommunication"
+  | "two_novices"
+  | "the_calling"
+  | "the_resonant_hall"
+  | "harmonics"
+  | "the_multitude"
+  | "abstinence"
+  | "gilded_altar"
+  | "the_endowment"
+  | "compound_interest"
+  | "a_new_voice"
+  | "counterpoint"
+  | "the_canticle"
+  | "the_choirmaster"
+  | "plainsong"
+  | "descant"
+  | "a_full_choir"
+  | "antiphon"
+  | "ascension"
+  | "two_elders"
+  | "ballast"
+  | "exaltation"
+  | "the_scales"
+  | "gravitas"
+  | "the_weight_of_ages"
+  | "gravity_well"
+  | "the_ancestors"
+  | "the_anvil"
+  | "an_offering"
+  | "tinder"
+  | "kindling"
+  | "from_the_ashes"
+  | "the_pyre"
+  | "everflame"
+  | "the_brazier"
+  | "embers"
+  | "the_ashen_crown"
+  | "a_parting"
+  | "the_cell"
+  | "anointing"
+  | "the_vigil"
+  | "discipline"
   // Cursed cards. Each pays for a real boon with a standing drawback, written
   // as an affliction (see systems/Afflictions) rather than in gold.
   | "blood_price"
@@ -142,6 +212,24 @@ type RunFlag =
   | "hasProspector"
   | "hasReliquary"
   | "hasPawnbroker"
+  | "hasCatechism"
+  | "hasResonantHall"
+  | "hasGildedAltar"
+  | "hasEndowment"
+  | "hasCounterpoint"
+  | "hasCanticle"
+  | "hasPlainsong"
+  | "hasChoirmaster"
+  | "hasAntiphon"
+  | "hasScales"
+  | "hasWeightOfAges"
+  | "hasAnvil"
+  | "hasPyre"
+  | "hasBrazier"
+  | "hasEmbers"
+  | "hasAshenCrown"
+  | "hasCell"
+  | "hasVigil"
   // The boon half of a cursed card. Its drawback is an affliction, never a flag
   // — so a boss can inflict the drawback without granting the boon with it.
   | "hasBloodPrice"
@@ -175,7 +263,21 @@ type RunCounter =
   | "titheBowl"
   | "luckyCoin"
   | "countingHouse"
-  | "deepPockets";
+  | "deepPockets"
+  | "litany"
+  | "harmonics"
+  | "multitude"
+  | "compoundInterest"
+  | "abstinence"
+  | "descant"
+  | "fullChoir"
+  | "gravitas"
+  | "gravityWell"
+  | "ancestors"
+  | "kindling"
+  | "everflame"
+  | "fromTheAshes"
+  | "discipline";
 
 /**
  * A persistent-unlock condition on an item. Items without one are available
@@ -222,6 +324,14 @@ export type Effect =
   | { kind: "loadSize" } // load every die of the chosen die's size (now + future)
   | { kind: "wildSize" } // make every die of the chosen die's size wild (now + future)
   | { kind: "sealSize" } // make the chosen size's maximum face score (now + future)
+  | { kind: "removeTarget" } // remove the chosen die — never the last one
+  | { kind: "removeSize" } // remove every die of the chosen size — never the only size
+  | { kind: "removeMissing" } // remove every die whose size can miss — never the whole grid
+  | { kind: "growTarget"; steps?: number } // grow the chosen die `steps` rungs
+  | { kind: "growSize"; steps?: number } // grow every die of the chosen size `steps` rungs
+  | { kind: "ballastSize" } // the chosen size never rolls its lowest two faces (now + future)
+  | { kind: "burnSize" } // burn every die of the chosen size — never the only size
+  | { kind: "anointTarget"; times: number } // the chosen die counts `times` more scores
   | { kind: "bonusRollsProportional"; fraction: number; min: number } // add max(min, ⌊fraction·roll budget⌋) rolls, this trial only
   | { kind: "bonusRollPerRound"; count?: number }
   | { kind: "setFlag"; flag: RunFlag }
@@ -271,6 +381,17 @@ const twinSize = (): Effect => ({ kind: "twinSize" });
 const loadSize = (): Effect => ({ kind: "loadSize" });
 const wildSize = (): Effect => ({ kind: "wildSize" });
 const sealSize = (): Effect => ({ kind: "sealSize" });
+const removeTarget = (): Effect => ({ kind: "removeTarget" });
+const removeSize = (): Effect => ({ kind: "removeSize" });
+const removeMissing = (): Effect => ({ kind: "removeMissing" });
+const growTarget = (steps?: number): Effect => ({ kind: "growTarget", steps });
+const growSize = (steps?: number): Effect => ({ kind: "growSize", steps });
+const ballastSize = (): Effect => ({ kind: "ballastSize" });
+const burnSize = (): Effect => ({ kind: "burnSize" });
+const anointTarget = (times: number): Effect => ({
+  kind: "anointTarget",
+  times,
+});
 const bonusRollsProportional = (fraction: number, min: number): Effect => ({
   kind: "bonusRollsProportional",
   fraction,
@@ -287,6 +408,13 @@ const incCounter = (counter: RunCounter): Effect => ({
   kind: "incCounter",
   counter,
 });
+
+/** An Offering pays a gold for every this many faces it burns: the burning The
+ *  Pyre's tree does before its engine arrives buys the cards that carry it
+ *  there. At 1 per 10, builders reached the duel 12% of the time rather than
+ *  10%; at 1 per 5, 15%, but late trials cleared in two rolls or fewer 54% of
+ *  the time (engine experiment, RUNS=4000). */
+export const OFFERING_FACES_PER_GOLD = 10;
 
 export interface ItemDef {
   id: ShopItemId;
@@ -320,6 +448,11 @@ export interface ItemDef {
    *  marks it, so a card that will cost the run something is never mistaken for
    *  an ordinary one (see ui/itemCard's cursed treatment). */
   cursed?: boolean;
+  /** A prototype: its rules are real — the sim can offer it and the dev panel
+   *  can grant it — but the live shop and the collection leave it out until the
+   *  design it belongs to lands. The simulation lets prototypes into the shop
+   *  with Shop.setPrototypeItemsForSimulation. */
+  prototype?: boolean;
   effects: Effect[];
 }
 
@@ -383,9 +516,49 @@ export function proportionalCount(
   return Math.max(min, Math.floor(state.dice.length * fraction));
 }
 
+/**
+ * Whether every die of this size scores on every face it can roll: a d1, a wild
+ * size, a size whose faces are all scoring numbers (a loaded size only has to
+ * cover the faces it can still roll), or one whose one missing face is a sealed
+ * maximum. The Catechism only grows on a roll every die scored, so a grid of
+ * these sizes is the one it grows on reliably — which is what the pruning cards
+ * remove toward, and what the Lessons shopper builds toward.
+ */
+export function sizeAlwaysScores(state: RunState, sides: number): boolean {
+  if (sides === 1 || state.wildSizes.includes(sides as DieSides)) return true;
+  // The Scales score the upper half of a die's faces, which only a d1 always
+  // lands in.
+  if (state.hasScales) return false;
+  const loaded = state.loadedSizes.includes(sides as DieSides);
+  const faces = loaded ? Math.max(1, sides - 2) : sides;
+  const sealed = !loaded && state.royalSealSizes.includes(sides as DieSides);
+  for (let face = 1; face <= faces; face++) {
+    if (state.scoringNumbers.includes(face)) continue;
+    if (sealed && face === sides) continue;
+    return false;
+  }
+  return true;
+}
+
+/** The sizes on the grid whose dice can still miss a roll. */
+export function sizesThatCanMiss(state: RunState): DieSides[] {
+  return (
+    Object.keys(state.dice.sizeCounts()).map(Number) as DieSides[]
+  ).filter((sides) => !sizeAlwaysScores(state, sides));
+}
+
+/** How many distinct die sizes the grid holds. */
+const sizesOnGrid = (state: RunState): number =>
+  Object.keys(state.dice.sizeCounts()).length;
+
 /** Extra Dice scales with the grid so it never becomes a rounding error. */
 const EXTRA_DICE_FRACTION = 0.25;
 const EXTRA_DICE_MIN = 5;
+
+/** The Calling pours d1s the same way, so a pruned grid can grow back at a
+ *  pace its size can feel, but from a smaller floor: its dice always score. */
+const CALLING_FRACTION = 0.25;
+const CALLING_MIN = 3;
 
 /** Overtime buys a quarter of the trial's own roll budget rather than a flat
  *  two — which was a seventh of a Lesser Trial and a twentieth of a Greater
@@ -422,6 +595,40 @@ function goalRise(multMilli = 1_000): string {
   return `${Math.round((multMilli - 1_000) / 10)}%`;
 }
 
+/** A grid multiplier's copy, with the goal it charges appended while the grid
+ *  curse is on (systems/CardReworks; a simulation may lift it for a baseline). The rise is read
+ *  back from the curse's own factor for the growth the card promises, so a
+ *  tuning change moves the text with it; a partial growth (Like Minds doubles
+ *  one size) prints the most it can charge. */
+function gridCurseDesc(
+  id: ShopItemId,
+  boon: string,
+  growth: number,
+  partial = false,
+): (state: RunState) => string {
+  return () => {
+    if (!isGridCurse(id)) return `${boon}.`;
+    const rise = `×${Number(gridCurseGoalFactor(growth).toFixed(1))}`;
+    return partial
+      ? `${boon}, but every goal from here on grows with your grid, by up to ${rise}.`
+      : `${boon}, but every goal from here on grows ${rise}.`;
+  };
+}
+
+/** A stacking multiplier's copy, with the cap the card reworks put on its
+ *  copies (systems/CardReworks) when it has one. */
+function withStackCap(
+  id: ShopItemId,
+  desc: (state: RunState) => string,
+): (state: RunState) => string {
+  return (state) => {
+    const cap = cardReworksEnabled() ? REWORK_STACK_CAPS[id] : undefined;
+    return cap === undefined
+      ? desc(state)
+      : `${desc(state)} Up to ${cap} copies.`;
+  };
+}
+
 /** What The Long Night buys, and what Devil's Bargain lends. */
 const LONG_NIGHT_BONUS_ROLLS = 5;
 const DEVILS_BARGAIN_GOLD = 20;
@@ -431,6 +638,98 @@ const OUROBOROS_DIE_POINTS = 1n + OUROBOROS_BONUS;
 /** Shopping Cart's across-the-board discount. Declared here with the card that
  *  promises it; the shop's pricing reads it back (see systems/Shop). */
 export const SHOPPING_CART_DISCOUNT_PERCENT = 25;
+
+/** The Multitude's chance, per copy, that a die The Curious copies arrives as a
+ *  pair. */
+export const MULTITUDE_PAIR_CHANCE = 0.2;
+/** Abstinence's gold per copy for leaving a shop empty-handed. */
+export const ABSTINENCE_GOLD = 3;
+/** From the Ashes' share, per copy, of burned dice that return as d100s. */
+export const ASHES_RETURN_SHARE = 0.1;
+/** Anointing's scores. */
+export const ANOINTING_SCORES = 5;
+
+const CARDINALS: Record<number, string> = {
+  1: "one",
+  2: "two",
+  3: "three",
+  4: "four",
+};
+
+const ORDINALS: Record<number, string> = {
+  1: "first",
+  2: "second",
+  3: "third",
+  4: "fourth",
+  5: "fifth",
+  6: "sixth",
+};
+
+/** The factor every engine card prints: its growth before any boost. */
+const ENGINE_FACTOR = growthFactorText(ENGINE_GROWTH_PERCENT);
+
+/** How an engine's boost describes the factor it raises: a fixed one (every
+ *  qualifying roll pays it), a cap (a roll pays up to it), or The Vigil's (each
+ *  die pays it as it scores). */
+type BoostPhrasing = "fixed" | "cap" | "vigil";
+
+/** An engine's boost: +0.02 to its factor (or its cap) a copy, three copies at
+ *  most, cheap enough to finish. `engine` reads whether the engine is owned and
+ *  how many boosts are. A boost never reaches growth already earned, which is
+ *  why the copy says "from now on". */
+function boost(
+  id: ShopItemId,
+  name: string,
+  growth: GrowthEngineId | "vigil",
+  engineName: string,
+  phrasing: BoostPhrasing,
+  engine: (s: RunState) => { owned: boolean; copies: number },
+): ItemDef {
+  return {
+    id,
+    name,
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => engine(s).copies,
+      (copies) => growthFactorText(engineGrowthPercent(growth, copies)),
+      (figure) => {
+        const rule =
+          phrasing === "cap"
+            ? `${engineName} multiplies by up to ${figure} from now on.`
+            : phrasing === "vigil"
+              ? `${engineName} multiplies each scoring die by ${figure} from now on.`
+              : `${engineName} multiplies by ${figure} from now on.`;
+        return `${rule} Up to ${BOOST_MAX_COPIES} copies.`;
+      },
+    ),
+    available: (s) => engine(s).owned && engine(s).copies < BOOST_MAX_COPIES,
+    effects: [
+      incCounter(
+        (
+          {
+            litany: "litany",
+            harmonics: "harmonics",
+            compound_interest: "compoundInterest",
+            descant: "descant",
+            gravity_well: "gravityWell",
+            everflame: "everflame",
+            discipline: "discipline",
+          } as Partial<Record<ShopItemId, RunCounter>>
+        )[id]!,
+      ),
+    ],
+  };
+}
+
+/** The sizes on the grid Ballast can still act on: above a d2, and not yet
+ *  ballasted. */
+export function ballastableSizes(state: RunState): DieSides[] {
+  return (Object.keys(state.dice.sizeCounts()).map(Number) as DieSides[])
+    .filter((sides) => sides > 2 && !state.ballastSizes.includes(sides))
+    .sort((a, b) => a - b);
+}
 
 /** Every item, in rough rarity/cost order. This array is the single source of
  *  truth: the shop's offer pool, the dev panel's grant list, and each item's
@@ -541,7 +840,12 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "common",
-    desc: "Choose a die size — every die of that size is duplicated.",
+    desc: gridCurseDesc(
+      "twin",
+      "Choose a die size — every die of that size is duplicated",
+      2,
+      true,
+    ),
     needsTarget: true,
     targetsSize: true,
     effects: [twinSize()],
@@ -594,11 +898,14 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "uncommon",
-    desc: stacking(
-      (s) => s.downbeat,
-      (copies) => `×${DOWNBEAT_MULT ** BigInt(copies)}`,
-      (factor) =>
-        `Every ${DOWNBEAT_INTERVAL}th roll of a trial multiplies points by ${factor}.`,
+    desc: withStackCap(
+      "downbeat",
+      stacking(
+        (s) => s.downbeat,
+        (copies) => `×${DOWNBEAT_MULT ** BigInt(copies)}`,
+        (factor) =>
+          `Every ${DOWNBEAT_INTERVAL}th roll of a trial multiplies points by ${factor}.`,
+      ),
     ),
     unlock: { kind: "scoreStreak", count: 20 },
     effects: [incCounter("downbeat")],
@@ -621,7 +928,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "uncommon",
-    desc: "Duplicate every die in your grid.",
+    desc: gridCurseDesc("mult2", "Duplicate every die in your grid", 2),
     effects: [multiplyDice(2)],
   },
   {
@@ -630,7 +937,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "rare",
-    desc: "Triple every die in your grid.",
+    desc: gridCurseDesc("mult3", "Triple every die in your grid", 3),
     effects: [multiplyDice(3)],
   },
   {
@@ -1115,7 +1422,12 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     rarity: "uncommon",
     unique: true,
-    desc: "Whenever any die rolls a 5 or 6, add another copy of that die to your grid.",
+    // Reworked (systems/CardReworks): only a d6 or larger showing its highest
+    // face, so a grid of d1s — which always does — cannot double every roll.
+    desc: () =>
+      cardReworksEnabled()
+        ? "Whenever a d6 or larger rolls its highest face, add another copy of that die to your grid."
+        : "Whenever any die rolls a 5 or 6, add another copy of that die to your grid.",
     unlock: { kind: "diceInGrid", count: 1000 },
     effects: [setFlag("hasDoubleTheFun")],
   },
@@ -1181,12 +1493,22 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     stackPricing: "explosive",
     rarity: "uncommon",
-    desc: stacking(
-      (s) => s.foundry,
-      (copies) => 2 ** copies,
-      (factor) =>
-        `At the start of each trial, multiply the number of your smallest dice by ${factor}.`,
-    ),
+    // The rework pours a fixed number instead (see systems/CardReworks); the
+    // doubling copy remains for a simulation that turns the reworks off.
+    desc: (s) =>
+      cardReworksEnabled()
+        ? stacking(
+            (r) => r.foundry,
+            (copies) => INNER_CIRCLE_POUR * copies,
+            (count) =>
+              `At the start of each trial, add ${count} dice of your most common size.`,
+          )(s)
+        : stacking(
+            (r) => r.foundry,
+            (copies) => 2 ** copies,
+            (factor) =>
+              `At the start of each trial, multiply the number of your smallest dice by ${factor}.`,
+          )(s),
     unlock: { kind: "diceInGrid", count: 29 },
     effects: [incCounter("foundry")],
   },
@@ -1214,11 +1536,14 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "uncommon",
-    desc: stacking(
-      (s) => s.lastCall,
-      (copies) => `×${4 ** copies}`,
-      (factor) =>
-        `Points earned on the final roll of each trial are multiplied by ${factor}.`,
+    desc: withStackCap(
+      "last_call",
+      stacking(
+        (s) => s.lastCall,
+        (copies) => `×${4 ** copies}`,
+        (factor) =>
+          `Points earned on the final roll of each trial are multiplied by ${factor}.`,
+      ),
     ),
     unlock: { kind: "clutchClear" },
     effects: [incCounter("lastCall")],
@@ -1260,10 +1585,13 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     stackPricing: "explosive",
     rarity: "rare",
-    desc: stacking(
-      (s) => s.prism,
-      (copies) => `×${3 ** copies}`,
-      (factor) => `Every point you earn is multiplied by ${factor}.`,
+    desc: withStackCap(
+      "prism",
+      stacking(
+        (s) => s.prism,
+        (copies) => `×${3 ** copies}`,
+        (factor) => `Every point you earn is multiplied by ${factor}.`,
+      ),
     ),
     unlock: { kind: "winGame" },
     effects: [incCounter("prism")],
@@ -1364,6 +1692,492 @@ export const ITEMS: ItemDef[] = [
     unlock: { kind: "goldHeld", amount: 40 },
     effects: [setFlag("hasPawnbroker")],
   },
+  // --- Strategy-tree engines -------------------------------------------------
+  // The tier-3 cards of the strategy trees (see systems/ItemTrees). Each compounds per
+  // roll TAKEN rather than per trial: a build that already clears easily ends
+  // its trial sooner and so grows less, which is what keeps a finished engine
+  // spending most of a trial's rolls instead of clearing it on the first.
+  {
+    id: "the_catechism",
+    name: "The Catechism",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Each roll where every die scores permanently multiplies your multiplier by ${ENGINE_FACTOR}.`,
+    effects: [setFlag("hasCatechism")],
+  },
+  // The Catechism's boost, capped so it tunes the engine rather than becoming a
+  // second one. It raises the growth of rolls still to come, never of rolls
+  // already counted (see systems/GrowthEngines).
+  boost("litany", "Litany", "catechism", "The Catechism", "fixed", (s) => ({
+    owned: s.hasCatechism,
+    copies: s.litany,
+  })),
+  // The Lessons' pruning cards. The Catechism grows only on a roll every die
+  // scored, and these are how a grid sheds the dice that cannot — at the price of
+  // the points those dice paid on the rolls they did land. None of them may
+  // empty the grid: a run with nothing to roll can neither score nor grow back.
+  {
+    id: "dismissal",
+    name: "A Dismissal",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    needsTarget: true,
+    desc: "Remove a die of your choice from your grid.",
+    available: (s) => s.dice.length > 1,
+    effects: [removeTarget()],
+  },
+  {
+    id: "winnowing",
+    name: "The Winnowing",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    needsTarget: true,
+    targetsSize: true,
+    desc: "Choose a die size — remove every die of that size from your grid.",
+    available: (s) => sizesOnGrid(s) > 1,
+    effects: [removeSize()],
+  },
+  {
+    id: "excommunication",
+    name: "Excommunication",
+    priceBand: "strong",
+    stackPricing: "linear",
+    rarity: "rare",
+    desc: "Remove every die from your grid that cannot score on every roll.",
+    available: (s) => {
+      const missing = sizesThatCanMiss(s).length;
+      return missing > 0 && missing < sizesOnGrid(s);
+    },
+    effects: [removeMissing()],
+  },
+  // The Lessons' way back up. Pruning leaves a grid that always scores but is
+  // small, and a small grid cannot carry an engine through the middle ranks.
+  // These add only d1s — a die that answers every roll — so a perfect grid can
+  // grow without giving back what makes The Catechism grow.
+  {
+    id: "two_novices",
+    name: "Two Novices",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    desc: "Add two d1 to your grid.",
+    available: smallGrid,
+    effects: [addDice(1, 2)],
+  },
+  {
+    id: "the_calling",
+    name: "The Calling",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: (s) =>
+      `Add ${proportionalCount(s, CALLING_FRACTION, CALLING_MIN)} d1 to your grid.`,
+    effects: [addDiceProportional(1, CALLING_FRACTION, CALLING_MIN)],
+  },
+  // --- The other strategy trees' cards (see systems/ItemTrees) ----------------
+  //
+  // Resonance: an engine fed by multipliers landing together.
+  {
+    id: "the_resonant_hall",
+    name: "The Resonant Hall",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Each roll that ${CARDINALS[GROWTH_TUNING.resonanceMultipliers]} or more cards multiply permanently multiplies your multiplier by ${ENGINE_FACTOR}.`,
+    effects: [setFlag("hasResonantHall")],
+  },
+  boost(
+    "harmonics",
+    "Harmonics",
+    "resonance",
+    "The Resonant Hall",
+    "fixed",
+    (s) => ({ owned: s.hasResonantHall, copies: s.harmonics }),
+  ),
+  // The Gathering's boost: The Curious' copies arrive in pairs.
+  {
+    id: "the_multitude",
+    name: "The Multitude",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => s.multitude,
+      (copies) => `${Math.round(MULTITUDE_PAIR_CHANCE * 100 * copies)}%`,
+      (figure) =>
+        `Each die The Curious copies has a ${figure} chance to arrive as a pair. Up to ${BOOST_MAX_COPIES} copies.`,
+    ),
+    available: (s) => s.hasDoubleTheFun && s.multitude < BOOST_MAX_COPIES,
+    effects: [incCounter("multitude")],
+  },
+  // The Treasury: an engine fed by the purse, so every purchase slows it.
+  {
+    id: "abstinence",
+    name: "Abstinence",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "common",
+    desc: stacking(
+      (s) => s.abstinence,
+      (copies) => ABSTINENCE_GOLD * copies,
+      (gold) =>
+        `When you leave a shop without buying anything, gain ${gold} gold.`,
+    ),
+    effects: [incCounter("abstinence")],
+  },
+  {
+    id: "gilded_altar",
+    name: "The Gilded Altar",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Points ×2 for every ${GILDED_ALTAR_GOLD_PER_DOUBLING} gold you hold when you roll, up to ×${2 ** GILDED_ALTAR_MAX_DOUBLINGS}.`,
+    effects: [setFlag("hasGildedAltar")],
+  },
+  {
+    id: "the_endowment",
+    name: "The Endowment",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Each roll permanently multiplies your multiplier by up to ${ENGINE_FACTOR}: 0.01 for every ${GROWTH_TUNING.endowmentGoldPerPercent} gold you hold.`,
+    effects: [setFlag("hasEndowment")],
+  },
+  boost(
+    "compound_interest",
+    "Compound Interest",
+    "endowment",
+    "The Endowment",
+    "cap",
+    (s) => ({ owned: s.hasEndowment, copies: s.compoundInterest }),
+  ),
+  // The Canticle: an engine fed by the faces only one die shows.
+  {
+    id: "a_new_voice",
+    name: "A New Voice",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    desc: "Add a d8, a d10 and a d20 to your grid.",
+    effects: [addDice(8), addDice(10), addDice(20)],
+  },
+  {
+    id: "counterpoint",
+    name: "Counterpoint",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    desc: "A die showing a face no other die shows scores, whatever its number.",
+    effects: [setFlag("hasCounterpoint")],
+  },
+  {
+    id: "the_canticle",
+    name: "The Canticle",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Points ×2 for every face exactly one die shows, beyond the ${ORDINALS[CANTICLE_FREE_FACES]}.`,
+    effects: [setFlag("hasCanticle")],
+  },
+  // A second copy would remove nothing the first did not, so it sells once.
+  {
+    id: "the_choirmaster",
+    name: "The Choirmaster",
+    priceBand: "standard",
+    rarity: "uncommon",
+    unique: true,
+    desc: "After each trial, remove every die that showed a repeated face on its final roll.",
+    effects: [setFlag("hasChoirmaster")],
+  },
+  {
+    id: "plainsong",
+    name: "Plainsong",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Each roll permanently multiplies your multiplier by up to ${ENGINE_FACTOR}: 0.01 for every face exactly one die shows${GROWTH_TUNING.plainsongFreeFaces > 0 ? ` beyond the ${ORDINALS[GROWTH_TUNING.plainsongFreeFaces]}` : ""}.`,
+    effects: [setFlag("hasPlainsong")],
+  },
+  boost("descant", "Descant", "plainsong", "Plainsong", "cap", (s) => ({
+    owned: s.hasPlainsong,
+    copies: s.descant,
+  })),
+  // Plainsong's fuel, opened with the engine: big dice, which rarely repeat a
+  // face, and a small grid's lone faces counted twice.
+  {
+    id: "a_full_choir",
+    name: "A Full Choir",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => s.fullChoir,
+      (copies) => copies,
+      (count) => `At the start of each trial, add ${count} d100 to your grid.`,
+    ),
+    available: (s) => s.hasPlainsong,
+    effects: [incCounter("fullChoir")],
+  },
+  {
+    id: "antiphon",
+    name: "Antiphon",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    desc: "Every face exactly one die shows counts twice toward Plainsong.",
+    available: (s) => s.hasPlainsong,
+    effects: [setFlag("hasAntiphon")],
+  },
+  // The Weighing: an engine fed by big faces.
+  {
+    id: "ascension",
+    name: "Ascension",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    needsTarget: true,
+    desc: "Grow a die of your choice two sizes.",
+    available: (s) => s.dice.growableCount() > 0,
+    effects: [growTarget(2)],
+  },
+  {
+    id: "two_elders",
+    name: "Two Elders",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: "Add two d100 to your grid.",
+    effects: [addDice(100, 2)],
+  },
+  {
+    id: "ballast",
+    name: "Ballast",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    needsTarget: true,
+    targetsSize: true,
+    desc: "Choose a die size — every die of that size never rolls its lowest two faces, now and later.",
+    available: (s) => ballastableSizes(s).length > 0,
+    effects: [ballastSize()],
+  },
+  {
+    id: "exaltation",
+    name: "Exaltation",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    needsTarget: true,
+    targetsSize: true,
+    desc: "Choose a die size — every die of that size grows one size.",
+    available: (s) => s.dice.growableCount() > 0,
+    effects: [growSize(1)],
+  },
+  {
+    id: "the_scales",
+    name: "The Scales",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    desc: "Every die scores its face value on the upper half of its faces. The Order's numbers no longer score.",
+    effects: [setFlag("hasScales")],
+  },
+  {
+    id: "gravitas",
+    name: "Gravitas",
+    priceBand: "build",
+    stackPricing: "explosive",
+    rarity: "rare",
+    desc: `Points ×(your average die size ÷ ${GRAVITAS_SIZE_PER_FACTOR}), at least ×1, per copy.`,
+    effects: [incCounter("gravitas")],
+  },
+  {
+    id: "the_weight_of_ages",
+    name: "The Weight of Ages",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Each roll permanently multiplies your multiplier by up to ${ENGINE_FACTOR}: 0.01 for every ${GROWTH_TUNING.weightDicePerPercent} dice showing ${GROWTH_TUNING.weightFace} or higher.`,
+    effects: [setFlag("hasWeightOfAges")],
+  },
+  boost(
+    "gravity_well",
+    "Gravity Well",
+    "weight",
+    "The Weight of Ages",
+    "cap",
+    (s) => ({ owned: s.hasWeightOfAges, copies: s.gravityWell }),
+  ),
+  // The Weight of Ages' fuel, opened with the engine: a steady pour of d100s,
+  // and every d100 heavy enough to count.
+  {
+    id: "the_ancestors",
+    name: "The Ancestors",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => s.ancestors,
+      (copies) => copies,
+      (count) => `Add ${count} d100 to your grid after every roll.`,
+    ),
+    available: (s) => s.hasWeightOfAges,
+    effects: [incCounter("ancestors")],
+  },
+  {
+    id: "the_anvil",
+    name: "The Anvil",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Your d100s never roll below ${ANVIL_FLOOR}.`,
+    available: (s) => s.hasWeightOfAges,
+    effects: [setFlag("hasAnvil")],
+  },
+  // The Pyre: an engine fed by the dice a run burns and shatters.
+  {
+    id: "an_offering",
+    name: "An Offering",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    needsTarget: true,
+    targetsSize: true,
+    desc: `Choose a die size — burn every die of that size. Gain 1 gold for every ${OFFERING_FACES_PER_GOLD} faces burned.`,
+    available: (s) => sizesOnGrid(s) > 1,
+    effects: [burnSize()],
+  },
+  {
+    id: "tinder",
+    name: "Tinder",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    desc: "Add three d20 to your grid.",
+    effects: [addDice(20, 3)],
+  },
+  {
+    id: "kindling",
+    name: "Kindling",
+    priceBand: "strong",
+    stackPricing: "explosive",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => s.kindling,
+      (copies) => `×${2 ** copies}`,
+      (factor) =>
+        `Faces that burn or shatter count ${factor} toward The Pyre and The Ashen Crown.`,
+    ),
+    effects: [incCounter("kindling")],
+  },
+  {
+    id: "from_the_ashes",
+    name: "From the Ashes",
+    priceBand: "build",
+    stackPricing: "linear",
+    rarity: "rare",
+    desc: stacking(
+      (s) => s.fromTheAshes,
+      (copies) => `${Math.round(ASHES_RETURN_SHARE * 10 * copies)} in 10`,
+      (share) => `When dice burn or shatter, ${share} return as a d100.`,
+    ),
+    effects: [incCounter("fromTheAshes")],
+  },
+  {
+    id: "the_pyre",
+    name: "The Pyre",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Each roll permanently multiplies your multiplier by up to ${ENGINE_FACTOR}: 0.01 for every ${GROWTH_TUNING.pyreFacesPerPercent} faces burned or shattered since the last roll.`,
+    effects: [setFlag("hasPyre")],
+  },
+  boost("everflame", "Everflame", "pyre", "The Pyre", "cap", (s) => ({
+    owned: s.hasPyre,
+    copies: s.everflame,
+  })),
+  // The Pyre's fuel, opened with the engine: a fire that burns on every roll —
+  // a die shows a 1 once in as many rolls as it has faces, so the grid feeds it
+  // about a face a die — and embers that carry a burn into the next roll.
+  {
+    id: "the_brazier",
+    name: "The Brazier",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    desc: "After every roll, every die larger than a d1 that rolled a 1 burns.",
+    available: (s) => s.kindling > 0,
+    effects: [setFlag("hasBrazier")],
+  },
+  {
+    id: "embers",
+    name: "Embers",
+    priceBand: "standard",
+    rarity: "uncommon",
+    unique: true,
+    desc: "Half the faces The Pyre spends on a roll stay in the fire for the next.",
+    available: (s) => s.hasPyre,
+    effects: [setFlag("hasEmbers")],
+  },
+  // The Pyre's multiplier, opened with Kindling: the tree burns before its
+  // engine arrives, and this is what that burning pays until it does.
+  {
+    id: "the_ashen_crown",
+    name: "The Ashen Crown",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Points ×2 for every ${ASHEN_CROWN_FACES_PER_DOUBLING} faces burned or shattered this run, up to ×${2 ** ASHEN_CROWN_MAX_DOUBLINGS}.`,
+    effects: [setFlag("hasAshenCrown")],
+  },
+  // The Hermitage: an engine fed by a small grid's dice, one die at a time.
+  {
+    id: "a_parting",
+    name: "A Parting",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    needsTarget: true,
+    desc: "Remove a die of your choice from your grid. Gain 1 gold.",
+    available: (s) => s.dice.length > 1,
+    effects: [removeTarget(), addGold(1)],
+  },
+  {
+    id: "the_cell",
+    name: "The Cell",
+    priceBand: "strong",
+    rarity: "uncommon",
+    unique: true,
+    desc: `Points ×2 for every empty seat below ${CELL_SEATS} dice.`,
+    effects: [setFlag("hasCell")],
+  },
+  {
+    id: "anointing",
+    name: "Anointing",
+    priceBand: "strong",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    needsTarget: true,
+    desc: `Choose a die. It counts as having scored ${ANOINTING_SCORES} more times under The Vigil.`,
+    available: (s) => s.hasVigil,
+    effects: [anointTarget(ANOINTING_SCORES)],
+  },
+  {
+    id: "the_vigil",
+    name: "The Vigil",
+    priceBand: "build",
+    rarity: "uncommon",
+    unique: true,
+    desc: `While you hold ${GROWTH_TUNING.vigilGridLimit} or fewer dice, each time a die scores, that die's points are permanently multiplied by ${ENGINE_FACTOR}. Copies begin with none.`,
+    effects: [setFlag("hasVigil")],
+  },
+  boost("discipline", "Discipline", "vigil", "The Vigil", "vigil", (s) => ({
+    owned: s.hasVigil,
+    copies: s.discipline,
+  })),
 ];
 
 /** Human-readable hint for a locked item's unlock condition (shown in the
@@ -1540,9 +2354,12 @@ export function applyEffect(
       state.extraNumberCount += 1;
       state.scoringNumbers.push(1 + state.extraNumberCount);
       return true;
-    case "multiplyDice":
+    case "multiplyDice": {
+      const before = state.dice.length;
       state.dice.multiply(effect.factor, ctx.source ?? "starter");
+      curseGoalsForGrowth(state, ctx.source, before);
       return true;
+    }
     case "shrinkTarget": {
       const indices =
         ctx.indices ?? (ctx.index !== undefined ? [ctx.index] : []);
@@ -1563,7 +2380,10 @@ export function applyEffect(
     case "twinSize": {
       const sides = targetSize(state, ctx);
       if (sides === undefined) return false;
-      return state.dice.twinAllOfSize(sides, ctx.source ?? "starter") > 0;
+      const before = state.dice.length;
+      const added = state.dice.twinAllOfSize(sides, ctx.source ?? "starter");
+      curseGoalsForGrowth(state, ctx.source, before);
+      return added > 0;
     }
     case "loadSize": {
       const sides = targetSize(state, ctx);
@@ -1584,6 +2404,56 @@ export function applyEffect(
       state.royalSealSizes.push(sides);
       return true;
     }
+    // The removal effects refuse, rather than empty the grid: the purchase is
+    // aborted and the player is not charged for a card that could not act.
+    case "removeTarget":
+      if (ctx.index === undefined || state.dice.length <= 1) return false;
+      return state.dice.removeAt(ctx.index);
+    case "removeSize": {
+      const sides = targetSize(state, ctx);
+      if (sides === undefined || sizesOnGrid(state) <= 1) return false;
+      return state.dice.removeSizes((size) => size === sides) > 0;
+    }
+    case "removeMissing": {
+      const missing = new Set<number>(sizesThatCanMiss(state));
+      if (missing.size === 0 || missing.size >= sizesOnGrid(state))
+        return false;
+      return state.dice.removeSizes((size) => missing.has(size)) > 0;
+    }
+    case "growTarget":
+      if (ctx.index === undefined) return false;
+      return state.dice.growAt(ctx.index, effect.steps ?? 1);
+    case "growSize": {
+      const sides = targetSize(state, ctx);
+      if (sides === undefined) return false;
+      return state.dice.growAllOfSize(sides, effect.steps ?? 1) > 0;
+    }
+    case "ballastSize": {
+      const sides = targetSize(state, ctx);
+      if (sides === undefined || !ballastableSizes(state).includes(sides))
+        return false;
+      state.ballastSizes.push(sides);
+      return true;
+    }
+    case "burnSize": {
+      const sides = targetSize(state, ctx);
+      if (sides === undefined || sizesOnGrid(state) <= 1) return false;
+      const burned = state.dice.removeSizes((size) => size === sides);
+      if (burned <= 0) return false;
+      feedPyre(state, burned * sides);
+      if (offeringFacesPerGold > 0)
+        grantGold(state, Math.floor((burned * sides) / offeringFacesPerGold));
+      riseFromTheAshes(
+        state,
+        state.dice,
+        burned,
+        blocksGrowthPermanently(state),
+      );
+      return true;
+    }
+    case "anointTarget":
+      if (ctx.index === undefined || !state.hasVigil) return false;
+      return state.dice.anointAt(ctx.index, effect.times, vigilPercent(state));
     case "bonusRollsProportional":
       // Bought between trials, so the budget this reads is the one it extends.
       state.bonusRollsThisRound += Math.max(
@@ -1698,6 +2568,25 @@ export function itemDisabledDuringTrialByAffliction(
  *  inflict it rather than from a second table that could drift from them. Null
  *  for the ordinary cards, which inflict nothing. A cursed card's face is
  *  stamped with this affliction's seal (see ui/itemCard). */
+/** Whether a card carries a standing drawback: its own flag, or the grid curse
+ *  the card reworks lay on the grid multipliers. */
+export function itemIsCursed(def: ItemDef): boolean {
+  return def.cursed === true || isGridCurse(def.id);
+}
+
+/** The grid curse (systems/CardReworks): every goal from here grows
+ *  by the share the grid just grew, to the curse's power. Read off the grid
+ *  itself, so doubling one size of a mixed grid charges less than doubling all
+ *  of it. */
+function curseGoalsForGrowth(
+  state: RunState,
+  source: string | undefined,
+  before: number,
+): void {
+  if (!source || !isGridCurse(source) || before <= 0) return;
+  state.goalScale *= gridCurseGoalFactor(state.dice.length / before);
+}
+
 export function afflictionOf(def: ItemDef): AfflictionId | null {
   for (const effect of def.effects)
     if (effect.kind === "afflict") return effect.id;
@@ -1740,7 +2629,52 @@ const GROWTH_COUNTERS = new Set<RunCounter>([
   "brickMold",
   "foundry",
   "genesis",
+  "multitude",
+  "fromTheAshes",
+  "fullChoir",
+  "ancestors",
 ]);
+
+/** Count burned or shattered faces, Kindling's doubling and all: toward The
+ *  Ashen Crown always — so the chain's tier-2 card pays before its engine
+ *  arrives — and toward The Pyre while the run owns it. */
+// Sim-only: the engine experiment sweeps An Offering's payout.
+let offeringFacesPerGold = OFFERING_FACES_PER_GOLD;
+
+/** Sim-only. An Offering's faces burned per gold paid, 0 for none; null
+ *  restores the card's own. */
+export function setOfferingFacesPerGoldForSimulation(
+  faces: number | null,
+): void {
+  offeringFacesPerGold = faces ?? OFFERING_FACES_PER_GOLD;
+}
+
+export function feedPyre(state: RunState, faces: number): void {
+  if (faces <= 0) return;
+  const counted = faces * 2 ** state.kindling;
+  state.facesBurned += counted;
+  if (state.hasPyre) state.pyreFaces += counted;
+}
+
+/** From the Ashes: return a share of `burned` dice to `pool` as d100s. Rounded
+ *  at random with `rng` (a roll's breakage), or down without one (a card bought
+ *  in the shop). Returns how many returned. */
+export function riseFromTheAshes(
+  state: RunState,
+  pool: DicePool,
+  burned: number,
+  blocked: boolean,
+  rng?: () => number,
+): number {
+  if (state.fromTheAshes <= 0 || burned <= 0 || blocked) return 0;
+  const expected = burned * ASHES_RETURN_SHARE * state.fromTheAshes;
+  const whole = Math.floor(expected);
+  const count = whole + (rng && rng() < expected - whole ? 1 : 0);
+  if (count <= 0) return 0;
+  pool.addDice(100, count, withSizeAuras(state, 100), "from_the_ashes");
+  if (pool === state.dice) addItemValue(state, "from_the_ashes", count);
+  return count;
+}
 
 /** The molds, which each pour dice of one size into the grid after every roll,
  *  one per copy owned. A new mold is a row here and a card above — nothing else
@@ -1753,6 +2687,7 @@ export const MOLDS: {
   { id: "chip_mold", counter: "chipMold", sides: 2 },
   { id: "spike_mold", counter: "spikeMold", sides: 4 },
   { id: "brick_mold", counter: "brickMold", sides: 6 },
+  { id: "the_ancestors", counter: "ancestors", sides: 100 },
 ];
 
 /** How many dice the molds will pour on a roll, without pouring them (the
@@ -1784,7 +2719,7 @@ export function applyMolds(
 /**
  * Apply the trial-start passives (Foundry dice) to the run and return the number
  * of dice added, so the caller can decide whether to re-lay the grid. Called
- * once as each trial begins (see engine.resolveTrialEnd). Pocket Change and
+ * once as each trial begins, after the shop (see engine.openTrial). Pocket Change and
  * Dividend are not here — they pay out every roll, so they live in scoreRoll.
  */
 export function applyTrialStart(state: RunState): number {
@@ -1799,10 +2734,45 @@ export function applyTrialStart(state: RunState): number {
   // included — otherwise a Foundry build would walk straight through it. Locust
   // Idol says the same thing for the rest of the run.
   if (!blocksGrowth(state) && state.foundry > 0) {
-    // Foundry: double the smallest size on the grid, once per copy owned. A flat
-    // handful of dice was noise past the first few trials; a doubling stays worth
-    // the explosive price the card is sold at.
-    addItemValue(state, "foundry", state.dice.foundryDouble(state.foundry));
+    if (cardReworksEnabled()) {
+      // Reworked (see systems/CardReworks): a fixed pour of the grid's
+      // most common size, the larger size on a tie. A pour grows the grid by a
+      // constant, where a doubling compounds once per trial. An empty grid has
+      // no size to pour, as it has none for the doubling to act on.
+      const sizes = Object.entries(state.dice.sizeCounts()).map(
+        ([size, count]) => [Number(size) as DieSides, count] as const,
+      );
+      if (sizes.length > 0) {
+        const [sides] = sizes.reduce((best, entry) =>
+          entry[1] > best[1] || (entry[1] === best[1] && entry[0] > best[0])
+            ? entry
+            : best,
+        );
+        const count = INNER_CIRCLE_POUR * state.foundry;
+        state.dice.addDice(
+          sides,
+          count,
+          withSizeAuras(state, sides),
+          "foundry",
+        );
+        addItemValue(state, "foundry", count);
+      }
+    } else {
+      // Foundry: double the smallest size on the grid, once per copy owned. A
+      // flat handful of dice was noise past the first few trials; a doubling
+      // stays worth the explosive price the card is sold at.
+      addItemValue(state, "foundry", state.dice.foundryDouble(state.foundry));
+    }
+  }
+  // A Full Choir: a d100 a copy, under the same shut-off as Foundry.
+  if (!blocksGrowth(state) && state.fullChoir > 0) {
+    state.dice.addDice(
+      100,
+      state.fullChoir,
+      withSizeAuras(state, 100),
+      "a_full_choir",
+    );
+    addItemValue(state, "a_full_choir", state.fullChoir);
   }
   enforceGridCap(state);
   return state.dice.length - before;
@@ -1870,6 +2840,52 @@ export const ITEM_THEMES: Record<ShopItemId, ItemTheme[]> = {
   pocket_change: ["precision"],
   dividend: ["precision"],
   momentum: ["precision"],
+  the_catechism: ["precision"],
+  litany: ["precision"],
+  dismissal: ["precision"],
+  winnowing: ["precision"],
+  excommunication: ["precision"],
+  two_novices: ["precision"],
+  the_calling: ["precision"],
+  the_resonant_hall: ["multiplier"],
+  harmonics: ["multiplier"],
+  the_multitude: ["swarm"],
+  abstinence: ["economy"],
+  gilded_altar: ["economy"],
+  the_endowment: ["economy"],
+  compound_interest: ["economy"],
+  a_new_voice: ["swarm"],
+  counterpoint: ["precision"],
+  the_canticle: ["multiplier"],
+  the_choirmaster: ["precision"],
+  plainsong: ["precision"],
+  descant: ["precision"],
+  a_full_choir: ["swarm"],
+  antiphon: ["precision"],
+  ascension: ["precision"],
+  two_elders: ["swarm"],
+  ballast: ["precision"],
+  exaltation: ["precision"],
+  the_scales: ["precision"],
+  gravitas: ["multiplier"],
+  the_weight_of_ages: ["swarm"],
+  gravity_well: ["swarm"],
+  the_ancestors: ["swarm"],
+  the_anvil: ["precision"],
+  an_offering: ["precision"],
+  tinder: ["swarm"],
+  kindling: ["multiplier"],
+  from_the_ashes: ["swarm"],
+  the_pyre: ["multiplier"],
+  everflame: ["multiplier"],
+  the_brazier: ["multiplier"],
+  embers: ["multiplier"],
+  the_ashen_crown: ["multiplier"],
+  a_parting: ["precision"],
+  the_cell: ["multiplier"],
+  anointing: ["precision"],
+  the_vigil: ["precision"],
+  discipline: ["precision"],
 
   tithe_bowl: ["economy"],
   lucky_coin: ["economy"],

@@ -18,6 +18,8 @@ import {
   rerollIsFree,
   rerollShopOffers,
   ShopOffer,
+  leaveShop,
+  isTreeUpgrade,
 } from "../systems/Shop";
 import { addCamera, cameraOrigin, setCameraViewport } from "../ui/camera";
 import { recordSelection } from "../systems/SaveData";
@@ -42,7 +44,7 @@ import {
 } from "../ui/layout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
-import { buildCursedSeal, rarityMark } from "../ui/itemCard";
+import { buildCursedSeal, rarityMark, UPGRADE_LABEL } from "../ui/itemCard";
 import { addItemValue, recordRunItemPurchase } from "../systems/ItemValue";
 import { spendGold } from "../systems/Gold";
 import { buildRichCopy, isMarked } from "../ui/richCopy";
@@ -2101,10 +2103,38 @@ export class ShopScene extends Phaser.Scene {
           })
           .setOrigin(0, 0.5)
       : undefined;
-    if (curseLabel) {
-      const totalWidth = rarityLabel.width + curseLabel.width;
-      rarityLabel.setOrigin(0, 0.5).setX(-totalWidth / 2);
-      curseLabel.setX(rarityLabel.x + rarityLabel.width);
+    // A tree card the run opened by buying the card above it says so, between
+    // its rarity and any curse: it is the next step of a strategy already begun.
+    const upgradeLabel = isTreeUpgrade(this.state, offer.id)
+      ? this.add
+          .text(0, rarityLabel.y, ` · ${UPGRADE_LABEL}`, {
+            fontFamily: SERIF,
+            fontSize: fontSize(13, 8),
+            color: CSS.upgrade,
+            fontStyle: "bold",
+          })
+          .setOrigin(0, 0.5)
+      : undefined;
+    const trailing = [upgradeLabel, curseLabel].filter(
+      (label): label is Phaser.GameObjects.Text => label !== undefined,
+    );
+    if (trailing.length > 0) {
+      const totalWidth = [rarityLabel, ...trailing].reduce(
+        (sum, label) => sum + label.width,
+        0,
+      );
+      // Rarity, upgrade and curse together can outrun the parchment on a
+      // small card; the line shrinks to fit rather than crossing the border.
+      const fit = Math.min(1, (228 * scale) / totalWidth);
+      rarityLabel
+        .setOrigin(0, 0.5)
+        .setScale(fit)
+        .setX((-totalWidth * fit) / 2);
+      let x = rarityLabel.x + rarityLabel.displayWidth;
+      for (const label of trailing) {
+        label.setScale(fit).setX(x);
+        x += label.displayWidth;
+      }
     }
     // The title hangs from its top edge rather than sitting on its centre: a
     // name long enough for two lines then grows down into the gap above the
@@ -2164,6 +2194,7 @@ export class ShopScene extends Phaser.Scene {
         img,
         ...(seal ? [seal] : []),
         rarityLabel,
+        ...(upgradeLabel ? [upgradeLabel] : []),
         ...(curseLabel ? [curseLabel] : []),
         name,
         desc,
@@ -2226,6 +2257,7 @@ export class ShopScene extends Phaser.Scene {
       // produces the same dim read without revealing the card underneath.
       img.setTint(0x978e79);
       rarityLabel.setAlpha(0.72);
+      upgradeLabel?.setAlpha(0.72);
       curseLabel?.setAlpha(0.72);
       name.setAlpha(0.72);
       desc.setAlpha(0.68);
@@ -2916,6 +2948,10 @@ export class ShopScene extends Phaser.Scene {
         return "Choose a die size — every die of it turns wild";
       case "royal_seal":
         return "Choose a die size to receive the Royal Seal";
+      case "dismissal":
+        return "Choose a die to remove";
+      case "winnowing":
+        return "Choose a die size — every die of it is removed";
       default:
         return offer.targetsSize ? "Choose a die size" : "Choose a die";
     }
@@ -3294,6 +3330,9 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private exit(): void {
+    // Abstinence pays for a visit that took nothing, before the run is saved
+    // on its way out.
+    leaveShop(this.state, this.purchasesMade > 0);
     saveActiveRun(this.registry, { scene: "TrialOverview" });
     slideSceneOut(
       this,

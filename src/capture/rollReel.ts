@@ -35,6 +35,10 @@ export interface RollReelConfig {
   readonly betweenRollsMs: number;
   /** The rest on the final roll's result, before the recorder stops. */
   readonly closingMs: number;
+  /** Press again this long after each press, whether or not the scene has
+   *  finished presenting the roll — a player who does not wait. Unset, a reel
+   *  waits for GameScene to settle and then rests `betweenRollsMs`. */
+  readonly pressEveryMs?: number;
 }
 
 /** Grid growth: four rolls of a Genesis build, watched from 24 dice to 102.
@@ -139,6 +143,13 @@ export async function playRollReel(
       return;
     }
     scene.onRoll();
+    if (config.pressEveryMs !== undefined) {
+      const last = index === config.rolls - 1;
+      if (!last) {
+        await hold(scene, config.pressEveryMs);
+        continue;
+      }
+    }
     const settled = await settle(scene, mine);
     if (generation !== mine) return;
     if (!settled) {

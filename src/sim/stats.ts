@@ -4,7 +4,13 @@
 import { TRIALS_PER_RANK, trialGoal, WIN_TRIAL } from "../config";
 import type { BossModifierId } from "../systems/Boss";
 import { BOSS_MODIFIERS } from "../systems/Boss";
-import { ITEMS, PriceBand, Rarity, ShopItemId } from "../systems/Items";
+import {
+  itemIsCursed,
+  ITEMS,
+  PriceBand,
+  Rarity,
+  ShopItemId,
+} from "../systems/Items";
 import { sourceLabel } from "../systems/ItemPoints";
 import { RunRecord } from "./bot";
 
@@ -194,7 +200,7 @@ function itemStats(records: RunRecord[]): ItemStat[] {
 }
 
 function curseStats(records: RunRecord[]): CurseStat[] {
-  const cursed = ITEMS.filter((def) => def.cursed);
+  const cursed = ITEMS.filter((def) => itemIsCursed(def));
   const runs = records.length;
   return cursed.map((def) => {
     let offered = 0;

@@ -161,7 +161,6 @@ async function main(): Promise<void> {
     goldForfeited: 0,
     rollGold: { titheBowl: 1, luckyCoin: 1, total: 2 },
     totalGoldEarned: 40,
-    diceAdded: 3,
     insuranceUsed: false,
     bossCleared: false,
   };

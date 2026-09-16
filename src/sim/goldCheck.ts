@@ -22,7 +22,7 @@ import {
   grantGold,
   rollGold,
 } from "../systems/Gold";
-import { ITEMS } from "../systems/Items";
+import { itemIsCursed, ITEMS } from "../systems/Items";
 import {
   offerFor,
   PRICE_BANDS,
@@ -294,7 +294,7 @@ console.log("\nShop pricing");
   state.hasShoppingCart = true;
   let floored = true;
   for (const item of ITEMS) {
-    if (item.priceBand === "free" || item.cursed) continue;
+    if (item.priceBand === "free" || itemIsCursed(item)) continue;
     if (priceFor(item, state) < 1) floored = false;
   }
   check(floored, "no ordinary paid card can be discounted below 1 gold");

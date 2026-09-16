@@ -27,13 +27,27 @@ Character and hero illustrations remain art-direction concepts.
 
 ## Character roster art
 
-`art-src/characters/` holds the illustration masters; it is excluded from the
-deployed build. `npm run art:characters` re-exports each master as the three
-WebP widths the roster's `srcset` asks for, named `<stem>-<width>.webp`.
+`art-src/` is excluded from the deployed build. `art-src/characters/` holds the
+raw character illustrations as **transparent PNGs** (2400x2400 preferred), and
+`art-src/card-blank.png` is the empty parchment card they are shown on.
+`npm run art:characters` bakes each character onto the card and exports the
+three WebP widths the roster's `srcset` asks for, named `<stem>-<width>.webp`.
 
-Masters must be **square** and at least **1200px** on a side (2400px preferred).
-The roster renders at `aspect-ratio: 1 / 1` with `object-fit: cover`, so an
-off-ratio master is centre-cropped rather than letterboxed.
+The bake trims each character to its visible pixels, scales it to 1780px tall,
+and centres it with its top 290px down the 2400px card, so every character
+stands on the same floor line. It then draws a soft floor shadow under it — a
+blurred ellipse whose width follows the character's — so the blank card itself
+carries no shadow. A character must be at least 1780px tall once trimmed; the
+script refuses anything smaller unless run with `--allow-upscale`.
+
+To add a character, drop `character-<role>.png` into `art-src/characters/`, run
+`npm run art:characters`, and add a `<figure>` with `class="card-art"` on its
+`<img>` to the roster in `index.html`.
+
+`card-blank.png` was reconstructed from the first two finished cards, so the
+region behind a character's body is filled in rather than original parchment.
+It is invisible behind the current roster, but a much narrower character would
+expose more of it; a clean export of the card is the fix if that ever shows.
 
 The grid stays three columns at every breakpoint, so the image never renders
 wider than **371 CSS px** — the width it reaches once the container caps at

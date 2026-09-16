@@ -15,11 +15,15 @@ import { drawEffectBorder } from "./dieBorder";
 import { Die } from "../systems/Dice";
 
 /** How long a newly won die takes to reach its full size in the grid. */
-const SPAWN_MS = 260;
+export const SPAWN_MS = 260;
 /** The fraction of its final size a die starts at when it pops in. Small
  *  enough to read as arriving rather than as a die that was already there
  *  twitching, large enough that the face is legible the whole way up. */
 const SPAWN_START_SCALE = 0.3;
+/** How long a die that shattered or burned takes to leave the grid. */
+export const DEPART_MS = 240;
+/** The fraction of its size a departing die has collapsed to when it vanishes. */
+const DEPART_END_SCALE = 0.2;
 
 /** How faded an inert die is. Enough to drop it behind the dice that still
  *  count, not so much that its face stops being readable — the player is meant
@@ -323,6 +327,37 @@ export class DieSprite extends Phaser.GameObjects.Container {
         this.spawnTween = undefined;
       },
     });
+  }
+
+  /**
+   * One frame of the same pop-in, driven from outside. A grid past the
+   * individually-animated threshold can win thousands of dice at once, and one
+   * tween apiece would cost more than the arrival it animates — so the scene
+   * runs a single tween over the batch and poses each die here instead.
+   * `elapsed` is ms since this die's own start; negative means still waiting.
+   */
+  poseSpawn(scale: number, elapsed: number): void {
+    const t = Phaser.Math.Clamp(elapsed / SPAWN_MS, 0, 1);
+    const eased = Phaser.Math.Easing.Back.Out(t);
+    this.setScale(
+      scale * (SPAWN_START_SCALE + (1 - SPAWN_START_SCALE) * eased),
+    );
+    this.setAlpha((this.inert ? INERT_ALPHA : 1) * Math.min(1, eased));
+  }
+
+  /**
+   * One frame of this die leaving the grid — the pop-in run backwards: a small
+   * swell, then a collapse to nothing as it fades. Driven from the scene's
+   * shared reflow tween for the same reason `poseSpawn` is. `elapsed` is ms
+   * since this die's own start; negative means it has not begun to go.
+   */
+  poseDeparture(scale: number, elapsed: number): void {
+    const t = Phaser.Math.Clamp(elapsed / DEPART_MS, 0, 1);
+    const eased = Phaser.Math.Easing.Back.In(t);
+    this.setScale(scale * (1 - (1 - DEPART_END_SCALE) * eased));
+    this.setAlpha(
+      (this.inert ? INERT_ALPHA : 1) * (1 - Phaser.Math.Easing.Quadratic.In(t)),
+    );
   }
 
   /** How much of the pop-in is still to come, in ms. */

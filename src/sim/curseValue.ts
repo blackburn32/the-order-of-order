@@ -13,6 +13,7 @@ import {
   OUROBOROS_BONUS,
 } from "../systems/Scoring";
 import type { ShopOffer } from "../systems/Shop";
+import { gridCurseGoalFactor, isGridCurse } from "../systems/CardReworks";
 import { trialRollTarget } from "../systems/Trial";
 
 const ITEM_BY_ID = new Map(ITEMS.map((def) => [def.id, def]));
@@ -237,10 +238,37 @@ function boonValue(state: RunState, offer: ShopOffer): number {
   return value;
 }
 
+/** How much a grid multiplier grows this grid: its factor, or for a card that
+ *  duplicates one size, the growth expected when a random die names the size. */
+function gridGrowthOf(state: RunState, id: string): number {
+  const def = ITEM_BY_ID.get(id as (typeof ITEMS)[number]["id"]);
+  const total = state.dice.length;
+  if (!def || total === 0) return 1;
+  for (const effect of def.effects) {
+    if (effect.kind === "multiplyDice") return effect.factor;
+    if (effect.kind === "twinSize") {
+      let growth = 0;
+      for (const count of Object.values(state.dice.sizeCounts())) {
+        const share = count / total;
+        growth += share * (1 + share);
+      }
+      return growth;
+    }
+  }
+  return 1;
+}
+
 /** What a cursed offer is worth to this run right now. Above 1 means the boon
  * outweighs the drawback; 1 is break-even. */
 export function appraiseCurse(state: RunState, offer: ShopOffer): number {
-  if (!offer.cursed || !offer.affliction) return 1;
+  if (!offer.cursed) return 1;
+  // A grid curse is its own exchange rate: the grid's growth, less the growth
+  // it charges every goal — break-even at parity.
+  if (isGridCurse(offer.id)) {
+    const growth = gridGrowthOf(state, offer.id);
+    return growth / gridCurseGoalFactor(growth);
+  }
+  if (!offer.affliction) return 1;
   return (
     boonValue(state, offer) * Math.exp(-afflictionRisk(state, offer.affliction))
   );

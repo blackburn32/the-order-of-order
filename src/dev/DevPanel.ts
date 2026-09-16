@@ -377,6 +377,14 @@ function autoTargets(
       const i = state.dice.findIndex(canShrink);
       return i === -1 ? null : { index: i };
     }
+    // The removal cards refuse to empty the grid, so there must be something
+    // left behind: another die, or another size.
+    case "dismissal":
+      return state.dice.length > 1 ? { index: state.dice.length - 1 } : null;
+    case "winnowing":
+      return Object.keys(state.dice.sizeCounts()).length > 1
+        ? { index: state.dice.length - 1 }
+        : null;
     default:
       return {}; // no target needed
   }
@@ -398,6 +406,9 @@ function setTrial(
   state.score = 0n;
   state.trialScore = 0n;
   state.trialCleared = false;
+  // Opened like any trial the ladder lands on, so the trial-start passives
+  // (The Inner Circle, A Full Choir) can be tested by jumping.
+  state.trialOpenPending = true;
   state.bonusRollsThisRound = 0;
   // Past the final rank the ladder only continues for an endless run, so a jump
   // there implies one — otherwise the very first resolve would declare victory.

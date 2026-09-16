@@ -20,6 +20,7 @@ import {
 } from "../systems/Boss";
 import { inertDiceCount, scoringNumbersFor } from "../systems/Afflictions";
 import {
+  openTrial,
   resolveRoll,
   resolveTrialEnd,
   rollPool,
@@ -52,9 +53,15 @@ import { evaluateAndUnlock } from "../systems/SaveData";
 import { finalizeRun } from "../systems/RunEnd";
 import { saveActiveRun } from "../systems/ActiveRunPersistence";
 import { AmbientLayer } from "../ui/AmbientLayer";
-import { DieSprite } from "../ui/DieSprite";
+import { DEPART_MS, DieSprite, SPAWN_MS } from "../ui/DieSprite";
 import { DiceSummaryCard, type CardEffectChance } from "../ui/DiceSummaryCard";
 import { formatScore } from "../ui/formatScore";
+import { rollBreakdown } from "../systems/RollBreakdown";
+import {
+  breakdownRows,
+  playRollBreakdown,
+  type RollBreakdownView,
+} from "../ui/rollBreakdown";
 import { buildItemCard } from "../ui/itemCard";
 import {
   addFelt,
@@ -109,6 +116,19 @@ const HUD_STATS = [
   { key: "gold", label: "GOLD", weight: 0.75, color: CSS.gold },
 ] as const;
 type HudStatKey = (typeof HUD_STATS)[number]["key"];
+/** The run state as the HUD strip, footer and table tension read it. */
+interface HudReading {
+  rank: string;
+  roll: string;
+  score: bigint;
+  target: string;
+  gold: string;
+  numbers: string;
+  duel: boolean;
+  /** The goal, or in the duel the Order of Disorder's running score. */
+  goal: bigint;
+  lastRoll: boolean;
+}
 /** The seal's radius in layout pixels — half the size the wax is *designed* at,
  *  which is what the rail geometry below is measured against. Deliberately not
  *  derived from the texture: that is baked above layout resolution (see
@@ -236,6 +256,35 @@ const GRID_GROWTH_MS = 320;
 const GRID_SPAWN_DELAY_MS = 110;
 /** Total spread of arrival times across one batch of new dice. */
 const GRID_SPAWN_RIPPLE_MS = 140;
+/** How long the grid holds still once dice start shattering or burning out of
+ *  it before the survivors — and the camera — move to close the gaps. */
+const DEPART_SLIDE_DELAY_MS = 140;
+
+/** The pacing of one growth reflow — see syncGrid. */
+interface GridGrowthTiming {
+  growMs: number;
+  spawnDelayMs: number;
+  rippleMs: number;
+}
+
+/** A roll's growth: quick, because the next roll is waiting on it. */
+const ROLL_GROWTH: GridGrowthTiming = {
+  growMs: GRID_GROWTH_MS,
+  spawnDelayMs: GRID_SPAWN_DELAY_MS,
+  rippleMs: GRID_SPAWN_RIPPLE_MS,
+};
+
+/** The trial-start passives' growth (The Inner Circle, A Full Choir): nothing
+ *  is waiting on it, and it is the one moment the player sees what those cards
+ *  are worth, so the block opens up slowly and the new dice ripple in. */
+const TRIAL_OPEN_GROWTH: GridGrowthTiming = {
+  growMs: 900,
+  spawnDelayMs: 260,
+  rippleMs: 620,
+};
+/** The beat the table holds its old grid for after sliding in, so the growth
+ *  reads as happening to the grid the player just saw. */
+const TRIAL_OPEN_DELAY_MS = 220;
 
 /** Keep roll feedback bounded even when a modifier hits the whole grid. */
 const MAX_PULSED_DICE = 64;
@@ -246,14 +295,21 @@ const MAX_CARD_EFFECT_CHANCE = 0.55;
 const MAX_INDIVIDUAL_SETTLE_DICE = 100;
 
 /**
- * Whether dice at this detail level can be moved one at a time.
+ * Whether a growth reflow at this detail level is animated die by die: the
+ * dice on the table sliding to their new cells, the new ones popping in.
  *
- * Past `noCallouts` the viewport holds thousands of sprites, each of which
- * would need its own tween through a reflow — well past the hundred dice that
- * is already this scene's line for animating dice individually rather than
- * with one shared cue (see MAX_INDIVIDUAL_SETTLE_DICE).
+ * Everything short of summary cards is. Past `noCallouts` the viewport can
+ * hold thousands of sprites, so the slide and the pop-in are both driven from
+ * one shared tween (see animateGridGrowth) rather than a tween per die; only
+ * the card grid, which has no dice to move, reflows another way.
  */
 function glidesIndividually(detail: GridDetailLevel): boolean {
+  return detail !== "cards";
+}
+
+/** Whether new dice at this detail level get their own pop-in tween. Past
+ *  `noCallouts` they share the batch tween instead — see animateGridGrowth. */
+function spawnsIndividually(detail: GridDetailLevel): boolean {
   return detail === "full" || detail === "noCallouts";
 }
 
@@ -348,11 +404,11 @@ interface Layout {
   bossRibbon?: { x: number; y: number; w: number; h: number; compact: boolean };
   disabledCards?: DisabledCardOverlayLayout;
   footer: { numbersY: number; settingsY: number; split: boolean };
-  /** The gold rule closing the interface strip off from the playfield. It sits
-   *  in the air between the last piece of top chrome — the HUD, or the boss
-   *  ribbon when one presides — and the top of the grid, so the stats read as
-   *  a header band rather than as counters floating over the table. */
-  divider: { x: number; y: number; w: number };
+  /** The band between the top chrome (HUD, or boss ribbon) and the seal, which
+   *  the roll callout centres itself in. Absent in compact landscape, where the
+   *  seal sits beside the grid rather than under it and the callout hangs from
+   *  just under the HUD instead. */
+  calloutBand?: { top: number; bottom: number };
   /** The dice camera's viewport: the whole playfield between the HUD and the
    *  footer, seal included. Dice are clipped to it, and pan/zoom may carry
    *  them anywhere inside it — behind the seal, which the interface camera
@@ -427,6 +483,8 @@ export class GameScene extends Phaser.Scene {
   // Once the player zooms in, count changes preserve their chosen zoom.
   private followsFitZoom = true;
   private lastFitZoom = 1;
+  // How the next growth reflow is paced. A roll's unless the trial is opening.
+  private growthTiming: GridGrowthTiming = ROLL_GROWTH;
   // Set for one syncGrid() when the room has moved under the dice: the block
   // is re-centred on the sigil instead of keeping a scroll measured against
   // the old layout. A zoomed-in player owns their scroll, so it stays unset.
@@ -439,6 +497,16 @@ export class GameScene extends Phaser.Scene {
     tween: Phaser.Tweens.Tween;
     to: { zoom: number; scrollX: number; scrollY: number };
   };
+  // The dice half of it: one tween sliding every moved die to its new cell
+  // (and, on a dense grid, popping in every new one). Owned alongside the
+  // glide, so the relayout that takes the camera back takes the dice too.
+  private gridGrowth?: Phaser.Tweens.Tween;
+  // Dice that shattered or burned, still animating out under `gridGrowth`.
+  // Already dropped from `sprites`, so they are this list's to destroy.
+  private departingDice: DieSprite[] = [];
+  // The beat between the table arriving and the trial-start passives growing
+  // the grid; a roll pressed inside it opens the trial at once instead.
+  private openingTimer?: Phaser.Time.TimerEvent;
   private layout!: Layout;
   // The interface — HUD, boss ribbon, seal, footer links: cheap to destroy and
   // rebuild wholesale on resize, unlike the (potentially huge) dice grid,
@@ -468,12 +536,24 @@ export class GameScene extends Phaser.Scene {
   private hudScore!: Phaser.GameObjects.Text;
   private hudTarget!: Phaser.GameObjects.Text;
   private hudNumbers!: Phaser.GameObjects.Text;
+  /** The HUD as the last roll left it, held from the moment a trial resolves
+   *  until the scene leaves. Resolution advances the ladder, resets the roll
+   *  count and pays out gold, so reading the live state in that window would
+   *  flash the next trial's goal over the table the player just finished. */
+  private endedTrialHud?: HudReading;
   private runFooterLinks: Phaser.GameObjects.Text[] = [];
   private hudScorePlaque!: Phaser.GameObjects.Container;
   // The score the HUD is currently *showing*, which lags state.score while a
   // count-up runs. Reset (not tweened) whenever the HUD is rebuilt.
   private shownScore = 0n;
   private scoreTween?: Phaser.Time.TimerEvent;
+  /** Holds the score plaque's count-up until the roll callout shows its total,
+   *  so the plaque never climbs ahead of the multiplier being counted out. */
+  private scoreRevealAt = 0;
+  private scoreRevealTimer?: Phaser.Time.TimerEvent;
+  /** The last roll's callout, hurried off the table when the next roll starts. */
+  private breakdownView?: RollBreakdownView;
+  private celebrateTimer?: Phaser.Time.TimerEvent;
   private feltImage!: Phaser.GameObjects.Image;
   // Sigil + motes behind the dice. Only built when effects are on; every use
   // is optional-chained rather than guarded again at the call site.
@@ -522,6 +602,7 @@ export class GameScene extends Phaser.Scene {
     this.effectTimer = undefined;
     this.finishEffects = undefined;
     this.pendingAdvance = undefined;
+    this.endedTrialHud = undefined;
     this.sprites = new Map();
     this.cards = new Map();
     this.cardRegions = new Map();
@@ -535,6 +616,8 @@ export class GameScene extends Phaser.Scene {
     this.recenterOnSigil = false;
     // Phaser destroyed the tween along with the previous run's display list.
     this.gridGlide = undefined;
+    this.gridGrowth = undefined;
+    this.departingDice = [];
     this.diceLayerTween = undefined;
     // The scene instance is reused across restarts, but Phaser destroys all
     // non-main cameras on shutdown — these fields would otherwise dangle.
@@ -548,6 +631,13 @@ export class GameScene extends Phaser.Scene {
     this.showdown = undefined;
     this.shownScore = this.state.score;
     this.scoreTween = undefined;
+    // A trial that ended mid-callout leaves the callout's handle behind with its
+    // text and timers already destroyed; hurrying it on the next trial's first
+    // roll would draw destroyed text.
+    this.breakdownView = undefined;
+    this.celebrateTimer = undefined;
+    this.scoreRevealTimer = undefined;
+    this.scoreRevealAt = 0;
     this.sealBreathe = undefined;
     this.trialUnlocks = [...this.trialUnlocks];
     this.bossCalloutHeld = true;
@@ -559,13 +649,23 @@ export class GameScene extends Phaser.Scene {
     // they composite above the windowed grid, just like other popups.
     this.banners = new BannerStack(this, (objs) => this.overlay(objs));
 
+    this.growthTiming = ROLL_GROWTH;
+    this.openingTimer = undefined;
     saveActiveRun(this.registry, {
       scene: "Game",
       unlocked: this.trialUnlocks,
     });
 
+    // The table is laid with the grid as the shop left it, and the trial-start
+    // passives grow it once the table has arrived — see openTrialOnTable.
     this.build();
-    slideSceneIn(this, this.transitionBackdrop());
+    const complete = trialComplete(this.state);
+    slideSceneIn(this, this.transitionBackdrop(), () => {
+      if (complete || !this.state.trialOpenPending) return;
+      this.openingTimer = this.time.delayedCall(TRIAL_OPEN_DELAY_MS, () =>
+        this.openTrialOnTable(),
+      );
+    });
 
     this.renderTutorial();
 
@@ -574,7 +674,7 @@ export class GameScene extends Phaser.Scene {
     // case that still needs handling is a trial that is somehow already complete
     // on entry (a dev-panel jump), which would otherwise wait for a roll the
     // player has no reason to make.
-    if (trialComplete(this.state)) {
+    if (complete) {
       this.rolling = true;
       this.resolveEndOfTrial();
     } else {
@@ -586,6 +686,8 @@ export class GameScene extends Phaser.Scene {
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       offResize();
       offInput();
+      this.breakdownView?.destroy();
+      this.breakdownView = undefined;
     });
   }
 
@@ -788,8 +890,6 @@ export class GameScene extends Phaser.Scene {
     // The closing rule tracks the strip rather than the screen: on a wide
     // monitor a full-bleed line would float away from the 600px-capped stats
     // it belongs to. A small outset keeps it reading as their underline.
-    const dividerX = W / 2;
-    const dividerW = Math.min(W - hudMargin * 2, hudWidth + 24);
 
     // Split, the links own the bottom row and the sacred numbers sit on the
     // line above it, bottom-aligned so a second wrapped line grows up into the
@@ -850,7 +950,6 @@ export class GameScene extends Phaser.Scene {
         footer,
         // Compact landscape hangs the boss ribbon off the seal rail, so the
         // HUD is the only thing above the rule.
-        divider: { x: dividerX, y: (hudBottom + gridTop) / 2, w: dividerW },
         grid: {
           x: 0,
           y: gridTop,
@@ -889,6 +988,7 @@ export class GameScene extends Phaser.Scene {
     const gridTop = chromeBottom + (bossRibbon ? 12 : 16);
     const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14, scale: 1 };
     const gridBottom = button.y - SEAL_RADIUS - 16;
+    const calloutBand = { top: chromeBottom, bottom: button.y - SEAL_RADIUS };
 
     const gridFrame = {
       x: portrait ? margin : W * 0.06,
@@ -903,9 +1003,9 @@ export class GameScene extends Phaser.Scene {
         headerDisabledCards ??
         disabledCardOverlayLayout(disabledCount, gridFrame, false),
       footer,
+      calloutBand,
       // A Boss Trial pushes the rule below the ribbon: the modifiers presiding
       // over the round are part of the header, not of the table.
-      divider: { x: dividerX, y: (chromeBottom + gridTop) / 2, w: dividerW },
       // The playfield runs to the footer, past the seal: a phone screen has
       // little enough of it that stopping the dice short of the button would
       // waste the tallest part of the room.
@@ -928,6 +1028,8 @@ export class GameScene extends Phaser.Scene {
     // text on a destroyed HUD object, and the score simply snaps instead.
     this.scoreTween?.remove();
     this.scoreTween = undefined;
+    this.scoreRevealTimer?.remove();
+    this.scoreRevealTimer = undefined;
     this.shownScore = this.state.score;
     this.stopSealBreathe();
 
@@ -999,8 +1101,6 @@ export class GameScene extends Phaser.Scene {
     if (bossRibbon) items.push(bossRibbon);
     items.push(...this.buildDisabledBossCards(layout));
 
-    items.push(this.buildHudDivider(layout));
-
     const { numbersY, split } = layout.footer;
     // Sacred numbers pinned bottom-left. Sharing the baseline with the stacked
     // links, the text wraps within the half-width gap so it never runs under
@@ -1020,44 +1120,6 @@ export class GameScene extends Phaser.Scene {
 
     this.updateHud();
     return items;
-  }
-
-  /** The gold rule under the interface strip. Both ends fade into the felt
-   *  rather than stopping dead, so the line reads as an edge of the header
-   *  band and not as a bar drawn across the table. */
-  private buildHudDivider(layout: Layout): Phaser.GameObjects.GameObject {
-    const { x, y, w } = layout.divider;
-    const g = this.add.graphics().setPosition(x, y);
-    // Solid through the middle third, fading over each outer third. A single
-    // gradient rect can only fade one way, so the ends are drawn as their own
-    // quads with the outer corners at zero alpha.
-    const third = w / 3;
-    const left = -w / 2;
-    g.fillGradientStyle(
-      COLORS.gold,
-      COLORS.gold,
-      COLORS.gold,
-      COLORS.gold,
-      0,
-      0.85,
-      0,
-      0.85,
-    );
-    g.fillRect(left, -1, third, 2);
-    g.fillStyle(COLORS.gold, 0.85);
-    g.fillRect(left + third, -1, third, 2);
-    g.fillGradientStyle(
-      COLORS.gold,
-      COLORS.gold,
-      COLORS.gold,
-      COLORS.gold,
-      0.85,
-      0,
-      0.85,
-      0,
-    );
-    g.fillRect(left + third * 2, -1, third, 2);
-    return g;
   }
 
   /** Persistent Boss Trial identity: one pill per modifier. Roomy layouts lay
@@ -1350,29 +1412,40 @@ export class GameScene extends Phaser.Scene {
     );
   }
 
-  private updateHud(): void {
+  /** Everything the HUD and the table's tension draw from the run state. */
+  private readHud(): HudReading {
     const s = this.state;
-    this.setHudValue(
-      this.hudRank,
-      `${rankOf(s.trial)}-${trialInRank(s.trial)}`,
-    );
-    this.setHudValue(this.hudRoll, `${s.roll}/${trialRollTarget(s)}`);
-    this.setScoreDisplay(s.score);
-    this.setHudValue(
-      this.hudTarget,
-      formatScore(isMirrorTrial(s.trial) ? rivalScore(s) : goalFor(s)),
-    );
-    this.setHudValue(this.hudGold, String(s.gold));
-
+    const duel = isMirrorTrial(s.trial);
+    const goal = duel ? rivalScore(s) : goalFor(s);
     // The Silence cuts the scoring numbers back to 1s, so the footer has to read
     // them through the same accessor the scorer does or it would lie about what
     // scores this trial.
     const numbers = scoringNumbersFor(s);
     const extras =
       s.extraPoints > 0 ? `  ·  +${s.extraPoints} bonus per scoring die` : "";
-    this.hudNumbers.setText(`Sacred numbers: ${numbers.join(", ")}${extras}`);
+    return {
+      rank: `${rankOf(s.trial)}-${trialInRank(s.trial)}`,
+      roll: `${s.roll}/${trialRollTarget(s)}`,
+      score: s.score,
+      target: formatScore(goal),
+      gold: String(s.gold),
+      numbers: `Sacred numbers: ${numbers.join(", ")}${extras}`,
+      duel,
+      goal,
+      lastRoll: trialRollTarget(s) - s.roll <= 1,
+    };
+  }
 
-    this.updateTension();
+  private updateHud(): void {
+    const hud = this.endedTrialHud ?? this.readHud();
+    this.setHudValue(this.hudRank, hud.rank);
+    this.setHudValue(this.hudRoll, hud.roll);
+    this.setScoreDisplay(hud.score);
+    this.setHudValue(this.hudTarget, hud.target);
+    this.setHudValue(this.hudGold, hud.gold);
+    this.hudNumbers.setText(hud.numbers);
+
+    this.updateTension(hud);
   }
 
   /**
@@ -1383,11 +1456,20 @@ export class GameScene extends Phaser.Scene {
    * so both of those paths land here as a plain `setText`.
    */
   private setScoreDisplay(score: bigint): void {
+    this.scoreRevealTimer?.remove();
+    this.scoreRevealTimer = undefined;
     if (score === this.shownScore) {
       this.setHudValue(this.hudScore, formatScore(score));
       return;
     }
     const rising = score > this.shownScore;
+    const wait = this.scoreRevealAt - this.time.now;
+    if (rising && wait > 0 && fx.motion) {
+      this.scoreRevealTimer = this.time.delayedCall(wait, () =>
+        this.setScoreDisplay(score),
+      );
+      return;
+    }
     this.scoreTween?.remove();
     this.scoreTween = fx.countUp(
       this,
@@ -1406,22 +1488,18 @@ export class GameScene extends Phaser.Scene {
    * arrives with the goal still out of reach. The sigil reads the same two
    * numbers — see AmbientLayer.
    */
-  private updateTension(): void {
+  private updateTension(hud: HudReading): void {
     if (!fx.on) return;
-    const s = this.state;
     // In the duel the felt reads the lead instead of a goal: even at the
     // halfway mark while the two are level, warm while ahead, and cold and
     // bloody on the last roll from behind.
-    const duel = isMirrorTrial(s.trial);
-    const goal = duel ? rivalScore(s) : goalFor(s);
+    const { duel, goal, score } = hud;
     const progress = duel
-      ? duelProgress(s.score, goal)
+      ? duelProgress(score, goal)
       : goal > 0n
-        ? Number(s.score) / Number(goal)
+        ? Number(score) / Number(goal)
         : 0;
-    const danger =
-      trialRollTarget(s) - s.roll <= 1 &&
-      (duel ? s.score <= goal : s.score < goal);
+    const danger = hud.lastRoll && (duel ? score <= goal : score < goal);
     const t = Phaser.Math.Clamp(progress, 0, 1);
 
     this.ambient?.setProgress(t, danger);
@@ -1487,25 +1565,30 @@ export class GameScene extends Phaser.Scene {
    *  creating sprites for newly-visible indices, destroying ones that
    *  scrolled out, and repositioning the rest.
    *  Used for the initial build, resize, and every pan/zoom step. */
-  private syncGrid(layout: Layout): void {
+  private syncGrid(layout: Layout, spawned?: number): void {
     this.layout = layout;
     const n = this.state.dice.length;
     const firstLayout = this.gridCount < 0;
     const countChanged = n !== this.gridCount;
+    const growing = n > this.gridCount;
     const cam = this.ensureGridCamera();
-    // Dice won mid-trial reshape the whole block — more columns, a lower fit
-    // zoom, every die already on the table in a new cell — so snapshot where
-    // the grid is *drawn* right now and glide the new layout in from there
-    // instead of cutting to it.
-    //
-    // Growth only. A shrink lands on a *tighter* camera than the one it would
-    // start from, and the culling window below is computed for the
-    // destination: gliding one would sweep the camera across ground that
-    // window does not cover and show bare felt at the edges.
+    // Dice that shattered or burned since the last layout. Taken before the
+    // pose below, which then records every survivor under its *new* index —
+    // so the dice behind a gap slide back into it instead of each cell simply
+    // swapping faces.
+    const departed =
+      !firstLayout && countChanged ? this.takeDepartedDice(n) : [];
+    // Dice won or lost mid-trial reshape the whole block — a different column
+    // count and fit zoom, every die already on the table in a new cell — so
+    // snapshot where the grid is *drawn* right now and animate the new layout
+    // in from there instead of cutting to it.
     const from =
-      !firstLayout && n > this.gridCount && fx.motion
+      !firstLayout && countChanged && fx.motion
         ? this.captureGridPose(cam)
         : undefined;
+    // Where the dice just won begin. A roll that both grew and lost dice says
+    // how many it grew by; otherwise every die past the old count is new.
+    if (from && spawned !== undefined) from.count = Math.max(0, n - spawned);
     // Every relayout is the camera's new owner — a pan, a pinch, a resize, the
     // next handful of dice — so whatever is left of the last glide gives way
     // to the pose about to be computed here.
@@ -1571,7 +1654,10 @@ export class GameScene extends Phaser.Scene {
     // Whether the card grid is about to be animated rather than cut to. Both
     // ends have to be cards: a growth that changes representation is a change
     // of what the player is looking at, not of how it is framed.
-    const easingCards = from?.detail === "cards" && this.gridDetail === "cards";
+    // Growth only: a shrinking card grid has nothing leaving that a card could
+    // show, and cuts to its tighter framing as it always has.
+    const easingCards =
+      growing && from?.detail === "cards" && this.gridDetail === "cards";
 
     if (this.gridDetail === "cards") {
       if (enteringCards) {
@@ -1581,6 +1667,7 @@ export class GameScene extends Phaser.Scene {
         for (const retiring of this.retiringCards) retiring.card.destroy();
         this.retiringCards.clear();
       }
+      for (const sprite of departed) sprite.destroy();
       if (enteringCards && fx.motion && this.sprites.size > 0) {
         this.fadeDiceLayerOut();
       } else if (!this.diceLayerTween) {
@@ -1691,7 +1778,17 @@ export class GameScene extends Phaser.Scene {
         else if (index >= from.count) arrived.push(sprite);
       }
 
-      if (animate) this.animateGridGrowth(moved, arrived, scale);
+      if (animate) {
+        this.animateGridGrowth(
+          moved,
+          arrived,
+          departed,
+          scale,
+          spawnsIndividually(this.gridDetail),
+        );
+      } else {
+        for (const sprite of departed) sprite.destroy();
+      }
     }
 
     // Two ways to play the reflow, because the two representations answer to
@@ -1707,14 +1804,26 @@ export class GameScene extends Phaser.Scene {
     // one that lands among dice too numerous to move individually would jump
     // them into new cells and only then slide the camera over them. The visual
     // representation change itself is independently cross-faded above.
+    //
+    // A shrink glides its camera only when the whole block is laid out. It
+    // lands on a *tighter* camera than the one it starts from, and the culling
+    // window above is computed for the destination: gliding a culled one would
+    // sweep the camera across ground that window does not cover and show bare
+    // felt at the edges. Its dice still slide and depart under the cut.
     if (!from) return;
     if (easingCards) {
       this.easeGridCards(cam, n, from, view, recenter);
     } else if (
       glidesIndividually(from.detail) &&
-      glidesIndividually(this.gridDetail)
+      glidesIndividually(this.gridDetail) &&
+      (growing || visible.length === n)
     ) {
-      this.glideGridCamera(cam, view, from);
+      this.glideGridCamera(
+        cam,
+        view,
+        from,
+        departed.length > 0 ? DEPART_SLIDE_DELAY_MS : 0,
+      );
     }
   }
 
@@ -1908,6 +2017,41 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * Pull the sprites of dice that have left the pool out of `sprites`, and
+   * re-key the survivors to the indices their dice sit at now.
+   *
+   * Below the bucket threshold every die is its own object, so a sprite can be
+   * followed to wherever its die went — and one whose die is gone shattered or
+   * burned. A bucketed pool synthesises its dice per index and has no such
+   * identity, so there the dice past the new count are the ones that leave:
+   * the same stand-in `cueCreatedDice` uses for the dice that arrive.
+   */
+  private takeDepartedDice(n: number): DieSprite[] {
+    const departed: DieSprite[] = [];
+    if (this.state.dice.bucketed) {
+      for (const [index, sprite] of this.sprites) {
+        if (index < n) continue;
+        departed.push(sprite);
+        this.sprites.delete(index);
+      }
+      return departed;
+    }
+    const indexOf = new Map<Die, number>();
+    for (let i = 0; i < n; i++) {
+      const die = this.state.dice.dieAt(i);
+      if (die) indexOf.set(die, i);
+    }
+    const survivors = new Map<number, DieSprite>();
+    for (const sprite of this.sprites.values()) {
+      const index = indexOf.get(sprite.die);
+      if (index === undefined) departed.push(sprite);
+      else survivors.set(index, sprite);
+    }
+    this.sprites = survivors;
+    return departed;
+  }
+
   /** The pose the grid is drawn at this instant — mid-glide included, so a
    *  second win landing during the first one's reflow continues from where the
    *  table actually is rather than from where it was going. */
@@ -1931,32 +2075,108 @@ export class GameScene extends Phaser.Scene {
    *  that opens up. Everything here is a *visual* rewind: the layout in
    *  `this.viewport` and the sprite pool are already final, so a pan or
    *  another roll can cut the animation short at any point without leaving the
-   *  grid in a half-built state. */
+   *  grid in a half-built state.
+   *
+   *  One tween drives every die, because a dense grid can have ten thousand of
+   *  them on screen: a tween apiece is ten thousand allocations, and each
+   *  relayout's `clearPulse` would then scan all of them once per die. Arrivals
+   *  keep their own `spawnIn` while the grid is sparse enough to pulse them —
+   *  a pulse waits out a pop-in it can see (see DieSprite.pulseEffects).
+   *
+   *  Dice that shattered or burned collapse where they stood, and the dice
+   *  behind them hold for a beat before closing the gap, so the loss reads
+   *  before the grid tidies it away. */
   private animateGridGrowth(
     moved: { sprite: DieSprite; from: { x: number; y: number } }[],
     arrived: DieSprite[],
+    departed: DieSprite[],
     scale: number,
+    individualSpawns: boolean,
   ): void {
-    for (const { sprite, from } of moved) {
-      if (from.x === sprite.x && from.y === sprite.y) continue;
-      const to = { x: sprite.x, y: sprite.y };
-      sprite.setPosition(from.x, from.y);
-      this.tweens.add({
-        targets: sprite,
-        x: to.x,
-        y: to.y,
-        duration: GRID_GROWTH_MS,
-        ease: "Cubic.easeOut",
-      });
-    }
+    const timing = this.growthTiming;
+    for (const sprite of departed) sprite.clearPulse();
+    // Under the survivors, so the dice closing a gap pass over the one leaving
+    // it rather than behind it. Each move is a splice of the whole container,
+    // so a dense grid losing dice by the thousand skips it: at that size the
+    // overlap is too small to read.
+    if (departed.length <= MAX_PULSED_DICE)
+      for (const sprite of departed) this.diceContainer.sendToBack(sprite);
+    const departStep =
+      departed.length > 1 ? timing.rippleMs / (departed.length - 1) : 0;
+    const slideDelay = departed.length > 0 ? DEPART_SLIDE_DELAY_MS : 0;
+    const slides = moved
+      .filter(({ sprite, from }) => from.x !== sprite.x || from.y !== sprite.y)
+      .map(({ sprite, from }) => ({
+        sprite,
+        from,
+        to: { x: sprite.x, y: sprite.y },
+      }));
 
     // Spread over a fixed window rather than a fixed step per die, so two new
     // dice and two hundred take the same time to finish arriving.
     const step =
-      arrived.length > 1 ? GRID_SPAWN_RIPPLE_MS / (arrived.length - 1) : 0;
-    arrived.forEach((sprite, i) => {
-      sprite.spawnIn(scale, GRID_SPAWN_DELAY_MS + i * step);
+      arrived.length > 1 ? timing.rippleMs / (arrived.length - 1) : 0;
+    if (individualSpawns) {
+      arrived.forEach((sprite, i) => {
+        sprite.spawnIn(scale, slideDelay + timing.spawnDelayMs + i * step);
+      });
+    }
+    const spawns = individualSpawns ? [] : arrived;
+    if (slides.length === 0 && spawns.length === 0 && departed.length === 0)
+      return;
+
+    const duration = Math.max(
+      slideDelay + timing.growMs,
+      spawns.length > 0
+        ? slideDelay + timing.spawnDelayMs + timing.rippleMs + SPAWN_MS
+        : 0,
+      departed.length > 0 ? timing.rippleMs + DEPART_MS : 0,
+    );
+    this.departingDice = departed;
+    const clock = { ms: 0 };
+    const draw = () => {
+      departed.forEach((sprite, i) => {
+        sprite.poseDeparture(scale, clock.ms - i * departStep);
+      });
+      const t = Phaser.Math.Clamp(
+        (clock.ms - slideDelay) / timing.growMs,
+        0,
+        1,
+      );
+      const eased = Phaser.Math.Easing.Cubic.Out(t);
+      for (const { sprite, from, to } of slides) {
+        if (!sprite.active) continue;
+        sprite.setPosition(
+          from.x + (to.x - from.x) * eased,
+          from.y + (to.y - from.y) * eased,
+        );
+      }
+      spawns.forEach((sprite, i) => {
+        if (!sprite.active) return;
+        sprite.poseSpawn(
+          scale,
+          clock.ms - slideDelay - timing.spawnDelayMs - i * step,
+        );
+      });
+    };
+    draw();
+    this.gridGrowth = this.tweens.add({
+      targets: clock,
+      ms: duration,
+      duration,
+      ease: "Linear",
+      onUpdate: draw,
+      onComplete: () => {
+        draw();
+        this.gridGrowth = undefined;
+        this.destroyDepartingDice();
+      },
     });
+  }
+
+  private destroyDepartingDice(): void {
+    for (const sprite of this.departingDice) sprite.destroy();
+    this.departingDice = [];
   }
 
   /** Ease the camera from the pose it was drawing to the one the new layout
@@ -1966,6 +2186,7 @@ export class GameScene extends Phaser.Scene {
     cam: Phaser.Cameras.Scene2D.Camera,
     view: WindowedView,
     from: GridPose,
+    delay = 0,
   ): void {
     const to = {
       zoom: view.zoom,
@@ -1992,7 +2213,8 @@ export class GameScene extends Phaser.Scene {
     const tween = this.tweens.add({
       targets: pose,
       ...to,
-      duration: GRID_GROWTH_MS,
+      duration: this.growthTiming.growMs,
+      delay,
       ease: "Cubic.easeOut",
       onUpdate: draw,
       onComplete: () => {
@@ -2077,7 +2299,7 @@ export class GameScene extends Phaser.Scene {
     const tween = this.tweens.add({
       targets: pose,
       ...to,
-      duration: GRID_GROWTH_MS,
+      duration: this.growthTiming.growMs,
       ease: "Cubic.easeOut",
       onUpdate: draw,
       onComplete: () => {
@@ -2092,6 +2314,9 @@ export class GameScene extends Phaser.Scene {
   private stopGridGlide(): void {
     this.gridGlide?.tween.remove();
     this.gridGlide = undefined;
+    this.gridGrowth?.remove();
+    this.gridGrowth = undefined;
+    this.destroyDepartingDice();
   }
 
   /** Land the growth animation where it was heading, now. A gesture that
@@ -2101,7 +2326,7 @@ export class GameScene extends Phaser.Scene {
    *  A plain relayout is what lands it: the pool and the viewport have held
    *  the destination since the reflow began, and only the drawing was behind. */
   private finishGridGlide(): void {
-    if (!this.gridGlide) return;
+    if (!this.gridGlide && !this.gridGrowth) return;
     this.stopGridGlide();
     this.syncGrid(this.layout);
   }
@@ -2597,9 +2822,32 @@ export class GameScene extends Phaser.Scene {
     if (!this.rolling) this.startRoll();
   }
 
+  /** Jump the last roll's callout to its end — total shown, score plaque
+   *  landed — and clear it away, so a press mid-callout goes straight into the
+   *  next roll rather than waiting the count out. */
+  private finishBreakdown(): void {
+    if (!this.breakdownView) return;
+    this.breakdownView.hurry();
+    this.breakdownView = undefined;
+    this.celebrateTimer?.remove();
+    this.celebrateTimer = undefined;
+    // The plaque lands on the score now rather than counting toward it.
+    this.scoreRevealAt = 0;
+    this.scoreRevealTimer?.remove();
+    this.scoreRevealTimer = undefined;
+    this.scoreTween?.remove();
+    this.scoreTween = undefined;
+    this.shownScore = this.state.score;
+    this.setHudValue(this.hudScore, formatScore(this.state.score));
+  }
+
   private startRoll(): void {
+    // A roll pressed before the table has opened the trial: open it now, so
+    // the dice about to tumble are the ones the grid is drawing.
+    this.openTrialOnTable();
     this.rolling = true;
     this.tumbling = true;
+    this.finishBreakdown();
 
     // Each die picks its own rocking motion for this roll; `update()` advances
     // all of them per frame from this timestamp.
@@ -3027,60 +3275,59 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    const listedEffects =
-      result.points > 0n
-        ? result.modifiers.filter(
-            (mod) => mod.float === "aggregate" || Boolean(mod.mult),
-          )
-        : [];
-    if (result.points > 0) {
+    // The roll's callout: the dice that scored, the points other effects added,
+    // then the multiplier counted up through every card and engine that raised
+    // it, and the total last (see ui/rollBreakdown). The boss's answer stacks
+    // underneath in the same bounded column.
+    const breakdown = rollBreakdown(
+      result,
+      activeBosses(s).some((boss) => boss.id === "eclipse")
+        ? "The Eclipse"
+        : "The Long Shadow",
+    );
+    // Centred between the HUD and the seal, rows fitted to that band; compact
+    // landscape, whose seal sits beside the grid, hangs it under the HUD.
+    const band = this.layout.calloutBand;
+    let floatY = breakdown ? 150 : 195;
+    const rowCount =
+      (breakdown ? breakdownRows(breakdown) : 0) + bossCues.length;
+    const room = band
+      ? band.bottom - band.top - 16
+      : this.scale.height - floatY - 24;
+    const floatStep = Math.min(45, Math.max(20, room / Math.max(1, rowCount)));
+    const effectFontSize = floatStep < 32 ? 18 : 22;
+    this.breakdownView?.destroy();
+    this.breakdownView = undefined;
+    this.scoreRevealAt = 0;
+    if (breakdown) {
       audio.score(Number(result.points > 100n ? 100n : result.points));
-      this.overlay(
-        floatText(
-          this,
-          this.scale.width / 2,
-          150,
-          `+${formatScore(result.points)}`,
-          CSS.goldLight,
-          42,
-        ),
+      const view = playRollBreakdown(this, breakdown, {
+        x: this.scale.width / 2,
+        top: floatY,
+        centerY: band
+          ? (band.top + band.bottom) / 2 - (bossCues.length * floatStep) / 2
+          : undefined,
+        maxWidth: this.scale.width - 32,
+        rowStep: floatStep,
+        fontSize: effectFontSize,
+        add: (object) => {
+          this.overlay(object);
+          return object;
+        },
+        pace: autoReroll ? 2.5 : 1,
+        onBonus: (index) => audio.multiply(index),
+        onStep: (index) => audio.multiply(index),
+      });
+      this.breakdownView = view;
+      this.scoreRevealAt = this.time.now + view.totalAtMs;
+      this.celebrateTimer = this.time.delayedCall(view.totalAtMs, () =>
+        this.celebrateRoll(result.points),
       );
-      this.celebrateRoll(result.points);
+      floatY = view.bottomY;
     } else {
       audio.dud();
     }
 
-    // Item effects and the boss's answer share one bounded vertical stack.
-    // Suppressed score sources look exactly like their usual float with a red
-    // cancellation stroke; effects that do not map to points read in red.
-    let floatY = 195;
-    const rowCount = listedEffects.length + bossCues.length;
-    const floatStep = Math.min(
-      45,
-      Math.max(20, (this.scale.height - floatY - 24) / Math.max(1, rowCount)),
-    );
-    const effectFontSize = floatStep < 32 ? 18 : 22;
-    for (const mod of listedEffects) {
-      // Multipliers show their marginal contribution to the final total.
-      // Windfall may also have made an otherwise non-scoring top face score;
-      // include that base point after every other active multiplier.
-      const addedPoints = mod.mult
-        ? result.points -
-          result.points / mod.mult +
-          (mod.displayPoints ?? 0n) * (result.multiplier / mod.mult)
-        : (mod.displayPoints ?? mod.points);
-      this.overlay(
-        floatText(
-          this,
-          this.scale.width / 2,
-          floatY,
-          `${mod.name.toUpperCase()} +${formatScore(addedPoints)}`,
-          CSS.goldLight,
-          effectFontSize,
-        ),
-      );
-      floatY += floatStep;
-    }
     for (const cue of bossCues) {
       this.overlay(
         cue.kind === "struck"
@@ -3109,11 +3356,15 @@ export class GameScene extends Phaser.Scene {
     // (smaller) sprite is what pulses.
     if (shrunk.length > 0) audio.shrink();
 
+    // Dice shattered, burned, defected or culled change the count without
+    // growing it, and are re-laid through the same reflow — see syncGrid.
+    const gridChanged =
+      spawnedCount > 0 || shrunk.length > 0 || s.dice.length !== this.gridCount;
     const finishRoll = (skipHold: boolean) => {
       this.effectTimer = undefined;
       this.finishEffects = undefined;
-      if (spawnedCount > 0 || shrunk.length > 0) {
-        this.syncGrid(this.layout);
+      if (gridChanged) {
+        this.syncGrid(this.layout, spawnedCount);
         // Genesis is the only roll-time creator without an existing per-die
         // cue. Double the Fun labels the die that caused each duplication.
         this.cueCreatedDice(
@@ -3146,7 +3397,7 @@ export class GameScene extends Phaser.Scene {
       });
     };
 
-    if (spawnedCount > 0 || shrunk.length > 0) {
+    if (gridChanged) {
       this.finishEffects = finishRoll;
       this.effectTimer = this.time.delayedCall(420, () => finishRoll(false));
     } else finishRoll(false);
@@ -3343,6 +3594,38 @@ export class GameScene extends Phaser.Scene {
    *  what they are fighting before they spend a roll finding out. The final
    *  Boss Trial has no modifier to name — it has an opponent — so it announces
    *  that instead. */
+  /**
+   * Open the trial on the table: run the trial-start passives (engine.openTrial)
+   * and grow the grid into what they poured, through the same reflow a roll's
+   * growth uses, paced slower. Waits for the table to slide in so the player
+   * watches the grid they finished shopping with grow; a no-op once opened.
+   */
+  private openTrialOnTable(): void {
+    this.openingTimer?.remove();
+    this.openingTimer = undefined;
+    if (!this.state.trialOpenPending) return;
+    const before = { ...this.state.itemValues };
+    openTrial(this.state);
+    // Committed at once, like a roll: a reload after this point must not pour
+    // the trial's dice a second time.
+    saveActiveRun(this.registry, {
+      scene: "Game",
+      unlocked: this.trialUnlocks,
+    });
+    this.growthTiming = TRIAL_OPEN_GROWTH;
+    this.syncGrid(this.layout);
+    this.growthTiming = ROLL_GROWTH;
+    for (const [id, color, css] of [
+      ["foundry", COLORS.rarityUncommon, CSS.rarityUncommon],
+      ["a_full_choir", COLORS.rarityUncommon, CSS.rarityUncommon],
+    ] as const) {
+      const added = (this.state.itemValues[id] ?? 0) - (before[id] ?? 0);
+      if (added <= 0) continue;
+      this.cueCreatedDice(added, id, sourceLabel(id).toUpperCase(), color, css);
+    }
+    this.updateHud();
+  }
+
   private announceBoss(): void {
     const duel = isMirrorTrial(this.state.trial);
     const bosses = activeBosses(this.state);
@@ -3371,6 +3654,24 @@ export class GameScene extends Phaser.Scene {
   /** Resolve the end of a trial (win/lose/advance) with the matching audio,
    *  result presentation, and scene transition. Assumes
    *  `trialComplete(state)`. */
+  /** Run `then` once the roll's callout has counted out and closed, or now if
+   *  there is none. A trial that ends on this roll is not announced — no
+   *  fanfare, no banner, no showdown — over the top of the total that ended it. */
+  private afterCallout(then: () => void): void {
+    const view = this.breakdownView;
+    const wait = view ? view.closedAt - this.time.now : 0;
+    if (wait > 0) this.time.delayedCall(wait, then);
+    else then();
+  }
+
+  /** Leave the table: clear the callout first, so the slide-out neither moves
+   *  it nor waits on a tween of something already destroyed. */
+  private slideOutOfTrial(complete: () => void): void {
+    this.breakdownView?.destroy();
+    this.breakdownView = undefined;
+    slideSceneOut(this, complete, this.transitionBackdrop());
+  }
+
   private resolveEndOfTrial(): void {
     const s = this.state;
     // The duel's two totals, read before the engine touches anything. The last
@@ -3380,6 +3681,8 @@ export class GameScene extends Phaser.Scene {
     const duel = isMirrorTrial(s.trial);
     const finalScore = s.score;
     const finalRivalScore = rivalScore(s);
+    // Hold the HUD on the trial just played until the scene slides out.
+    this.endedTrialHud = this.readHud();
     // The engine decides win/lose/advance, pays out the gold and runs the
     // trial-start passives on advance; the scene handles audio, banners, and
     // scene transitions around it.
@@ -3392,64 +3695,61 @@ export class GameScene extends Phaser.Scene {
         unlocked: this.trialUnlocks,
       });
       const onward = () =>
-        slideSceneOut(
-          this,
-          () =>
-            this.scene.start("TrialResults", {
-              outcome,
-              unlocked: this.trialUnlocks,
-            }),
-          this.transitionBackdrop(),
+        this.slideOutOfTrial(() =>
+          this.scene.start("TrialResults", {
+            outcome,
+            unlocked: this.trialUnlocks,
+          }),
         );
       // The duel hands its punctuation to the showdown, which plays the same
       // fanfare against the two totals rather than against an empty table, and
       // then waits for the player instead of timing out into the next screen.
-      if (duel) {
-        this.openShowdown(finalScore, finalRivalScore, true, onward);
-        return;
-      }
-      audio.victory();
-      this.punctuate("victory");
-      this.time.delayedCall(700, onward);
+      this.afterCallout(() => {
+        if (duel) {
+          this.openShowdown(finalScore, finalRivalScore, true, onward);
+          return;
+        }
+        audio.victory();
+        this.punctuate("victory");
+        this.time.delayedCall(700, onward);
+      });
       return;
     }
     if (outcome.phase === "gameOver") {
       finalizeRun(s);
       const onward = () =>
-        slideSceneOut(
-          this,
-          () => this.scene.start("GameOver", { unlocked: this.trialUnlocks }),
-          this.transitionBackdrop(),
+        this.slideOutOfTrial(() =>
+          this.scene.start("GameOver", { unlocked: this.trialUnlocks }),
         );
-      if (duel) {
-        this.openShowdown(finalScore, finalRivalScore, false, onward);
-        return;
-      }
-      audio.gameOver();
-      this.punctuate("gameOver");
-      this.time.delayedCall(900, onward);
+      this.afterCallout(() => {
+        if (duel) {
+          this.openShowdown(finalScore, finalRivalScore, false, onward);
+          return;
+        }
+        audio.gameOver();
+        this.punctuate("gameOver");
+        this.time.delayedCall(900, onward);
+      });
       return;
     }
 
-    audio.trialUp();
-    this.punctuate("advanced");
     this.checkUnlocks();
     saveActiveRun(this.registry, {
       scene: "TrialResults",
       outcome,
       unlocked: this.trialUnlocks,
     });
-    this.time.delayedCall(700, () => {
-      this.updateHud();
-      slideSceneOut(
-        this,
-        () =>
+    this.afterCallout(() => {
+      audio.trialUp();
+      this.punctuate("advanced");
+      this.time.delayedCall(700, () => {
+        this.slideOutOfTrial(() =>
           this.scene.start("TrialResults", {
             outcome,
             unlocked: this.trialUnlocks,
           }),
-        this.transitionBackdrop(),
-      );
+        );
+      });
     });
   }
 

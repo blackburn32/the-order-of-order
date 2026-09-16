@@ -46,6 +46,8 @@ export const CSS = {
   rarityUncommon: "#4a7fc9",
   rarityRare: "#9a4fc9",
   cursed: "#7d1622",
+  /** A tree card its parent opened, marked on the shop's rarity line. */
+  upgrade: "#3d6b2f",
 };
 
 export const SERIF = 'Georgia, "Palatino Linotype", "Times New Roman", serif';

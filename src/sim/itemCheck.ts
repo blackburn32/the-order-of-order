@@ -2,6 +2,7 @@ import {
   isBossTrial,
   MAX_CURSES_PER_OFFER_SET,
   STARTING_DICE,
+  WIN_TRIAL,
 } from "../config";
 import { newRun, type RunState } from "../state/RunState";
 import { bossesForRank, goalFor } from "../systems/Boss";
@@ -12,17 +13,27 @@ import {
   ITEMS,
   type ShopItemId,
 } from "../systems/Items";
-import { makeDie } from "../systems/Dice";
+import { makeDie, type DieOpts, type DieSides } from "../systems/Dice";
+import { DicePool } from "../systems/DicePool";
+import {
+  hydrateRunState,
+  serializeRunState,
+} from "../systems/ActiveRunPersistence";
 import {
   applyBoosterChoice,
   applyOffer,
   availableIds,
   BOOSTER_PACKS,
+  leaveShop,
   offerFor,
   openBooster,
   shopClosed,
   rerollShopOffers,
   rollShopOffers,
+  setItemTreesForSimulation,
+  offerDrawWeight,
+  isTreeUpgrade,
+  metaUnlockOwner,
 } from "../systems/Shop";
 import {
   CRUNCH_TIME_MULT,
@@ -33,6 +44,11 @@ import {
   scoreRoll,
 } from "../systems/Scoring";
 import { trialRollTarget } from "../systems/Trial";
+import {
+  INNER_CIRCLE_POUR,
+  setCardReworksForSimulation,
+  setGridCurseGoalPerDoublingForSimulation,
+} from "../systems/CardReworks";
 import { applyGoldCeiling, trialPayout } from "../systems/Gold";
 import {
   AFFLICTIONS,
@@ -46,8 +62,25 @@ import {
 } from "../systems/Afflictions";
 import { rollsForTrial } from "../config";
 import { scoreRollHistogram } from "../systems/ScoringHistogram";
-import { resolveRoll, resolveTrialEnd, rollPool } from "./engine";
+import {
+  openTrial,
+  prepareDuel,
+  resolveRoll,
+  resolveTrialEnd,
+  rollPool,
+} from "./engine";
+import { formatMultiplier, rollBreakdown } from "../systems/RollBreakdown";
 import { mulberry32 } from "./localStorageShim";
+
+/** A percent → count table, as the growth engines and The Vigil store them. */
+function atPercents(counts: Record<number, number>): number[] {
+  const table: number[] = [];
+  for (const [percent, count] of Object.entries(counts)) {
+    while (table.length <= Number(percent)) table.push(0);
+    table[Number(percent)] = count;
+  }
+  return table;
+}
 
 function check(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -151,8 +184,10 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   );
 }
 
-// Foundry doubles the smallest size on the grid, once per copy owned.
+// Without the card reworks (a simulation's baseline), Foundry doubles the
+// smallest size on the grid, once per copy owned.
 {
+  setCardReworksForSimulation(false);
   const state = newRun();
   state.dice.addDice(2, 5, {}, "test");
   state.dice.addDice(20, 3, {}, "test");
@@ -161,6 +196,95 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   check(added === 15, "two Foundry copies should quadruple five d2");
   check(state.dice.countOfSize(2) === 20, "leaving twenty d2");
   check(state.dice.countOfSize(20) === 3, "and the larger dice untouched");
+  setCardReworksForSimulation(true);
+}
+
+// The trial-start passives wait for the trial to open, not for the last one to
+// end: an Inner Circle bought in the shop between the two fires on the very
+// next trial, and only once however often that trial is opened.
+{
+  const state = newRun(); // the starter d6
+  state.trialCleared = true;
+  resolveTrialEnd(state);
+  const before = state.dice.length;
+  state.foundry = 1; // bought in the shop that follows
+  check(
+    openTrial(state) === INNER_CIRCLE_POUR &&
+      state.dice.length === before + INNER_CIRCLE_POUR,
+    "an Inner Circle bought in the shop should pour into the next trial",
+  );
+  check(
+    openTrial(state) === 0 && state.dice.length === before + INNER_CIRCLE_POUR,
+    "and a trial opened again (a resumed save) should not pour twice",
+  );
+}
+
+// The card reworks: The Inner Circle pours ten of the most common size per copy,
+// The Curious copies only a d6 or larger showing its highest face, and the
+// stacking multipliers stop at two copies. A simulation's baseline ignores them.
+{
+  const circle = newRun(); // the starter d6
+  circle.dice.addDice(2, 5, {}, "test");
+  circle.dice.addDice(20, 3, {}, "test");
+  circle.foundry = 2;
+  check(
+    applyTrialStart(circle) === 20 && circle.dice.countOfSize(2) === 25,
+    "a reworked Inner Circle should pour ten of the most common size per copy",
+  );
+  const emptied = newRun();
+  emptied.dice.removeAt(0); // the starter d6, leaving nothing
+  emptied.foundry = 1;
+  check(
+    emptied.dice.length === 0 && applyTrialStart(emptied) === 0,
+    "and pour nothing, rather than throw, onto an empty grid",
+  );
+
+  const curious = newRun(); // the starter d6
+  curious.dice.addDice(4, 3, {}, "test");
+  curious.dice.addDice(8, 2, {}, "test");
+  curious.dice.roll(() => 0.55, curious.scoringNumbers); // d8s show 5, d6 a 4
+  check(
+    curious.dice.doubleTheFun(true) === 0,
+    "a reworked Curious should not copy a d8 showing 5",
+  );
+  curious.dice.roll(() => 0.999, curious.scoringNumbers); // every die at its top
+  check(
+    curious.dice.doubleTheFun(true) === 3 &&
+      curious.dice.countOfSize(4) === 3 &&
+      curious.dice.countOfSize(8) === 4,
+    "but should copy the d6 and d8s at their highest face, and never a d4",
+  );
+  const chancy = newRun(); // the starter d6
+  chancy.dice.addDice(8, 3, {}, "test");
+  chancy.dice.roll(() => 0.999, chancy.scoringNumbers); // every die at its top
+  check(
+    chancy.dice.doubleTheFun(true, 0.5, () => 0.7) === 0 &&
+      chancy.dice.doubleTheFun(true, 0.5, () => 0.3) === 4,
+    "and, swept below every time, copy each qualifying die only at its chance",
+  );
+
+  const stack = newRun();
+  stack.shopUnlocks.push("momentum"); // Resonance's root, which unlocks its tree
+  stack.purchases.downbeat = 1; // the tier-2 card that opens Vespers
+  stack.purchases.last_call = 1;
+  check(
+    availableIds(stack).includes("last_call"),
+    "a reworked Vespers should still sell a second copy",
+  );
+  stack.purchases.last_call = 2;
+  check(!availableIds(stack).includes("last_call"), "but not a third");
+  stack.shopUnlocks.push("hair_trigger");
+  check(
+    !availableIds(stack).includes("hair_trigger"),
+    "and Hair Trigger should be retired from the reworked shop",
+  );
+  setCardReworksForSimulation(false);
+  check(
+    availableIds(stack).includes("last_call") &&
+      availableIds(stack).includes("hair_trigger"),
+    "and a baseline without the reworks should ignore them",
+  );
+  setCardReworksForSimulation(true);
 }
 
 // Royal Seal is a size aura and its scoring face feeds the ordinary scorer.
@@ -1156,4 +1280,861 @@ function buy(
   );
 }
 
+// The Catechism: the Lessons' engine, sold once Group Study is owned, which grows
+// every later roll by 10% for each roll the whole live grid scored on.
+{
+  const shopper = newRun();
+  check(
+    !availableIds(shopper).includes("the_catechism"),
+    "The Catechism should wait for Group Study",
+  );
+  shopper.purchases.grindstone = 1;
+  check(
+    availableIds(shopper).includes("the_catechism"),
+    "and be offered once Group Study is owned",
+  );
+
+  const state = newRun();
+  state.hasCatechism = true;
+  state.dice.shrinkAll(5); // the starter d6, down to a d1
+  state.dice.addDice(1, 9);
+  state.dice.roll(() => 0.5, state.scoringNumbers);
+  const first = resolveRoll(state, () => 0.5);
+  check(
+    first.result.points === 10n && state.growthRollsAt.catechism?.[10] === 1,
+    "a roll the whole grid scored should pay ungrown, then count",
+  );
+  state.dice.roll(() => 0.5, state.scoringNumbers);
+  const second = resolveRoll(state, () => 0.5);
+  check(
+    second.result.points === 11n && second.result.growth === 1n,
+    "the roll after it should grow by 10%",
+  );
+  check(
+    second.result.modifiers.some(
+      (mod) => mod.id === "catechism" && mod.displayPoints === 1n,
+    ),
+    "and the breakdown should show what the growth added",
+  );
+
+  state.dice.addDice(6, 1);
+  state.dice.roll(() => 0.99, state.scoringNumbers); // the d6 shows a 6
+  const missed = resolveRoll(state, () => 0.99);
+  check(
+    missed.result.points === 12n && state.growthRollsAt.catechism?.[10] === 2,
+    "a roll one die missed should still grow, but not count",
+  );
+
+  const credited = [
+    ...Object.values(state.dicePoints),
+    ...Object.values(state.itemPoints),
+  ].reduce((sum, points) => sum + points, 0n);
+  check(
+    credited === state.totalScore &&
+      (state.itemPoints.the_catechism ?? 0n) === 3n,
+    "growth should be credited to The Catechism, keeping attribution whole",
+  );
+}
+
+// Both sides of the duel score a roll at the same growth: the count the player's
+// roll earns moves only after the mirror has rolled.
+{
+  const state = newRun();
+  state.hasCatechism = true;
+  state.growthRollsAt = { catechism: atPercents({ 10: 3 }) };
+  state.dice.shrinkAll(5);
+  state.dice.addDice(1, 9);
+  state.trial = WIN_TRIAL;
+  prepareDuel(state);
+  rollPool(state, state.dice, () => 0.5);
+  const duelRoll = resolveRoll(state, () => 0.5);
+  check(
+    duelRoll.rivalPoints === duelRoll.result.points &&
+      state.growthRollsAt.catechism?.[10] === 4,
+    "the mirror should score a duel roll at the player's growth, not the next roll's",
+  );
+}
+
+// Litany: offered only beside The Catechism, two copies at most, raising the
+// growth of rolls counted after it and credited with the share it added.
+{
+  const state = newRun();
+  check(
+    !availableIds(state).includes("litany"),
+    "Litany should wait for The Catechism",
+  );
+  state.hasCatechism = true;
+  state.purchases.the_catechism = 1;
+  check(
+    availableIds(state).includes("litany"),
+    "and be offered once The Catechism is owned",
+  );
+  const free = () => ({ ...offerFor("litany", state), cost: 0 });
+  check(
+    applyOffer(state, free()) &&
+      applyOffer(state, free()) &&
+      applyOffer(state, free()) &&
+      state.litany === 3 &&
+      !availableIds(state).includes("litany"),
+    "and stop at three copies",
+  );
+
+  // Ten rolls counted at 10%, ten at 12%: 10 × 1.1¹⁰ × 1.12¹⁰ = 80.56, where the
+  // card's own rate alone would have grown to 10 × 1.1²⁰ = 67.27.
+  const grown = newRun();
+  grown.hasCatechism = true;
+  grown.litany = 1;
+  grown.growthRollsAt = { catechism: atPercents({ 10: 10, 12: 10 }) };
+  grown.dice.shrinkAll(5);
+  grown.dice.addDice(1, 9);
+  grown.dice.roll(() => 0.5, grown.scoringNumbers);
+  const roll = resolveRoll(grown, () => 0.5);
+  check(
+    roll.result.points === 80n && grown.growthRollsAt.catechism?.[12] === 11,
+    "a roll should grow at each count's own rate, and count at the run's current one",
+  );
+  check(
+    grown.itemPoints.the_catechism === 57n && grown.itemPoints.litany === 13n,
+    "the growth the card's own rate earns should go to The Catechism, the rest to Litany",
+  );
+}
+
+// The pruning cards shed the dice that can miss, and never empty the grid.
+{
+  const free = (id: ShopItemId, state: RunState) => ({
+    ...offerFor(id, state),
+    cost: 0,
+  });
+
+  const lone = newRun(); // the starter d6 and nothing else
+  check(
+    !applyOffer(lone, free("dismissal", lone), 0) && lone.dice.length === 1,
+    "A Dismissal should refuse to remove the last die",
+  );
+
+  const state = newRun();
+  state.dice.addDice(1, 3);
+  state.dice.addDice(20, 2);
+  check(
+    applyOffer(state, free("dismissal", state), 0) &&
+      state.dice.length === 5 &&
+      state.dice.countOfSize(6) === 0,
+    "A Dismissal should remove the die it names",
+  );
+  const d20 = state.dice.findIndex((die) => die.sides === 20);
+  check(
+    applyOffer(state, free("winnowing", state), d20) &&
+      state.dice.countOfSize(20) === 0 &&
+      state.dice.length === 3,
+    "The Winnowing should remove every die of the size it names",
+  );
+  check(
+    !applyOffer(state, free("winnowing", state), 0) && state.dice.length === 3,
+    "and refuse to remove the grid's only size",
+  );
+
+  const mixed = newRun(); // the starter d6, which can miss
+  mixed.dice.addDice(1, 4);
+  mixed.dice.addDice(2, 2);
+  mixed.scoringNumbers.push(2); // a d2 now scores on both faces
+  mixed.extraNumberCount = 1;
+  check(
+    applyOffer(mixed, free("excommunication", mixed)) &&
+      mixed.dice.length === 6 &&
+      mixed.dice.countOfSize(6) === 0,
+    "Excommunication should remove exactly the dice that can miss",
+  );
+  check(
+    !applyOffer(mixed, free("excommunication", mixed)),
+    "and do nothing on a grid where every die always scores",
+  );
+
+  const doomed = newRun(); // only dice that can miss
+  doomed.dice.addDice(6, 3);
+  check(
+    !applyOffer(doomed, free("excommunication", doomed)) &&
+      doomed.dice.length === 4,
+    "and refuse to empty a grid that has no die worth keeping",
+  );
+}
+
+// The d1 cards grow a grid without putting a die that can miss on it.
+{
+  const state = newRun(); // the starter d6
+  check(
+    applyOffer(state, { ...offerFor("two_novices", state), cost: 0 }) &&
+      state.dice.countOfSize(1) === 2,
+    "Two Novices should add two d1",
+  );
+  state.dice.addDice(1, 10); // thirteen dice, twelve of them d1
+  check(
+    applyOffer(state, { ...offerFor("the_calling", state), cost: 0 }) &&
+      state.dice.countOfSize(1) === 15,
+    "The Calling should add a quarter of the grid, at least three, as d1",
+  );
+}
+
+// The reworked grid multipliers are cursed: free, and every goal from then on
+// grows by the share the grid just grew — at parity, or more gently when swept.
+{
+  setGridCurseGoalPerDoublingForSimulation(2); // parity
+  const state = newRun(); // the starter d6
+  state.dice.addDice(6, 9, {}, "test"); // ten d6
+  const offer = offerFor("mult2", state);
+  check(
+    offer.cursed && offer.cost === 0,
+    "a reworked Gathering should be cursed, and so free",
+  );
+  const goal = goalFor(state);
+  check(
+    applyOffer(state, offer) &&
+      state.dice.length === 20 &&
+      goalFor(state) === goal * 2n,
+    "and double every goal as it doubles the grid",
+  );
+
+  setGridCurseGoalPerDoublingForSimulation(1.6);
+  const mixed = newRun(); // the starter d6
+  mixed.dice.addDice(4, 1, {}, "test"); // and a d4: twinning the d6 grows it by half
+  check(
+    applyOffer(mixed, offerFor("twin", mixed), 0) &&
+      mixed.dice.length === 3 &&
+      Math.abs(mixed.goalScale - 1.5 ** Math.log2(1.6)) < 1e-9,
+    "Like Minds should charge only the share of the grid it grew, at the swept rate",
+  );
+  setGridCurseGoalPerDoublingForSimulation(null);
+  setCardReworksForSimulation(false);
+  check(
+    !offerFor("mult2", newRun()).cursed,
+    "and a baseline without the reworks should sell them uncursed",
+  );
+  setCardReworksForSimulation(true);
+}
+
+// The trees: a card waits for the card above it and then draws at better odds;
+// cards outside the trees, and a baseline without them, are untouched.
+{
+  const state = newRun(); // the starter d6, so both shrink cards can act
+  const pool = () => availableIds(state);
+  check(
+    pool().includes("shrink") && !pool().includes("grindstone"),
+    "a tree card should wait for the card above it",
+  );
+  check(
+    offerDrawWeight(state, "shrink") === 1,
+    "a tree's root should draw like any other card",
+  );
+  check(
+    pool().includes("refinement") && offerDrawWeight(state, "refinement") === 1,
+    "a tree's supports should sit in the base set, ungated",
+  );
+  state.purchases.shrink = 1;
+  check(
+    pool().includes("grindstone") && offerDrawWeight(state, "grindstone") === 3,
+    "and open, at better odds, once that card is owned",
+  );
+  check(
+    !pool().includes("uniform"),
+    "a branch should wait for its chain's tier-2 card",
+  );
+  state.purchases.grindstone = 1;
+  check(
+    pool().includes("uniform") && offerDrawWeight(state, "uniform") === 3,
+    "and open with it, at better odds",
+  );
+  check(
+    !pool().includes("lucky_seven"),
+    "a branch should wait for its own chain's tier-2 card",
+  );
+  state.purchases.the_scales = 1;
+  check(pool().includes("lucky_seven"), "and open once that card is owned");
+  delete state.purchases.the_scales;
+  delete state.purchases.grindstone;
+  check(
+    pool().includes("extra_die") && offerDrawWeight(state, "extra_die") === 1,
+    "cards outside every tree should be untouched",
+  );
+  setItemTreesForSimulation(false);
+  delete state.purchases.shrink;
+  check(
+    pool().includes("grindstone") && offerDrawWeight(state, "grindstone") === 1,
+    "and a baseline without the trees should ignore them",
+  );
+  setItemTreesForSimulation(null);
+
+  check(
+    !isTreeUpgrade(state, "grindstone") && !isTreeUpgrade(state, "shrink"),
+    "a tree card should not be marked an upgrade before its parent is owned, nor a root ever",
+  );
+  state.purchases.shrink = 1;
+  check(
+    isTreeUpgrade(state, "grindstone") && !isTreeUpgrade(state, "extra_die"),
+    "and be marked once it is, where a card outside the trees never is",
+  );
+  check(
+    metaUnlockOwner("prism").id === "momentum" &&
+      metaUnlockOwner("double_the_fun").id === "extra_dice" &&
+      metaUnlockOwner("extra_die").id === "extra_die",
+    "a tree card should unlock with its root, and any other card by itself",
+  );
+  check(
+    offerFor("prism", state).desc.endsWith("Up to 2 copies.") &&
+      !offerFor("hourglass", state).desc.includes("Up to"),
+    "a capped multiplier should print its cap, and an uncapped one nothing",
+  );
+}
+
+// --- The other strategy trees' engines ----------------------------------------
+
+/** A fresh run whose grid is exactly these dice. */
+function gridOf(...stacks: [DieSides, number, DieOpts?][]): RunState {
+  const state = newRun();
+  state.dice = DicePool.fromDice(
+    stacks.flatMap(([sides, count, opts]) =>
+      Array.from({ length: count }, () => makeDie(sides, opts)),
+    ),
+  );
+  return state;
+}
+
+/** The card as a free offer. */
+const freeOffer = (id: ShopItemId, state: RunState) => ({
+  ...offerFor(id, state),
+  cost: 0,
+});
+
+/** An rng that plays these values in turn, over and over. */
+function sequence(values: number[]): () => number {
+  let next = 0;
+  return () => values[next++ % values.length];
+}
+
+/** The rng value that rolls `face` on a die of `sides`. */
+const faceOf = (face: number, sides: number) => (face - 0.5) / sides;
+
+/** Whether a run's attribution still sums to its score. */
+function attributionWhole(state: RunState): boolean {
+  const credited = [
+    ...Object.values(state.dicePoints),
+    ...Object.values(state.itemPoints),
+  ].reduce((sum, points) => sum + points, 0n);
+  return credited === state.totalScore;
+}
+
+/** Roll the run's grid with `rng` and resolve the roll. */
+function rollWith(state: RunState, rng: () => number, resolveRng = rng) {
+  rollPool(state, state.dice, rng);
+  return resolveRoll(state, resolveRng);
+}
+
+// Resonance: The Resonant Hall counts a roll three cards multiplied, and
+// Harmonics raises the rate of the rolls it counts after.
+{
+  const state = gridOf([1, 15]);
+  state.hasResonantHall = true;
+  state.hasAmplifier = true;
+  state.hasCrunchTime = true;
+  const pair = rollWith(state, () => 0.5);
+  check(
+    pair.result.points === 90n && !state.growthRollsAt.resonance,
+    "The Resonant Hall should not count a roll only two cards multiplied",
+  );
+  state.prism = 1;
+  const trio = rollWith(state, () => 0.5);
+  check(
+    trio.result.points === 270n && state.growthRollsAt.resonance?.[10] === 1,
+    "and count a roll three cards multiplied, at 10%",
+  );
+  const grown = rollWith(state, () => 0.5);
+  check(grown.result.points === 297n, "growing the rolls after it");
+  state.shopUnlocks.push("momentum"); // Resonance's root, which unlocks its tree
+  state.purchases.the_resonant_hall = 1;
+  check(
+    availableIds(state).includes("harmonics"),
+    "Harmonics should be offered beside The Resonant Hall",
+  );
+  state.harmonics = 1;
+  rollWith(state, () => 0.5);
+  check(
+    state.growthRollsAt.resonance?.[12] === 1 &&
+      (state.itemPoints.harmonics ?? 0n) === 0n,
+    "and count later rolls at 12%, earning nothing on rolls counted before it",
+  );
+  rollWith(state, () => 0.5);
+  check(
+    (state.itemPoints.harmonics ?? 0n) > 0n && attributionWhole(state),
+    "then take its share of the growth, keeping attribution whole",
+  );
+}
+
+// The Multitude pairs the copies The Curious makes.
+{
+  const state = gridOf([8, 4]);
+  state.hasDoubleTheFun = true;
+  state.multitude = 3; // a 60% chance a copy arrives as a pair
+  rollWith(
+    state,
+    () => 0.999,
+    () => 0.1,
+  ); // every d8 at its top face
+  check(
+    state.dice.length === 12 &&
+      state.itemValues.double_the_fun === 4 &&
+      state.itemValues.the_multitude === 4,
+    "The Multitude should pair The Curious' copies, credited to itself",
+  );
+}
+
+// The Treasury: The Gilded Altar and The Endowment read the purse; Abstinence
+// pays for an empty-handed visit.
+{
+  const state = gridOf([1, 4]);
+  state.hasGildedAltar = true;
+  state.gold = 25;
+  const altar = rollWith(state, () => 0.5);
+  check(
+    altar.result.points === 16n &&
+      altar.result.modifiers.some(
+        (mod) => mod.id === "gildedAltar" && mod.mult === 4n,
+      ) &&
+      state.itemPoints.gilded_altar === 12n,
+    "The Gilded Altar should double a roll for every 10 gold held, credited to itself",
+  );
+  state.hasEndowment = true;
+  state.gold = 23;
+  rollWith(state, () => 0.5);
+  check(
+    state.growthRollsAt.endowment?.[2] === 1,
+    "The Endowment should count a roll at 1% for every 10 gold held",
+  );
+  state.gold = 200;
+  const rich = rollWith(state, () => 0.5);
+  check(state.growthRollsAt.endowment?.[10] === 1, "up to its 10% cap");
+  check(
+    rich.result.modifiers.some(
+      (mod) => mod.id === "gildedAltar" && mod.mult === 16n,
+    ),
+    "while The Gilded Altar stops at ×16",
+  );
+  state.compoundInterest = 2;
+  rollWith(state, () => 0.5);
+  check(
+    state.growthRollsAt.endowment?.[14] === 1 && attributionWhole(state),
+    "which Compound Interest raises, keeping attribution whole",
+  );
+
+  const shopper = newRun();
+  shopper.abstinence = 2;
+  const gold = shopper.gold;
+  check(
+    leaveShop(shopper, true) === 0 && shopper.gold === gold,
+    "Abstinence should pay nothing for a visit that bought something",
+  );
+  check(
+    leaveShop(shopper, false) === 6 && shopper.gold === gold + 6,
+    "and 3 gold a copy for one that bought nothing",
+  );
+}
+
+// The Canticle: lone faces score under Counterpoint, double the roll under The
+// Canticle and grow it under Plainsong; The Choirmaster removes the dice that
+// repeated a face.
+{
+  const voice = newRun();
+  check(
+    applyOffer(voice, freeOffer("a_new_voice", voice)) &&
+      voice.dice.countOfSize(8) === 1 &&
+      voice.dice.countOfSize(10) === 1 &&
+      voice.dice.countOfSize(20) === 1,
+    "A New Voice should add a d8, a d10 and a d20",
+  );
+
+  const state = gridOf([100, 8]);
+  state.hasCounterpoint = true;
+  state.hasCanticle = true;
+  state.hasPlainsong = true;
+  // Six faces shown once, and an 11 shown twice.
+  const roll = rollWith(
+    state,
+    sequence([11, 22, 33, 44, 55, 66, 77, 11].map((face) => faceOf(face, 100))),
+    () => 0.5,
+  );
+  check(
+    roll.result.points === 24n,
+    "Counterpoint should score the six lone faces, and The Canticle double them for each beyond the fourth",
+  );
+  check(
+    state.growthRollsAt.plainsong?.[6] === 1,
+    "Plainsong should count 1% for each of the six unrepeated faces",
+  );
+  check(
+    state.dice.removeRepeatedFaces() === 2 && state.dice.length === 6,
+    "The Choirmaster should remove the dice that repeated a face",
+  );
+  const chorus = gridOf([1, 4]);
+  rollPool(chorus, chorus.dice, () => 0.5);
+  check(
+    chorus.dice.removeRepeatedFaces() === 0 && chorus.dice.length === 4,
+    "and never empty a grid on which every die repeated one",
+  );
+
+  // Plainsong's fuel.
+  const unsung = newRun();
+  check(
+    !availableIds(unsung).includes("a_full_choir") &&
+      !availableIds(unsung).includes("antiphon"),
+    "Plainsong's fuel should wait for Plainsong",
+  );
+  const antiphon = gridOf([100, 8]);
+  antiphon.hasPlainsong = true;
+  antiphon.hasAntiphon = true;
+  rollWith(
+    antiphon,
+    sequence([11, 22, 33, 44, 55, 66, 77, 11].map((face) => faceOf(face, 100))),
+    () => 0.5,
+  );
+  check(
+    antiphon.growthRollsAt.plainsong?.[10] === 1,
+    "Antiphon should count the six lone faces twice, up to Plainsong's cap",
+  );
+  const loft = gridOf([6, 2]);
+  loft.hasPlainsong = true;
+  check(
+    applyOffer(loft, freeOffer("a_full_choir", loft)) && loft.fullChoir === 1,
+    "A Full Choir should be bought beside Plainsong",
+  );
+  applyTrialStart(loft);
+  check(
+    loft.dice.countOfSize(100) === 1 && loft.itemValues.a_full_choir === 1,
+    "and add a d100 as each trial starts",
+  );
+}
+
+// The Weighing: dice grow, a size is ballasted, The Scales pay faces, Gravitas
+// reads the grid's mean size and The Weight of Ages its high faces.
+{
+  const state = gridOf([6, 1], [20, 2]);
+  check(
+    applyOffer(state, freeOffer("ascension", state), 0) &&
+      state.dice.dieAt(0)?.sides === 10,
+    "Ascension should grow a die two sizes",
+  );
+  const d20 = state.dice.findIndex((die) => die.sides === 20);
+  check(
+    applyOffer(state, freeOffer("exaltation", state), d20) &&
+      state.dice.countOfSize(100) === 2,
+    "Exaltation should grow every die of a size one size",
+  );
+  const d100 = state.dice.findIndex((die) => die.sides === 100);
+  check(
+    applyOffer(state, freeOffer("ballast", state), d100) &&
+      state.ballastSizes.includes(100),
+    "Ballast should mark the size it names",
+  );
+  rollPool(state, state.dice, () => 0);
+  check(
+    state.dice.dieAt(d100)?.value === 3 && state.dice.dieAt(0)?.value === 1,
+    "whose dice then never roll their lowest two faces, while other sizes do",
+  );
+  check(
+    applyOffer(state, freeOffer("two_elders", state)) &&
+      state.dice.countOfSize(100) === 4,
+    "Two Elders should add two d100",
+  );
+
+  const scales = gridOf([20, 3], [1, 1]);
+  scales.hasScales = true;
+  scales.scoringNumbers.push(2, 3);
+  scales.extraNumberCount = 2;
+  const weighed = rollWith(
+    scales,
+    sequence([faceOf(15, 20), faceOf(5, 20), faceOf(11, 20), 0.5]),
+    () => 0.5,
+  );
+  check(
+    weighed.result.points === 27n,
+    "The Scales should pay the faces of the upper half — a 15, an 11 and a d1's 1 — and nothing for a 5 or the scoring numbers",
+  );
+
+  const heavy = gridOf([100, 20]);
+  heavy.gravitas = 1;
+  heavy.hasWeightOfAges = true;
+  const high = rollWith(
+    heavy,
+    () => 0.995,
+    () => 0.5,
+  ); // every d100 shows 100
+  check(
+    high.result.modifiers.some(
+      (mod) => mod.id === "gravitas" && mod.mult === 10n,
+    ),
+    "Gravitas should multiply by the grid's average die size over ten",
+  );
+  check(
+    heavy.growthRollsAt.weight?.[6] === 1,
+    "The Weight of Ages should count 1% for every three dice showing 50 or higher",
+  );
+
+  // The Weight of Ages' fuel.
+  const anvil = gridOf([100, 3], [20, 1]);
+  anvil.hasWeightOfAges = true;
+  anvil.hasAnvil = true;
+  rollPool(anvil, anvil.dice, () => 0);
+  const anvilD100 = anvil.dice.findIndex((die) => die.sides === 100);
+  const anvilD20 = anvil.dice.findIndex((die) => die.sides === 20);
+  check(
+    anvil.dice.dieAt(anvilD100)?.value === 50 &&
+      anvil.dice.dieAt(anvilD20)?.value === 1,
+    "The Anvil should hold a d100 at 50 or higher, and leave other sizes alone",
+  );
+  anvil.ancestors = 2;
+  rollWith(anvil, () => 0.5);
+  check(
+    anvil.dice.countOfSize(100) === 5 && anvil.itemValues.the_ancestors === 2,
+    "The Ancestors should add a d100 a copy after every roll",
+  );
+}
+
+// The Pyre: burned and shattered faces feed it, Kindling doubles them, and From
+// the Ashes returns a share of the burned dice.
+{
+  const state = gridOf([4, 10], [6, 5]);
+  state.hasPyre = true;
+  state.kindling = 1;
+  state.fromTheAshes = 1;
+  const d4 = state.dice.findIndex((die) => die.sides === 4);
+  const goldBefore = state.gold;
+  check(
+    applyOffer(state, freeOffer("an_offering", state), d4) &&
+      state.dice.countOfSize(4) === 0 &&
+      state.pyreFaces === 80 &&
+      state.dice.countOfSize(100) === 1 &&
+      state.gold === goldBefore + 4,
+    "An Offering should burn a size, its faces doubled by Kindling, a tenth return as d100s, and pay a gold per ten faces",
+  );
+  rollWith(state, () => 0.5);
+  check(
+    state.growthRollsAt.pyre?.[4] === 1 && state.pyreFaces === 0,
+    "The Pyre should count 1% per twenty faces, and the roll spend them",
+  );
+  const lastSize = gridOf([6, 3]);
+  lastSize.hasPyre = true;
+  check(
+    !applyOffer(lastSize, freeOffer("an_offering", lastSize), 0),
+    "An Offering should refuse to burn the grid's only size",
+  );
+
+  const shatter = gridOf([6, 10, { wildFace: true }], [20, 1]);
+  shatter.hasPyre = true;
+  shatter.afflictions.push("bloodPrice");
+  rollWith(
+    shatter,
+    () => 0.5,
+    () => 0,
+  ); // every scoring die shatters
+  check(
+    shatter.dice.length === 1 && shatter.growthRollsAt.pyre?.[3] === 1,
+    "and a shattered die should feed The Pyre its faces on the roll it breaks",
+  );
+
+  // The Pyre's fuel.
+  const brazier = gridOf([6, 4], [20, 2], [1, 1]);
+  brazier.hasPyre = true;
+  brazier.hasBrazier = true;
+  brazier.hasEmbers = true;
+  rollWith(
+    brazier,
+    () => 0,
+    () => 0.5,
+  ); // every die shows a 1
+  check(
+    brazier.dice.length === 1 &&
+      brazier.growthRollsAt.pyre?.[3] === 1 &&
+      brazier.itemValues.the_brazier === 6,
+    "The Brazier should burn every die but a d1 that rolled a 1, feeding The Pyre its faces",
+  );
+  check(
+    brazier.pyreFaces === 32,
+    "and Embers keep half the faces the roll spent",
+  );
+  rollWith(brazier, () => 0.5);
+  check(
+    brazier.growthRollsAt.pyre?.[1] === 1 && brazier.pyreFaces === 16,
+    "for the next roll to count",
+  );
+  const crown = gridOf([20, 5], [1, 1]);
+  crown.hasAshenCrown = true;
+  const crownD20 = crown.dice.findIndex((die) => die.sides === 20);
+  check(
+    applyOffer(crown, freeOffer("an_offering", crown), crownD20) &&
+      crown.facesBurned === 100 &&
+      crown.pyreFaces === 0,
+    "Burned faces should count toward The Ashen Crown without The Pyre",
+  );
+  const crowned = rollWith(crown, () => 0.5);
+  check(
+    crowned.result.points === 2n && crown.itemPoints.the_ashen_crown === 1n,
+    "which doubles a roll for every hundred of them, credited to itself",
+  );
+  const kindled = gridOf([20, 5], [1, 1]);
+  kindled.hasAshenCrown = true;
+  kindled.kindling = 1;
+  check(
+    applyOffer(
+      kindled,
+      freeOffer("an_offering", kindled),
+      kindled.dice.findIndex((die) => die.sides === 20),
+    ) && kindled.facesBurned === 200,
+    "and Kindling double the faces it reads, with or without The Pyre",
+  );
+  crown.facesBurned = 10_000;
+  check(
+    rollWith(crown, () => 0.5).result.modifiers.some(
+      (mod) => mod.id === "ashenCrown" && mod.mult === 16n,
+    ),
+    "up to ×16",
+  );
+  const lastDice = gridOf([6, 2]);
+  lastDice.hasBrazier = true;
+  rollWith(lastDice, () => 0);
+  check(
+    lastDice.dice.length === 2,
+    "The Brazier should never burn the whole grid",
+  );
+  const bucketed = gridOf([20, 5000]);
+  bucketed.hasBrazier = true;
+  rollWith(bucketed, mulberry32(7));
+  const left = bucketed.dice.length;
+  check(
+    bucketed.dice.bucketed && left < 5000 && left > 4600,
+    `and burn about one die in twenty from a bucketed grid of d20s (${left} left)`,
+  );
+}
+
+// The Hermitage: The Cell pays for empty seats, and The Vigil grows each die as
+// it scores — a tally Anointing adds to, saves carry and the duel's mirror copies.
+{
+  const cell = gridOf([1, 3]);
+  cell.hasCell = true;
+  check(
+    rollWith(cell, () => 0.5).result.points === 96n,
+    "The Cell should double a roll for every empty seat below eight dice",
+  );
+
+  const parted = gridOf([6, 2]);
+  const gold = parted.gold;
+  check(
+    applyOffer(parted, freeOffer("a_parting", parted), 0) &&
+      parted.dice.length === 1 &&
+      parted.gold === gold + 1,
+    "A Parting should remove a die and pay 1 gold",
+  );
+
+  const state = gridOf([1, 4]);
+  state.hasVigil = true;
+  state.extraPoints = 9; // each die pays 10
+  const first = rollWith(state, () => 0.5);
+  check(
+    first.result.points === 40n && state.dice.dieAt(0)?.scores?.[10] === 1,
+    "The Vigil should tally each die that scored, and grow nothing on that roll",
+  );
+  check(
+    rollWith(state, () => 0.5).result.points === 44n,
+    "then grow each die's points 10% for every score it has tallied",
+  );
+  state.discipline = 1;
+  rollWith(state, () => 0.5);
+  check(
+    state.dice.dieAt(0)?.scores?.[12] === 1 &&
+      state.dice.dieAt(0)?.scores?.[10] === 2,
+    "and tally at 12% once Discipline is owned, keeping the tallies before it",
+  );
+  check(
+    applyOffer(state, freeOffer("anointing", state), 0) &&
+      state.dice.dieAt(0)?.scores?.[12] === 6,
+    "Anointing should tally five more scores on the die it names",
+  );
+  check(
+    hydrateRunState(serializeRunState(state))?.dice.dieAt(0)?.scores?.[12] ===
+      6,
+    "and a saved run should keep each die's tally",
+  );
+  check(attributionWhole(state), "keeping attribution whole");
+  const before = state.dice.dieAt(1)?.scores;
+  state.dice.addDice(1, 9); // thirteen dice
+  const crowded = rollWith(state, () => 0.5);
+  check(
+    crowded.result.points === 130n &&
+      state.dice.dieAt(1)?.scores?.[12] === before?.[12],
+    "and past twelve dice it should neither grow nor tally",
+  );
+
+  const duel = gridOf([1, 4]);
+  duel.hasVigil = true;
+  duel.extraPoints = 9;
+  duel.dice.anointAt(0, 5, 10);
+  duel.trial = WIN_TRIAL;
+  prepareDuel(duel);
+  const duelRoll = rollWith(duel, () => 0.5);
+  check(
+    duelRoll.rivalPoints === duelRoll.result.points &&
+      duelRoll.result.points === 46n &&
+      duel.rival?.dice.dieAt(0)?.scores?.[10] === 6,
+    "the duel's mirror should copy each die's tally, and grow and tally its own the same",
+  );
+}
+
+// The roll callout regroups a scored roll as (dice + bonuses) × multiplier. Its
+// numbers are read off the scorer, never re-scored: the multiplier's last step
+// must land on the roll's own points, growth and the Eclipse included.
+{
+  const state = gridOf([1, 4]);
+  state.extraPoints = 2;
+  state.prism = 1;
+  state.hasAmplifier = true;
+  state.hasCatechism = true;
+  state.growthRollsAt = { catechism: atPercents({ 10: 2 }) };
+  const roll = rollWith(state, () => 0.5);
+  const breakdown = rollBreakdown(roll.result);
+  check(
+    breakdown !== null &&
+      breakdown.dice === 4n &&
+      breakdown.bonuses.some((b) => b.id === "extraPoint" && b.points === 8n) &&
+      breakdown.subtotal === 12n,
+    "the callout should split four scoring dice from Deeper Stillness' eight points",
+  );
+  const steps = breakdown?.steps ?? [];
+  check(
+    steps.map((step) => step.factor).join(" ") === "×1.2 ×2 ×3" &&
+      formatMultiplier(steps[1].after) === "2.41",
+    "and count the multiplier up smallest factor first: the growth the roll really got (72 → 87 is ×1.2), then the cards",
+  );
+  const final = breakdown!.multiplier;
+  check(
+    breakdown!.points === roll.result.points &&
+      (breakdown!.subtotal * final.num) / final.den === roll.result.points &&
+      formatMultiplier(final) === "7.25",
+    "landing exactly on the roll's points (12 × 6 grown twice is 87, ×7.25)",
+  );
+  check(
+    formatMultiplier({ num: 121n, den: 100n }) === "1.21" &&
+      formatMultiplier({ num: 15n, den: 2n }) === "7.5" &&
+      formatMultiplier({ num: 12n, den: 1n }) === "12",
+    "multipliers print whole when whole and to two places otherwise",
+  );
+
+  const eclipsed = gridOf([1, 2]);
+  eclipsed.prism = 1;
+  eclipsed.afflictions = ["eclipse"];
+  const dark = rollBreakdown(rollWith(eclipsed, () => 0.5).result);
+  check(
+    dark?.steps.map((step) => step.factor).join(" ") === "×3 ÷2" &&
+      formatMultiplier(dark.multiplier) === "1",
+    "the Eclipse should show as the one step that lowers the multiplier",
+  );
+  check(
+    rollBreakdown({ points: 0n, multiplier: 1n, modifiers: [] }) === null,
+    "a roll that scored nothing has no callout",
+  );
+}
 console.log("Item mechanics check: ALL PASS");

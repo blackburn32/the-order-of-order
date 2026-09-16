@@ -117,137 +117,74 @@ export function rollsForTrial(trial: number): number {
 
 // ---- Goal curve ------------------------------------------------------------
 //
-// Score goals for every trial of the ladder (index = trial - 1), designed
-// against the balance simulation (src/sim/smartSurvivalCurve.ts) rather than by a
-// single geometric ratio, because shopping creates a wildly skewed score
-// distribution that diverges across builds.
+// Winning is gated on an ENGINE: a strategy tree's tier-3 card, which compounds
+// for the rest of the run (see systems/ItemTrees). The curve is shaped so that
+// building one carries a run to the duel and nothing short of one does, which
+// is why it is written as a growth RATE per trial rather than as a table of
+// measured quantiles — a curve written as a formula in the trial number (t², kᵗ,
+// t!) cannot tell an engine from a strong shop, but a fixed per-trial growth
+// that sits below an engine's and above everything else can.
 //
-// The tuner designs each goal from UNCENSORED capacity: it replays the field one
-// trial at a time with that trial playing its whole roll budget out, so what it
-// samples is what each build COULD have scored rather than what the previous
-// goal let it stop at. The goal is then the quantile that lands on an explicit
-// absolute survival schedule. Front to back, so each rank is designed against
-// the shops the ranks before it could actually afford.
+// Rank 1 keeps the goals it was tuned to: the opening's real difficulty is
+// trial 1's single d6, not a number here. From trial 4 the goal PER ROLL grows
+// by a fixed factor every trial, and each trial asks for that rate times its own
+// roll budget:
+//   ranks 2-3   ×1.6  the shop is still assembling a build
+//   ranks 4-6   ×2.2  the build deadline: an engine has to land here
+//   ranks 7-10  ×2.4  a little above act 2, below a finished engine's growth,
+//                     so a finished engine pulls away and anything else falls
 //
-// Attrition intent on the coherent, fully unlocked smart field — weak/base-pool
-// builds remain in the report, but do not set the goals:
-//   rank 1 — ~65%  the first three trials now form a real onboarding ramp
-//   rank 2 — ~62%  the learning runway continues to climb
-//   rank 3 — ~57%  the King's messenger
-//   rank 6 — ~36%  the Betrayal
-//   rank 9 — ~9%   the summons; these builds enter the final rank
-// The final duel then decides how many of that cohort actually win.
+// Asking per roll keeps the SAWTOOTH: a rank opens with a seven-roll Lesser
+// Trial and closes with an eighteen-roll Boss Trial, so the Lesser Trial of one
+// rank asks for less than the Boss Trial before it. The engines compound per
+// roll TAKEN, which is what keeps a finished engine spending most of a trial's
+// rolls rather than clearing it on the first.
 //
-// The curve SAWTOOTHS, and that is deliberate: a rank opens with a seven-roll
-// Lesser Trial and closes with an eighteen-roll Boss Trial, so the Lesser Trial of
-// rank 3 asks for less than the Boss Trial of rank 2. What rises from rank to
-// rank is each slot against the same slot.
-//
-// Trial 1 remains the smallest score the rules can express. From there the
-// opening rises every trial: onboarding still has a gentler slope than the late
-// ladder, but no clear after the first is handed out at the minimum goal.
-//
-// See src/sim/smartSurvivalCurve.ts to redesign this schedule and
-// src/sim/validate.ts to re-test it against the real survival gate.
-//
-// Ranks 4 through 8 were designed against the APPRAISING bot — the one strategy
-// that measures what it buys and aims the cards that need a die (sim/expert.ts)
-// — because the price-and-theme field the earlier curve came from left them 10
-// to 14 points slacker than the survival schedule intends for anyone playing
-// well: it walked into rank 5 with 60% of its runs alive against a target of
-// 49%, and into rank 8 with 36% against 26%.
-//
-//   FIELD=expert RUNS=200 node node_modules/tsx/dist/cli.mjs src/sim/smartSurvivalCurve.ts
-//
-// Ranks 1 to 3 keep the goals they had. The expert was only a few points loose
-// there, the opening's real difficulty is trial 1's single d6 rather than any
-// number in this table, and the designed alternative asked five times as much on
-// trial 3 — which nearly doubled rank-1 deaths for builds that shop by price,
-// i.e. for a person still learning what the cards do.
-//
-// Ranks 9 and 10 keep the SHAPE they had, scaled by the factor rank 8 moved
-// (x44). By then the design pass was setting goals from 15 to 35 surviving runs,
-// where the quantile it takes is barely more than one lucky run's ceiling — it
-// proposed raising the last trial a millionfold — and the live endgame was
-// already landing on target for the expert anyway. Measure while the sample is
-// thick; continue by formula once it is not.
-const AUTHORED_GOALS: bigint[] = [
-  // rank 1 — a short onboarding ramp
-  1n,
-  2n,
-  3n,
-  // rank 2
-  5n,
-  12n,
-  30n,
-  // rank 3 — closes on the King's messenger
-  60n,
-  120n,
-  280n,
-  // rank 4 — from here the curve is the appraising bot's
-  800n,
-  4_100n,
-  11_000n,
-  // rank 5
-  9_300n,
-  53_000n,
-  110_000n,
-  // rank 6 — closes on the Betrayal
-  89_000n,
-  200_000n,
-  580_000n,
-  // rank 7
-  160_000n,
-  2_500_000n,
-  41_000_000n,
-  // rank 8
-  50_000_000n,
-  100_000_000n,
-  4_000_000_000n,
-  // rank 9 — closes on the summons; the live shape, scaled by rank 8's move
-  6_700_000_000n,
-  80_000_000_000n,
-  1_700_000_000_000n,
-  // rank 10 — the last rank; its Boss Trial is the duel, which has no goal at
-  // all (see isMirrorTrial). The entry is still a real number because the
-  // endless ladder walks out from it.
-  890_000_000_000n,
-  1_300_000_000_000n,
-  760_000_000_000_000n,
-];
+// Measured with the engine experiment (src/sim/catechismExperiment.ts, trees ×3,
+// the card reworks on): builders reach the duel ~35-55% of the time, runs with
+// no engine ~0-2%, and builders spend a third or more of their rolls in ranks
+// 7-10. That experiment sweeps the two later rates through `engineGateGoals`.
 
-// The authored table covers the whole ladder, so the formula below is only
-// reached if WIN_RANK is raised past it. Both numbers are read straight off the
-// measured curve so that an eleventh rank would continue the shape rather than
-// restart it:
-//
-//   RANK_RATIO — how much a rank's Boss Trial asks over the last one's. The
-//     the late smart-field curve grows sharply as it selects its final cohort.
-//   SLOT_SHARE — each trial's goal as a fraction of its OWN rank's Boss Trial.
-//     The last measured rank is approximately 0.004 / 0.047 / 1.
-//
-// Taking the shares off the rank's own boss is what preserves the sawtooth: a
-// rank opens on a seven-roll Lesser Trial asking for an eighth of what its
-// eighteen-roll Boss Trial will, so the Lesser Trial of rank 8 asks less than the
-// Boss Trial of rank 7.
-const RANK_RATIO = 447n;
-const SLOT_SHARE_MILLI = [4n, 46n, 1_000n] as const;
+/** Rank 1's goals, as authored. */
+const OPENING_GOALS = [1, 2, 3] as const;
 
-/** The authored ranks, extended by formula if WIN_RANK ever outruns them. */
-function buildGoals(): bigint[] {
-  const goals = [...AUTHORED_GOALS];
-  const authoredRanks = AUTHORED_GOALS.length / TRIALS_PER_RANK;
-  let boss = AUTHORED_GOALS[AUTHORED_GOALS.length - 1];
-  for (let rank = authoredRanks + 1; rank <= WIN_RANK; rank++) {
-    boss *= RANK_RATIO;
-    for (const share of SLOT_SHARE_MILLI) {
-      goals.push((boss * share) / 1_000n);
-    }
+/** Growth of the goal per roll, per trial, in each act after rank 1. */
+export const GOAL_GROWTH_PER_TRIAL = {
+  /** Ranks 2-3. */
+  opening: 1.6,
+  /** Ranks 4-6, the build deadline. */
+  middle: 2.2,
+  /** Ranks 7-10. */
+  late: 2.4,
+} as const;
+
+/**
+ * The engine-gated goal for every trial of the ladder (index = trial - 1). The
+ * two later acts' growth may be moved apart to find which act a tree's builds
+ * die in; the shipping ladder uses GOAL_GROWTH_PER_TRIAL.
+ *
+ * Only multiplication and ceil touch the floats, both exactly specified by
+ * IEEE 754, so every device derives the same table (unlike Math.pow — see the
+ * endless ladder below).
+ */
+export function engineGateGoals(
+  middle: number = GOAL_GROWTH_PER_TRIAL.middle,
+  late: number = GOAL_GROWTH_PER_TRIAL.late,
+): number[] {
+  const goals: number[] = [...OPENING_GOALS];
+  let perRoll = goals[goals.length - 1] / rollsForTrial(goals.length);
+  for (let trial = goals.length + 1; trial <= WIN_TRIAL; trial++) {
+    const rank = rankOf(trial);
+    perRoll *=
+      rank <= 3 ? GOAL_GROWTH_PER_TRIAL.opening : rank <= 6 ? middle : late;
+    goals.push(Math.max(1, Math.ceil(perRoll * rollsForTrial(trial))));
   }
   return goals;
 }
 
-export const TRIAL_GOALS: bigint[] = buildGoals();
+// The final entry is the duel's, which has no goal at all (see isMirrorTrial);
+// it is still a real number because the endless ladder walks out from it.
+export const TRIAL_GOALS: bigint[] = engineGateGoals().map(BigInt);
 
 // Endless growth past WIN_TRIAL. A flat geometric ratio can be outrun forever,
 // because builds themselves grow geometrically (3^prism, 4^lastCall compound
@@ -257,10 +194,10 @@ export const TRIAL_GOALS: bigint[] = buildGoals();
 //
 //   goal(t) = goal(t-1) × ENDLESS_BASE^(1 + (t - 1 - WIN_TRIAL) × ENDLESS_ACCEL)
 //
-// The base is the ladder's own growth carried forward: the tuned curve grows
-// 15.5x per rank, which is 2.5x per trial, so endless opens at the rate the run
-// was already climbing rather than handing the player three easy trials as a
-// reward for finishing.
+// The base is the ladder's own growth carried forward: ranks 7-10 grow the goal
+// per roll ×2.4 a trial, so endless opens at about the rate the run was already
+// climbing rather than handing the player three easy trials as a reward for
+// finishing.
 //
 // Base and acceleration are held as exact integer quantities rather than as the
 // floats they read as, because this multiplier has to come out bit-for-bit
