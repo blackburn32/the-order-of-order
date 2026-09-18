@@ -4,6 +4,11 @@ import { clearActiveRun } from "./ActiveRunPersistence";
 import type { DiceStack } from "./DicePool";
 import { windfallFactor } from "./Dice";
 import { isRetired } from "./CardReworks";
+import {
+  DEFAULT_CHARACTER,
+  isCharacterId,
+  type CharacterId,
+} from "./Characters";
 import { ITEMS, meetsCriterion, ShopItemId } from "./Items";
 import { isSeed } from "./Rng";
 import { metaUnlockOwner } from "./Shop";
@@ -35,6 +40,10 @@ export interface HallEntry {
   trial: number; // trial reached within that rank (1..3)
   score: bigint; // total points accumulated across the whole run; the tiebreak
   won: boolean; // true if the run cleared the final rank
+  // The novice the run was played as. Optional because entries recorded before
+  // characters existed carry none; those runs were played under the rules the
+  // default character now carries, so that is what they are read back as.
+  character?: CharacterId;
   endless?: boolean; // true if the run continued past the final rank
   goldEarned?: number; // lifetime gold earned during the run
   dice: DiceStack[];
@@ -92,6 +101,9 @@ export function loadHall(): HallEntry[] {
         trial: Number(entry.trial),
         score: BigInt((entry.score as string | number | undefined) ?? 0),
         won: Boolean(entry.won),
+        character: isCharacterId(entry.character)
+          ? entry.character
+          : DEFAULT_CHARACTER,
         endless: Boolean(entry.endless),
         goldEarned: Number(entry.goldEarned ?? 0),
         dice: (Array.isArray(entry.dice) ? entry.dice : []).map((rawDie) => {
@@ -236,10 +248,24 @@ export interface Progress {
   unlocked: ShopItemId[]; // criterion-gated ids earned so far
   selectionCounts: Partial<Record<ShopItemId, number>>; // lifetime shop picks per item
   gamesCompleted: number; // wins + losses
+  // Every character the player has won a run with, which is what unlocks the
+  // characters gated behind them (see systems/Characters).
+  //
+  // Kept here rather than derived from the Hall, though the Hall records a
+  // win's character too: the Hall holds HALL_SIZE entries and drops the rest, so
+  // a win can be pushed off the end by later, better runs — and a character the
+  // player has already beaten the game with must not re-lock because they went
+  // on to play well.
+  charactersBeaten: CharacterId[];
 }
 
 function defaultProgress(): Progress {
-  return { unlocked: [], selectionCounts: {}, gamesCompleted: 0 };
+  return {
+    unlocked: [],
+    selectionCounts: {},
+    gamesCompleted: 0,
+    charactersBeaten: [],
+  };
 }
 
 export function loadProgress(): Progress {
@@ -251,6 +277,9 @@ export function loadProgress(): Progress {
         unlocked: Array.isArray(parsed.unlocked) ? parsed.unlocked : [],
         selectionCounts: parsed.selectionCounts ?? {},
         gamesCompleted: parsed.gamesCompleted ?? 0,
+        charactersBeaten: Array.isArray(parsed.charactersBeaten)
+          ? parsed.charactersBeaten.filter(isCharacterId)
+          : [],
       };
     }
   } catch {
@@ -303,6 +332,20 @@ export function hasBeatenGame(): boolean {
   return loadHall().some((entry) => entry.won);
 }
 
+/** The characters the player has won a run with. */
+export function charactersBeaten(): CharacterId[] {
+  return loadProgress().charactersBeaten;
+}
+
+/** Record that a run was won as `character`. Idempotent — winning twice with
+ *  the same novice changes nothing. */
+export function recordCharacterWin(character: CharacterId): void {
+  const progress = loadProgress();
+  if (progress.charactersBeaten.includes(character)) return;
+  progress.charactersBeaten.push(character);
+  saveProgress(progress);
+}
+
 export function recordGameCompleted(): void {
   const progress = loadProgress();
   progress.gamesCompleted += 1;
@@ -326,6 +369,7 @@ export function recordRunEnd(
     trial: trialInRank(state.trial),
     score: state.totalScore,
     won,
+    character: state.character,
     endless: state.endless,
     goldEarned: state.goldEarned,
     dice: state.dice.summarize(),
@@ -355,6 +399,8 @@ export function recordRunEnd(
   recordPlayerStatsRun(state, won);
   saveHallEntry(entry);
   recordGameCompleted();
+  // Persisted apart from the Hall entry above, which the Hall may later drop.
+  if (won) recordCharacterWin(state.character);
   return { personalBest };
 }
 

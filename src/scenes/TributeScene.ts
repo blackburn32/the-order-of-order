@@ -16,6 +16,7 @@ import {
   type ChoiceLayout,
 } from "../ui/choiceLayout";
 import { responsive } from "../ui/layout";
+import { attachCardHover } from "../ui/cardHover";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { addFelt } from "../ui/widgets";
 import { AmbientLayer } from "../ui/AmbientLayer";
@@ -171,8 +172,7 @@ export class TributeScene extends Phaser.Scene {
     card.setSize(CARD_W * scale, CARD_H * scale);
     card.setInteractive({ useHandCursor: true });
     card.on("pointerdown", () => this.choose(id));
-    card.on("pointerover", () => card.setScale(1.03));
-    card.on("pointerout", () => card.setScale(1));
+    attachCardHover(this, card);
   }
 
   /** Take the drawback and move on. The boss clear that led here still owes the

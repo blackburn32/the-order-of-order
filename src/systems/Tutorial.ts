@@ -9,6 +9,7 @@ import { PHONE_BUILD } from "../buildFlags";
 import { WIN_RANK } from "../config";
 import { UNUSED_ROLL_GOLD_CAP } from "./Gold";
 import { refreshActiveRun, saveActiveRun } from "./ActiveRunPersistence";
+import { DEFAULT_CHARACTER, type CharacterId } from "./Characters";
 
 // The tutorial steps, in the order they are shown. They follow the run's own
 // loop rather than one screen: the route screen teaches the shape of a rank,
@@ -260,13 +261,21 @@ export function tutorialBlocksScore(
 
 /**
  * Shared entry point for starting a run from the menu / intro: seeds a fresh
- * RunState, arms the tutorial if enabled, and enters the Game scene. Keeps the
- * intro and no-intro paths identical.
+ * RunState as `character`, arms the tutorial if enabled, and enters the Game
+ * scene. Keeps the intro and no-intro paths identical.
+ *
+ * The character is a parameter rather than something read back off storage
+ * because it is chosen for THIS run, on the screen immediately before this call
+ * (see scenes/CharacterScene) — nothing persists a "current" character, and a
+ * run is the only thing that ever holds one.
  */
-export function beginRun(scene: Phaser.Scene): void {
+export function beginRun(
+  scene: Phaser.Scene,
+  character: CharacterId = DEFAULT_CHARACTER,
+): void {
   // Freeze shop eligibility at run start. Unlocks earned during this run are
   // still saved and announced, but only the next run's snapshot can offer them.
-  const state = newRun(loadProgress().unlocked, randomSeed());
+  const state = newRun(loadProgress().unlocked, randomSeed(), character);
   // The run's first random decision, and so the first to be drawn from the seed
   // rather than from Math.random: rank 1's boss assignment.
   initializeRun(state, streamFor(state.seed, "boss", 1));

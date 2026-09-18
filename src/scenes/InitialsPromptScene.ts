@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { DEFAULT_CHARACTER, type CharacterId } from "../systems/Characters";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { fx } from "../systems/Effects";
 import {
@@ -35,6 +36,8 @@ export interface InitialsPromptData {
   rank: number;
   trial: number;
   endless?: boolean;
+  /** The novice the run was played as, which the board records beside it. */
+  character: CharacterId;
   /** Scene key to re-enable input on when the prompt closes. */
   returnTo: string;
 }
@@ -51,7 +54,12 @@ export interface InitialsPromptData {
 export class InitialsPromptScene extends Phaser.Scene {
   private score = 0n;
   private startedAt = 0;
-  private run = { rank: 1, trial: 1, endless: false };
+  private run = {
+    rank: 1,
+    trial: 1,
+    endless: false,
+    character: DEFAULT_CHARACTER as CharacterId,
+  };
   private returnTo = "Menu";
   private slots: string[] = ["A", "A", "A"];
   private sel = 0;
@@ -72,6 +80,7 @@ export class InitialsPromptScene extends Phaser.Scene {
       rank: data.rank,
       trial: data.trial,
       endless: data.endless ?? false,
+      character: data.character,
     };
     this.returnTo = data.returnTo;
     const seed = normalizeInitials(getInitials());
@@ -416,6 +425,7 @@ export class InitialsPromptScene extends Phaser.Scene {
           rank: this.run.rank,
           trial: this.run.trial,
           endless: this.run.endless,
+          character: this.run.character,
           rolls: 0,
           dicePoints: {},
           itemPoints: {},

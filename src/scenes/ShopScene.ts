@@ -926,8 +926,16 @@ export class ShopScene extends Phaser.Scene {
     tile.setSize(w, h);
     if (affordable) {
       tile.setInteractive({ useHandCursor: true });
-      tile.on("pointerover", () => tile.setScale(1.025));
-      tile.on("pointerout", () => tile.setScale(1));
+      // Lit rather than grown. A pack tile carries its name and price as Text,
+      // and Text is a texture baked at the size it was made at — scaling the
+      // tile resamples the very copy the pointer is there to read. A pack's face
+      // is a filled rectangle rather than the parchment `attachCardHover`
+      // washes, so it brightens its own colour instead.
+      const lit = Phaser.Display.Color.ValueToColor(pack.color).brighten(
+        22,
+      ).color;
+      tile.on("pointerover", () => bg.setFillStyle(lit, 0.94));
+      tile.on("pointerout", () => bg.setFillStyle(pack.color, 0.94));
       tile.on("pointerdown", () => {
         const center = tile.getWorldTransformMatrix().transformPoint(0, 0);
         this.openPack(pack, {

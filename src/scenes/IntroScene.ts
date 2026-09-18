@@ -1,7 +1,6 @@
 import Phaser from "phaser";
 import { COLORS, CSS } from "../art/palette";
 import { loadSettings, saveSettings } from "../systems/SaveData";
-import { beginRun } from "../systems/Tutorial";
 import { bannerButton, checkboxRow } from "../ui/widgets";
 import { responsive } from "../ui/layout";
 import { INTRO_PAGES, STORY_BUTTONS } from "../story";
@@ -83,7 +82,7 @@ export class IntroScene extends Phaser.Scene {
       0,
       label,
       () => {
-        if (last) this.leave(() => beginRun(this));
+        if (last) this.leave(() => this.scene.start("Character"));
         else this.nextPage();
       },
       blockWidth,

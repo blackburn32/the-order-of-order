@@ -5,6 +5,7 @@
 
 import { ITEMS, ShopItemId } from "../systems/Items";
 import type { RunState } from "../state/RunState";
+import type { CharacterId } from "../systems/Characters";
 
 /** Every item that is gated behind an unlock criterion — i.e. everything that is
  *  NOT available from the start of a fresh save. */
@@ -42,6 +43,17 @@ export interface SimConfig {
 
   /** Runs per strategy. */
   runs: number;
+
+  /**
+   * The novice every run in the batch is played as (see systems/Characters).
+   *
+   * A character changes MECHANICS and never goals, so a batch is only ever
+   * comparable within one of them: Melodie's ceiling makes a swarm bot's whole
+   * plan unbuyable and Roland's storm makes every size-targeted card a lottery,
+   * and both would read as a broken strategy if the two were pooled. Run the
+   * field once per character and read each against the same bar.
+   */
+  character?: CharacterId;
 
   /** Base RNG seed; run i of a strategy uses a seed derived from this. */
   seed: number;

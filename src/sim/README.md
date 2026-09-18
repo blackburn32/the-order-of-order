@@ -27,6 +27,8 @@ npm run sim                      # defaults from config.ts → sim-out/report.ht
 npm run sim -- --runs=5000       # more runs = tighter numbers (slower)
 npm run sim -- --seed=42         # reproducible; same seed → same report
 npm run sim -- --out=sim-out/base-only.html
+npm run sim -- --character=melodie  # the whole field as one novice
+npm run characters:check         # the three novices' rules, asserted
 npm run curse:check              # appetite 0 vs 1 curse decisions
 npm run pacing:feasibility       # survival-vs-duration frontier, no rule changes
 npm run benchmark                # your exported runs vs the whole field
@@ -44,6 +46,40 @@ That is the price of having the report contain a shopper that plays well, which
 is exactly the blind spot the rest of this file is about. Use `--runs` freely
 while iterating; the expert's numbers are steadier per run than the field's,
 because it is the one series whose decisions are not mostly luck.
+
+### One novice at a time
+
+A run is played as one of three characters (see `systems/Characters.ts`), and a
+character changes MECHANICS without changing goals — Diebert opens on a larger
+purse, Melodie pays a third less in the shop but her grid never exceeds twenty
+dice, and Roland's dice are all remade at new sizes after every roll. The goal ladder in
+`config.ts` is the same ladder for all three, which is the point: what differs is
+which approaches are practical, not how far a run has to get.
+
+That makes a pooled batch meaningless. Melodie's ceiling makes a swarm build
+unbuyable and Roland's storm makes every size-targeted card a lottery; averaged
+together they describe a game nobody plays. So the field is run once per
+character and each is read against the same bar:
+
+```bash
+npm run sim -- --character=diebert --out=sim-out/diebert.html
+npm run sim -- --character=melodie --out=sim-out/melodie.html
+npm run sim -- --character=roland  --out=sim-out/roland.html
+CHARACTER=melodie RUNS=2000 npm run engines:experiment
+```
+
+Two places the bots know which novice they are. `accepts` (in `bot.ts`) refuses a
+card whose whole payoff is more dice once the grid has no headroom — the shop
+still OFFERS those cards to Melodie, deliberately, because diluting her shelf is
+part of what her discount pays for, but a bot that spent gold on them would make
+her read as weaker than she plays. And `chooseTargets` points a size-naming card
+at the storm's most likely size rather than at a random die, which is what a
+player who has understood Roland's rule would do.
+
+When a character is out of the bar, the dials are the character's own numbers —
+its starting gold, its discount, its ceiling, the width of its size bell — and
+never the goal curve, the card prices or the item effects. Those are shared, and
+moving one to fix one character moves the other two.
 
 ### Reading the report
 

@@ -3,7 +3,8 @@
 // self-contained HTML report. Run with: npm run sim -- --runs=5000 --seed=1
 //
 // Flags (all optional; defaults from src/sim/config.ts):
-//   --runs=N     runs per strategy
+//   --runs=N       runs per strategy
+//   --character=ID the novice every run is played as (diebert|melodie|roland)
 //   --seed=N     base RNG seed (reproducible)
 //   --out=path   output HTML path (default sim-out/report.html)
 //   SIM_WORKERS=N overrides the default bounded CPU worker count (use 1 for serial)
@@ -18,6 +19,12 @@ import {
   workerData,
 } from "node:worker_threads";
 import { DEFAULT_CONFIG, GATED_ITEM_IDS, SimConfig } from "./config";
+import {
+  CHARACTER_ORDER,
+  CHARACTERS,
+  DEFAULT_CHARACTER,
+  isCharacterId,
+} from "../systems/Characters";
 import { installStorage, seedGlobalRandom } from "./localStorageShim";
 import { RunRecord, simulateRun } from "./bot";
 import { aggregate } from "./stats";
@@ -134,6 +141,19 @@ function parseArgs(argv: string[]): { cfg: SimConfig; out: string } {
     if (key === "runs") cfg.runs = Math.max(1, Number(val) | 0);
     else if (key === "seed") cfg.seed = Number(val) | 0;
     else if (key === "out") out = val;
+    else if (key === "character") {
+      // A batch is only comparable within one novice (see SimConfig.character),
+      // so an unknown id is a hard stop rather than a silent fall back to the
+      // default — a report labelled for a character it did not simulate is
+      // worse than no report.
+      if (!isCharacterId(val)) {
+        console.error(
+          `Unknown character "${val}". One of: ${CHARACTER_ORDER.join(", ")}`,
+        );
+        process.exit(1);
+      }
+      cfg.character = val;
+    }
   }
   return { cfg, out };
 }
@@ -141,8 +161,10 @@ function parseArgs(argv: string[]): { cfg: SimConfig; out: string } {
 async function main(): Promise<void> {
   const { cfg, out } = parseArgs(process.argv.slice(2));
 
+  const who = cfg.character ?? DEFAULT_CHARACTER;
   console.log(
-    `Simulating ${cfg.runs} runs × ${SIM_SERIES.length} series ` +
+    `Simulating ${cfg.runs} runs × ${SIM_SERIES.length} series as ` +
+      `${CHARACTERS[who].name} ` +
       `(base only vs all ${GATED_ITEM_IDS.length} gated items), seed ${cfg.seed}…`,
   );
 

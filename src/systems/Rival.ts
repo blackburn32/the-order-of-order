@@ -26,10 +26,22 @@ export interface RivalState {
   roll: number;
 }
 
-/** Open the duel: the rival takes the grid the player walks in with. */
+/** Open the duel: the rival takes the grid the player walks in with — and the
+ *  ceiling that grid is held under (see systems/Characters).
+ *
+ *  The ceiling has to be carried explicitly because the mirror is rebuilt from a
+ *  stack summary rather than cloned, and a summary is only what the grid holds,
+ *  not what it is allowed to hold. Without it a ceilinged player would spend the
+ *  duel watching a copy of their own grid outgrow them — the one trial in the
+ *  game whose fairness is a property of construction, broken by the one rule
+ *  that never reaches the copy. */
 export function createRival(state: RunState): RivalState {
   return {
-    dice: DicePool.fromStacks(state.dice.summarize()),
+    dice: DicePool.fromStacks(
+      state.dice.summarize(),
+      undefined,
+      state.dice.ceiling,
+    ),
     score: 0n,
     roll: 0,
   };

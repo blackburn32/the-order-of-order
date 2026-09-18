@@ -21,6 +21,9 @@ import disorder2Url from "../../images/story/ending-disorder-2.webp";
 import peace1Url from "../../images/story/ending-peace-1.webp";
 import peace2Url from "../../images/story/ending-peace-2.webp";
 import peace3Url from "../../images/story/ending-peace-3.webp";
+import diebertUrl from "../../images/characters/diebert-game.webp";
+import melodieUrl from "../../images/characters/melodie-game.webp";
+import rolandUrl from "../../images/characters/roland-game.webp";
 import { restoreActiveRun } from "../systems/ActiveRunPersistence";
 
 export class BootScene extends Phaser.Scene {
@@ -50,6 +53,11 @@ export class BootScene extends Phaser.Scene {
     this.load.image("ending-peace-1", peace1Url);
     this.load.image("ending-peace-2", peace2Url);
     this.load.image("ending-peace-3", peace3Url);
+
+    // The roster, keyed to match each character's `art` in systems/Characters.
+    this.load.image("character-diebert", diebertUrl);
+    this.load.image("character-melodie", melodieUrl);
+    this.load.image("character-roland", rolandUrl);
   }
 
   create(): void {

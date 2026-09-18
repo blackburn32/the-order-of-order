@@ -4,6 +4,12 @@
 // Run: npm run gold:check
 
 import { newRun, RunState } from "../state/RunState";
+import {
+  CHARACTER_ORDER,
+  CHARACTERS,
+  DEFAULT_CHARACTER,
+  MELODIE_DISCOUNT_PERCENT,
+} from "../systems/Characters";
 import { rollsForTrial } from "../config";
 import { activeBoss } from "../systems/Boss";
 import {
@@ -24,6 +30,7 @@ import {
 } from "../systems/Gold";
 import { itemIsCursed, ITEMS } from "../systems/Items";
 import {
+  discountedPrice,
   offerFor,
   PRICE_BANDS,
   priceFor,
@@ -32,6 +39,7 @@ import {
   applyOffer,
   applyBoosterChoice,
   boosterPrice,
+  BOOSTER_PACKS,
   repriceOffers,
   openBooster,
   rollBoosterOffers,
@@ -228,18 +236,76 @@ console.log("\nGold items");
 console.log("\nBanking");
 
 {
+  // The purse a run opens with is the CHARACTER's, not one flat constant: it is
+  // Diebert's whole ability, and STARTING_GOLD is now only the base the other
+  // two keep. `newRun` with no character named opens as the default one.
+  const opening = CHARACTERS[DEFAULT_CHARACTER].startingGold;
   const state = newRun([]);
-  check(state.gold === STARTING_GOLD, "a run starts with its purse");
-  check(state.peakGold === STARTING_GOLD, "and its peak matches");
+  check(state.gold === opening, "a run starts with its purse");
+  check(state.peakGold === opening, "and its peak matches");
   grantGold(state, 10);
-  check(state.gold === STARTING_GOLD + 10, "granting adds to the purse");
+  check(state.gold === opening + 10, "granting adds to the purse");
   check(state.peakGold === state.gold, "and tracks the peak");
   state.gold = 1;
   grantGold(state, 2);
   check(
-    state.peakGold === STARTING_GOLD + 10,
+    state.peakGold === opening + 10,
     "spending down does not lower the peak",
   );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nCharacters");
+
+{
+  for (const id of CHARACTER_ORDER) {
+    const who = CHARACTERS[id];
+    const state = newRun([], 0, id);
+    check(
+      state.gold === who.startingGold &&
+        state.goldEarned === who.startingGold &&
+        state.peakGold === who.startingGold,
+      `${who.name} opens on ${who.startingGold} gold`,
+    );
+  }
+  check(
+    CHARACTERS.diebert.startingGold > STARTING_GOLD,
+    "Diebert's purse is the one that differs",
+  );
+  check(
+    CHARACTERS.melodie.startingGold === STARTING_GOLD &&
+      CHARACTERS.roland.startingGold === STARTING_GOLD,
+    "and the other two keep the base purse",
+  );
+
+  // Melodie's discount is the other half of her rule, and it has to reach the
+  // booster packs as well as the loose cards (see Shop.discountedPrice).
+  const full = newRun([], 0, "diebert");
+  const half = newRun([], 0, "melodie");
+  // Against the constant rather than a number: the discount is a tuning dial,
+  // and a check that hard-codes today's value fails the next time it moves
+  // without anything actually being wrong.
+  const off = MELODIE_DISCOUNT_PERCENT / 100;
+  check(
+    discountedPrice(half, 12) === Math.ceil(12 * (1 - off)) &&
+      discountedPrice(full, 12) === 12,
+    `Melodie pays ${MELODIE_DISCOUNT_PERCENT}% less for a card`,
+  );
+  check(
+    discountedPrice(half, 9) === Math.ceil(9 * (1 - off)),
+    "and a price that does not divide evenly rounds up",
+  );
+  check(discountedPrice(half, 1) === 1, "and a card never falls below a gold");
+  check(discountedPrice(half, 0) === 0, "while a free card stays free");
+  // Packs price through the same funnel, which is the point: a discount that
+  // covered loose cards but not packs would push her onto one half of the shop.
+  for (const pack of BOOSTER_PACKS) {
+    check(
+      boosterPrice(half, pack) === discountedPrice(half, pack.cost) &&
+        boosterPrice(half, pack) < boosterPrice(full, pack),
+      `and less for the ${pack.id} pack`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

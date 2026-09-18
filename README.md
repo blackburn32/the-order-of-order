@@ -76,10 +76,10 @@ etc. Use `npm run preview` to serve that production build locally and confirm it
 The production web deployment combines the static marketing site and the game
 into one Cloudflare Worker with static assets:
 
-| URL | Content |
-| --- | --- |
-| `https://the-order-of-order.com/` | Marketing site |
-| `https://the-order-of-order.com/game/` | Browser game |
+| URL                                    | Content        |
+| -------------------------------------- | -------------- |
+| `https://the-order-of-order.com/`      | Marketing site |
+| `https://the-order-of-order.com/game/` | Browser game   |
 
 Build the combined artifact with `npm run build:web`. It writes `site-dist/`,
 including a game build whose Vite base is `/game/`; the other game targets keep

@@ -33,6 +33,7 @@ import {
 import { isRetired } from "../systems/CardReworks";
 import { metaUnlockOwner } from "../systems/Shop";
 import { buildItemCard } from "../ui/itemCard";
+import { attachCardHover } from "../ui/cardHover";
 import {
   compactColumns,
   destroyAllChildren,
@@ -865,8 +866,7 @@ export class ItemsScene extends Phaser.Scene {
         pressX = pointer.x;
         pressY = pointer.y;
       });
-      card.on("pointerover", () => card.setScale(1.018));
-      card.on("pointerout", () => card.setScale(1));
+      attachCardHover(this, card);
       card.on("pointerup", (pointer: Phaser.Input.Pointer) => {
         if (
           Phaser.Math.Distance.Between(pressX, pressY, pointer.x, pointer.y) >

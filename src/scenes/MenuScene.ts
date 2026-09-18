@@ -4,7 +4,6 @@ import { BUTTON_HEIGHT } from "../art/textures";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { loadProgress, loadSettings } from "../systems/SaveData";
-import { beginRun } from "../systems/Tutorial";
 import {
   addFelt,
   bannerButton,
@@ -235,11 +234,12 @@ export class MenuScene extends Phaser.Scene {
         label: "Start New Run",
         onClick: () =>
           this.leave(() => {
-            // Intro plays on every main-menu run until the player skips it; Victory /
-            // Game Over "Begin a New Run" skip straight to the game (they call
-            // setRun + start('Game') directly, so the intro is main-menu only).
+            // Intro plays on every main-menu run until the player skips it;
+            // Victory / Game Over "Begin a New Run" skip it (it is main-menu
+            // only). Either way the road leads to the character selection,
+            // which is the one place a run is actually begun.
             if (loadSettings().showIntro) this.scene.start("Intro");
-            else beginRun(this);
+            else this.scene.start("Character");
           }),
       },
       {

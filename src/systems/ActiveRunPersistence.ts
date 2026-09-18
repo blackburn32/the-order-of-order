@@ -9,6 +9,7 @@ import type { TrialEndOutcome } from "../sim/engine";
 import { AFFLICTIONS, type AfflictionId } from "./Afflictions";
 import { BOSS_MODIFIERS } from "./Boss";
 import { ENDINGS, type EndingId } from "./Endings";
+import { CHARACTERS, DEFAULT_CHARACTER, isCharacterId } from "./Characters";
 import { DIE_LADDER } from "./Dice";
 import { DicePool, type DiceStack } from "./DicePool";
 import { ITEMS, type ShopItemId } from "./Items";
@@ -239,7 +240,11 @@ function hydratePointMap(value: unknown): Record<string, bigint> | null {
   return result;
 }
 
-function hydrateDice(value: unknown, everAdded?: unknown): DicePool | null {
+function hydrateDice(
+  value: unknown,
+  everAdded?: unknown,
+  ceiling = Infinity,
+): DicePool | null {
   if (!Array.isArray(value) || value.length === 0) return null;
   const stacks: DiceStack[] = [];
   for (const raw of value) {
@@ -269,6 +274,7 @@ function hydrateDice(value: unknown, everAdded?: unknown): DicePool | null {
   return DicePool.fromStacks(
     stacks,
     isNonNegativeInteger(everAdded) ? everAdded : undefined,
+    ceiling,
   );
 }
 
@@ -316,10 +322,29 @@ export function hydrateRunState(value: unknown): RunState | null {
     }
   }
 
+  // The character is a string, and the generic pass above copies numbers,
+  // booleans, arrays and records only — so it is read here by hand. A save
+  // written before characters existed carries none, and resumes as the default:
+  // an in-progress run must never have a rule added to it underneath the player.
+  // An id this build does not recognise is a save from a build that had a
+  // character this one has not, and its rules cannot be honoured, so it fails
+  // the hydration rather than quietly becoming somebody else's run.
+  if (value.character === undefined) {
+    hydrated.character = DEFAULT_CHARACTER;
+  } else if (!isCharacterId(value.character)) {
+    return null;
+  } else {
+    hydrated.character = value.character;
+  }
+
   const score = parseBigInt(value.score);
   const trialScore = parseBigInt(value.trialScore);
   const totalScore = parseBigInt(value.totalScore);
-  const dice = hydrateDice(value.dice, value.diceEverAdded);
+  const dice = hydrateDice(
+    value.dice,
+    value.diceEverAdded,
+    CHARACTERS[hydrated.character].gridCeiling,
+  );
   const dicePoints = hydratePointMap(value.dicePoints);
   const itemPoints = hydratePointMap(value.itemPoints);
   if (
@@ -405,7 +430,10 @@ export function hydrateRunState(value: unknown): RunState | null {
   // both are read straight off the saved shape.
   hydrated.kingsDemand = (value.kingsDemand as AfflictionId | null) ?? null;
   if (value.rival !== undefined && value.rival !== null) {
-    const rival = hydrateRival(value.rival);
+    const rival = hydrateRival(
+      value.rival,
+      CHARACTERS[hydrated.character].gridCeiling,
+    );
     if (!rival) return null;
     hydrated.rival = rival;
   }
@@ -418,9 +446,11 @@ function validNullableId(value: unknown, ids: ReadonlySet<string>): boolean {
   return typeof value === "string" && ids.has(value);
 }
 
-function hydrateRival(value: unknown): RivalState | null {
+function hydrateRival(value: unknown, ceiling = Infinity): RivalState | null {
   if (!isRecord(value)) return null;
-  const dice = hydrateDice(value.dice);
+  // The mirror is a copy of the player's grid and plays by the player's rules,
+  // so it restores under the same ceiling.
+  const dice = hydrateDice(value.dice, undefined, ceiling);
   const score = parseBigInt(value.score);
   if (!dice || score === null || !isNonNegativeInteger(value.roll)) return null;
   return { dice, score, roll: value.roll };

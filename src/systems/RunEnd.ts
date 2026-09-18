@@ -38,6 +38,7 @@ export function finalizeRun(
       trial: trialInRank(state.trial),
       won,
       endless: state.endless,
+      character: state.character,
     });
   }
 

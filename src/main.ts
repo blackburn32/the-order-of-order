@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { BootScene } from "./scenes/BootScene";
 import { MenuScene } from "./scenes/MenuScene";
 import { IntroScene } from "./scenes/IntroScene";
+import { CharacterScene } from "./scenes/CharacterScene";
 import { GameScene } from "./scenes/GameScene";
 import { ShopScene } from "./scenes/ShopScene";
 import { GameOverScene } from "./scenes/GameOverScene";
@@ -63,6 +64,7 @@ function createGame(): Phaser.Game {
       BootScene,
       MenuScene,
       IntroScene,
+      CharacterScene,
       TrialOverviewScene,
       GameScene,
       TrialResultsScene,

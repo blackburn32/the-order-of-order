@@ -6,11 +6,14 @@
 // they hit along the way.
 
 import { newRun, RunState } from "../state/RunState";
+import { CHARACTERS, sizeWeights } from "../systems/Characters";
+import { DIE_LADDER, type DieSides } from "../systems/Dice";
 import {
   ballastableSizes,
   ITEM_THEMES,
   ITEMS,
   ItemDef,
+  itemGrowsGrid,
   ItemTheme,
   meetsCriterion,
   ShopItemId,
@@ -195,6 +198,58 @@ function pick<T>(arr: T[], rng: () => number): T {
  *  that needs no target; null is "no die on this grid is eligible". */
 export type DieTargets = { index?: number; indices?: number[] };
 
+/**
+ * The size a size-targeting card should be pointed at under a size storm, or
+ * null when the run is not under one.
+ *
+ * Naming a size is normally a read of the grid: a player loads whichever size
+ * they hold most of. Under Roland the grid is redrawn every roll, so what a size
+ * aura is actually worth is the share of the bell that size carries — a d8 aura
+ * covers 21% of every future grid, a d100 aura under 7% — and the grid in front
+ * of the player says nothing about which it will be. So the storm's own peak is
+ * what a player who has understood the rule would name, and it is what the field
+ * has to name too, or every aura card measures as a lottery Roland cannot use.
+ */
+function stormSize(state: RunState): DieSides | null {
+  const chaos = CHARACTERS[state.character].sizeChaos;
+  if (!chaos) return null;
+  const weights = sizeWeights(chaos);
+  let best = 0;
+  for (let i = 1; i < weights.length; i++)
+    if (weights[i] > weights[best]) best = i;
+  return DIE_LADDER[best];
+}
+
+/** Pick from candidate GROUPS, preferring the storm's peak when it is among
+ *  them. Applied to the candidates each card has already filtered to its own
+ *  rule, so a preference can never name a die the card would refuse. Off a
+ *  storm, and where the peak is not on the grid, this is the ordinary random
+ *  pick the field has always made. */
+function preferStormGroup<T extends { die: { sides: DieSides } }>(
+  state: RunState,
+  groups: T[],
+  rng: () => number,
+): T {
+  const peak = stormSize(state);
+  const match =
+    peak === null ? undefined : groups.find((g) => g.die.sides === peak);
+  return match ?? pick(groups, rng);
+}
+
+/** The same, for a card whose candidates are bare grid indices. */
+function preferStormIndex(
+  state: RunState,
+  indices: number[],
+  rng: () => number,
+): number {
+  const peak = stormSize(state);
+  if (peak !== null) {
+    const match = indices.find((i) => state.dice.dieAt(i)?.sides === peak);
+    if (match !== undefined) return match;
+  }
+  return pick(indices, rng);
+}
+
 /** Choose valid die target(s) for an offer, or null if none are eligible.
  *  Mirrors the dev panel's auto-target logic but with random valid picks. */
 function chooseTargets(
@@ -211,16 +266,22 @@ function chooseTargets(
     }
     case "loaded_die": {
       const idxs = dice.loadableIndices(TARGET_SAMPLE_LIMIT);
-      return idxs.length ? { index: pick(idxs, rng) } : null;
+      return idxs.length ? { index: preferStormIndex(state, idxs, rng) } : null;
     }
     case "twin":
-    case "wild_face":
-      return dice.length ? { index: Math.floor(rng() * dice.length) } : null;
+    case "wild_face": {
+      if (!dice.length) return null;
+      // Both name a size through a die, so both follow the storm's peak.
+      const groups = dice.groups();
+      return { index: preferStormGroup(state, groups, rng).firstIndex };
+    }
     case "royal_seal": {
       const groups = dice
         .groups()
         .filter(({ die }) => !state.royalSealSizes.includes(die.sides));
-      return groups.length ? { index: pick(groups, rng).firstIndex } : null;
+      return groups.length
+        ? { index: preferStormGroup(state, groups, rng).firstIndex }
+        : null;
     }
     case "dismissal":
     case "a_parting":
@@ -229,6 +290,8 @@ function chooseTargets(
         : null;
     case "winnowing": {
       const groups = dice.groups();
+      // The Winnowing removes a size, so the storm's peak is the LAST size to
+      // name: preferring it here would throw away the commonest dice.
       return new Set(groups.map((group) => group.die.sides)).size > 1
         ? { index: pick(groups, rng).firstIndex }
         : null;
@@ -236,21 +299,27 @@ function chooseTargets(
     case "ascension":
     case "exaltation": {
       const groups = dice.groups().filter((group) => group.die.sides < 100);
-      return groups.length ? { index: pick(groups, rng).firstIndex } : null;
+      return groups.length
+        ? { index: preferStormGroup(state, groups, rng).firstIndex }
+        : null;
     }
     case "ballast": {
       const sizes = ballastableSizes(state);
       const groups = dice
         .groups()
         .filter((group) => sizes.includes(group.die.sides));
-      return groups.length ? { index: pick(groups, rng).firstIndex } : null;
+      return groups.length
+        ? { index: preferStormGroup(state, groups, rng).firstIndex }
+        : null;
     }
     case "anointing":
       return dice.length ? { index: Math.floor(rng() * dice.length) } : null;
     case "grindstone": {
       // Now a size-wide shrink: pick any one shrinkable die to name its size.
+      // Shrinking the storm's peak is the one thing worth doing with it — the
+      // commonest size on every future grid steps a rung closer to scoring.
       const idxs = dice.shrinkableIndices(TARGET_SAMPLE_LIMIT);
-      return idxs.length ? { index: pick(idxs, rng) } : null;
+      return idxs.length ? { index: preferStormIndex(state, idxs, rng) } : null;
     }
     default:
       return {};
@@ -387,6 +456,27 @@ function byCostDescending(offers: ShopOffer[]): ShopOffer[] {
 /** Whether this bot will take the card, through its own rule if it has one. A
  *  run committed to a tree leaves every other tree's engine and boost on the
  *  shelf: it is measuring one engine, not whichever the shop happened to open. */
+const ITEM_BY_ID = new Map(ITEMS.map((def) => [def.id, def]));
+
+/**
+ * What the run's own novice rules out, before any strategy has an opinion.
+ *
+ * Only one character rules anything out today: a grid at its ceiling cannot be
+ * grown, so a card whose whole payoff is more dice would do nothing at all if
+ * bought. The SHOP still offers those cards — that dilution is deliberate, and
+ * part of what Melodie's discount is paying for — but a bot that spends gold on
+ * them is not modelling a player who has learned her one rule, and a field that
+ * buys dead cards would make her read as far weaker than she plays.
+ *
+ * Read off the pool's live headroom rather than off the character, so a grid
+ * that loses dice to breakage or defection can buy them back.
+ */
+function characterAllows(state: RunState, offer: ShopOffer): boolean {
+  if (state.dice.headroom > 0) return true;
+  const def = ITEM_BY_ID.get(offer.id);
+  return !def || !itemGrowsGrid(def);
+}
+
 function accepts(
   strategy: Strategy,
   state: RunState,
@@ -396,6 +486,7 @@ function accepts(
   const committed = committedTrees.get(state)?.tree;
   const owner = ENGINE_CARD_TREE.get(offer.id);
   if (committed && owner && owner !== committed) return false;
+  if (!characterAllows(state, offer)) return false;
   if (!skepticAllows(state, offer)) return false;
   return strategy.accepts
     ? strategy.accepts(state, offer, curseAppetite)
@@ -981,7 +1072,7 @@ export function simulateRun(
     bundleSize: cfg.expertBundleSize,
     objective: cfg.expertObjective,
   };
-  const state = newRun(cfg.unlockedAtStart, seed);
+  const state = newRun(cfg.unlockedAtStart, seed, cfg.character);
   beginRun(state, rng);
   commitToTree(state, strategy, seed);
 

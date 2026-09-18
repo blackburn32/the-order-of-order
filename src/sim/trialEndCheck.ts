@@ -19,9 +19,9 @@ import {
   trialInRank,
   WIN_TRIAL,
 } from "../config";
+import { CHARACTERS, DEFAULT_CHARACTER } from "../systems/Characters";
 import { newRun, RunState } from "../state/RunState";
 import { activeBoss, goalFor } from "../systems/Boss";
-import { STARTING_GOLD } from "../systems/Gold";
 import {
   clearedEarly,
   beginRun,
@@ -333,7 +333,12 @@ console.log("\nStarting state");
     trialGoal(2) === 2n,
     "with a rising onboarding goal on the second trial",
   );
-  check(state.gold === STARTING_GOLD, "with a starting purse");
+  // The opening purse belongs to the character now (Diebert's is his ability),
+  // so a fresh run opens on the default novice's rather than on one constant.
+  check(
+    state.gold === CHARACTERS[DEFAULT_CHARACTER].startingGold,
+    "with a starting purse",
+  );
   check(state.score === 0n, "and no score");
   check(!state.endless, "and is not endless");
   check(

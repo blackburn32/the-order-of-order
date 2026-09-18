@@ -24,6 +24,11 @@
 // gameplay — the feature just goes quiet and the local Hall keeps working.
 
 import type { HallEntry } from "./SaveData";
+import {
+  DEFAULT_CHARACTER,
+  isCharacterId,
+  type CharacterId,
+} from "./Characters";
 import { ITEMS, type ShopItemId } from "./Items";
 import { isSeed } from "./Rng";
 import {
@@ -61,6 +66,11 @@ export interface GlobalScoreRow {
   endless: boolean;
   score: bigint; // total points, the tiebreak
   name: string; // initials, uppercased; may be ''
+  /** The novice the run was played as. All three share one board — the ladder
+   *  they climbed is the same ladder — so this is shown beside a run rather than
+   *  used to sort or separate one. Rows submitted before characters existed
+   *  report the default. */
+  character: CharacterId;
   isYou: boolean;
   /** Opaque handle for `fetchRunAnalysis`. */
   memberId: string;
@@ -82,6 +92,7 @@ export interface RunSubmission {
   rank: number;
   trial: number;
   endless: boolean;
+  character: CharacterId;
   rolls: number;
   dicePoints: Record<string, bigint>;
   itemPoints: Record<string, bigint>;
@@ -177,6 +188,7 @@ export interface PendingSubmission {
   trial: number;
   won: boolean;
   endless: boolean;
+  character: CharacterId;
 }
 
 export function queuePendingSubmission(pending: PendingSubmission): void {
@@ -199,7 +211,15 @@ export function takePendingSubmission(): PendingSubmission | null {
       score: string | number;
     };
     if (!Number.isFinite(parsed.startedAt)) return null;
-    return { ...parsed, score: BigInt(parsed.score) };
+    return {
+      ...parsed,
+      score: BigInt(parsed.score),
+      // Queued before characters existed, or by a build that had one this does
+      // not: either way the prompt still opens, under the default novice.
+      character: isCharacterId(parsed.character)
+        ? parsed.character
+        : DEFAULT_CHARACTER,
+    };
   } catch {
     return null;
   }
@@ -363,6 +383,7 @@ export function submissionFromHallEntry(entry: HallEntry): RunSubmission {
     rank: entry.rank,
     trial: entry.trial,
     endless: !!entry.endless,
+    character: entry.character ?? DEFAULT_CHARACTER,
     rolls: entry.rolls ?? Math.max(0, (entry.history?.length ?? 1) - 1),
     dicePoints: entry.dicePoints ?? {},
     itemPoints: entry.itemPoints ?? {},
@@ -397,6 +418,7 @@ export async function submitRun(
     rank: String(Math.max(1, Math.floor(run.rank))),
     trial: String(Math.min(3, Math.max(1, Math.floor(run.trial)))),
     endless: run.endless ? "1" : "0",
+    character: run.character,
     score: (run.score < 0n ? 0n : run.score).toString(),
     rolls: String(Math.max(0, Math.floor(run.rolls))),
   });
@@ -470,6 +492,7 @@ interface WireRow {
   score?: unknown;
   rolls?: unknown;
   hasAnalysis?: unknown;
+  character?: unknown;
 }
 
 function toRow(raw: unknown, me: string): GlobalScoreRow | null {
@@ -488,6 +511,7 @@ function toRow(raw: unknown, me: string): GlobalScoreRow | null {
     endless: row.endless === true,
     score: BigInt(row.score),
     name: typeof row.initials === "string" ? row.initials.toUpperCase() : "",
+    character: isCharacterId(row.character) ? row.character : DEFAULT_CHARACTER,
     isYou: memberId !== "" && memberId === me,
     memberId,
     rolls: Number.isFinite(Number(row.rolls)) ? Number(row.rolls) : 0,

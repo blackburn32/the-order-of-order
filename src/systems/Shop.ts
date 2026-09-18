@@ -4,6 +4,7 @@ import {
   blocksGrowthPermanently,
   type AfflictionId,
 } from "../systems/Afflictions";
+import { CHARACTERS } from "./Characters";
 import {
   BOON_RARITY_WEIGHTS,
   CURSE_DRAW_WEIGHT,
@@ -149,13 +150,29 @@ function listPriceFor(
   return PRICE_BANDS[def.priceBand] * stack * market;
 }
 
-/** Take the run's discount cards off a list price. Never drops below 1 gold —
- *  a card the player can take for nothing should be a Coupon Book moment, not a
- *  rounding artefact. A card that was already free stays free. */
+/** Take the run's discount cards — and its character's standing discount — off a
+ *  list price. Never drops below 1 gold: a card the player can take for nothing
+ *  should be a Coupon Book moment, not a rounding artefact. A card that was
+ *  already free stays free.
+ *
+ *  The character's share is a percentage, so it multiplies alongside Shopping
+ *  Cart's and BEFORE the single rounding, while Pawnbroker's flat cut still
+ *  comes off last. Keeping every percentage on one side of the `ceil` is what
+ *  makes `repriceOffers` idempotent and order-independent — a row repriced twice
+ *  lands on the same number, and a Pawnbroker bought after a Shopping Cart costs
+ *  what it would have the other way round.
+ *
+ *  Booster packs price through here too (see `packPrice`), which is deliberate:
+ *  a discount that covered loose cards but not packs would quietly push its
+ *  character onto one half of the shop. Rerolls do not — they are a fee for
+ *  turning the shelf over rather than a price on anything, and halving them
+ *  would hand a discount character a cheaper search as well as cheaper goods. */
 export function discountedPrice(state: RunState, listPrice: number): number {
   if (listPrice <= 0) return 0;
 
   let price = listPrice;
+  const character = CHARACTERS[state.character].shopDiscountPercent;
+  if (character > 0) price *= 1 - character / 100;
   if (state.hasShoppingCart) price *= 1 - SHOPPING_CART_DISCOUNT;
   price = Math.ceil(price);
   if (state.hasPawnbroker) price -= PAWNBROKER_DISCOUNT;

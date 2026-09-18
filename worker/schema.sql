@@ -16,6 +16,18 @@ CREATE TABLE IF NOT EXISTS runs (
   trial       INTEGER NOT NULL,  -- trial within that rank (1..3)
   endless     INTEGER NOT NULL,  -- 0/1
 
+  -- The novice the run was played as (see src/systems/Characters). All three
+  -- share this one board, because all three climb the same ladder: the column
+  -- is shown beside a run, never sorted or filtered on. The default is what a
+  -- client too old to send one is recorded as.
+  --
+  -- Added after the board shipped, and NOT by an ALTER: `CREATE TABLE IF NOT
+  -- EXISTS` cannot add a column to a table that already exists, so a deployment
+  -- carrying rows from before this column must DROP TABLE runs and let this
+  -- recreate it. That is a deliberate choice rather than a migration — the rows
+  -- it discards predate characters and could only be back-filled with a guess.
+  character   TEXT NOT NULL DEFAULT 'diebert',
+
   -- The run's total points as an exact decimal, plus its digit count.
   --
   -- Points are a bigint that leaves SQLite's 64-bit INTEGER behind almost

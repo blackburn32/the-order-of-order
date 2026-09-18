@@ -165,6 +165,19 @@ function roundAtRandom(value: number, rng: () => number): number {
   return whole + (rng() < value - whole ? 1 : 0);
 }
 
+/** One ladder size drawn from a normalised weight table (see
+ *  systems/Characters.sizeWeights). Lives here rather than beside the weights so
+ *  the pool has no dependency on the characters that ask for a storm. */
+function drawSize(weights: readonly number[], rng: () => number): DieSides {
+  let roll = rng();
+  for (let i = 0; i < weights.length; i++) {
+    roll -= weights[i];
+    if (roll < 0) return DIE_LADDER[i];
+  }
+  // Only reachable on floating-point slack at the very top of the range.
+  return DIE_LADDER[DIE_LADDER.length - 1];
+}
+
 /**
  * Permute [0, count) without collisions. Cycle-walking an invertible bit-mix
  * keeps the sampled face histogram exact while making adjacent grid offsets
@@ -215,6 +228,17 @@ export class DicePool {
   // left of it after breakage, defection and the grid caps. Carried across a
   // resume by `fromStacks`, since a saved grid is only ever the survivors.
   private _everAdded = 0;
+  /** Dice this pool may never exceed (Melodie's twenty; see
+   *  systems/Characters). Infinity for every character without a ceiling.
+   *
+   *  A CEILING, not a cap: it stops growth happening rather than culling a grid
+   *  that has already grown, which is why it lives on the pool rather than in
+   *  the affliction fold beside Famished Idol's `gridCap`. Every growth path
+   *  below asks `headroom` first and adds what fits, so a card that would take
+   *  the grid past the ceiling simply adds fewer dice — and at the ceiling,
+   *  none. Nothing is destroyed, and `everAdded` only counts what actually
+   *  arrived. */
+  private _ceiling = Infinity;
   private roll_?: RollData; // cached result of the most recent roll()
   // The half-open span of grid indices the last roll actually read —
   // [rolledFrom, rolledTo) — and so everything the growth and destruction
@@ -243,8 +267,9 @@ export class DicePool {
   }
 
   /** A fresh pool holding the given starter dice (per-die mode). */
-  static fromDice(dice: Die[]): DicePool {
+  static fromDice(dice: Die[], ceiling = Infinity): DicePool {
     const p = new DicePool();
+    p._ceiling = ceiling;
     p.list = dice;
     p.gain(dice.length);
     p.ensureMode();
@@ -252,8 +277,13 @@ export class DicePool {
   }
 
   /** Rebuild a pool from a saved bucket summary (already bucketed). */
-  static fromStacks(stacks: DiceStack[], everAdded?: number): DicePool {
+  static fromStacks(
+    stacks: DiceStack[],
+    everAdded?: number,
+    ceiling = Infinity,
+  ): DicePool {
     const p = new DicePool();
+    p._ceiling = ceiling;
     p.buckets = stacks.map((s) => ({
       ...s,
       maxFaceBonus: windfallFactor(s.maxFaceBonus as number | boolean, s.sides),
@@ -291,6 +321,27 @@ export class DicePool {
     return this._count;
   }
 
+  /** The most dice this grid may ever hold. */
+  get ceiling(): number {
+    return this._ceiling;
+  }
+
+  /** Impose a ceiling on an existing pool — for a hydrated save, whose stacks
+   *  are rebuilt before the run's character is known. Never lowers a grid that
+   *  is already over it: the ceiling blocks growth, it does not cull. */
+  setCeiling(ceiling: number): void {
+    this._ceiling = ceiling;
+  }
+
+  /** How many more dice the ceiling has room for. Every growth path clamps what
+   *  it adds to this, so a ceilinged grid stops growing instead of overflowing
+   *  and being culled back. */
+  get headroom(): number {
+    return this._ceiling === Infinity
+      ? Infinity
+      : Math.max(0, this._ceiling - this._count);
+  }
+
   /** Dice this pool has ever been given, survivors and casualties alike. */
   get everAdded(): number {
     return this._everAdded;
@@ -323,6 +374,7 @@ export class DicePool {
     }));
     copy._count = this._count;
     copy._everAdded = this._everAdded;
+    copy._ceiling = this._ceiling;
     copy.rolledFrom = this.rolledFrom;
     copy.rolledTo = this.rolledTo;
     copy.lastScoringNumbers = [...this.lastScoringNumbers];
@@ -714,16 +766,25 @@ export class DicePool {
     pairChance = 0,
   ): number {
     this._lastPairs = 0;
+    // A ceilinged grid copies what fits and no more (see `headroom`). The walk
+    // stops rather than trimming afterwards, so the dice that do arrive are the
+    // ones the earliest eligible rolls earned.
+    const room = this.headroom;
+    if (room <= 0) return 0;
     if (this.mode === "list") {
       const copies: Die[] = [];
-      for (let k = this.rolledFrom; k < this.rolledTo; k++) {
+      for (
+        let k = this.rolledFrom;
+        k < this.rolledTo && copies.length < room;
+        k++
+      ) {
         const d = this.list[k];
         const copied = highestFaceOnly
           ? d.sides >= 6 && d.value === facesOf(d.sides, d.loaded)
           : d.value === 5 || d.value === 6;
         if (copied && (chance >= 1 || rng() < chance)) {
           copies.push(cloneDie(d, "double_the_fun"));
-          if (pairChance > 0 && rng() < pairChance) {
+          if (copies.length < room && pairChance > 0 && rng() < pairChance) {
             copies.push(cloneDie(d, "the_multitude"));
             this._lastPairs += 1;
           }
@@ -745,10 +806,11 @@ export class DicePool {
           : 0
         : (faces >= 5 ? (b.lastFaces[4] ?? 0) : 0) +
           (faces >= 6 ? (b.lastFaces[5] ?? 0) : 0);
-      const high =
+      const wanted =
         chance >= 1 || eligible === 0
           ? eligible
           : roundAtRandom(eligible * chance, rng);
+      const high = Math.min(wanted, room - added);
       if (high > 0) {
         this.addBucket(
           b.sides,
@@ -759,8 +821,10 @@ export class DicePool {
           high,
         );
         added += high;
-        const pairs =
-          pairChance > 0 ? roundAtRandom(high * pairChance, rng) : 0;
+        const pairs = Math.min(
+          pairChance > 0 ? roundAtRandom(high * pairChance, rng) : 0,
+          room - added,
+        );
         this.addBucket(
           b.sides,
           b.maxFaceBonus,
@@ -785,6 +849,7 @@ export class DicePool {
   /** Genesis: each scoring die spawns a copy, capped at `cap` dice total this
    *  roll. Returns the number added. Uses the cached roll. */
   genesis(cap: number): number {
+    cap = Math.min(cap, this.headroom);
     if (cap <= 0) return 0;
     if (this.mode === "list") {
       // List mode retains rolled values, so recover the scoring dice directly.
@@ -854,6 +919,8 @@ export class DicePool {
    */
   foundryDouble(copies: number): number {
     if (copies <= 0 || this._count === 0) return 0;
+    const room = this.headroom;
+    if (room <= 0) return 0;
     const extraPerDie = 2 ** copies - 1;
     if (this.mode === "list") {
       const smallestSides = this.list.reduce(
@@ -861,12 +928,13 @@ export class DicePool {
         this.list[0].sides,
       );
       const targets = this.list.filter((d) => d.sides === smallestSides);
-      const added = targets.length * extraPerDie;
+      const added = Math.min(targets.length * extraPerDie, room);
       // A doubling that would cross the threshold buckets first rather than
       // materialise the copies as individual dice.
       if (this._count + added < bucketThreshold) {
+        let made = 0;
         for (const d of targets)
-          for (let i = 0; i < extraPerDie; i++)
+          for (let i = 0; i < extraPerDie && made < added; i++, made++)
             this.list.push(cloneDie(d, "foundry"));
         this.gain(added);
         return added;
@@ -886,7 +954,8 @@ export class DicePool {
       .map((b) => ({ ...b }));
     let added = 0;
     for (const b of targets) {
-      const extra = b.count * extraPerDie;
+      const extra = Math.min(b.count * extraPerDie, room - added);
+      if (extra <= 0) break;
       this.addBucket(
         b.sides,
         b.maxFaceBonus,
@@ -970,21 +1039,24 @@ export class DicePool {
 
   // --- shop effects --------------------------------------------------------
 
-  /** Add `count` dice of a size. */
+  /** Add `count` dice of a size, or as many of them as the ceiling has room
+   *  for. Returns how many actually arrived, which is what a caller crediting
+   *  an item for the dice it produced has to count (see `twinAllOfSize`). */
   addDice(
     sides: DieSides,
     count: number,
     opts: DieOpts = {},
     source = "starter",
-  ): void {
-    if (count <= 0) return;
+  ): number {
+    count = Math.min(count, this.headroom);
+    if (count <= 0) return 0;
     // A bulk add that will cross the threshold converts first, so we never
     // materialise the (possibly enormous) new dice as individual objects.
     if (this.mode === "list" && this._count + count < bucketThreshold) {
       for (let i = 0; i < count; i++)
         this.list.push(makeDie(sides, opts, source));
       this.gain(count);
-      return;
+      return count;
     }
     this.convert();
     this.addBucket(
@@ -996,16 +1068,25 @@ export class DicePool {
       count,
     );
     this.gain(count);
+    return count;
   }
 
-  /** Duplicate the whole grid `factor`× (Multiply Dice). */
+  /** Duplicate the whole grid `factor`× (Multiply Dice), or as much of it as the
+   *  ceiling has room for: a grid with room for half its own size again is
+   *  doubled halfway rather than not at all. */
   multiply(factor: number, source: string): void {
     if (factor <= 1) return;
-    if (this.mode === "list" && this._count * factor < bucketThreshold) {
+    const wanted = this._count * (factor - 1);
+    const added = Math.min(wanted, this.headroom);
+    if (added <= 0) return;
+    if (this.mode === "list" && this._count + added < bucketThreshold) {
       const originals = this.list;
       const copies: Die[] = [];
-      for (let f = 1; f < factor; f++)
-        for (const d of originals) copies.push(cloneDie(d, source));
+      for (let f = 1; f < factor && copies.length < added; f++)
+        for (const d of originals) {
+          if (copies.length >= added) break;
+          copies.push(cloneDie(d, source));
+        }
       for (const d of copies) this.list.push(d);
       this.gain(copies.length);
       return;
@@ -1019,16 +1100,31 @@ export class DicePool {
     // what `_count` is about to be set to, and every later removal takes the
     // difference out of `_count` until it goes negative and the pool corrupts.
     const snapshot = this.buckets.map((b) => ({ ...b }));
-    for (const b of snapshot)
+    // Under a ceiling the copies are apportioned across the buckets rather than
+    // taken whole from the first of them, so a partial multiply returns a grid
+    // shaped like the one it multiplied.
+    let placed = 0;
+    for (let i = 0; i < snapshot.length; i++) {
+      const b = snapshot[i];
+      const share =
+        i === snapshot.length - 1
+          ? added - placed
+          : Math.min(
+              Math.round((added * b.count) / this._count),
+              added - placed,
+            );
+      if (share <= 0) continue;
       this.addBucket(
         b.sides,
         b.maxFaceBonus,
         b.loaded,
         b.wildFace,
         source,
-        b.count * (factor - 1),
+        share,
       );
-    this.gain(this._count * (factor - 1));
+      placed += share;
+    }
+    this.gain(placed);
   }
 
   /** Grow every die `steps` rungs — Refinement run backwards, for an affliction
@@ -1058,6 +1154,136 @@ export class DicePool {
         );
       }
     }
+  }
+
+  /**
+   * Roland's size storm: redraw every die's SIZE from `weights`, a normalised
+   * distribution over DIE_LADDER (see systems/Characters.sizeWeights). The grid
+   * keeps its count exactly — nothing is added and nothing is destroyed — and
+   * every die keeps the two things that are about its history rather than its
+   * shape: the `source` that is credited for its points, and The Vigil's tally.
+   *
+   * Three things are NOT kept, because after a redraw they would be about a die
+   * that no longer exists:
+   *
+   *   • `maxFaceBonus` is re-resolved at the new size. A windfall d100 carries
+   *     x4 because a d100's maximum face is a one-in-a-hundred event; the same
+   *     x4 on a d2 it was just remade as would pay a fortune every other roll.
+   *     A die that had no windfall still has none.
+   *   • `loaded` and `wildFace` are re-read from the size auras, which is what
+   *     those auras have always meant — every die of a size, current or later.
+   *     So Loaded Die on d6 covers whichever dice happen to be d6 this roll.
+   *   • the shown face is clamped into the new size, so a die remade smaller is
+   *     never drawn showing a face it does not have. The next roll overwrites it.
+   *
+   * Called after the roll has been scored and after The Vigil has counted it —
+   * the tallies of a roll describe the grid that took it, and this is the grid
+   * the player rolls NEXT (see sim/engine.resolveRoll).
+   */
+  randomizeSizes(
+    weights: readonly number[],
+    rng: () => number,
+    loadedSizes: readonly DieSides[] = [],
+    wildSizes: readonly DieSides[] = [],
+  ): void {
+    if (this._count === 0) return;
+    const resize = (
+      maxFaceBonus: number,
+      sides: DieSides,
+    ): {
+      sides: DieSides;
+      maxFaceBonus: number;
+      loaded: boolean;
+      wildFace: boolean;
+    } => ({
+      sides,
+      maxFaceBonus: maxFaceBonus > 0 ? windfallFactor(true, sides) : 0,
+      loaded: loadedSizes.includes(sides),
+      wildFace: wildSizes.includes(sides),
+    });
+
+    if (this.mode === "list") {
+      for (const d of this.list) {
+        const next = resize(d.maxFaceBonus, drawSize(weights, rng));
+        d.sides = next.sides;
+        d.maxFaceBonus = next.maxFaceBonus;
+        d.loaded = next.loaded;
+        d.wildFace = next.wildFace;
+        if (d.value > d.sides) d.value = d.sides;
+      }
+      // The cached roll describes sizes the grid no longer has.
+      this.roll_ = undefined;
+      return;
+    }
+
+    // Bucketed: a bucket of N identical dice is split across the ladder by a
+    // conditional decomposition of the multinomial — each size in turn takes a
+    // stochastically-rounded share of what is left, and the last takes the
+    // remainder, so the total is exact however the rounding falls. Rebuilding
+    // through a Map rather than `addBucket` keeps the merge linear: a grid with
+    // k buckets briefly has up to 8k before identical ones collapse again.
+    const map = new Map<string, Bucket>();
+    const place = (
+      shape: {
+        sides: DieSides;
+        maxFaceBonus: number;
+        loaded: boolean;
+        wildFace: boolean;
+      },
+      source: string,
+      count: number,
+      scores: readonly number[] | undefined,
+    ) => {
+      if (count <= 0) return;
+      const key = bucketKey(
+        shape.sides,
+        shape.maxFaceBonus,
+        shape.loaded,
+        shape.wildFace,
+        source,
+        scores,
+      );
+      const existing = map.get(key);
+      if (existing) {
+        existing.count += count;
+        return;
+      }
+      const kept = keptScores(scores);
+      map.set(key, {
+        ...shape,
+        source,
+        count,
+        ...(kept ? { scores: kept } : {}),
+      });
+    };
+
+    for (const b of this.buckets) {
+      let left = b.count;
+      let probLeft = 1;
+      for (let i = 0; i < DIE_LADDER.length && left > 0; i++) {
+        const last = i === DIE_LADDER.length - 1;
+        const take = last
+          ? left
+          : Math.min(
+              left,
+              roundAtRandom(
+                probLeft > 0 ? (left * weights[i]) / probLeft : 0,
+                rng,
+              ),
+            );
+        probLeft -= weights[i];
+        if (take > 0)
+          place(
+            resize(b.maxFaceBonus, DIE_LADDER[i]),
+            b.source,
+            take,
+            b.scores,
+          );
+        left -= take;
+      }
+    }
+    this.buckets = [...map.values()];
+    this.roll_ = undefined;
   }
 
   // --- destruction (afflictions) -------------------------------------------
@@ -1530,10 +1756,8 @@ export class DicePool {
           tally(b.maxFaceBonus, b.loaded, b.wildFace, b.count);
     }
     let added = 0;
-    for (const { opts, count } of variants.values()) {
-      this.addDice(sides, count, opts, source);
-      added += count;
-    }
+    for (const { opts, count } of variants.values())
+      added += this.addDice(sides, count, opts, source);
     return added;
   }
 

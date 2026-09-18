@@ -19,6 +19,12 @@ import {
   BossModifierId,
   rollBossModifiers,
 } from "../systems/Boss";
+import {
+  CHARACTER_ORDER,
+  CHARACTERS,
+  DEFAULT_CHARACTER,
+  type CharacterId,
+} from "../systems/Characters";
 import { DicePool } from "../systems/DicePool";
 import { getRun, RunState } from "../state/RunState";
 import { setFullBudgetAllTrials } from "../sim/engine";
@@ -93,6 +99,19 @@ export function installDevPanel(game: Phaser.Game): void {
       Apply
     </button>
     <hr style="border:none;border-top:1px solid #5a4a2e;margin:10px 0 8px;" />
+    <h4 style="margin:0 0 6px;font-size:12px;color:#e6c65a;">Novice</h4>
+    <select id="dp-character"
+      style="width:100%;box-sizing:border-box;margin-top:2px;background:#1a1526;color:#e9d8a6;
+             border:1px solid #5a4a2e;border-radius:3px;padding:3px 5px;font:inherit;">
+      ${CHARACTER_ORDER.map(
+        (id) => `<option value="${id}">${CHARACTERS[id].name}</option>`,
+      ).join("")}
+    </select>
+    <button id="dp-set-character" style="margin-top:8px;width:100%;padding:5px;background:#8a1f2b;
+      color:#e9d8a6;border:none;border-radius:3px;cursor:pointer;font:inherit;font-weight:bold;">
+      Switch novice
+    </button>
+    <hr style="border:none;border-top:1px solid #5a4a2e;margin:10px 0 8px;" />
     <h4 style="margin:0 0 6px;font-size:12px;color:#e6c65a;">Set Trial</h4>
     <label style="display:block;margin-top:2px;font-size:11px;opacity:.85;">Trial number (1-33, then endless)</label>
     <input id="dp-round" type="number" min="1" max="1000" value="1"
@@ -159,6 +178,9 @@ export function installDevPanel(game: Phaser.Game): void {
   const bonusCheckbox = panel.querySelector("#dp-bonus") as HTMLInputElement;
   const roundInput = panel.querySelector("#dp-round") as HTMLInputElement;
   const goldInput = panel.querySelector("#dp-gold") as HTMLInputElement;
+  const characterSelect = panel.querySelector(
+    "#dp-character",
+  ) as HTMLSelectElement;
   const bossSelect = panel.querySelector("#dp-boss") as HTMLSelectElement;
   const itemSelect = panel.querySelector("#dp-item") as HTMLSelectElement;
   const lbScoreInput = panel.querySelector("#dp-lb-score") as HTMLInputElement;
@@ -194,6 +216,13 @@ export function installDevPanel(game: Phaser.Game): void {
     const trial = Math.max(1, Math.floor(Number(roundInput.value) || 1));
     const boss = (bossSelect.value || null) as BossModifierId | null;
     status.textContent = setTrial(game, trial, boss);
+  });
+
+  panel.querySelector("#dp-set-character")!.addEventListener("click", () => {
+    status.textContent = setCharacter(
+      game,
+      characterSelect.value as CharacterId,
+    );
   });
 
   panel.querySelector("#dp-set-gold")!.addEventListener("click", () => {
@@ -255,6 +284,9 @@ export function installDevPanel(game: Phaser.Game): void {
   const applyVisibility = () => {
     panel.style.display = visible ? "block" : "none";
     toggle.textContent = visible ? "DEV ▾" : "DEV ▸";
+    // Opened onto the novice the run is actually being played as, so the switch
+    // reads as a current setting rather than as a proposal.
+    if (visible) characterSelect.value = getRun(game.registry).character;
   };
   toggle.onclick = () => {
     visible = !visible;
@@ -308,6 +340,9 @@ async function submitLeaderboardTest(
       rank: WIN_RANK,
       trial: TRIALS_PER_RANK,
       endless: false,
+      // The dev panel's synthetic submission is not a run anybody played, so it
+      // posts under the default novice rather than inventing a character for it.
+      character: DEFAULT_CHARACTER,
       rolls: 0,
       dicePoints: {},
       itemPoints: {},
@@ -418,6 +453,39 @@ function setTrial(
   refreshActiveScene(game);
   const name = activeBoss(state)?.name;
   return `Set to trial ${trial} — rank ${rankOf(trial)} ${trialName(trial)}${name ? ` (${name})` : ""}.`;
+}
+
+/**
+ * Swap the run's novice mid-run, for testing a character's rules without
+ * playing to them from the selection screen.
+ *
+ * Deliberately NOT what the game does — a run is played as one novice from its
+ * first roll, and nothing in the rules lets it change hands. So the two pieces
+ * of state a character seeds rather than merely governs have to be re-seeded
+ * here by hand: the grid's ceiling, which the pool was built with, and the
+ * purse, which is only ever set once at `newRun`. Everything else (the shop
+ * discount, the size storm) is read live off the id and needs nothing.
+ */
+function setCharacter(game: Phaser.Game, id: CharacterId): string {
+  const state = getRun(game.registry);
+  const who = CHARACTERS[id];
+  state.character = id;
+  state.dice.setCeiling(who.gridCeiling);
+  // The purse is re-seeded only while the run has not really begun, so switching
+  // on trial 1 shows the character's true opening and switching later does not
+  // hand the player a fresh one.
+  if (state.trial === 1 && state.roll === 0 && state.rollsTaken === 0) {
+    state.gold = who.startingGold;
+    state.goldEarned = who.startingGold;
+    state.peakGold = who.startingGold;
+  }
+  game.registry.set("run", state);
+  refreshActiveScene(game);
+  const over =
+    state.dice.length > who.gridCeiling
+      ? ` Grid holds ${state.dice.length}, over the ceiling — it will not grow, and nothing is culled.`
+      : "";
+  return `Playing as ${who.name}.${over}`;
 }
 
 /** Set the run's purse outright, for testing the shop without playing to it. */

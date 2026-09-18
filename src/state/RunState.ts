@@ -2,10 +2,14 @@ import { STARTING_DICE } from "../config";
 import { makeDie, DieSides } from "../systems/Dice";
 import { DicePool } from "../systems/DicePool";
 import type { BossModifierId } from "../systems/Boss";
+import {
+  CHARACTERS,
+  DEFAULT_CHARACTER,
+  type CharacterId,
+} from "../systems/Characters";
 import type { AfflictionId } from "../systems/Afflictions";
 import type { EndingId } from "../systems/Endings";
 import type { RivalState } from "../systems/Rival";
-import { STARTING_GOLD } from "../systems/Gold";
 import type { ShopItemId } from "../systems/Items";
 import type { RollSample } from "../systems/RunHistory";
 import type { ItemPurchaseEvent } from "../systems/ItemValue";
@@ -13,6 +17,15 @@ import type { GrowthEngineId } from "../systems/GrowthEngines";
 import { randomSeed } from "../systems/Rng";
 
 export interface RunState {
+  // The novice this run is being played as (see systems/Characters). Chosen
+  // once, before the first trial, and never changed: every rule it carries is
+  // read off this id rather than copied onto the run, so a resumed save cannot
+  // drift out of step with the character it was started as.
+  //
+  // A run saved before characters existed carries no id at all and resumes as
+  // DEFAULT_CHARACTER, whose rules are the game as it was — an in-progress run
+  // must never have a rule added to it underneath the player.
+  character: CharacterId;
   // Ladder position. `trial` runs straight through the whole run (1..30 for the
   // ten ranks, then 31+ in endless); rank and trial-within-rank are derived
   // from it by config's rankOf/trialInRank rather than stored.
@@ -264,8 +277,11 @@ export interface RunState {
 export function newRun(
   shopUnlocks: readonly ShopItemId[] = [],
   seed = 0,
+  character: CharacterId = DEFAULT_CHARACTER,
 ): RunState {
+  const who = CHARACTERS[character];
   return {
+    character,
     trial: 1,
     endless: false,
     roll: 0,
@@ -277,12 +293,13 @@ export function newRun(
     score: 0n,
     trialScore: 0n,
     totalScore: 0n,
-    gold: STARTING_GOLD,
-    goldEarned: STARTING_GOLD,
+    gold: who.startingGold,
+    goldEarned: who.startingGold,
     goldSpent: 0,
     trialRollGold: { titheBowl: 0, luckyCoin: 0, offering: 0 },
     dice: DicePool.fromDice(
       Array.from({ length: STARTING_DICE }, () => makeDie(6)),
+      who.gridCeiling,
     ),
     scoringNumbers: [1],
     loadedSizes: [],
@@ -393,7 +410,7 @@ export function newRun(
     scoreStreak: 0,
     momentumStreak: 0,
     clutchClear: false,
-    peakGold: STARTING_GOLD,
+    peakGold: who.startingGold,
     peakRollsLeftOnClear: 0,
     shopUnlocks: [...shopUnlocks],
     ownedUnique: [],

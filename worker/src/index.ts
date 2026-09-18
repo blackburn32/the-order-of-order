@@ -86,6 +86,22 @@ const MEMBER_RE = /^[A-Za-z0-9_-]{8,64}$/;
 const INITIALS_RE = /^[A-Z]{0,3}$/;
 const SCORE_RE = /^\d+$/;
 
+/** The novices a run can be played as (see src/systems/Characters). An
+ *  allowlist rather than a shape check: this string is written to the board and
+ *  read back by clients that will look for its art by name, so an id this build
+ *  does not know is one no client can render. A submission carrying one is not
+ *  rejected — the run is real and the board should hold it — it is simply
+ *  recorded as the default, exactly as a client too old to send one is. */
+const CHARACTERS = ["diebert", "melodie", "roland"] as const;
+const DEFAULT_CHARACTER = "diebert";
+
+function readCharacter(params: URLSearchParams): string {
+  const raw = params.get("character") ?? "";
+  return (CHARACTERS as readonly string[]).includes(raw)
+    ? raw
+    : DEFAULT_CHARACTER;
+}
+
 /** Strip leading zeros. The sort key leans on decimal length meaning magnitude,
  *  which only holds for a canonical decimal — "007" must not sort above "42". */
 function canonicalScore(raw: string): string {
@@ -111,6 +127,7 @@ interface Submission {
   rank: number;
   trial: number;
   endless: number;
+  character: string;
   scoreExact: string;
   scoreLen: number;
   rolls: number;
@@ -146,6 +163,7 @@ function readSubmission(params: URLSearchParams): Submission | string {
     rank,
     trial,
     endless: params.get("endless") === "1" ? 1 : 0,
+    character: readCharacter(params),
     scoreExact,
     scoreLen: scoreExact.length,
     rolls,
@@ -197,6 +215,7 @@ interface BoardRow {
   rank: number;
   trial: number;
   endless: number;
+  character: string;
   score_exact: string;
   rolls: number;
   has_analysis: number;
@@ -212,8 +231,8 @@ async function getTop(request: Request, env: Env): Promise<Response> {
     : DEFAULT_BOARD_SIZE;
 
   const { results } = await env.DB.prepare(
-    `SELECT member_id, initials, rank, trial, endless, score_exact, rolls,
-            has_analysis, created_at
+    `SELECT member_id, initials, rank, trial, endless, character, score_exact,
+            rolls, has_analysis, created_at
        FROM runs
       ORDER BY rank DESC, score_len DESC, score_exact DESC
       LIMIT ?1`,
@@ -231,6 +250,7 @@ async function getTop(request: Request, env: Env): Promise<Response> {
     rank: row.rank,
     trial: row.trial,
     endless: row.endless === 1,
+    character: row.character,
     score: row.score_exact,
     rolls: row.rolls,
     hasAnalysis: row.has_analysis === 1,
@@ -285,14 +305,15 @@ async function postRun(request: Request, env: Env): Promise<Response> {
   }
 
   await env.DB.prepare(
-    `INSERT INTO runs (member_id, initials, rank, trial, endless,
+    `INSERT INTO runs (member_id, initials, rank, trial, endless, character,
                        score_exact, score_len, rolls, has_analysis, created_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
      ON CONFLICT(member_id) DO UPDATE SET
        initials = excluded.initials,
        rank = excluded.rank,
        trial = excluded.trial,
        endless = excluded.endless,
+       character = excluded.character,
        score_exact = excluded.score_exact,
        score_len = excluded.score_len,
        rolls = excluded.rolls,
@@ -305,6 +326,7 @@ async function postRun(request: Request, env: Env): Promise<Response> {
       parsed.rank,
       parsed.trial,
       parsed.endless,
+      parsed.character,
       parsed.scoreExact,
       parsed.scoreLen,
       parsed.rolls,

@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { HallEntry, loadHall } from "../systems/SaveData";
+import { CHARACTERS } from "../systems/Characters";
 import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
 import { addCamera, setCameraViewport } from "../ui/camera";
 import { AmbientLayer } from "../ui/AmbientLayer";
@@ -562,7 +563,7 @@ export class HallScene extends Phaser.Scene {
       title: row.name || "Global Run",
       // A global run now charts exactly what a local one does, so the subtitle
       // reads like the local one's rather than apologising for approximations.
-      subtitle: `global #${row.rank} · rank ${row.runRank}-${row.trial}${
+      subtitle: `global #${row.rank} · ${CHARACTERS[row.character].name} · rank ${row.runRank}-${row.trial}${
         row.endless ? " · endless" : ""
       }`,
       dicePoints: analysis.dicePoints,
@@ -619,10 +620,15 @@ export class HallScene extends Phaser.Scene {
     };
     // Header row sits just above the scrolling list, fixed.
     const rankX = grid.x + grid.width * 0.08;
-    const nameX = grid.x + grid.width * 0.42;
+    const nameX = grid.x + grid.width * 0.34;
+    const whoX = grid.x + grid.width * 0.62;
     const scoreX = grid.x + grid.width * 0.98;
     this.header2(contentTop, rankX, "RANK", headerSize, 0.5);
     this.header2(contentTop, nameX, "INITIALS", headerSize, 0.5);
+    // All three novices climb the same ladder and share this one board, so the
+    // column says which one a run was, and the board goes on sorting by rank
+    // and points alone.
+    this.header2(contentTop, whoX, "NOVICE", headerSize, 0.5);
     this.header2(contentTop, scoreX, "SCORE", headerSize, 1);
     const rule = this.add.graphics();
     rule.lineStyle(1, COLORS.gold, 0.35);
@@ -648,7 +654,8 @@ export class HallScene extends Phaser.Scene {
     // run 0..grid.width horizontally; column X are re-expressed relative to it.
     const track = this.add.container(grid.x, grid.y);
     const lRank = grid.width * 0.08;
-    const lName = grid.width * 0.42;
+    const lName = grid.width * 0.34;
+    const lWho = grid.width * 0.62;
     const lScore = grid.width * 0.98;
 
     rows.forEach((row, i) => {
@@ -698,6 +705,18 @@ export class HallScene extends Phaser.Scene {
       };
       track.add(this.add.text(lRank, y, `${row.rank}`, style).setOrigin(0.5));
       track.add(this.add.text(lName, y, row.name || "—", style).setOrigin(0.5));
+      // Set dimmer than the run's own figures: it says which discipline the run
+      // was played under, which is context for the score beside it rather than
+      // part of the score.
+      track.add(
+        this.add
+          .text(lWho, y, CHARACTERS[row.character].name, {
+            ...style,
+            fontSize: `${Math.max(9, Math.round(cellSize * 0.85))}px`,
+            color: row.isYou ? CSS.goldLight : CSS.dim,
+          })
+          .setOrigin(0.5),
+      );
       const scoreText = this.add
         .text(lScore, y, formatScore(row.score), style)
         .setOrigin(1, 0.5);

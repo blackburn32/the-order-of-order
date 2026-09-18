@@ -3,7 +3,6 @@ import { CSS, SERIF } from "../art/palette";
 import { rankOf, WIN_RANK } from "../config";
 import { getRun } from "../state/RunState";
 import { toNumberPointMap } from "../systems/ItemPoints";
-import { beginRun } from "../systems/Tutorial";
 import { continueEndless } from "../sim/engine";
 import { formatScore } from "../ui/formatScore";
 import { addFelt, bannerButton, BannerAction } from "../ui/widgets";
@@ -96,11 +95,13 @@ export class VictoryScene extends Phaser.Scene {
       );
     } else {
       actions.push(
-        // No intro here (main-menu only); beginRun still re-arms the tutorial
-        // if the player hasn't completed it yet, or clears it otherwise.
+        // No intro here (main-menu only), but the novice is still chosen — and
+        // this is the one door where the run just won may have opened a new one.
+        // The selection screen is what calls beginRun, which re-arms the
+        // tutorial if the player hasn't completed it yet, or clears it.
         {
           label: "Begin a New Run",
-          onClick: () => this.leave(() => beginRun(this)),
+          onClick: () => this.leave(() => this.scene.start("Character")),
         },
         {
           label: "Return to the Vestibule",
@@ -231,6 +232,7 @@ export class VictoryScene extends Phaser.Scene {
       rank: pending.rank,
       trial: pending.trial,
       endless: pending.endless,
+      character: pending.character,
       returnTo: "Victory",
     });
   }

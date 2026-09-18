@@ -50,6 +50,7 @@
 // rolls in ranks 7-10, and few late trials clear in two rolls or fewer.
 //
 // Run: npm run engines:experiment           RUNS=600 for tighter numbers
+//                                           CHARACTER=melodie to measure one novice
 //      SCENARIOS=resonance,pyre             to run a subset
 //      GROWTH=10,14                         the Catechism's growth percents (default 10)
 //      MIDDLE=2.2 LATE=2.4                  goal growth in ranks 4-6 / 7-10
@@ -99,6 +100,12 @@ import {
 } from "../systems/CardReworks";
 import { simulateRun, type RunRecord, type StrategyName } from "./bot";
 import { DEFAULT_CONFIG, UNLOCK_POOLS, type SimConfig } from "./config";
+import {
+  CHARACTER_ORDER,
+  DEFAULT_CHARACTER,
+  isCharacterId,
+  type CharacterId,
+} from "../systems/Characters";
 import { installStorage, seedGlobalRandom } from "./localStorageShim";
 import { setLessonsPlan, type LessonsPlan } from "./lessons";
 import { setSkepticalShoppersForSimulation } from "./skeptic";
@@ -110,6 +117,27 @@ import {
 } from "./series";
 
 const RUNS = Math.max(1, Number(process.env.RUNS ?? 300) | 0);
+
+/**
+ * The novice every run in the experiment is played as.
+ *
+ * A character changes mechanics and never goals (see systems/Characters), so the
+ * tuning bar this experiment measures against — builders reaching the duel,
+ * roll use in ranks 7-10, the share of trials cleared in two rolls — is read
+ * once per character rather than once per build. Pooling them would average a
+ * ceiling that makes swarm engines unbuildable against a storm that makes size
+ * engines a lottery, and describe neither.
+ */
+const CHARACTER = ((): CharacterId => {
+  const raw = process.env.CHARACTER ?? DEFAULT_CHARACTER;
+  if (!isCharacterId(raw)) {
+    console.error(
+      `Unknown CHARACTER "${raw}". One of: ${CHARACTER_ORDER.join(", ")}`,
+    );
+    process.exit(1);
+  }
+  return raw;
+})();
 
 /** Goal growth in ranks 4-6 and 7-10 (config's GOAL_GROWTH_PER_TRIAL), which may be
  *  moved apart from the command line to find which act a tree's builds die in. */
@@ -598,6 +626,7 @@ function runScenario(scenario: Scenario): RunResult[] {
       };
       const config: SimConfig = {
         ...field.config,
+        character: CHARACTER,
         onTrialStart: (state: RunState) => {
           if (spec?.owns(state) && trace.boughtFor === null) {
             trace.boughtFor = state.trial;

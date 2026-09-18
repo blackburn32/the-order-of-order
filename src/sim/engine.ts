@@ -16,6 +16,7 @@ import {
   type AfflictionId,
 } from "../systems/Afflictions";
 import { bossesForRank, goalFor } from "../systems/Boss";
+import { CHARACTERS, sizeWeights } from "../systems/Characters";
 import type { DicePool } from "../systems/DicePool";
 import { createRival, playerLeadsDuel, rollRival } from "../systems/Rival";
 import {
@@ -357,6 +358,16 @@ export function resolveRoll(
   if (duel && state.rival && vigilActive(state, state.rival.dice.agg().total))
     state.rival.dice.countScores(vigilPercent(state));
 
+  // Roland's size storm, last of everything the roll does to the grid.
+  //
+  // After the scoring, after the growth passives, and after The Vigil — every
+  // one of those reads the roll's own tallies, and a grid whose sizes have been
+  // redrawn is no longer the grid that took the roll. What it leaves behind is
+  // the grid the player is looking at when they reach for the next roll, which
+  // is the whole of what the storm is for. The duel's mirror is scrambled with
+  // it, from the same stream, so the two grids stay each other's copy.
+  applySizeStorm(state, rng);
+
   // The run's timeline, taken last so the sample carries the grid the player is
   // actually left looking at — everything this roll grew, shattered or culled.
   if (opts.recordHistory !== false) recordRollSample(state);
@@ -373,6 +384,28 @@ export function resolveRoll(
     denied,
     rivalPoints,
   };
+}
+
+/**
+ * Redraw every die's size on both sides of the duel, for a character whose grid
+ * never settles (see systems/Characters). A no-op for everyone else, which is
+ * every character but Roland.
+ *
+ * The two pools are drawn from the same `rng` in a fixed order, so a replayed
+ * run scrambles them exactly as the run that happened did.
+ */
+function applySizeStorm(state: RunState, rng: () => number): void {
+  const chaos = CHARACTERS[state.character].sizeChaos;
+  if (!chaos) return;
+  const weights = sizeWeights(chaos);
+  state.dice.randomizeSizes(weights, rng, state.loadedSizes, state.wildSizes);
+  if (state.rival)
+    state.rival.dice.randomizeSizes(
+      weights,
+      rng,
+      state.loadedSizes,
+      state.wildSizes,
+    );
 }
 
 /**
