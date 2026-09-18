@@ -27,6 +27,8 @@ const MODIFIER_ITEM: Record<string, ShopItemId> = {
   ouroboros: "ouroboros",
   scales: "the_scales",
   counterpoint: "counterpoint",
+  aNewVoice: "a_new_voice",
+  solitude: "solitude",
 };
 
 /** The strategy trees' multipliers (Scoring.treeMultipliers), by modifier id. */

@@ -35,6 +35,8 @@ import {
   enforceGridCap,
   feedPyre,
   MULTITUDE_PAIR_CHANCE,
+  offeringBurnChanceFor,
+  offeringGoldFor,
   riseFromTheAshes,
   type ShopItemId,
 } from "../systems/Items";
@@ -62,6 +64,11 @@ import { cardReworksEnabled, curiousCopyChance } from "../systems/CardReworks";
 // scorers without a cycle.
 export { trialRollTarget };
 
+/** Rules folded once for a roll and shared by rolling, scoring, and passives. */
+export interface RollContext {
+  afflictions: ActiveAfflictions;
+}
+
 /**
  * Roll a grid for the run it belongs to.
  *
@@ -75,15 +82,17 @@ export function rollPool(
   state: RunState,
   pool: DicePool,
   rng: () => number = Math.random,
-): void {
+): RollContext {
   if (pool === state.dice) openTrial(state);
+  const afflictions = afflictionsFor(state);
   pool.roll(
     rng,
-    scoringNumbersFor(state),
+    scoringNumbersFor(state, afflictions),
     state.royalSealSizes,
-    inertDiceCount(state, pool.length),
+    inertDiceCount(state, pool.length, afflictions),
     rollRulesFor(state),
   );
+  return { afflictions };
 }
 
 /** True when the trial is over — either its goal has been met (`trialCleared`,
@@ -175,10 +184,22 @@ export interface TrialEndOutcome {
   goldBreakdown: GoldBreakdown;
   /** Gold a ceiling affliction took back as the trial ended (Pauper's Vow). */
   goldForfeited: number;
-  rollGold: { titheBowl: number; luckyCoin: number; total: number };
+  rollGold: {
+    titheBowl: number;
+    luckyCoin: number;
+    offering: number;
+    total: number;
+  };
   totalGoldEarned: number;
   insuranceUsed: boolean;
   bossCleared: boolean;
+}
+
+export interface ResolveRollOptions {
+  /** Context returned by the matching `rollPool` call. */
+  context?: RollContext;
+  /** Live play records the analysis timeline; headless roll-outs do not need it. */
+  recordHistory?: boolean;
 }
 
 /**
@@ -196,6 +217,7 @@ export interface TrialEndOutcome {
 export function resolveRoll(
   state: RunState,
   rng: () => number = Math.random,
+  opts: ResolveRollOptions = {},
 ): {
   result: RollResult;
   spawnedCount: number;
@@ -218,7 +240,7 @@ export function resolveRoll(
 } {
   const finalRoll = state.roll + 1 >= trialRollTarget(state);
   const scoreBefore = state.score;
-  const afflictions = afflictionsFor(state);
+  const afflictions = opts.context?.afflictions ?? afflictionsFor(state);
 
   // Two afflictions can take a roll away before its dice are ever read. The toll
   // is charged first and only bites when the purse is empty, so a run that keeps
@@ -248,7 +270,7 @@ export function resolveRoll(
       ? deniedRoll(state, "tollkeeper", "Toll unpaid")
       : denied === "gamblersCurse"
         ? deniedRoll(state, "gamblersCurse", "Gambler's Curse")
-        : scoreRollHistogram(state, rolled, { finalRoll });
+        : scoreRollHistogram(state, rolled, { finalRoll, afflictions });
   accumulatePoints(state, result, finalRoll);
   state.roll += 1;
   state.score += result.points;
@@ -288,6 +310,15 @@ export function resolveRoll(
   );
   state.defectors += passives.defected;
 
+  // An Offering pays for what this roll burned or shattered on the player's own
+  // grid — its own fire, The Brazier's, and every breakage alike.
+  const offeringGold = offeringGoldFor(state, passives.broken);
+  if (offeringGold > 0) {
+    state.trialRollGold.offering += offeringGold;
+    addItemValue(state, "an_offering", offeringGold);
+    grantGold(state, offeringGold);
+  }
+
   // What the growth engines earned is read off the player's own roll — after its
   // passives, so The Pyre sees the dice this roll shattered — and neither the
   // duel's mirror nor a roll an affliction took can earn it. The counts move
@@ -296,7 +327,7 @@ export function resolveRoll(
   const earned =
     denied === null
       ? growthEarned(state, {
-          everyLiveDieScored: everyLiveDieScored(state, rolled),
+          everyLiveDieScored: everyLiveDieScored(state, rolled, afflictions),
           multipliers: multipliersLanded(result.modifiers),
           valueCounts: rolled.valueCounts,
         })
@@ -310,6 +341,7 @@ export function resolveRoll(
     rollRival(state, state.rival, rng);
     const rivalResult = scoreRollHistogram(state, state.rival.dice.agg(), {
       finalRoll,
+      afflictions,
     });
     rivalPoints = rivalResult.points;
     state.rival.score += rivalPoints;
@@ -327,14 +359,14 @@ export function resolveRoll(
 
   // The run's timeline, taken last so the sample carries the grid the player is
   // actually left looking at — everything this roll grew, shattered or culled.
-  recordRollSample(state);
+  if (opts.recordHistory !== false) recordRollSample(state);
 
   return {
     result,
     spawnedCount: passives.spawnedCount,
     spawnedBySource: passives.spawnedBySource,
     shrunk: passives.shrunk,
-    goldGained,
+    goldGained: goldGained + offeringGold,
     broken: passives.broken,
     defected: passives.defected,
     culled: passives.culled,
@@ -384,7 +416,7 @@ export function applyGridPassives(
   // grows in place — O(buckets) once bucketed, so Double the Fun doubling into
   // the millions no longer walks (or reallocates) a giant array. The Drought
   // switches all of it off for its trial.
-  const growthBlocked = blocksGrowth(state);
+  const growthBlocked = blocksGrowth(state, afflictions);
   const curious = state.hasDoubleTheFun && !growthBlocked;
   const doubleTheFunCount = curious
     ? pool.doubleTheFun(
@@ -432,6 +464,22 @@ export function applyGridPassives(
     ashes += riseFromTheAshes(state, pool, burned, growthBlocked, rng);
   }
 
+  // An Offering sets a small fire of its own: each die larger than a d1 may burn
+  // after the roll, on both sides of the duel, feeding The Pyre as The Brazier's
+  // fire does.
+  const burnChance = denied ? 0 : offeringBurnChanceFor(state);
+  const offered =
+    burnChance > 0
+      ? pool.burnAtRandom(
+          breakCount(pool.length - pool.countOfSize(1), burnChance, rng),
+          rng,
+        )
+      : 0;
+  if (offered > 0) {
+    if (pool === state.dice) feedPyre(state, pool.lastBrokenFaces);
+    ashes += riseFromTheAshes(state, pool, offered, growthBlocked, rng);
+  }
+
   // Defection bills the other half of the same roll: the dice that came up with
   // nothing are the ones the Order of Disorder can talk to. A denied roll is not
   // a failure the traitors can point at, so nothing defects on it either.
@@ -472,7 +520,7 @@ export function applyGridPassives(
     spawnedCount: spawnedCount + ashes,
     spawnedBySource: { genesis: genesisCount, molds },
     shrunk,
-    broken: broken + burned,
+    broken: broken + burned + offered,
     defected,
     culled,
   };
@@ -523,7 +571,10 @@ export function resolveTrialEnd(
   const goal = goalFor(state);
   const rollGoldReceipt = {
     ...state.trialRollGold,
-    total: state.trialRollGold.titheBowl + state.trialRollGold.luckyCoin,
+    total:
+      state.trialRollGold.titheBowl +
+      state.trialRollGold.luckyCoin +
+      state.trialRollGold.offering,
   };
   // The duel is not scored against a goal at all — it is won by being ahead of
   // the Order of Disorder when the rolls run out, and a tie is not ahead.
@@ -620,7 +671,7 @@ export function resolveTrialEnd(
   // starts a trial at zero. Gold is what carries across.
   state.score = 0n;
   state.trialScore = 0n;
-  state.trialRollGold = { titheBowl: 0, luckyCoin: 0 };
+  state.trialRollGold = { titheBowl: 0, luckyCoin: 0, offering: 0 };
   state.bossModifiers = bossesForRank(
     state,
     state.trial,
@@ -695,7 +746,7 @@ export function continueEndless(
   state.bonusRollsThisRound = carriedRolls;
   state.score = 0n;
   state.trialScore = 0n;
-  state.trialRollGold = { titheBowl: 0, luckyCoin: 0 };
+  state.trialRollGold = { titheBowl: 0, luckyCoin: 0, offering: 0 };
   state.bossModifiers = bossesForRank(
     state,
     state.trial,

@@ -19,6 +19,7 @@ import {
   DieSides,
   faceFloor,
   faceRange,
+  isVoiceDie,
   makeDie,
   rollDie,
   windfallFactor,
@@ -299,6 +300,59 @@ export class DicePool {
     return this.mode === "bucket";
   }
 
+  /**
+   * Copy the pool without collapsing and rebuilding it through stack summaries.
+   * Appraisal creates thousands of short-lived run copies, so preserving the
+   * current representation avoids an O(dice) grouping pass followed by another
+   * O(dice) materialisation pass for every hypothesis.
+   */
+  clone(): DicePool {
+    const copy = new DicePool();
+    copy.mode = this.mode;
+    copy.list = this.list.map((die) => ({
+      ...die,
+      ...(die.scores ? { scores: [...die.scores] } : {}),
+    }));
+    copy.buckets = this.buckets.map((bucket) => ({
+      ...bucket,
+      ...(bucket.scores ? { scores: [...bucket.scores] } : {}),
+      ...(bucket.lastFaces ? { lastFaces: [...bucket.lastFaces] } : {}),
+      ...(bucket.lastInertFaces
+        ? { lastInertFaces: [...bucket.lastInertFaces] }
+        : {}),
+    }));
+    copy._count = this._count;
+    copy._everAdded = this._everAdded;
+    copy.rolledFrom = this.rolledFrom;
+    copy.rolledTo = this.rolledTo;
+    copy.lastScoringNumbers = [...this.lastScoringNumbers];
+    copy.lastScales = this.lastScales;
+    copy.lastSealed = new Set(this.lastSealed);
+    copy.rollVersion = this.rollVersion;
+    copy._lastBrokenFaces = this._lastBrokenFaces;
+    copy._lastPairs = this._lastPairs;
+    if (this.roll_) {
+      const agg = this.roll_.agg;
+      copy.roll_ = {
+        agg: {
+          ...agg,
+          valueCounts: new Map(agg.valueCounts),
+          allSizes: new Set(agg.allSizes),
+          scoringSizes: new Set(agg.scoringSizes),
+          scoringValueCounts: new Map(agg.scoringValueCounts),
+          voiceValueCounts: new Map(agg.voiceValueCounts),
+          vigil: agg.vigil.map((group) => ({
+            scores: [...group.scores],
+            count: group.count,
+          })),
+        },
+        scoringBySource: new Map(this.roll_.scoringBySource),
+        windfallTriggers: new Map(this.roll_.windfallTriggers),
+      };
+    }
+    return copy;
+  }
+
   // --- transition ----------------------------------------------------------
 
   /** Flip to bucket storage once the grid is large enough. One-way, even though
@@ -431,6 +485,7 @@ export class DicePool {
     const allSizes = new Set<number>();
     const scoringSizes = new Set<number>();
     const scoringValueCounts = new Map<number, number>();
+    const voiceValueCounts = new Map<number, number>();
     const vigil = new Map<string, VigilGroup>();
     let scoringCount = 0;
     let scoringD1Count = 0;
@@ -487,6 +542,11 @@ export class DicePool {
           scoringBySource.set(
             die.source,
             (scoringBySource.get(die.source) ?? 0) + 1,
+          );
+        } else if (isVoiceDie(die)) {
+          voiceValueCounts.set(
+            die.value,
+            (voiceValueCounts.get(die.value) ?? 0) + 1,
           );
         }
         // A sealed size pays its whole face; the base point is counted above.
@@ -557,6 +617,8 @@ export class DicePool {
               royalSealHit
             )
               royalSealScoringCount += c;
+          } else if (isVoiceDie(b)) {
+            voiceValueCounts.set(v, (voiceValueCounts.get(v) ?? 0) + c);
           }
           if (royalSealHit) royalSealBonus += (b.sides - 1) * c;
           if (windfallHit) windfallFactors.add(b.maxFaceBonus);
@@ -597,6 +659,7 @@ export class DicePool {
         scoringSizes,
         windfallMult,
         scoringValueCounts,
+        voiceValueCounts,
         faceValueBonus,
         sidesTotal,
         vigil: [...vigil.values()],
@@ -1078,6 +1141,42 @@ export class DicePool {
     return removed;
   }
 
+  /** Burn `count` live dice larger than a d1, chosen at random from the most
+   *  recent roll (An Offering). Never empties the grid. Returns how many burned;
+   *  their faces are `lastBrokenFaces`. */
+  burnAtRandom(count: number, rng: () => number): number {
+    this._lastBrokenFaces = 0;
+    const target = Math.min(count, this._count - 1);
+    if (target <= 0 || !this.roll_) return 0;
+    if (this.mode === "list") {
+      const end = Math.min(this.rolledTo, this.list.length);
+      const candidates: number[] = [];
+      for (let k = this.rolledFrom; k < end; k++)
+        if (this.list[k].sides > 1) candidates.push(k);
+      // A partial Fisher-Yates: the first `take` slots are a uniform sample.
+      const take = Math.min(target, candidates.length);
+      for (let j = 0; j < take; j++) {
+        const swap = j + Math.floor(rng() * (candidates.length - j));
+        [candidates[j], candidates[swap]] = [candidates[swap], candidates[j]];
+      }
+      const doomed = candidates.slice(0, take).sort((a, b) => b - a);
+      for (const k of doomed) {
+        this._lastBrokenFaces += this.list[k].sides;
+        this.list.splice(k, 1);
+      }
+      this._count -= take;
+      this.rolledTo -= take;
+      return take;
+    }
+    const before = this.buckets.map((b) => ({ b, count: b.count }));
+    const removed = this.removeSpread(target, (b) =>
+      b.sides > 1 ? b.count : 0,
+    );
+    for (const { b, count: was } of before)
+      this._lastBrokenFaces += (was - b.count) * b.sides;
+    return removed;
+  }
+
   /** Faces (a die's sides) the most recent breakage, defection or Brazier pass
    *  destroyed — what The Pyre counts. */
   get lastBrokenFaces(): number {
@@ -1173,10 +1272,14 @@ export class DicePool {
 
   /** Grow the die at grid index `i` up `steps` rungs (Ascension). Returns false
    *  if the index is invalid or the die is already a d100. */
-  growAt(i: number, steps: number): boolean {
+  growAt(i: number, steps: number, crownHighestFace = false): boolean {
     return this.mutateAt(i, (d) => {
       if (!canGrow(d)) return false;
       for (let s = 0; s < steps; s++) this.stepUp(d);
+      // Ascension: the grown die's highest face always scores. A max-face
+      // factor of 1 is that rule and nothing more; a die that already doubles
+      // its roll there (Rollplayer) keeps its own factor.
+      if (crownHighestFace) d.maxFaceBonus = Math.max(d.maxFaceBonus, 1);
       return true;
     });
   }

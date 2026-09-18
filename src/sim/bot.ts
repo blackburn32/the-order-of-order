@@ -61,6 +61,7 @@ import {
 } from "./engine";
 import { isMirrorTrial, rankOf, trialInRank } from "../config";
 import { mulberry32 } from "./localStorageShim";
+import { skepticAllows } from "./skeptic";
 import { SimConfig } from "./config";
 import { acceptsCurse, afflictionRisk } from "./curseValue";
 import {
@@ -226,8 +227,7 @@ function chooseTargets(
       return dice.length > 1
         ? { index: Math.floor(rng() * dice.length) }
         : null;
-    case "winnowing":
-    case "an_offering": {
+    case "winnowing": {
       const groups = dice.groups();
       return new Set(groups.map((group) => group.die.sides)).size > 1
         ? { index: pick(groups, rng).firstIndex }
@@ -396,6 +396,7 @@ function accepts(
   const committed = committedTrees.get(state)?.tree;
   const owner = ENGINE_CARD_TREE.get(offer.id);
   if (committed && owner && owner !== committed) return false;
+  if (!skepticAllows(state, offer)) return false;
   return strategy.accepts
     ? strategy.accepts(state, offer, curseAppetite)
     : acceptsCurse(state, offer, curseAppetite);
@@ -980,7 +981,7 @@ export function simulateRun(
     bundleSize: cfg.expertBundleSize,
     objective: cfg.expertObjective,
   };
-  const state = newRun(cfg.unlockedAtStart);
+  const state = newRun(cfg.unlockedAtStart, seed);
   beginRun(state, rng);
   commitToTree(state, strategy, seed);
 
@@ -1018,8 +1019,8 @@ export function simulateRun(
     // It is what `benchmark.ts` measures a bot's capacity from, and the same
     // moment a run exported from the dev panel is usually captured at.
     if (state.roll === 0) cfg.onTrialStart?.(state);
-    rollPool(state, state.dice, rng);
-    resolveRoll(state, rng);
+    const context = rollPool(state, state.dice, rng);
+    resolveRoll(state, rng, { context, recordHistory: false });
     rolls += 1;
     rollScores?.push(Number(state.score));
     if (clearedOnRoll === null && state.trialCleared)

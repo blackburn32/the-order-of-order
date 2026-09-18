@@ -11,7 +11,6 @@
 // appraiser calls this thousands of times per shop, so it copies by hand and
 // drops the one field a hypothesis has no use for — the timeline.
 
-import { DicePool } from "../systems/DicePool";
 import type { RunState } from "../state/RunState";
 
 function cloneCounts<T extends Record<string, unknown>>(map: T): T {
@@ -21,12 +20,10 @@ function cloneCounts<T extends Record<string, unknown>>(map: T): T {
 /**
  * A run the caller may mutate freely.
  *
- * The grid is rebuilt through the pool's own stack summary, which is the only
- * copy that stays cheap when the grid is in the millions — `summarize()` is
- * O(buckets) there, not O(dice). Below the bucket threshold that round trip
- * re-materialises the dice in stack order, so grid INDICES are not stable
- * across a clone. Nothing may carry an index from a clone back to the original;
- * name a die by its group (see `appraise.groupKey`) instead.
+ * The grid uses the pool's direct clone path: bucketed grids stay O(buckets),
+ * while small per-die grids avoid a grouping pass followed by re-materialising
+ * every die. Callers still name targets by group (see `appraise.groupKey`)
+ * rather than coupling an appraisal to a particular grid index.
  *
  * `rollHistory` is dropped rather than copied: it is a chart's input, no rule
  * reads it, and a hypothesis that carried hundreds of samples per clone would
@@ -37,7 +34,7 @@ export function cloneRunState(state: RunState): RunState {
     ...state,
     bossModifiers: [...state.bossModifiers],
     trialRollGold: { ...state.trialRollGold },
-    dice: DicePool.fromStacks(state.dice.summarize()),
+    dice: state.dice.clone(),
     scoringNumbers: [...state.scoringNumbers],
     loadedSizes: [...state.loadedSizes],
     wildSizes: [...state.wildSizes],
@@ -46,7 +43,7 @@ export function cloneRunState(state: RunState): RunState {
     endingsSeen: [...state.endingsSeen],
     rival: state.rival
       ? {
-          dice: DicePool.fromStacks(state.rival.dice.summarize()),
+          dice: state.rival.dice.clone(),
           score: state.rival.score,
           roll: state.rival.roll,
         }

@@ -35,6 +35,11 @@
 //                 (sim/treeShoppers.ts) at ×3 odds with the reworks and every
 //                 tree's prototypes in the shop
 //   smart-prototypes  the smart field with every tree's cards in the shop
+//   skeptic-E     engine E's scenario above (catechism: engine-10-both-trees3;
+//                 curious: curious-multitude) with a shopper that buys none of
+//                 its tree's cards on faith — only the engine, the boost, and
+//                 cards that pay on the next trial (sim/skeptic.ts). The gap
+//                 between the two is how much of a tree is bought on trust
 //
 // Every scenario reports how far grids got: the share of runs (of builders,
 // when an engine is measured) whose grid ever held 10k, 100k and 1M dice.
@@ -55,7 +60,8 @@
 //      VIGIL_GRID=12 RESONANCE_MULTS=2      the engines' input rates
 //      CROWN_FACES=50 CROWN_CAP=5           The Ashen Crown's faces per doubling
 //                                           and most doublings
-//      OFFERING_GOLD=5                      An Offering's faces per gold (0: none)
+//      OFFERING_CHANCE=0.02 OFFERING_GOLD=3 An Offering's burn chance per die per
+//                                           roll, and its most gold a roll
 //      PERCENT=vigil:8,pyre:12              an engine's growth or cap before its
 //                                           boost (The Catechism's is GROWTH)
 
@@ -76,10 +82,7 @@ import {
   type GrowthEngineId,
   type GrowthTuning,
 } from "../systems/GrowthEngines";
-import {
-  setOfferingFacesPerGoldForSimulation,
-  type ShopItemId,
-} from "../systems/Items";
+import { setOfferingForSimulation, type ShopItemId } from "../systems/Items";
 import { ITEM_TREES } from "../systems/ItemTrees";
 import {
   setAshenCrownForSimulation,
@@ -98,6 +101,7 @@ import { simulateRun, type RunRecord, type StrategyName } from "./bot";
 import { DEFAULT_CONFIG, UNLOCK_POOLS, type SimConfig } from "./config";
 import { installStorage, seedGlobalRandom } from "./localStorageShim";
 import { setLessonsPlan, type LessonsPlan } from "./lessons";
+import { setSkepticalShoppersForSimulation } from "./skeptic";
 import {
   seedOffsetFor,
   seriesConfig,
@@ -155,9 +159,12 @@ const envNumber = (name: string): number | null =>
     : null;
 const CROWN_FACES = envNumber("CROWN_FACES");
 const CROWN_CAP = envNumber("CROWN_CAP");
+const OFFERING_CHANCE = envNumber("OFFERING_CHANCE");
 const OFFERING_GOLD = envNumber("OFFERING_GOLD");
-if (OFFERING_GOLD !== null)
-  console.log(`  an offering pays a gold per ${OFFERING_GOLD} faces`);
+if (OFFERING_CHANCE !== null || OFFERING_GOLD !== null)
+  console.log(
+    `  an offering burns ${OFFERING_CHANCE ?? "its own"} a die, pays up to ${OFFERING_GOLD ?? "its own"} gold a roll`,
+  );
 if (CROWN_FACES !== null || CROWN_CAP !== null)
   console.log(
     `  ashen crown ${JSON.stringify({ faces: CROWN_FACES, cap: CROWN_CAP })}`,
@@ -335,6 +342,8 @@ interface Scenario {
   trees?: number;
   /** Whether the cards that compound outside the trees are reworked. */
   reworks?: boolean;
+  /** Whether the shopper refuses tree cards that do not pay now. */
+  skeptical?: boolean;
 }
 
 /** Growth percents The Catechism is swept over. The card prints 10%. */
@@ -504,6 +513,22 @@ const SCENARIOS: Scenario[] = [
     reworks: true,
     prototypes: true,
   })),
+  ...(Object.keys(ENGINES) as EngineKind[]).map((engine): Scenario => {
+    const trusting =
+      engine === "catechism"
+        ? { field: LESSONS_FIELD, prototypes: false }
+        : { field: ENGINES[engine].field, prototypes: true };
+    return {
+      id: `skeptic-${engine}`,
+      label: `${ENGINES[engine].label}, skeptical shopper, trees ×3`,
+      engine,
+      goals: CANDIDATE_GOALS,
+      trees: 3,
+      reworks: true,
+      skeptical: true,
+      ...trusting,
+    };
+  }),
   {
     id: "smart-prototypes",
     label: "Smart field, trees ×3, every tree's cards",
@@ -555,6 +580,7 @@ function runScenario(scenario: Scenario): RunResult[] {
   setItemTreesForSimulation(scenario.trees ?? false);
   setCardReworksForSimulation(scenario.reworks ?? false);
   setGridCurseGoalPerDoublingForSimulation(scenario.gridCurse ?? null);
+  setSkepticalShoppersForSimulation(scenario.skeptical ?? false);
   const results: RunResult[] = [];
   for (const field of scenario.field) {
     seedGlobalRandom(DEFAULT_CONFIG.seed + field.seedOffset);
@@ -766,8 +792,33 @@ function topPurchases(group: RunResult[], count = 14): [string, number][] {
     .slice(0, count);
 }
 
+/** The tree an engine belongs to, by its engine card. */
+const ENGINE_TREE: Record<EngineKind, string> = {
+  catechism: "lessons",
+  curious: "gathering",
+  resonance: "resonance",
+  endowment: "treasury",
+  plainsong: "canticle",
+  weight: "weighing",
+  pyre: "pyre",
+  vigil: "hermitage",
+};
+
+/** Share of ALL runs that bought each card of the engine's chain, root first —
+ *  where a chain loses the runs that never commit to it. */
+function chainBought(kind: EngineKind, group: RunResult[]): number[] {
+  const tree = ITEM_TREES.find((t) => t.id === ENGINE_TREE[kind])!;
+  return tree.nodes.map(
+    (node) =>
+      group.filter(({ record }) => (record.purchases[node.id] ?? 0) > 0)
+        .length / Math.max(1, group.length),
+  );
+}
+
 interface Summary {
   scenario: Scenario;
+  /** Share of all runs that bought each chain card, root first. */
+  chain: number[];
   /** Share of the measured runs whose grid reached each of GRID_MARKS. */
   grid: number[];
   duel: number;
@@ -810,6 +861,13 @@ function report(
   if (spec) {
     const buildRanks = built.map((result) =>
       rankOf(Math.max(1, result.trace.boughtFor! - 1)),
+    );
+    const tree = ITEM_TREES.find((t) => t.id === ENGINE_TREE[kind!])!;
+    console.log(
+      "  chain bought (all runs): " +
+        chainBought(kind!, results)
+          .map((share, index) => `${tree.nodes[index].id} ${pct(share)}`)
+          .join(" → "),
     );
     console.log(
       `  engine built ${pct(built.length / results.length)} (median rank ${median(buildRanks)}) · ` +
@@ -919,6 +977,7 @@ function report(
 
   return {
     scenario,
+    chain: kind ? chainBought(kind, results) : [],
     grid,
     duel: duelShare(results),
     win: mean(records.map((record) => (record.won ? 1 : 0))),
@@ -966,7 +1025,7 @@ try {
   setGrowthTuningForSimulation(TUNING);
   setGildedAltarMaxDoublingsForSimulation(ALTAR_CAP);
   setAshenCrownForSimulation(CROWN_FACES, CROWN_CAP);
-  setOfferingFacesPerGoldForSimulation(OFFERING_GOLD);
+  setOfferingForSimulation(OFFERING_CHANCE, OFFERING_GOLD);
   for (const [id, percent] of PERCENTS)
     setEngineGrowthPercentForSimulation(id, percent);
   for (const scenario of selected) {
@@ -981,24 +1040,25 @@ try {
   setGrowthTuningForSimulation(null);
   setGildedAltarMaxDoublingsForSimulation(null);
   setAshenCrownForSimulation(null, null);
-  setOfferingFacesPerGoldForSimulation(null);
+  setOfferingForSimulation(null, null);
   for (const [id] of PERCENTS) setEngineGrowthPercentForSimulation(id, null);
   setLessonsPlan();
   setItemTreesForSimulation(null);
   setCardReworksForSimulation(true);
   setCuriousCopyChanceForSimulation(null);
   setGridCurseGoalPerDoublingForSimulation(null);
+  setSkepticalShoppersForSimulation(false);
 }
 
 const swept = summaries.filter((summary) => summary.scenario.engine);
 if (swept.length > 1) {
   console.log("\n== Summary — every engine scenario ==");
   console.log(
-    `${"scenario".padEnd(54)} built  duel|built  duel|not  grows on  ×/roll  max boost  use r4-6  use r7-10  ≤2 rolls  win   10k+  1M+`,
+    `${"scenario".padEnd(54)} t1   t2   built  duel|built  duel|not  grows on  ×/roll  max boost  use r4-6  use r7-10  ≤2 rolls  win   10k+  1M+`,
   );
   for (const summary of swept) {
     console.log(
-      `${summary.scenario.label.padEnd(54)} ${pct(summary.built)}   ${pct(summary.duelIfBuilt)}        ` +
+      `${summary.scenario.label.padEnd(54)} ${pct(summary.chain[0])} ${pct(summary.chain[1])} ${pct(summary.built)}   ${pct(summary.duelIfBuilt)}        ` +
         `${pct(summary.duelIfNot)}      ${pct(summary.grewOn)}     ` +
         `${Number.isNaN(summary.perRoll) ? "    —" : summary.perRoll.toFixed(3)}   ${pct(summary.boost[BOOST_MAX_COPIES])}       ` +
         `${pct(summary.pacing.use[1])}      ${pct(summary.pacing.use[2])}       ` +

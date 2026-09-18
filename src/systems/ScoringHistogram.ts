@@ -1,5 +1,6 @@
 import { COLORS } from "../art/palette";
 import {
+  type ActiveAfflictions,
   applyMultiplierPenalty,
   extraPointsFor,
   jackpotFor,
@@ -8,13 +9,15 @@ import {
   snakeEyesFor,
   suppresses,
 } from "./Afflictions";
-import { Die, DieSides, faceFloor, faceRange } from "./Dice";
+import { Die, DieSides, faceFloor, faceRange, isVoiceDie } from "./Dice";
 import type { RollRules } from "./DicePool";
 import { probit } from "./ExactMath";
 import { RunState } from "../state/RunState";
 import { groupScores, growRoll, type VigilGroup } from "./GrowthEngines";
 import {
   counterpointDice,
+  solitudePoints,
+  voiceDice,
   DOWNBEAT_MULT,
   flatMultiplier,
   flatMultiplierModifiers,
@@ -63,6 +66,8 @@ export interface DiceAgg {
   // hit their current top face this roll (1n when none did)
   scoringValueCounts: Map<number, number>; // face value -> LIVE dice showing it
   // that scored (Counterpoint pays the lone faces that did not)
+  voiceValueCounts: Map<number, number>; // face value -> LIVE A New Voice dice
+  // showing it that did not score (they score when alone on their face)
   faceValueBonus: number; // under The Scales, face value ABOVE the base point,
   // summed over every scoring die
   sidesTotal: number; // the sides of every die in the grid, inert ones included
@@ -83,6 +88,7 @@ export function aggFromDice(
 ): DiceAgg {
   const scales = rules.scales ?? false;
   const scoringValueCounts = new Map<number, number>();
+  const voiceValueCounts = new Map<number, number>();
   const vigil = new Map<string, VigilGroup>();
   let faceValueBonus = 0;
   let sidesTotal = 0;
@@ -132,6 +138,11 @@ export function aggFromDice(
         windfallScoringCount += 1;
       else if (!numberScores && !die.wildFace && !windfallHit && royalSealHit)
         royalSealScoringCount += 1;
+    } else if (isVoiceDie(die)) {
+      voiceValueCounts.set(
+        die.value,
+        (voiceValueCounts.get(die.value) ?? 0) + 1,
+      );
     }
     // The seal pays the whole face, and the base point is already counted above.
     if (royalSealHit) royalSealBonus += die.sides - 1;
@@ -154,6 +165,7 @@ export function aggFromDice(
     scoringSizes,
     windfallMult,
     scoringValueCounts,
+    voiceValueCounts,
     faceValueBonus,
     sidesTotal,
     vigil: [...vigil.values()],
@@ -262,6 +274,7 @@ export function rollBucketsToAgg(
   const ballast = new Set<number>(rules.ballastSizes ?? []);
   const anvil = rules.anvil ?? false;
   const scoringValueCounts = new Map<number, number>();
+  const voiceValueCounts = new Map<number, number>();
   let faceValueBonus = 0;
   let sidesTotal = 0;
   const valueCounts = new Map<number, number>();
@@ -309,6 +322,8 @@ export function rollBucketsToAgg(
           windfallScoringCount += c;
         else if (!numberScores && !b.wildFace && !windfallHit && royalSealHit)
           royalSealScoringCount += c;
+      } else if (isVoiceDie(b)) {
+        voiceValueCounts.set(v, (voiceValueCounts.get(v) ?? 0) + c);
       }
       if (royalSealHit) royalSealBonus += (b.sides - 1) * c;
       // Windfall only fires on a die's own top face; a loaded die (faces < sides)
@@ -333,6 +348,7 @@ export function rollBucketsToAgg(
     scoringSizes,
     windfallMult,
     scoringValueCounts,
+    voiceValueCounts,
     faceValueBonus,
     sidesTotal,
     // A bucket summary carries no score counts; the grid's own pool does.
@@ -344,11 +360,17 @@ export function rollBucketsToAgg(
  *  Inert dice are left out, as every count on the aggregate already leaves them
  *  out: a die the Toll crossed through produced no outcome to fail with. Dice
  *  that scored only on a number The Silence has muted did not score. */
-export function everyLiveDieScored(state: RunState, agg: DiceAgg): boolean {
+export function everyLiveDieScored(
+  state: RunState,
+  agg: DiceAgg,
+  afflictions?: ActiveAfflictions,
+): boolean {
   const live = agg.total - agg.inertCount;
   const scored =
     agg.scoringCount -
-    (suppresses(state, "extraNumber") ? agg.extraNumberScoringCount : 0);
+    (suppresses(state, "extraNumber", afflictions)
+      ? agg.extraNumberScoringCount
+      : 0);
   return live > 0 && scored >= live;
 }
 
@@ -370,7 +392,7 @@ export function scoreRollHistogram(
   // the whole modifier. Doing it here means a caller that passes the unfiltered
   // scoring numbers still gets the right answer, and doing it on a caller that
   // already filtered them is a no-op (the count is already zero).
-  const silenced = suppresses(state, "extraNumber");
+  const silenced = suppresses(state, "extraNumber", opts.afflictions);
   const extraNumberScored = silenced ? 0 : agg.extraNumberScoringCount;
 
   // Nothing here has to account for the inert dice. Whoever rolled the grid
@@ -469,7 +491,8 @@ export function scoreRollHistogram(
     });
   }
 
-  const extraPointBonus = scoringCount * extraPointsFor(state);
+  const extraPointBonus =
+    scoringCount * extraPointsFor(state, opts.afflictions);
   if (extraPointBonus > 0) {
     modifiers.push({
       id: "extraPoint",
@@ -482,7 +505,7 @@ export function scoreRollHistogram(
     });
   }
 
-  const keenEdge = keenEdgeFor(state);
+  const keenEdge = keenEdgeFor(state, opts.afflictions);
   const keenEdgeBonus = keenEdge > 0 ? scoringD1Count * keenEdge * 2 : 0;
   if (keenEdgeBonus > 0) {
     modifiers.push({
@@ -496,7 +519,7 @@ export function scoreRollHistogram(
     });
   }
 
-  if (snakeEyesFor(state)) {
+  if (snakeEyesFor(state, opts.afflictions)) {
     let bonus = 0n;
     for (const [value, count] of valueCounts)
       if (count >= 2) bonus += BigInt(value) * BigInt(count);
@@ -513,7 +536,7 @@ export function scoreRollHistogram(
     }
   }
 
-  const jackpot = jackpotFor(state);
+  const jackpot = jackpotFor(state, opts.afflictions);
   const jackpotSets = Math.floor(scoringCount / JACKPOT_DICE);
   if (jackpot > 0 && jackpotSets > 0) {
     modifiers.push({
@@ -527,6 +550,21 @@ export function scoreRollHistogram(
     });
   }
 
+  const voices = state.hasCounterpoint
+    ? 0
+    : voiceDice(valueCounts, agg.voiceValueCounts);
+  if (voices > 0) {
+    modifiers.push({
+      id: "aNewVoice",
+      name: "A New Voice",
+      points: BigInt(voices * (1 + extraPointsFor(state, opts.afflictions))),
+      color: COLORS.glow,
+      dice: noDice,
+      bigPulse: false,
+      float: "aggregate",
+    });
+  }
+
   const counterpoint = state.hasCounterpoint
     ? counterpointDice(valueCounts, agg.scoringValueCounts)
     : 0;
@@ -534,7 +572,9 @@ export function scoreRollHistogram(
     modifiers.push({
       id: "counterpoint",
       name: "Counterpoint",
-      points: BigInt(counterpoint * (1 + extraPointsFor(state))),
+      points: BigInt(
+        counterpoint * (1 + extraPointsFor(state, opts.afflictions)),
+      ),
       color: COLORS.glow,
       dice: noDice,
       bigPulse: false,
@@ -584,6 +624,18 @@ export function scoreRollHistogram(
       float: "aggregate",
     });
   }
+  const solitude = solitudePoints(state, agg.total);
+  if (solitude > 0) {
+    modifiers.push({
+      id: "solitude",
+      name: "Solitude",
+      points: BigInt(solitude),
+      color: COLORS.glow,
+      dice: noDice,
+      bigPulse: false,
+      float: "aggregate",
+    });
+  }
   const dividendPoints = state.dividend * Math.floor(agg.total / 3);
   if (dividendPoints > 0) {
     modifiers.push({
@@ -609,7 +661,8 @@ export function scoreRollHistogram(
   const hourglassActive = state.hasHourglass && isHourglassRoll(state);
   const downbeatActive = state.downbeat > 0 && isDownbeatRoll(state);
   const hairTriggerActive = state.hasHairTrigger && isFirstRoll(state);
-  const luckySevenActive = luckySevenFor(state) && showsASeven(valueCounts);
+  const luckySevenActive =
+    luckySevenFor(state, opts.afflictions) && showsASeven(valueCounts);
   const treeMults = treeMultipliers(state, agg);
   const multiplier = applyMultiplierPenalty(
     state,
@@ -625,6 +678,7 @@ export function scoreRollHistogram(
       (luckySevenActive ? LUCKY_SEVEN_MULT : 1n) *
       treeMultiplierProduct(treeMults) *
       agg.windfallMult,
+    opts.afflictions,
   );
 
   modifiers.push(...flatMultiplierModifiers(state));

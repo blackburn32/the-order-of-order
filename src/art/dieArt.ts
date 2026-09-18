@@ -119,10 +119,14 @@ export function drawDieStrike(g: Phaser.GameObjects.Graphics): void {
   g.lineBetween(STRIKE_REACH, -STRIKE_REACH, -STRIKE_REACH, STRIKE_REACH);
 }
 
-/** The gold marker a max-face die wears, centred on the origin. Matches the
- *  baked `pip-gold`, which is a 12x12 texture holding a radius-5 circle. */
-export function drawDiePip(g: Phaser.GameObjects.Graphics): void {
-  g.fillStyle(COLORS.gold, 1);
+/** The marker a max-face die (gold) or one of A New Voice's dice (`voicePip`)
+ *  wears, centred on the origin. Matches the baked `pip-gold` / `pip-voice`,
+ *  each a 12x12 texture holding a radius-5 circle. */
+export function drawDiePip(
+  g: Phaser.GameObjects.Graphics,
+  color: number = COLORS.gold,
+): void {
+  g.fillStyle(color, 1);
   g.fillCircle(0, 0, 5);
 }
 

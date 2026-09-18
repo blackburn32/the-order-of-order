@@ -148,8 +148,8 @@ export function measureCapacity(
     let peakLog = 0;
     let trialsCleared = 0;
     for (let r = 0; r < rolls; r++) {
-      rollPool(trial, trial.dice, rng);
-      resolveRoll(trial, rng);
+      const context = rollPool(trial, trial.dice, rng);
+      resolveRoll(trial, rng, { context, recordHistory: false });
       if (clearedOn === 0 && trial.trial === firstTrial && trial.trialCleared)
         clearedOn = trial.roll;
       if (crossing && trialComplete(trial)) {

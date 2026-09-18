@@ -148,6 +148,7 @@ function receiptLines(o: TrialEndOutcome): ReceiptLine[] {
     { label: "Relics and boss rewards", amount: o.goldBreakdown.items },
     { label: "Tithe Bowl during rolls", amount: o.rollGold.titheBowl },
     { label: "Lucky Coin during rolls", amount: o.rollGold.luckyCoin },
+    { label: "An Offering during rolls", amount: o.rollGold.offering },
     // The one line that can take gold away: a ceiling affliction skimming the
     // purse as the trial ends (Pauper's Vow). Printed last, and signed, so the
     // receipt still adds up to what the player is carrying into the shop.

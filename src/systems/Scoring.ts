@@ -1,5 +1,6 @@
 import { COLORS } from "../art/palette";
 import {
+  type ActiveAfflictions,
   applyMultiplierPenalty,
   inertDiceCount,
   extraPointsFor,
@@ -10,7 +11,7 @@ import {
   snakeEyesFor,
   suppresses,
 } from "./Afflictions";
-import { Die } from "./Dice";
+import { Die, isVoiceDie } from "./Dice";
 import { RunState } from "../state/RunState";
 import { trialRollTarget } from "./Trial";
 import {
@@ -105,6 +106,18 @@ export function setGildedAltarMaxDoublingsForSimulation(
 }
 /** The Cell doubles a roll for every seat empty below this many dice. */
 export const CELL_SEATS = 8;
+
+/** Solitude's points per copy for each empty seat below CELL_SEATS dice. The
+ *  Hermitage's first card counts the same seats The Cell does, so the grid size
+ *  that closes The Cell is the one the player has already watched close this. */
+export const SOLITUDE_POINTS_PER_SEAT = 1;
+
+/** Solitude's points on a roll of a grid holding `dice` dice. */
+export function solitudePoints(state: RunState, dice: number): number {
+  return (
+    state.solitude * SOLITUDE_POINTS_PER_SEAT * Math.max(0, CELL_SEATS - dice)
+  );
+}
 
 /** The Ashen Crown doubles a roll for every this many faces burned or shattered
  *  in the run, up to ×16 — The Pyre's fixed factor, paid for by the burning the
@@ -226,6 +239,20 @@ export function treeMultiplierModifiers(
     bigPulse: false,
     float: "aggregate" as const,
   }));
+}
+
+/** A New Voice's dice that scored by being alone on their face: its dice that
+ *  scored by no other rule, showing a face no other live die shows. Each pays a
+ *  scoring die's points. Counterpoint pays every such die, these included, so a
+ *  run that owns it reads this as nothing. */
+export function voiceDice(
+  valueCounts: Map<number, number>,
+  voiceValueCounts: Map<number, number>,
+): number {
+  let dice = 0;
+  for (const [value, count] of voiceValueCounts)
+    if (count === 1 && valueCounts.get(value) === 1) dice += 1;
+  return dice;
 }
 
 /** Counterpoint's dice: live dice alone on their face that scored by no other
@@ -443,6 +470,8 @@ export interface RollResult {
 /** Options that vary a roll's scoring beyond the run state itself. */
 export interface ScoreOpts {
   finalRoll?: boolean; // this is the last roll of the trial (Last Call multiplies it)
+  /** Folded once by the roll engine and reused by every scoring query. */
+  afflictions?: ActiveAfflictions;
 }
 
 /** Score an explicit array of rolled dice against the run's scoring numbers.
@@ -464,6 +493,7 @@ export function scoreRoll(
   const seenFaces = new Set<number>();
   const rawValueCounts = new Map<number, number>();
   const scoringValueCounts = new Map<number, number>();
+  const voiceValueCounts = new Map<number, number>();
   const vigilGroups = new Map<string, VigilGroup>();
   const scales = state.hasScales;
   let faceValueBonus = 0;
@@ -528,6 +558,11 @@ export function scoreRoll(
         keenDice.push(i);
       }
       scoringDice.push(i);
+    } else if (isVoiceDie(die)) {
+      voiceValueCounts.set(
+        die.value,
+        (voiceValueCounts.get(die.value) ?? 0) + 1,
+      );
     }
     // A sealed size pays its whole face; the base point every scoring die earns
     // is already counted above, so the seal adds the rest of the face's value.
@@ -715,6 +750,23 @@ export function scoreRoll(
     });
   }
 
+  // A New Voice: its dice score when alone on their face — Counterpoint's rule,
+  // for three dice, before the card that makes it every die's.
+  const voices = state.hasCounterpoint
+    ? 0
+    : voiceDice(valueCounts, voiceValueCounts);
+  if (voices > 0) {
+    modifiers.push({
+      id: "aNewVoice",
+      name: "A New Voice",
+      points: BigInt(voices * (1 + extraPointsFor(state))),
+      color: COLORS.glow,
+      dice: [],
+      bigPulse: false,
+      float: "aggregate",
+    });
+  }
+
   // Counterpoint: a die alone on its face scores whatever its number, paying
   // what any scoring die pays.
   const counterpoint = state.hasCounterpoint
@@ -779,6 +831,18 @@ export function scoreRoll(
       id: "pocketChange",
       name: "Small Mercies",
       points: BigInt(2 * state.pocketChange),
+      color: COLORS.glow,
+      dice: [],
+      bigPulse: false,
+      float: "aggregate",
+    });
+  }
+  const solitude = solitudePoints(state, dice.length);
+  if (solitude > 0) {
+    modifiers.push({
+      id: "solitude",
+      name: "Solitude",
+      points: BigInt(solitude),
       color: COLORS.glow,
       dice: [],
       bigPulse: false,

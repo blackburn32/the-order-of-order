@@ -180,7 +180,7 @@ console.log("\nAdvancing");
   state.score = goalFor(state);
   state.trialCleared = true;
   state.roll = 3;
-  state.trialRollGold = { titheBowl: 2, luckyCoin: 1 };
+  state.trialRollGold = { titheBowl: 2, luckyCoin: 1, offering: 0 };
   const before = state.gold;
   const out = resolveTrialEnd(state);
   check(out.phase === "advanced", "a cleared trial advances the ladder");

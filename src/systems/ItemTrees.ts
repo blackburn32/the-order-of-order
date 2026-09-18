@@ -22,6 +22,30 @@
 // off the engine itself: cards no other strategy has a use for, opened only once
 // the run owns the engine they feed, so they never dilute the base set.
 //
+// THE RULE — every card pays when it is bought. A card on the shelf must be
+// worth buying to a run that owns nothing but what opened it: a support must pay
+// in the base set, a chain root must pay on its own, and a gated card must pay
+// once its parent is owned. A card whose only use is a card further down a tree
+// hangs from that card as a branch instead. A player has never seen the rest of
+// the chain, so a card that only makes sense beside it is a card no player buys
+// — and a chain whose early cards are such cards is one no player starts, however
+// well a shopper who already knows the chain builds it. The Weighing once opened
+// on growing a die, which lowers its odds of scoring until The Scales arrive;
+// Ballast then made a size never roll the 1 it scored on. Rule of thumb: the
+// root teaches the tree's idea in miniature (Ascension's die always scores its
+// highest face; A New Voice's dice score alone on their face; An Offering pays
+// for what burns; Solitude pays for empty seats), and the cards that deepen the
+// idea wait for the card that makes it the rule.
+//
+// Shelf copy follows from it: a gated card is only ever seen once its parent is
+// owned, so its text may name that card ("Under The Scales, …"), and should when
+// the parent is why the card is worth having.
+//
+// `npm run engines:experiment` measures the rule: its skeptic-* scenarios play
+// every tree with a shopper that buys none of its tree's cards on faith (see
+// sim/skeptic.ts). A tree the trusting shopper builds and the skeptic does not is
+// a tree whose early cards break the rule.
+//
 // A chain holds one card of each tier, in order. Tiers describe how a card grows
 // a run's score, which is what the goal curve is designed against:
 //   1  additive      more dice, more points per die; culled in ranks 4-6
@@ -182,7 +206,6 @@ export const ITEM_TREES: ItemTree[] = [
       { id: "chip", tier: 1 },
       { id: "whetstone", tier: 1 },
       { id: "loaded_die", tier: 1 },
-      { id: "dismissal", tier: 1 },
       { id: "two_novices", tier: 1 },
       { id: "extra_number", tier: 1 },
       { id: "refinement", tier: 2 },
@@ -190,13 +213,17 @@ export const ITEM_TREES: ItemTree[] = [
       { id: "iron_debt", tier: 2 },
       { id: "keen_edge", tier: 2 },
       { id: "leaden_dice", tier: 2 },
-      { id: "winnowing", tier: 2 },
-      { id: "excommunication", tier: 2 },
       { id: "the_calling", tier: 2 },
       { id: "rollplayer", tier: 2 },
       { id: "centurion", tier: 2 },
     ],
-    branches: [{ id: "uniform" }],
+    branches: [
+      { id: "uniform" },
+      // Shedding dice only pays once a roll every die scores grows something.
+      { id: "dismissal", parent: "the_catechism" },
+      { id: "winnowing", parent: "the_catechism" },
+      { id: "excommunication", parent: "the_catechism" },
+    ],
   },
   {
     id: "gathering",
@@ -259,14 +286,17 @@ export const ITEM_TREES: ItemTree[] = [
       "While the grid stays at 12 dice or fewer, each time a die scores its points are permanently multiplied by 1.1; each Discipline adds 0.02 to that, up to 1.16.",
     excludes:
       "The Gathering (any growth past 12 dice switches the engine off) and The Pyre (nothing to burn).",
-    nodes: chain("a_parting", "the_cell", "the_vigil", "discipline"),
+    nodes: chain("solitude", "the_cell", "the_vigil", "discipline"),
     supports: [
       { id: "extra_point", tier: 1 },
-      { id: "anointing", tier: 2 },
       { id: "paupers_vow", tier: 2 },
       { id: "tollkeeper", tier: 2 },
     ],
     branches: [
+      // Removing a die pays once an empty seat does.
+      { id: "a_parting", parent: "solitude" },
+      // Counts only under The Vigil.
+      { id: "anointing", parent: "the_vigil" },
       {
         id: "famished_idol",
         change: {
@@ -290,9 +320,6 @@ export const ITEM_TREES: ItemTree[] = [
       "gravity_well",
     ),
     supports: [
-      { id: "two_elders", tier: 1 },
-      { id: "ballast", tier: 1 },
-      { id: "exaltation", tier: 1 },
       { id: "royal_seal", tier: 2 },
       { id: "snake_eyes", tier: 2 },
     ],
@@ -300,6 +327,11 @@ export const ITEM_TREES: ItemTree[] = [
       { id: "gravitas" },
       { id: "lucky_seven" },
       { id: "the_bloat" },
+      // Bigger dice score less often until The Scales pay their faces, and a
+      // ballasted size never rolls the 1 it scored on.
+      { id: "two_elders", parent: "the_scales" },
+      { id: "exaltation", parent: "the_scales" },
+      { id: "ballast", parent: "the_scales" },
       // Builders' grids held too few d100s to reach the cap, and rode the
       // tree's fixed factors instead.
       { id: "the_ancestors", parent: "the_weight_of_ages" },
@@ -349,8 +381,10 @@ export const ITEM_TREES: ItemTree[] = [
     excludes:
       "The Gathering (copies repeat faces) and The Lessons (shrunk dice all show 1).",
     nodes: chain("a_new_voice", "counterpoint", "plainsong", "descant"),
-    supports: [{ id: "the_choirmaster", tier: 2 }],
+    supports: [],
     branches: [
+      // Before Counterpoint a repeated face is usually a scoring 1.
+      { id: "the_choirmaster", parent: "counterpoint" },
       { id: "the_canticle" },
       { id: "parade" },
       { id: "menagerie" },
@@ -366,23 +400,25 @@ export const ITEM_TREES: ItemTree[] = [
       "Each roll permanently multiplies your multiplier by up to 1.1: 0.01 for every 20 faces burned or shattered; each Everflame adds 0.02 to the cap, up to 1.16.",
     excludes:
       "The Lessons (a shrunk die is worthless fuel) and The Hermitage (nothing to burn).",
-    nodes: chain("an_offering", "kindling", "the_pyre", "everflame"),
+    nodes: chain("an_offering", "the_ashen_crown", "the_pyre", "everflame"),
     supports: [
       { id: "tinder", tier: 1 },
       { id: "ouroboros", tier: 2 },
-      { id: "from_the_ashes", tier: 2 },
     ],
     branches: [
       { id: "blood_price" },
-      // Builders died in ranks 4-6, before the engine could carry them: the
-      // chain's tier-2 card earned nothing until The Pyre was owned. Kindling
-      // now doubles the faces this reads too.
-      { id: "the_ashen_crown" },
+      // Kindling was the chain's tier-2 card and paid nothing until The Ashen
+      // Crown or The Pyre was owned: a shopper who buys only what pays bought
+      // it in no run at all, so no run reached the engine. The Crown pays on the
+      // first die An Offering burns, and Kindling doubles what it already reads.
+      { id: "kindling" },
       // The fire burned only when a curse shattered dice or an Offering was
-      // bought: it grew on a third of the rolls taken.
-      // Opened with Kindling rather than the engine: burning every roll is
-      // what pays The Ashen Crown before The Pyre arrives.
-      { id: "the_brazier", parent: "kindling" },
+      // bought: it grew on a third of the rolls taken. Opened with The Ashen
+      // Crown rather than the engine: burning every roll is what pays the Crown
+      // before The Pyre arrives.
+      { id: "the_brazier" },
+      // Returns nothing until something burns.
+      { id: "from_the_ashes", parent: "an_offering" },
       { id: "embers", parent: "the_pyre" },
     ],
   },

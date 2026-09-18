@@ -12,7 +12,8 @@ import {
   faceNumeralStyle,
 } from "../art/dieArt";
 import { drawEffectBorder } from "./dieBorder";
-import { Die } from "../systems/Dice";
+import { COLORS } from "../art/palette";
+import { Die, isVoiceDie } from "../systems/Dice";
 
 /** How long a newly won die takes to reach its full size in the grid. */
 export const SPAWN_MS = 260;
@@ -51,13 +52,29 @@ const SHARP_THRESHOLD = 1.25;
  */
 const MAX_SHARP_RESOLUTION = 16;
 
+/** A corner pip: gold top-right on a die whose highest face always scores
+ *  (Rollplayer, Centurion, Ascension), blue top-left on one of A New Voice's
+ *  dice, which scores when alone on its face. */
+interface Pip {
+  baked: Phaser.GameObjects.Image;
+  sharp?: Phaser.GameObjects.Graphics;
+  wanted: boolean;
+}
+
+const PIPS = {
+  gold: { x: 34, key: "pip-gold", color: COLORS.gold },
+  voice: { x: -34, key: "pip-voice", color: COLORS.voicePip },
+} as const;
+
+type PipKind = keyof typeof PIPS;
+
 /** A die in the grid: ivory body, baked face (pips/numeral), type label. */
 export class DieSprite extends Phaser.GameObjects.Container {
   die: Die;
   private bodyImage: Phaser.GameObjects.Image;
   private faceImage: Phaser.GameObjects.Image;
   private typeImage: Phaser.GameObjects.Image;
-  private marker?: Phaser.GameObjects.Image;
+  private pips: Partial<Record<PipKind, Pip>> = {};
   // The cross an inert die wears (see setInert), hidden on every other die.
   private strikeImage: Phaser.GameObjects.Image;
   // Border overlay for effect flashes. Created up front (not lazily) so the
@@ -91,7 +108,6 @@ export class DieSprite extends Phaser.GameObjects.Container {
   private sharpFace?: Phaser.GameObjects.Text;
   private sharpLabel?: Phaser.GameObjects.Text;
   private sharpStrike?: Phaser.GameObjects.Graphics;
-  private sharpMarker?: Phaser.GameObjects.Graphics;
   // Whether this die is drawn past what its baked art can serve. Starts false:
   // until told otherwise a die is at its designed size under an unzoomed
   // camera, which is how every screen outside the grid draws one.
@@ -112,10 +128,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
     this.faceImage = artImage(scene, 0, -4, "die-atlas", `face-${die.sides}-1`);
     this.add([this.bodyImage, this.typeImage, this.faceImage]);
 
-    if (die.maxFaceBonus) {
-      this.marker = artImage(scene, 34, -34, "pip-gold");
-      this.add(this.marker);
-    }
+    this.syncPips();
 
     // Over the face, under the effect border, so a die that is both inert and
     // flashing still reads as struck out. Built for every die rather than on
@@ -154,6 +167,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
   refreshType(): void {
     this.bodyImage.setTexture(`die-${this.die.sides}`);
     this.typeImage.setFrame(`label-d${this.die.sides}`);
+    this.syncPips();
     if (this.sharp) this.drawSharp();
     this.showFace(this.die.value > 0 ? this.die.value : null);
   }
@@ -237,13 +251,59 @@ export class DieSprite extends Phaser.GameObjects.Container {
     this.sharpStrike = scene.add.graphics();
     drawDieStrike(this.sharpStrike);
 
-    if (this.marker) {
-      this.sharpMarker = scene.add.graphics();
-      this.sharpMarker.setPosition(this.marker.x, this.marker.y);
-      drawDiePip(this.sharpMarker);
-    }
+    for (const kind of Object.keys(this.pips) as PipKind[])
+      this.pips[kind]!.sharp = this.sharpPip(kind);
 
     this.addSharp();
+  }
+
+  /** The live counterpart of a pip, drawn where its baked image sits. */
+  private sharpPip(kind: PipKind): Phaser.GameObjects.Graphics {
+    const pip = this.scene.add.graphics();
+    pip.setPosition(PIPS[kind].x, -34);
+    drawDiePip(pip, PIPS[kind].color);
+    return pip;
+  }
+
+  /**
+   * Show the pips this die has earned and hide the rest. Re-read on every
+   * refresh rather than fixed at construction: the grid re-points a sprite at
+   * other dice as it shifts, and Ascension marks a die the grid already holds.
+   * A pip is built the first time a die wants one and kept after, hidden.
+   */
+  private syncPips(): void {
+    const wants: Record<PipKind, boolean> = {
+      gold: this.die.maxFaceBonus > 0,
+      voice: isVoiceDie(this.die),
+    };
+    let added = false;
+    for (const kind of Object.keys(PIPS) as PipKind[]) {
+      let pip = this.pips[kind];
+      if (!pip && wants[kind]) {
+        pip = {
+          baked: artImage(this.scene, PIPS[kind].x, -34, PIPS[kind].key),
+          wanted: true,
+        };
+        this.add(pip.baked);
+        if (this.sharpBody) {
+          pip.sharp = this.sharpPip(kind);
+          this.add(pip.sharp);
+        }
+        this.pips[kind] = pip;
+        added = true;
+      }
+      if (!pip) continue;
+      pip.wanted = wants[kind];
+      pip.baked.setVisible(pip.wanted && !this.sharp);
+      pip.sharp?.setVisible(pip.wanted && this.sharp);
+    }
+    // A late pip was appended above the strike and the effect border, which are
+    // drawn over every other part of the die.
+    if (added && this.strikeImage) {
+      this.bringToTop(this.strikeImage);
+      if (this.sharpStrike) this.bringToTop(this.sharpStrike);
+      this.bringToTop(this.effectBorder);
+    }
   }
 
   /** Add the live children, in the baked children's own stacking order. */
@@ -253,7 +313,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
         this.sharpBody,
         this.sharpLabel,
         this.sharpFace,
-        this.sharpMarker,
+        ...Object.values(this.pips).map((pip) => pip.sharp),
         this.sharpStrike,
       ].filter((child) => child !== undefined),
     );
@@ -288,10 +348,12 @@ export class DieSprite extends Phaser.GameObjects.Container {
 
     this.bodyImage.setVisible(!sharp);
     this.typeImage.setVisible(!sharp);
-    this.marker?.setVisible(!sharp);
+    for (const pip of Object.values(this.pips)) {
+      pip.baked.setVisible(pip.wanted && !sharp);
+      pip.sharp?.setVisible(pip.wanted && sharp);
+    }
     this.sharpBody?.setVisible(sharp);
     this.sharpLabel?.setVisible(sharp);
-    this.sharpMarker?.setVisible(sharp);
 
     this.strikeImage.setVisible(!sharp && this.inert);
     this.sharpStrike?.setVisible(sharp && this.inert);

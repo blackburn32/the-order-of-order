@@ -14,7 +14,9 @@
 //   1  take the tree's gated cards — its chain and the multipliers its tier-2
 //      card opens — on sight, at any price the purse covers; the engine and its
 //      boost first. A repeatable chain card is on the path for its first copy
-//      only, and after that is worth what the plan says it is
+//      only, and after that is worth what the plan says it is. A card the plan
+//      refuses outright (rule 2) stays refused even when gated: a branch can be
+//      a tree's card and still be wrong for this grid
 //   2  rank everything else by what the tree wants of the grid (`worth`)
 //   3  from rank 2, while the engine is still missing, keep a build card's price
 //      banked through everything that is not on the path
@@ -307,31 +309,15 @@ const WEIGHING: TreePlan = {
   },
 };
 
-/** The size An Offering burns: the most faces among the sizes that hold no
- *  more than half the grid, so a burn feeds the fire without ending the run. */
-function offeringTarget(state: RunState): DiceGroup | undefined {
-  const counts = state.dice.sizeCounts();
-  const half = state.dice.length / 2;
-  return best(
-    state.dice.groups().filter((group) => counts[group.die.sides] <= half),
-    (a, b) =>
-      counts[a.die.sides] * a.die.sides > counts[b.die.sides] * b.die.sides,
-  );
-}
-
 /** The Pyre: a grid that burns as fast as it regrows. */
 const PYRE: TreePlan = {
   tree: "pyre",
   theme: "swarm",
   engine: "the_pyre",
   boost: "everflame",
-  worth: (state, offer) => {
+  worth: (_state, offer) => {
     const id = offer.id;
     if (SHRINKS.has(id)) return TIER.refuse;
-    if (id === "an_offering")
-      return (state.hasPyre || state.hasAshenCrown) && offeringTarget(state)
-        ? TIER.useful
-        : TIER.refuse;
     if (id === "kindling" || id === "ouroboros" || id === "from_the_ashes")
       return TIER.power;
     // More dice that score is more dice that shatter.
@@ -345,8 +331,6 @@ const PYRE: TreePlan = {
       economy: TIER.useful,
     });
   },
-  chooseTargets: (state, offer) =>
-    offer.id === "an_offering" ? at(offeringTarget(state)) : undefined,
 };
 
 /** The Hermitage keeps no more dice than this: The Cell pays for every seat
@@ -477,10 +461,12 @@ export function planRank(
   const owner = ENGINE_CARD_TREE.get(offer.id);
   if (owner && owner !== plan.tree) return TIER.refuse;
   if (OUTSIDE_TREES[offer.id]?.status === "retire") return TIER.refuse;
+  const worth = plan.worth(state, offer);
+  if (worth <= TIER.refuse) return TIER.refuse;
   // Rule 1: the gated cards, each on the path until the run owns one.
   if (GATED.get(plan.tree)!.has(offer.id) && !state.purchases[offer.id])
     return TIER.path;
-  return plan.worth(state, offer);
+  return worth;
 }
 
 /** Whether this plan takes the card at all. Cursed cards are appraised against

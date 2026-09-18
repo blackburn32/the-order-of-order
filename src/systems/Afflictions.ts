@@ -443,15 +443,22 @@ export function afflict(state: RunState, id: AfflictionId): void {
 // so a debuff written once here applies identically in the live game, the
 // reference scorer and the balance simulation.
 
-export function suppresses(state: RunState, bonus: SuppressibleBonus): boolean {
-  return afflictionsFor(state).suppress.includes(bonus);
+export function suppresses(
+  state: RunState,
+  bonus: SuppressibleBonus,
+  active: ActiveAfflictions = afflictionsFor(state),
+): boolean {
+  return active.suppress.includes(bonus);
 }
 
 /** Whether growth is blocked *right now* — during the trial the ladder is
  *  standing on. What the trial itself reads: the roll loop's growth passives and
  *  the trial-start ones. */
-export function blocksGrowth(state: RunState): boolean {
-  return afflictionsFor(state).blocksGrowth;
+export function blocksGrowth(
+  state: RunState,
+  active: ActiveAfflictions = afflictionsFor(state),
+): boolean {
+  return active.blocksGrowth;
 }
 
 /** Whether growth is blocked for the rest of the run rather than for one trial.
@@ -478,8 +485,11 @@ export function blocksGrowthPermanently(state: RunState): boolean {
  * are later multiplied by. `inertDiceCount` turns the fraction into the dice
  * that actually pay it.
  */
-export function deadDiceFraction(state: RunState): number {
-  const a = afflictionsFor(state);
+export function deadDiceFraction(
+  state: RunState,
+  active: ActiveAfflictions = afflictionsFor(state),
+): number {
+  const a = active;
   const late = state.roll > 0 ? a.lateRollDeadFraction : 0;
   return Math.min(DEAD_DICE_CEILING, a.deadDiceFraction + late);
 }
@@ -508,8 +518,12 @@ export function deadDiceFraction(state: RunState): number {
  * where nothing has to be reordered to keep them that way, and a die only ever
  * goes inert once — the block never gives one back and then takes another.
  */
-export function inertDiceCount(state: RunState, total: number): number {
-  const fraction = deadDiceFraction(state);
+export function inertDiceCount(
+  state: RunState,
+  total: number,
+  active: ActiveAfflictions = afflictionsFor(state),
+): number {
+  const fraction = deadDiceFraction(state, active);
   if (fraction <= 0 || total <= 0) return 0;
   return Math.min(total, Math.floor(total * fraction));
 }
@@ -533,33 +547,57 @@ export function isInertIndex(
 const ONLY_ONES = [1];
 
 /** The faces that score this roll. The Silence cuts this back to 1s only. */
-export function scoringNumbersFor(state: RunState): number[] {
-  return suppresses(state, "extraNumber") ? ONLY_ONES : state.scoringNumbers;
+export function scoringNumbersFor(
+  state: RunState,
+  active: ActiveAfflictions = afflictionsFor(state),
+): number[] {
+  return suppresses(state, "extraNumber", active)
+    ? ONLY_ONES
+    : state.scoringNumbers;
 }
 
-export function extraPointsFor(state: RunState): number {
-  return suppresses(state, "extraPoint") ? 0 : state.extraPoints;
+export function extraPointsFor(
+  state: RunState,
+  active: ActiveAfflictions = afflictionsFor(state),
+): number {
+  return suppresses(state, "extraPoint", active) ? 0 : state.extraPoints;
 }
 
-export function keenEdgeFor(state: RunState): number {
-  return suppresses(state, "keenEdge") ? 0 : state.keenEdge;
+export function keenEdgeFor(
+  state: RunState,
+  active: ActiveAfflictions = afflictionsFor(state),
+): number {
+  return suppresses(state, "keenEdge", active) ? 0 : state.keenEdge;
 }
 
-export function snakeEyesFor(state: RunState): boolean {
-  return state.hasSnakeEyes && !suppresses(state, "patterns");
+export function snakeEyesFor(
+  state: RunState,
+  active: ActiveAfflictions = afflictionsFor(state),
+): boolean {
+  return state.hasSnakeEyes && !suppresses(state, "patterns", active);
 }
 
-export function jackpotFor(state: RunState): number {
-  return suppresses(state, "patterns") ? 0 : state.jackpot;
+export function jackpotFor(
+  state: RunState,
+  active: ActiveAfflictions = afflictionsFor(state),
+): number {
+  return suppresses(state, "patterns", active) ? 0 : state.jackpot;
 }
 
-export function luckySevenFor(state: RunState): boolean {
-  return state.hasLuckySeven && !suppresses(state, "patterns");
+export function luckySevenFor(
+  state: RunState,
+  active: ActiveAfflictions = afflictionsFor(state),
+): boolean {
+  return state.hasLuckySeven && !suppresses(state, "patterns", active);
 }
 
 /** The Eclipse halves the compounded run multiplier, never below ×1. */
-export function applyMultiplierPenalty(state: RunState, mult: bigint): bigint {
-  if (!afflictionsFor(state).halveMultiplier) return mult;
+export function applyMultiplierPenalty(
+  state: RunState,
+  mult: bigint,
+  active: ActiveAfflictions = afflictionsFor(state),
+): bigint {
+  if (!active.halveMultiplier) return mult;
   const halved = mult / 2n;
   return halved < 1n ? 1n : halved;
 }

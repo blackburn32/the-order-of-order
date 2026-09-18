@@ -705,7 +705,8 @@ export class InventoryScene extends Phaser.Scene {
         const chips: ChipSpec[] = [];
         for (const factor of [...tally.maxFace.keys()].sort((a, b) => b - a)) {
           chips.push({
-            label: `×${factor} ON MAX${share(tally.maxFace.get(factor)!)}`,
+            // Ascension's dice score on their highest face without multiplying.
+            label: `${factor > 1 ? `×${factor} ON MAX` : "MAX SCORES"}${share(tally.maxFace.get(factor)!)}`,
             color: COLORS.goldLight,
             css: CSS.goldLight,
           });

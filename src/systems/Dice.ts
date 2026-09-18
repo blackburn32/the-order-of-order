@@ -34,6 +34,16 @@ export interface Die {
   scores?: number[];
 }
 
+/** A New Voice's dice score when no other die shows their face. They are known
+ *  by the card that added them rather than by a flag of their own: the rule
+ *  belongs to those three dice, and a copy another card makes of one is that
+ *  card's die — just as a copy begins The Vigil with no tally. */
+export const VOICE_SOURCE = "a_new_voice";
+
+export function isVoiceDie(die: { source: string }): boolean {
+  return die.source === VOICE_SOURCE;
+}
+
 export interface DieOpts {
   maxFaceBonus?: boolean | number;
   loaded?: boolean;

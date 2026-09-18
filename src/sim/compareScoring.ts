@@ -288,6 +288,27 @@ function scenarios(): Scenario[] {
         royalSealSizes: [6],
       },
     ),
+    s(
+      "a new voice, ascension and solitude",
+      [
+        ...Array.from({ length: 3 }, (_, i) =>
+          makeDie(([8, 10, 20] as const)[i], {}, "a_new_voice"),
+        ),
+        makeDie(10, { maxFaceBonus: 1 }, "ascension"),
+        ...many(2, 6),
+      ],
+      { solitude: 2, extraPoints: 1 },
+    ),
+    s(
+      "a new voice under counterpoint",
+      [
+        ...Array.from({ length: 6 }, (_, i) =>
+          makeDie(([8, 10, 20] as const)[i % 3], {}, "a_new_voice"),
+        ),
+        ...many(4, 20),
+      ],
+      { hasCounterpoint: true },
+    ),
     s("the gilded altar and the cell", many(5, 6), {
       gold: 37,
       hasGildedAltar: true,

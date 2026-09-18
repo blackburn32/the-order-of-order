@@ -54,9 +54,9 @@ export interface RunState {
   // tax; gold a ceiling affliction confiscates is forfeited, not spent.
   goldSpent: number;
   // Gold earned during rolls in the current trial. Clear rewards are returned
-  // by resolveTrialEnd; these two counters let Results account for the whole
-  // trial, including Tithe Bowl and Lucky Coin.
-  trialRollGold: { titheBowl: number; luckyCoin: number };
+  // by resolveTrialEnd; these counters let Results account for the whole
+  // trial, including Tithe Bowl, Lucky Coin and An Offering.
+  trialRollGold: { titheBowl: number; luckyCoin: number; offering: number };
   dice: DicePool; // the grid; per-die below BUCKET_THRESHOLD, bucketed above
   scoringNumbers: number[]; // starts [1]; Extra number adds 2, then 3
   // Persistent size auras (Loaded Die / Wild Face). A die size listed here means
@@ -172,6 +172,7 @@ export interface RunState {
   hasPyre: boolean; // growth from the faces that burned or shattered
   kindling: number; // burned faces count double toward The Pyre, per copy
   everflame: number; // +2% to The Pyre's cap per copy
+  hasOffering: boolean; // dice burn now and then, and every die that burns pays gold
   hasBrazier: boolean; // every die that rolled a 1 burns after the roll
   hasEmbers: boolean; // half the faces The Pyre spends stay for the next roll
   hasAshenCrown: boolean; // ×2 per 100 faces burned or shattered this run
@@ -192,6 +193,7 @@ export interface RunState {
   // at their relevant moment (scoring, trial start, trial clear). Unlike the
   // boolean flags above, these items are repeatable and their effects compound.
   pocketChange: number; // +2 pts every roll, per copy
+  solitude: number; // +1 pt every roll per empty seat below 8 dice, per copy
   whetstone: number; // 10% chance per copy each roll to shrink a random die
   dividend: number; // +1 pt per 3 dice every roll, per copy
   momentum: number; // +2 × momentumStreak per copy on each scoring roll
@@ -278,7 +280,7 @@ export function newRun(
     gold: STARTING_GOLD,
     goldEarned: STARTING_GOLD,
     goldSpent: 0,
-    trialRollGold: { titheBowl: 0, luckyCoin: 0 },
+    trialRollGold: { titheBowl: 0, luckyCoin: 0, offering: 0 },
     dice: DicePool.fromDice(
       Array.from({ length: STARTING_DICE }, () => makeDie(6)),
     ),
@@ -356,6 +358,7 @@ export function newRun(
     hasPyre: false,
     kindling: 0,
     everflame: 0,
+    hasOffering: false,
     hasBrazier: false,
     hasEmbers: false,
     hasAshenCrown: false,
@@ -367,6 +370,7 @@ export function newRun(
     discipline: 0,
     goalScale: 1,
     pocketChange: 0,
+    solitude: 0,
     whetstone: 0,
     dividend: 0,
     momentum: 0,

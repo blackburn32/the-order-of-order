@@ -75,7 +75,7 @@ function populatedRun(): RunState {
   run.totalScore = run.score * 99n;
   run.gold = 37;
   run.goldEarned = 101;
-  run.trialRollGold = { titheBowl: 3, luckyCoin: 2 };
+  run.trialRollGold = { titheBowl: 3, luckyCoin: 2, offering: 1 };
   run.scoringNumbers = [1, 2, 3, 4];
   run.loadedSizes = [6];
   run.wildSizes = [20];
@@ -159,7 +159,7 @@ async function main(): Promise<void> {
       total: 8,
     },
     goldForfeited: 0,
-    rollGold: { titheBowl: 1, luckyCoin: 1, total: 2 },
+    rollGold: { titheBowl: 1, luckyCoin: 1, offering: 0, total: 2 },
     totalGoldEarned: 40,
     insuranceUsed: false,
     bossCleared: false,

@@ -445,6 +445,26 @@ RUNS≥2000: builders reach the duel ~35-55% of the time, runs with no engine
 ~0-2%, builders spend ≥~32% of their rolls in ranks 7-10, and ≲~37% of those
 trials clear in two rolls or fewer.
 
+### Does a tree sell itself? — the skeptical shopper
+
+Every tree shopper takes its tree's gated cards on sight, because it already
+knows where the chain leads. A player doesn't, which is why the trees follow the
+rule that every card pays when it is bought (`systems/ItemTrees`, top of file).
+The `skeptic-<engine>` scenarios test that rule
+(`SCENARIOS=skeptic-weight,skeptic-pyre`): the same shopper, except that a tree
+card (anything but the engine and its boost) is bought only if rolling out the
+next trial with it (`sim/appraise.ts`, matched seeds) comes out ahead — ≥ +0.02
+log10 points, or more gold for no loss of points (`sim/skeptic.ts`). Each run
+also prints `chain bought (all runs)`, the share of runs that bought each chain
+card, root first, which is where a tree loses the players who never start it.
+
+Compare each `skeptic-*` scenario with its trusting twin (`catechism` ↔
+`engine-10-both-trees3`, `curious` ↔ `curious-multitude`, the rest by engine
+name). A tree whose build rate collapses under the skeptic has an early card
+that doesn't pay on its own. The skeptic rolls out every tree card it is
+offered, so it costs about a second a run; run the eight scenarios as separate
+processes.
+
 ## The smart-field survival curve (the previous design)
 
 `smartSurvivalCurve.ts` tuned the curve before the engine gate. It uses the
@@ -630,6 +650,7 @@ crosses the bucket threshold.
 | `goldCheck.ts`           | Gold-economy assertions.                                                                         |
 | `lessons.ts`             | The Lessons shopper: one strategy tree played toward its engine, as six numbered rules.          |
 | `treeShoppers.ts`        | One written plan per remaining tree (Resonance, Treasury, Canticle, Weighing, Pyre, Hermitage).  |
+| `skeptic.ts`             | Sim switch: tree shoppers buy a tree card only if it pays on the next trial (`skeptic-*`).       |
 | `catechismExperiment.ts` | Every tree's engine against the engine-gate goal curve, on matched seeds; restores every switch. |
 | `exportItemTrees.ts`     | Validates the strategy trees (`systems/ItemTrees`) and writes them to CSV.                       |
 | `compareScoring.ts`      | Per-die vs histogram scorer parity + perf timing.                                                |

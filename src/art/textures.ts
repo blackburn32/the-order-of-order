@@ -80,6 +80,7 @@ const BAKE_SCALE: Record<string, number> = {
   "btn-corners-scroll": ART_SCALE,
   banner: ART_SCALE,
   "pip-gold": ART_SCALE,
+  "pip-voice": ART_SCALE,
   "die-atlas": ART_SCALE,
   ...Object.fromEntries(DIE_LADDER.map((sides) => [`die-${sides}`, ART_SCALE])),
 };
@@ -1183,6 +1184,10 @@ function buildPips(scene: Phaser.Scene): void {
   g.translateCanvas(6, 6);
   drawDiePip(g);
   bakeGraphics(g, "pip-gold", 12, 12);
+  const voice = scene.add.graphics();
+  voice.translateCanvas(6, 6);
+  drawDiePip(voice, COLORS.voicePip);
+  bakeGraphics(voice, "pip-voice", 12, 12);
 }
 
 /**

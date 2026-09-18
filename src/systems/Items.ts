@@ -33,6 +33,7 @@ import {
   JACKPOT_DICE,
   JACKPOT_POINTS,
   OUROBOROS_BONUS,
+  SOLITUDE_POINTS_PER_SEAT,
 } from "./Scoring";
 import { trialRollTarget } from "./Trial";
 import { addItemValue } from "./ItemValue";
@@ -153,6 +154,7 @@ export type ShopItemId =
   | "the_brazier"
   | "embers"
   | "the_ashen_crown"
+  | "solitude"
   | "a_parting"
   | "the_cell"
   | "anointing"
@@ -225,6 +227,7 @@ type RunFlag =
   | "hasWeightOfAges"
   | "hasAnvil"
   | "hasPyre"
+  | "hasOffering"
   | "hasBrazier"
   | "hasEmbers"
   | "hasAshenCrown"
@@ -245,6 +248,7 @@ type RunFlag =
  *  compounds with the count (see the stacking passives on RunState). */
 type RunCounter =
   | "pocketChange"
+  | "solitude"
   | "whetstone"
   | "dividend"
   | "momentum"
@@ -327,10 +331,9 @@ export type Effect =
   | { kind: "removeTarget" } // remove the chosen die — never the last one
   | { kind: "removeSize" } // remove every die of the chosen size — never the only size
   | { kind: "removeMissing" } // remove every die whose size can miss — never the whole grid
-  | { kind: "growTarget"; steps?: number } // grow the chosen die `steps` rungs
+  | { kind: "growTarget"; steps?: number; crownHighestFace?: boolean } // grow the chosen die `steps` rungs; optionally its highest face always scores
   | { kind: "growSize"; steps?: number } // grow every die of the chosen size `steps` rungs
   | { kind: "ballastSize" } // the chosen size never rolls its lowest two faces (now + future)
-  | { kind: "burnSize" } // burn every die of the chosen size — never the only size
   | { kind: "anointTarget"; times: number } // the chosen die counts `times` more scores
   | { kind: "bonusRollsProportional"; fraction: number; min: number } // add max(min, ⌊fraction·roll budget⌋) rolls, this trial only
   | { kind: "bonusRollPerRound"; count?: number }
@@ -384,10 +387,13 @@ const sealSize = (): Effect => ({ kind: "sealSize" });
 const removeTarget = (): Effect => ({ kind: "removeTarget" });
 const removeSize = (): Effect => ({ kind: "removeSize" });
 const removeMissing = (): Effect => ({ kind: "removeMissing" });
-const growTarget = (steps?: number): Effect => ({ kind: "growTarget", steps });
+const growTarget = (steps?: number, crownHighestFace?: boolean): Effect => ({
+  kind: "growTarget",
+  steps,
+  crownHighestFace,
+});
 const growSize = (steps?: number): Effect => ({ kind: "growSize", steps });
 const ballastSize = (): Effect => ({ kind: "ballastSize" });
-const burnSize = (): Effect => ({ kind: "burnSize" });
 const anointTarget = (times: number): Effect => ({
   kind: "anointTarget",
   times,
@@ -409,12 +415,14 @@ const incCounter = (counter: RunCounter): Effect => ({
   counter,
 });
 
-/** An Offering pays a gold for every this many faces it burns: the burning The
- *  Pyre's tree does before its engine arrives buys the cards that carry it
- *  there. At 1 per 10, builders reached the duel 12% of the time rather than
- *  10%; at 1 per 5, 15%, but late trials cleared in two rolls or fewer 54% of
- *  the time (engine experiment, RUNS=4000). */
-export const OFFERING_FACES_PER_GOLD = 10;
+/** An Offering, The Pyre's first card: after every roll each die larger than a
+ *  d1 burns with this chance, and every die that burns or shatters pays a gold,
+ *  up to OFFERING_GOLD_PER_ROLL a roll. It is the whole tree's promise in one
+ *  card — a die lost to the fire is worth something — sold before any card that
+ *  needs the fire to be lit. The cap keeps a grid that burns by the thousand
+ *  (The Brazier) from buying out the shop. */
+export const OFFERING_BURN_CHANCE = 0.01;
+export const OFFERING_GOLD_PER_ROLL = 2;
 
 export interface ItemDef {
   id: ShopItemId;
@@ -1724,8 +1732,8 @@ export const ITEMS: ItemDef[] = [
     stackPricing: "linear",
     rarity: "common",
     needsTarget: true,
-    desc: "Remove a die of your choice from your grid.",
-    available: (s) => s.dice.length > 1,
+    desc: "Remove a die of your choice from your grid. The Catechism no longer waits on it to score.",
+    available: (s) => s.hasCatechism && s.dice.length > 1,
     effects: [removeTarget()],
   },
   {
@@ -1736,8 +1744,8 @@ export const ITEMS: ItemDef[] = [
     rarity: "uncommon",
     needsTarget: true,
     targetsSize: true,
-    desc: "Choose a die size — remove every die of that size from your grid.",
-    available: (s) => sizesOnGrid(s) > 1,
+    desc: "Choose a die size — remove every die of that size from your grid. The Catechism no longer waits on them to score.",
+    available: (s) => s.hasCatechism && sizesOnGrid(s) > 1,
     effects: [removeSize()],
   },
   {
@@ -1746,8 +1754,9 @@ export const ITEMS: ItemDef[] = [
     priceBand: "strong",
     stackPricing: "linear",
     rarity: "rare",
-    desc: "Remove every die from your grid that cannot score on every roll.",
+    desc: "Remove every die from your grid that cannot score on every roll, so every roll can grow The Catechism.",
     available: (s) => {
+      if (!s.hasCatechism) return false;
       const missing = sizesThatCanMiss(s).length;
       return missing > 0 && missing < sizesOnGrid(s);
     },
@@ -1861,7 +1870,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
-    desc: "Add a d8, a d10 and a d20 to your grid.",
+    desc: "Add a d8, a d10 and a d20 to your grid. Each of them scores when no other die shows its face.",
     effects: [addDice(8), addDice(10), addDice(20)],
   },
   {
@@ -1889,7 +1898,8 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     rarity: "uncommon",
     unique: true,
-    desc: "After each trial, remove every die that showed a repeated face on its final roll.",
+    desc: "After each trial, remove every die that showed a repeated face on its final roll, leaving Counterpoint more faces to itself.",
+    available: (s) => s.hasCounterpoint,
     effects: [setFlag("hasChoirmaster")],
   },
   {
@@ -1939,9 +1949,9 @@ export const ITEMS: ItemDef[] = [
     stackPricing: "linear",
     rarity: "common",
     needsTarget: true,
-    desc: "Grow a die of your choice two sizes.",
+    desc: "Grow a die of your choice two sizes. Its highest face always scores.",
     available: (s) => s.dice.growableCount() > 0,
-    effects: [growTarget(2)],
+    effects: [growTarget(2, true)],
   },
   {
     id: "two_elders",
@@ -1949,7 +1959,8 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     stackPricing: "linear",
     rarity: "uncommon",
-    desc: "Add two d100 to your grid.",
+    desc: "Add two d100 to your grid. Under The Scales, each scores on 51 or higher.",
+    available: (s) => s.hasScales,
     effects: [addDice(100, 2)],
   },
   {
@@ -1960,8 +1971,8 @@ export const ITEMS: ItemDef[] = [
     rarity: "uncommon",
     needsTarget: true,
     targetsSize: true,
-    desc: "Choose a die size — every die of that size never rolls its lowest two faces, now and later.",
-    available: (s) => ballastableSizes(s).length > 0,
+    desc: "Choose a die size — every die of that size never rolls its lowest two faces, now and later. Under The Scales, those faces never scored.",
+    available: (s) => s.hasScales && ballastableSizes(s).length > 0,
     effects: [ballastSize()],
   },
   {
@@ -1972,8 +1983,8 @@ export const ITEMS: ItemDef[] = [
     rarity: "uncommon",
     needsTarget: true,
     targetsSize: true,
-    desc: "Choose a die size — every die of that size grows one size.",
-    available: (s) => s.dice.growableCount() > 0,
+    desc: "Choose a die size — every die of that size grows one size. Under The Scales, bigger dice pay bigger faces.",
+    available: (s) => s.hasScales && s.dice.growableCount() > 0,
     effects: [growSize(1)],
   },
   {
@@ -2044,11 +2055,9 @@ export const ITEMS: ItemDef[] = [
     priceBand: "low",
     stackPricing: "linear",
     rarity: "common",
-    needsTarget: true,
-    targetsSize: true,
-    desc: `Choose a die size — burn every die of that size. Gain 1 gold for every ${OFFERING_FACES_PER_GOLD} faces burned.`,
-    available: (s) => sizesOnGrid(s) > 1,
-    effects: [burnSize()],
+    unique: true,
+    desc: `After every roll, each die larger than a d1 has a 1 in ${Math.round(1 / OFFERING_BURN_CHANCE)} chance to burn. Every die that burns or shatters pays 1 gold, up to ${OFFERING_GOLD_PER_ROLL} a roll.`,
+    effects: [setFlag("hasOffering")],
   },
   {
     id: "tinder",
@@ -2071,6 +2080,7 @@ export const ITEMS: ItemDef[] = [
       (factor) =>
         `Faces that burn or shatter count ${factor} toward The Pyre and The Ashen Crown.`,
     ),
+    available: (s) => s.hasAshenCrown,
     effects: [incCounter("kindling")],
   },
   {
@@ -2084,6 +2094,7 @@ export const ITEMS: ItemDef[] = [
       (copies) => `${Math.round(ASHES_RETURN_SHARE * 10 * copies)} in 10`,
       (share) => `When dice burn or shatter, ${share} return as a d100.`,
     ),
+    available: (s) => s.hasOffering,
     effects: [incCounter("fromTheAshes")],
   },
   {
@@ -2099,9 +2110,10 @@ export const ITEMS: ItemDef[] = [
     owned: s.hasPyre,
     copies: s.everflame,
   })),
-  // The Pyre's fuel, opened with the engine: a fire that burns on every roll —
-  // a die shows a 1 once in as many rolls as it has faces, so the grid feeds it
-  // about a face a die — and embers that carry a burn into the next roll.
+  // The Pyre's fuel: a fire that burns on every roll — a die shows a 1 once in
+  // as many rolls as it has faces, so the grid feeds it about a face a die —
+  // opened with The Ashen Crown, and embers that carry a burn into the next
+  // roll, opened with the engine.
   {
     id: "the_brazier",
     name: "The Brazier",
@@ -2109,7 +2121,7 @@ export const ITEMS: ItemDef[] = [
     rarity: "uncommon",
     unique: true,
     desc: "After every roll, every die larger than a d1 that rolled a 1 burns.",
-    available: (s) => s.kindling > 0,
+    available: (s) => s.hasAshenCrown,
     effects: [setFlag("hasBrazier")],
   },
   {
@@ -2122,8 +2134,9 @@ export const ITEMS: ItemDef[] = [
     available: (s) => s.hasPyre,
     effects: [setFlag("hasEmbers")],
   },
-  // The Pyre's multiplier, opened with Kindling: the tree burns before its
-  // engine arrives, and this is what that burning pays until it does.
+  // The Pyre's multiplier and the chain's second card, opened with An Offering:
+  // the tree burns before its engine arrives, and this is what that burning
+  // pays until it does.
   {
     id: "the_ashen_crown",
     name: "The Ashen Crown",
@@ -2134,6 +2147,30 @@ export const ITEMS: ItemDef[] = [
     effects: [setFlag("hasAshenCrown")],
   },
   // The Hermitage: an engine fed by a small grid's dice, one die at a time.
+  // Solitude comes first because every card after it closes at a grid size, and
+  // a player who has already grown past that size has to see the door shut
+  // while the price of walking back through it is one or two dice.
+  {
+    id: "solitude",
+    name: "Solitude",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    desc: (s) => {
+      const seats = Math.max(0, CELL_SEATS - s.dice.length);
+      const pays = stacking(
+        (state) => state.solitude,
+        (copies) => SOLITUDE_POINTS_PER_SEAT * copies,
+        (points, plural) =>
+          `Gain ${points} point${plural ? "s" : ""} on every roll for each empty seat below ${CELL_SEATS} dice.`,
+      )(s);
+      return seats > 0
+        ? `${pays} ${seats} seat${seats === 1 ? " is" : "s are"} empty now.`
+        : `${pays} Your grid has no empty seats.`;
+    },
+    available: (s) => s.dice.length < CELL_SEATS,
+    effects: [incCounter("solitude")],
+  },
   {
     id: "a_parting",
     name: "A Parting",
@@ -2141,8 +2178,8 @@ export const ITEMS: ItemDef[] = [
     stackPricing: "linear",
     rarity: "common",
     needsTarget: true,
-    desc: "Remove a die of your choice from your grid. Gain 1 gold.",
-    available: (s) => s.dice.length > 1,
+    desc: "Remove a die of your choice from your grid, emptying a seat for Solitude. Gain 1 gold.",
+    available: (s) => s.solitude > 0 && s.dice.length > 1,
     effects: [removeTarget(), addGold(1)],
   },
   {
@@ -2422,7 +2459,11 @@ export function applyEffect(
     }
     case "growTarget":
       if (ctx.index === undefined) return false;
-      return state.dice.growAt(ctx.index, effect.steps ?? 1);
+      return state.dice.growAt(
+        ctx.index,
+        effect.steps ?? 1,
+        effect.crownHighestFace,
+      );
     case "growSize": {
       const sides = targetSize(state, ctx);
       if (sides === undefined) return false;
@@ -2433,22 +2474,6 @@ export function applyEffect(
       if (sides === undefined || !ballastableSizes(state).includes(sides))
         return false;
       state.ballastSizes.push(sides);
-      return true;
-    }
-    case "burnSize": {
-      const sides = targetSize(state, ctx);
-      if (sides === undefined || sizesOnGrid(state) <= 1) return false;
-      const burned = state.dice.removeSizes((size) => size === sides);
-      if (burned <= 0) return false;
-      feedPyre(state, burned * sides);
-      if (offeringFacesPerGold > 0)
-        grantGold(state, Math.floor((burned * sides) / offeringFacesPerGold));
-      riseFromTheAshes(
-        state,
-        state.dice,
-        burned,
-        blocksGrowthPermanently(state),
-      );
       return true;
     }
     case "anointTarget":
@@ -2635,20 +2660,33 @@ const GROWTH_COUNTERS = new Set<RunCounter>([
   "ancestors",
 ]);
 
+// Sim-only: the engine experiment sweeps An Offering's fire and its payout.
+let offeringBurnChance = OFFERING_BURN_CHANCE;
+let offeringGoldPerRoll = OFFERING_GOLD_PER_ROLL;
+
+/** Sim-only. An Offering's burn chance per die per roll, and the most gold it
+ *  pays on one roll; null restores the card's own. */
+export function setOfferingForSimulation(
+  burnChance: number | null,
+  goldPerRoll: number | null,
+): void {
+  offeringBurnChance = burnChance ?? OFFERING_BURN_CHANCE;
+  offeringGoldPerRoll = goldPerRoll ?? OFFERING_GOLD_PER_ROLL;
+}
+
+/** An Offering's chance for each die larger than a d1 to burn after a roll. */
+export function offeringBurnChanceFor(state: RunState): number {
+  return state.hasOffering ? offeringBurnChance : 0;
+}
+
+/** The gold An Offering pays for `dice` dice burned or shattered on one roll. */
+export function offeringGoldFor(state: RunState, dice: number): number {
+  return state.hasOffering ? Math.min(dice, offeringGoldPerRoll) : 0;
+}
+
 /** Count burned or shattered faces, Kindling's doubling and all: toward The
  *  Ashen Crown always — so the chain's tier-2 card pays before its engine
  *  arrives — and toward The Pyre while the run owns it. */
-// Sim-only: the engine experiment sweeps An Offering's payout.
-let offeringFacesPerGold = OFFERING_FACES_PER_GOLD;
-
-/** Sim-only. An Offering's faces burned per gold paid, 0 for none; null
- *  restores the card's own. */
-export function setOfferingFacesPerGoldForSimulation(
-  faces: number | null,
-): void {
-  offeringFacesPerGold = faces ?? OFFERING_FACES_PER_GOLD;
-}
-
 export function feedPyre(state: RunState, faces: number): void {
   if (faces <= 0) return;
   const counted = faces * 2 ** state.kindling;
@@ -2881,6 +2919,7 @@ export const ITEM_THEMES: Record<ShopItemId, ItemTheme[]> = {
   the_brazier: ["multiplier"],
   embers: ["multiplier"],
   the_ashen_crown: ["multiplier"],
+  solitude: ["precision"],
   a_parting: ["precision"],
   the_cell: ["multiplier"],
   anointing: ["precision"],

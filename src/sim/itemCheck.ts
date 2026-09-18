@@ -11,6 +11,7 @@ import {
   enforceGridCap,
   itemDisabledDuringTrialByAffliction,
   ITEMS,
+  OFFERING_GOLD_PER_ROLL,
   type ShopItemId,
 } from "../systems/Items";
 import { makeDie, type DieOpts, type DieSides } from "../systems/Dice";
@@ -1458,6 +1459,41 @@ function buy(
   );
 }
 
+// Every card pays when it is bought (systems/ItemTrees): a card whose only use is
+// a card further down its tree waits for that card, with the trees on or off.
+{
+  const item = (id: ShopItemId) => ITEMS.find((def) => def.id === id)!;
+  const gates: [ShopItemId, (state: RunState) => void][] = [
+    ["two_elders", (s) => (s.hasScales = true)],
+    ["exaltation", (s) => (s.hasScales = true)],
+    ["ballast", (s) => (s.hasScales = true)],
+    ["dismissal", (s) => (s.hasCatechism = true)],
+    ["winnowing", (s) => (s.hasCatechism = true)],
+    ["excommunication", (s) => (s.hasCatechism = true)],
+    ["the_choirmaster", (s) => (s.hasCounterpoint = true)],
+    ["from_the_ashes", (s) => (s.hasOffering = true)],
+    ["kindling", (s) => (s.hasAshenCrown = true)],
+    ["the_brazier", (s) => (s.hasAshenCrown = true)],
+    ["a_parting", (s) => (s.solitude = 1)],
+    ["anointing", (s) => (s.hasVigil = true)],
+  ];
+  for (const [id, open] of gates) {
+    const state = gridOf([1, 1], [6, 2], [20, 1]); // sizes that miss, and one that cannot
+    const shut = item(id).available?.(state) === false;
+    open(state);
+    check(
+      shut && (item(id).available?.(state) ?? true),
+      `${item(id).name} should wait for the card that makes it pay`,
+    );
+  }
+  const crowded = gridOf([6, 8]);
+  check(
+    item("solitude").available?.(crowded) === false &&
+      item("solitude").available?.(gridOf([6, 7])) === true,
+    "Solitude should leave the shelf once the grid holds eight dice",
+  );
+}
+
 // The d1 cards grow a grid without putting a die that can miss on it.
 {
   const state = newRun(); // the starter d6
@@ -1748,6 +1784,29 @@ function rollWith(state: RunState, rng: () => number, resolveRng = rng) {
       voice.dice.countOfSize(20) === 1,
     "A New Voice should add a d8, a d10 and a d20",
   );
+  // The starter d6 shows a lone 3, the d8 and d10 share a 5, the d20 a lone 17.
+  const voiceFaces = sequence([
+    faceOf(3, 6),
+    faceOf(5, 8),
+    faceOf(5, 10),
+    faceOf(17, 20),
+  ]);
+  const sung = rollWith(voice, voiceFaces, () => 0.5);
+  check(
+    sung.result.points === 1n &&
+      sung.result.modifiers.some(
+        (mod) => mod.id === "aNewVoice" && mod.points === 1n,
+      ) &&
+      voice.itemPoints.a_new_voice === 1n,
+    "A New Voice's dice should score alone on their face — the d20's 17, not the shared 5 or the starter's lone 3",
+  );
+  voice.hasCounterpoint = true;
+  const countered = rollWith(voice, voiceFaces, () => 0.5);
+  check(
+    countered.result.points === 2n &&
+      !countered.result.modifiers.some((mod) => mod.id === "aNewVoice"),
+    "and leave the paying to Counterpoint once it owns the rule",
+  );
 
   const state = gridOf([100, 8]);
   state.hasCounterpoint = true;
@@ -1816,8 +1875,16 @@ function rollWith(state: RunState, rng: () => number, resolveRng = rng) {
   const state = gridOf([6, 1], [20, 2]);
   check(
     applyOffer(state, freeOffer("ascension", state), 0) &&
-      state.dice.dieAt(0)?.sides === 10,
-    "Ascension should grow a die two sizes",
+      state.dice.dieAt(0)?.sides === 10 &&
+      state.dice.dieAt(0)?.maxFaceBonus === 1,
+    "Ascension should grow a die two sizes and mark its highest face",
+  );
+  const ascended = gridOf([6, 1]);
+  applyOffer(ascended, freeOffer("ascension", ascended), 0);
+  check(
+    rollWith(ascended, () => faceOf(10, 10)).result.points === 1n &&
+      rollWith(ascended, () => faceOf(9, 10)).result.points === 0n,
+    "whose highest face then always scores, without multiplying the roll",
   );
   const d20 = state.dice.findIndex((die) => die.sides === 20);
   check(
@@ -1898,30 +1965,70 @@ function rollWith(state: RunState, rng: () => number, resolveRng = rng) {
 // The Pyre: burned and shattered faces feed it, Kindling doubles them, and From
 // the Ashes returns a share of the burned dice.
 {
-  const state = gridOf([4, 10], [6, 5]);
-  state.hasPyre = true;
+  const state = gridOf([6, 10], [1, 1]);
+  check(
+    applyOffer(state, freeOffer("an_offering", state)) && state.hasOffering,
+    "An Offering should light its fire",
+  );
   state.kindling = 1;
   state.fromTheAshes = 1;
-  const d4 = state.dice.findIndex((die) => die.sides === 4);
   const goldBefore = state.gold;
+  // Resolved with an rng of 0, every die larger than a d1 catches.
+  rollWith(
+    state,
+    () => 0.5,
+    () => 0,
+  );
   check(
-    applyOffer(state, freeOffer("an_offering", state), d4) &&
-      state.dice.countOfSize(4) === 0 &&
-      state.pyreFaces === 80 &&
+    state.dice.countOfSize(6) === 0 &&
+      state.facesBurned === 120 &&
       state.dice.countOfSize(100) === 1 &&
-      state.gold === goldBefore + 4,
-    "An Offering should burn a size, its faces doubled by Kindling, a tenth return as d100s, and pay a gold per ten faces",
+      state.gold === goldBefore + OFFERING_GOLD_PER_ROLL &&
+      state.trialRollGold.offering === OFFERING_GOLD_PER_ROLL &&
+      state.itemValues.an_offering === OFFERING_GOLD_PER_ROLL,
+    "An Offering should burn dice after a roll, their faces doubled by Kindling, a tenth returning as d100s, and pay a gold a die up to its cap",
   );
-  rollWith(state, () => 0.5);
-  check(
-    state.growthRollsAt.pyre?.[4] === 1 && state.pyreFaces === 0,
-    "The Pyre should count 1% per twenty faces, and the roll spend them",
+  const fed = gridOf([6, 10], [1, 1]);
+  fed.hasOffering = true;
+  fed.hasPyre = true;
+  rollWith(
+    fed,
+    () => 0.5,
+    () => 0,
   );
-  const lastSize = gridOf([6, 3]);
-  lastSize.hasPyre = true;
+  rollWith(
+    fed,
+    () => 0.5,
+    () => 0.5,
+  );
   check(
-    !applyOffer(lastSize, freeOffer("an_offering", lastSize), 0),
-    "An Offering should refuse to burn the grid's only size",
+    fed.growthRollsAt.pyre?.[3] === 1 && fed.pyreFaces === 0,
+    "The Pyre should count 1% per twenty faces burned, and the roll spend them",
+  );
+  const lastDice = gridOf([6, 3]);
+  lastDice.hasOffering = true;
+  rollWith(
+    lastDice,
+    () => 0.5,
+    () => 0,
+  );
+  check(
+    lastDice.dice.length === 1,
+    "An Offering should never burn the whole grid",
+  );
+  const unlit = gridOf([6, 3]);
+  rollWith(
+    unlit,
+    () => 0.5,
+    () => 0,
+  );
+  check(unlit.dice.length === 3, "and nothing burns without it");
+  const embersOnly = gridOf([6, 200]);
+  embersOnly.hasOffering = true;
+  rollWith(embersOnly, () => 0.5, mulberry32(11));
+  check(
+    embersOnly.dice.length < 200 && embersOnly.dice.length > 190,
+    `and burn about one die in a hundred (${embersOnly.dice.length} left of 200)`,
   );
 
   const shatter = gridOf([6, 10, { wildFace: true }], [20, 1]);
@@ -1964,11 +2071,14 @@ function rollWith(state: RunState, rng: () => number, resolveRng = rng) {
   );
   const crown = gridOf([20, 5], [1, 1]);
   crown.hasAshenCrown = true;
-  const crownD20 = crown.dice.findIndex((die) => die.sides === 20);
+  crown.hasBrazier = true;
+  rollWith(
+    crown,
+    () => 0,
+    () => 0.5,
+  ); // every d20 shows a 1 and burns
   check(
-    applyOffer(crown, freeOffer("an_offering", crown), crownD20) &&
-      crown.facesBurned === 100 &&
-      crown.pyreFaces === 0,
+    crown.facesBurned === 100 && crown.pyreFaces === 0,
     "Burned faces should count toward The Ashen Crown without The Pyre",
   );
   const crowned = rollWith(crown, () => 0.5);
@@ -1978,13 +2088,15 @@ function rollWith(state: RunState, rng: () => number, resolveRng = rng) {
   );
   const kindled = gridOf([20, 5], [1, 1]);
   kindled.hasAshenCrown = true;
+  kindled.hasBrazier = true;
   kindled.kindling = 1;
+  rollWith(
+    kindled,
+    () => 0,
+    () => 0.5,
+  );
   check(
-    applyOffer(
-      kindled,
-      freeOffer("an_offering", kindled),
-      kindled.dice.findIndex((die) => die.sides === 20),
-    ) && kindled.facesBurned === 200,
+    kindled.facesBurned === 200,
     "and Kindling double the faces it reads, with or without The Pyre",
   );
   crown.facesBurned = 10_000;
@@ -1994,11 +2106,11 @@ function rollWith(state: RunState, rng: () => number, resolveRng = rng) {
     ),
     "up to ×16",
   );
-  const lastDice = gridOf([6, 2]);
-  lastDice.hasBrazier = true;
-  rollWith(lastDice, () => 0);
+  const lastPair = gridOf([6, 2]);
+  lastPair.hasBrazier = true;
+  rollWith(lastPair, () => 0);
   check(
-    lastDice.dice.length === 2,
+    lastPair.dice.length === 2,
     "The Brazier should never burn the whole grid",
   );
   const bucketed = gridOf([20, 5000]);
@@ -2019,6 +2131,19 @@ function rollWith(state: RunState, rng: () => number, resolveRng = rng) {
   check(
     rollWith(cell, () => 0.5).result.points === 96n,
     "The Cell should double a roll for every empty seat below eight dice",
+  );
+
+  const alone = gridOf([1, 3]);
+  alone.solitude = 1;
+  check(
+    rollWith(alone, () => 0.5).result.points === 8n,
+    "Solitude should pay a point for every empty seat below eight dice",
+  );
+  alone.dice.addDice(1, 5);
+  check(
+    rollWith(alone, () => 0.5).result.points === 8n &&
+      alone.itemPoints.solitude === 5n,
+    "and nothing once the grid fills them",
   );
 
   const parted = gridOf([6, 2]);

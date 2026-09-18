@@ -16,6 +16,9 @@ export const COLORS = {
   glow: 0xffd977,
   glowGreen: 0x86e07a, // Snake Eyes match flash
   glowSteel: 0xcfd6df, // Whetstone shrink flash
+  // The pip A New Voice's dice wear: a cool blue beside the max-face gold, so
+  // a die that scores when alone on its face never reads as a Rollplayer.
+  voicePip: 0x7fb4e8,
   // Shop rarity tiers.
   rarityCommon: 0xd4b83c,
   rarityUncommon: 0x4a7fc9,

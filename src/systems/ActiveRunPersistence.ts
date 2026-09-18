@@ -337,6 +337,11 @@ export function hydrateRunState(value: unknown): RunState | null {
     !isRecord(value.trialRollGold) ||
     !isNonNegativeInteger(value.trialRollGold.titheBowl) ||
     !isNonNegativeInteger(value.trialRollGold.luckyCoin) ||
+    // Absent from saves made before An Offering paid during rolls.
+    !(
+      value.trialRollGold.offering === undefined ||
+      isNonNegativeInteger(value.trialRollGold.offering)
+    ) ||
     !validIdArray(value.bossModifiers ?? [], bossIds) ||
     !validIdArray(value.afflictions ?? [], afflictionIds) ||
     !validIdArray(value.endingsSeen ?? [], endingIds) ||
@@ -394,6 +399,7 @@ export function hydrateRunState(value: unknown): RunState | null {
   hydrated.trialRollGold = {
     titheBowl: value.trialRollGold.titheBowl,
     luckyCoin: value.trialRollGold.luckyCoin,
+    offering: (value.trialRollGold.offering as number | undefined) ?? 0,
   };
   // A null default means the generic pass above skipped these two entirely, so
   // both are read straight off the saved shape.
@@ -548,6 +554,9 @@ function hydrateOutcome(value: unknown): TrialEndOutcome | null {
     !["titheBowl", "luckyCoin", "total"].every((key) =>
       isNonNegativeInteger(rollGold[key]),
     ) ||
+    !(
+      rollGold.offering === undefined || isNonNegativeInteger(rollGold.offering)
+    ) ||
     !isNonNegativeInteger(value.totalGoldEarned) ||
     typeof value.insuranceUsed !== "boolean" ||
     typeof value.bossCleared !== "boolean"
@@ -569,7 +578,10 @@ function hydrateOutcome(value: unknown): TrialEndOutcome | null {
       rollsLeft,
       rollsPaid,
     } as unknown as TrialEndOutcome["goldBreakdown"],
-    rollGold: { ...rollGold } as unknown as TrialEndOutcome["rollGold"],
+    rollGold: {
+      offering: 0,
+      ...rollGold,
+    } as unknown as TrialEndOutcome["rollGold"],
   };
 }
 
