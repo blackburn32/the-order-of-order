@@ -561,9 +561,20 @@ export class ShopScene extends Phaser.Scene {
         stroke: "#0d0a12",
         strokeThickness: Math.max(3, Math.round(titleSize * 0.09)),
         wordWrap: { width: panelW * 0.92 },
+        // In the style rather than set after the fact: a Text rasterizes itself
+        // on construction, and every style change after that rasterizes it
+        // again. This is the most expensive object on the screen — 40px, a
+        // stroke and a blurred shadow drawn through both — so it is also the one
+        // that least wants drawing twice.
+        shadow: {
+          offsetY: 4,
+          color: "#000000",
+          blur: 10,
+          stroke: true,
+          fill: true,
+        },
       })
-      .setOrigin(0.5)
-      .setShadow(0, 4, "#000000", 10, true, true);
+      .setOrigin(0.5);
     items.push(title);
     cursorY += title.height / 2 + 10;
 
@@ -709,9 +720,17 @@ export class ShopScene extends Phaser.Scene {
         fontStyle: "bold",
         stroke: "#0d0a12",
         strokeThickness: Math.max(3, Math.round(titleSize * 0.09)),
+        // Built into the style for the same reason as the stacked layout's
+        // title above it.
+        shadow: {
+          offsetY: 3,
+          color: "#000000",
+          blur: 8,
+          stroke: true,
+          fill: true,
+        },
       })
-      .setOrigin(0, 0)
-      .setShadow(0, 3, "#000000", 8, true, true);
+      .setOrigin(0, 0);
     const metaY = headerTop + title.height / 2;
     const codexLink = this.add
       .text(right, metaY, "Codex", {
