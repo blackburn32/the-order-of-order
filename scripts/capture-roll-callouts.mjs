@@ -27,6 +27,8 @@ const PRESETS = [
   "roll-callout-hundred",
   "roll-callout-multitude",
   "roll-callout-skip",
+  "roll-callout-goal",
+  "roll-callout-first-roll",
 ];
 
 const projectRoot = process.cwd();
@@ -44,6 +46,10 @@ const stillsEvery = Number(option("stills") ?? 0);
 /** Also tile every Nth frame into one contact-sheet PNG per clip. */
 const sheetEvery = Number(option("sheet") ?? 0);
 const format = option("format") ?? "wide";
+/** Phaser's 2D renderer gives complete frames (see below) and is what the
+ *  published clips are taken with; --renderer webgl is for reviewing the
+ *  effects that only the rich tier draws, such as particle bursts. */
+const renderer = option("renderer") ?? "canvas";
 /** The clean studio fills the browser, so the frame is the viewport's shape. */
 const VIEWPORTS = {
   wide: { width: 1600, height: 900 },
@@ -52,7 +58,9 @@ const VIEWPORTS = {
 const viewport = VIEWPORTS[format];
 if (!viewport) throw new Error(`Unknown format: ${format}`);
 /** Output names carry the frame when it is not the default landscape one. */
-const suffix = format === "wide" ? "" : `-${format}`;
+const suffix =
+  (format === "wide" ? "" : `-${format}`) +
+  (renderer === "canvas" ? "" : `-${renderer}`);
 const width = Number(option("width") ?? (format === "wide" ? 800 : 480));
 /** Palette size per frame. The felt's gradients are most of a frame's bytes, and
  *  128 colours keeps the text crisp at roughly two thirds of 256's size. */
@@ -105,7 +113,7 @@ try {
       url.searchParams.set("preset", id);
       url.searchParams.set("format", format);
       // Complete frames: see the motion recorder on WebGL backbuffer reads.
-      url.searchParams.set("renderer", "canvas");
+      url.searchParams.set("renderer", renderer);
       await page.goto(url.href, { waitUntil: "domcontentloaded" });
       await page.waitForFunction(
         (preset) =>

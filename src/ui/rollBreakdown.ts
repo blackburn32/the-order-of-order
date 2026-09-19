@@ -17,6 +17,7 @@
 
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
+import { SIGIL_INK_RADIUS } from "../art/textures";
 import { fx } from "../systems/Effects";
 import {
   formatHundredths,
@@ -45,7 +46,18 @@ export interface RollBreakdownOptions {
   onBonus?(index: number): void;
   /** Each time a step raises the multiplier, by its index. */
   onStep?(index: number): void;
+  /** Celebrate the total: this roll carried the trial past its goal. */
+  acclaim?: RollAcclaim;
 }
+
+/**
+ * How loudly a callout celebrates the total it lands on.
+ *
+ * - `goal` — this roll carried the trial past its goal.
+ * - `firstRoll` — it did that on the trial's very first roll, which is the
+ *   rarest thing a roll can do and is staged as such.
+ */
+export type RollAcclaim = "goal" | "firstRoll";
 
 export interface RollBreakdownView {
   /** The y just below the panel, for whatever stacks under it. */
@@ -104,6 +116,27 @@ function transitionMs(bonusGap: number, stepGap: number): number {
 const HOLD_AFTER_TOTAL_MS = 650;
 const FADE_MS = 300;
 
+/** Extra rest an acclaimed callout takes before it clears away, on top of the
+ *  ordinary hold. The flare lands on the total and then has to be *looked* at;
+ *  at the plain hold the seal would barely finish turning once. */
+const ACCLAIM_HOLD_MS: Record<RollAcclaim, number> = {
+  goal: 900,
+  firstRoll: 1600,
+};
+
+/** `COLORS.feltDark` carried `amount` of the way toward gold — the wash the
+ *  panel takes when the roll met the goal. Mixed rather than drawn as a second
+ *  translucent fill so the border and the rows still sit on one flat felt. */
+function goldWash(amount: number): number {
+  const mixed = Phaser.Display.Color.Interpolate.ColorWithColor(
+    Phaser.Display.Color.ValueToColor(COLORS.feltDark),
+    Phaser.Display.Color.ValueToColor(COLORS.gold),
+    100,
+    Math.round(amount * 100),
+  );
+  return Phaser.Display.Color.GetColor(mixed.r, mixed.g, mixed.b);
+}
+
 /** The line under the bonus while an effect is added: "CONSENSUS +399". */
 function bonusStepText(name: string, points: bigint): string {
   return `${name.toUpperCase()} +${formatScore(points)}`;
@@ -112,7 +145,8 @@ function bonusStepText(name: string, points: bigint): string {
 type Piece =
   | Phaser.GameObjects.Text
   | Phaser.GameObjects.Container
-  | Phaser.GameObjects.Graphics;
+  | Phaser.GameObjects.Graphics
+  | Phaser.GameObjects.Image;
 
 export function playRollBreakdown(
   scene: Phaser.Scene,
@@ -270,23 +304,37 @@ export function playRollBreakdown(
     panelTop += shift;
     panelBottom += shift;
   }
+  const panelH = panelBottom - panelTop;
+  const panelCenterY = panelTop + panelH / 2;
+  const panelRadius = Math.min(18, fontSize * 0.8);
   const panel = opts.add(scene.add.graphics().setDepth(50));
-  panel.fillStyle(COLORS.feltDark, 0.93);
-  panel.fillRoundedRect(
-    x - panelW / 2,
-    panelTop,
-    panelW,
-    panelBottom - panelTop,
-    Math.min(18, fontSize * 0.8),
-  );
-  panel.lineStyle(1.5, COLORS.gold, 0.55);
-  panel.strokeRoundedRect(
-    x - panelW / 2,
-    panelTop,
-    panelW,
-    panelBottom - panelTop,
-    Math.min(18, fontSize * 0.8),
-  );
+  // Redrawn rather than layered over: the acclaim below washes this same felt
+  // gold and thickens this same border, so there is only ever one panel.
+  const drawPanel = (
+    fill: number,
+    stroke: number,
+    lineWidth: number,
+    strokeAlpha: number,
+  ) => {
+    panel.clear();
+    panel.fillStyle(fill, 0.93);
+    panel.fillRoundedRect(
+      x - panelW / 2,
+      panelTop,
+      panelW,
+      panelH,
+      panelRadius,
+    );
+    panel.lineStyle(lineWidth, stroke, strokeAlpha);
+    panel.strokeRoundedRect(
+      x - panelW / 2,
+      panelTop,
+      panelW,
+      panelH,
+      panelRadius,
+    );
+  };
+  drawPanel(COLORS.feltDark, COLORS.gold, 1.5, 0.55);
   pieces.unshift(panel);
 
   // Anything wider than the panel (a very long card name) shrinks to fit.
@@ -339,6 +387,184 @@ export function playRollBreakdown(
   const at = (delay: number, run: () => void) => {
     if (delay <= 0) run();
     else timers.push(scene.time.delayedCall(delay, run));
+  };
+
+  // --- the acclaim --------------------------------------------------------------
+  // A roll that met the trial's goal says so when its total lands: the felt
+  // takes a gold wash, a ribbon rides the panel's top edge, and a halo pulses
+  // out behind it. A goal met on the trial's *first* roll says it far louder —
+  // a deeper wash, a seal turning in the panel's own background, a second ring,
+  // and a flare that keeps pulsing for as long as the callout holds.
+  //
+  // Everything is built here, hidden, and pushed onto `pieces`, so the fade-out
+  // carries it away with the rest of the callout and nothing outlives the roll.
+  const acclaim = opts.acclaim;
+  const grand = acclaim === "firstRoll";
+  let seal: Phaser.GameObjects.Image | undefined;
+  let halo: Phaser.GameObjects.Image | undefined;
+  let ribbon: Phaser.GameObjects.Container | undefined;
+  if (acclaim) {
+    // The halo is circular and scaled uniformly: `fadeOut` restores a piece's
+    // resting `scale`, which is one number, so a piece stretched to an ellipse
+    // would snap square the moment it started to clear away.
+    const haloSize = Math.hypot(panelW, panelH) * 1.15;
+    halo = opts.add(
+      scene.add
+        .image(x, panelCenterY, "spark")
+        .setDisplaySize(haloSize, haloSize)
+        .setTint(COLORS.glow)
+        .setAlpha(0)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setDepth(49.5),
+    );
+    pieces.push(halo);
+    restScale.set(halo, halo.scale);
+
+    if (grand) {
+      // Sized against the panel's shorter side so the mark stays inside the
+      // felt: the callout has no mask, and a seal spilling past the border
+      // would read as a second object rather than as the panel's background.
+      const sealSize = (Math.min(panelW, panelH) * 0.94) / SIGIL_INK_RADIUS;
+      seal = opts.add(
+        scene.add
+          .image(x, panelCenterY, "sigil")
+          .setDisplaySize(sealSize, sealSize)
+          .setTint(COLORS.glow)
+          .setAlpha(0)
+          .setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(50.5),
+      );
+      pieces.push(seal);
+      restScale.set(seal, seal.scale);
+    }
+
+    const plate = scene.add.graphics();
+    const ribbonText = scene.add
+      .text(0, 0, grand ? "FIRST ROLL CLEAR" : "GOAL MET", {
+        fontFamily: SERIF,
+        fontSize: `${Math.round(labelSize)}px`,
+        color: grand ? CSS.ink : CSS.goldLight,
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+    const ribbonH = labelSize * 1.8;
+    const ribbonW = Math.min(
+      panelW - fontSize,
+      ribbonText.width + labelSize * 1.8,
+    );
+    // A long name on a narrow phone shrinks to fit rather than widening the
+    // panel every row was already laid out against.
+    if (ribbonText.width > ribbonW - labelSize)
+      ribbonText.setScale((ribbonW - labelSize) / ribbonText.width);
+    plate.fillStyle(grand ? COLORS.goldLight : COLORS.feltDark, 1);
+    plate.fillRoundedRect(
+      -ribbonW / 2,
+      -ribbonH / 2,
+      ribbonW,
+      ribbonH,
+      ribbonH / 2,
+    );
+    plate.lineStyle(grand ? 2.5 : 2, grand ? COLORS.glow : COLORS.gold, 0.95);
+    plate.strokeRoundedRect(
+      -ribbonW / 2,
+      -ribbonH / 2,
+      ribbonW,
+      ribbonH,
+      ribbonH / 2,
+    );
+    // Set on the panel's top border rather than inside it: the first row's
+    // text starts barely half a row below `panelTop`, and a ribbon centred on
+    // the edge would sit on top of it.
+    ribbon = opts.add(
+      scene.add
+        .container(x, panelTop - ribbonH * 0.45, [plate, ribbonText])
+        .setDepth(52)
+        .setAlpha(0),
+    );
+    pieces.push(ribbon);
+    restScale.set(ribbon, 1);
+  }
+
+  let celebrated = false;
+  const celebrate = () => {
+    if (!acclaim || celebrated) return;
+    celebrated = true;
+    drawPanel(
+      goldWash(grand ? 0.26 : 0.11),
+      grand ? COLORS.glow : COLORS.goldLight,
+      grand ? 3.5 : 2.5,
+      1,
+    );
+    total.setColor(grand ? CSS.glow : CSS.goldLight);
+    if (ribbon) {
+      ribbon.setAlpha(1);
+      punch(ribbon, 1.22, 150);
+    }
+    // The ring and the sparks belong to the scene rather than to `pieces`: both
+    // tear themselves down on their own clock, and a second destroy from the
+    // fade-out would be destroying something already gone.
+    const ring = fx.shockwave(
+      scene,
+      x,
+      panelCenterY,
+      panelW * 0.66,
+      COLORS.glow,
+      scaled(520),
+    );
+    if (ring) opts.add(ring);
+    const sparks = fx.burst(scene, x, panelCenterY, {
+      count: grand ? 44 : 18,
+      tint: COLORS.glow,
+      speed: grand ? 360 : 220,
+      gravityY: 90,
+      lifespan: scaled(grand ? 1100 : 700),
+    });
+    if (sparks) opts.add(sparks);
+    if (!motion) {
+      // Reduced motion still gets the gold, just none of the turning.
+      halo?.setAlpha(grand ? 0.3 : 0.16);
+      seal?.setAlpha(0.45);
+      return;
+    }
+    if (halo)
+      tween(halo, {
+        alpha: { from: 0, to: grand ? 0.42 : 0.2 },
+        duration: scaled(grand ? 420 : 320),
+        yoyo: true,
+        repeat: grand ? 3 : 1,
+        ease: "Sine.easeInOut",
+      });
+    if (seal) {
+      const base = rest(seal);
+      tween(seal, {
+        alpha: { from: 0, to: 0.55 },
+        duration: scaled(520),
+        ease: "Quad.easeOut",
+      });
+      tween(seal, {
+        scale: { from: base * 0.55, to: base },
+        duration: scaled(640),
+        ease: "Back.easeOut",
+      });
+      tween(seal, {
+        rotation: Math.PI * 2,
+        duration: scaled(4200),
+        repeat: -1,
+        ease: "Linear",
+      });
+    }
+    if (grand)
+      at(scaled(260), () => {
+        const second = fx.shockwave(
+          scene,
+          x,
+          panelCenterY,
+          panelW * 0.95,
+          COLORS.goldLight,
+          scaled(640),
+        );
+        if (second) opts.add(second);
+      });
   };
   const reveal = (piece: Piece, delay: number, pop = true) => {
     piece.setAlpha(0);
@@ -457,7 +683,8 @@ export function playRollBreakdown(
       showMultiplier(finalHundredths, finalFractional);
       settleStep();
     }
-    punch(total, 1.2, 120);
+    punch(total, grand ? 1.5 : acclaim ? 1.34 : 1.2, acclaim ? 190 : 120);
+    celebrate();
   });
 
   let fading = false;
@@ -476,16 +703,13 @@ export function playRollBreakdown(
       });
     }
   };
-  at(totalAtMs + scaled(HOLD_AFTER_TOTAL_MS), () => fadeOut(scaled(FADE_MS)));
+  const holdMs = HOLD_AFTER_TOTAL_MS + (acclaim ? ACCLAIM_HOLD_MS[acclaim] : 0);
+  at(totalAtMs + scaled(holdMs), () => fadeOut(scaled(FADE_MS)));
 
   return {
     bottomY: panelBottom + rowStep * 0.5,
     totalAtMs,
-    closedAt:
-      scene.time.now +
-      totalAtMs +
-      scaled(HOLD_AFTER_TOTAL_MS) +
-      scaled(FADE_MS),
+    closedAt: scene.time.now + totalAtMs + scaled(holdMs) + scaled(FADE_MS),
     hurry() {
       for (const timer of timers) timer.remove();
       countEvent?.remove();
@@ -496,10 +720,18 @@ export function playRollBreakdown(
         showMultiplier(finalHundredths, finalFractional);
         settleStep();
       }
+      // The halo and the seal are washes the acclaim fades in itself, so they
+      // are left out of the settle below — shown at full opacity first, they
+      // would flash white for the frame before `celebrate` tweened them from 0.
+      const flare = new Set<Piece>();
+      for (const piece of [halo, seal]) if (piece) flare.add(piece);
       for (const piece of pieces) {
         stopOwn(piece);
-        piece.setAlpha(1);
+        if (!flare.has(piece)) piece.setAlpha(1);
       }
+      // The gold and the ribbon land even on a callout the player skipped past:
+      // the roll met the goal whether or not they waited to be told.
+      celebrate();
       fadeOut(160);
     },
     destroy() {

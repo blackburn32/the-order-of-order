@@ -39,6 +39,11 @@ export interface RollReelConfig {
    *  finished presenting the roll — a player who does not wait. Unset, a reel
    *  waits for GameScene to settle and then rests `betweenRollsMs`. */
   readonly pressEveryMs?: number;
+  /** The last roll carries the trial past its goal. GameScene answers a clear
+   *  by holding the callout and then leaving for the results screen, so it
+   *  never clears `rolling` and there is no settle to wait for: the reel rests
+   *  `closingMs` from the press instead. */
+  readonly clears?: boolean;
 }
 
 /** Grid growth: four rolls of a Genesis build, watched from 24 dice to 102.
@@ -86,7 +91,10 @@ export function rollReelDuration(config: RollReelConfig): number {
     config.openingMs +
     config.rolls * (ROLL_BUDGET_MS + config.betweenRollsMs) -
     config.betweenRollsMs +
-    config.closingMs
+    config.closingMs -
+    // A clearing reel rests on the press rather than on a settled roll, so the
+    // last roll's budget is the rest itself and is not spent twice.
+    (config.clears ? ROLL_BUDGET_MS : 0)
   );
 }
 
@@ -149,6 +157,11 @@ export async function playRollReel(
         await hold(scene, config.pressEveryMs);
         continue;
       }
+    }
+    if (config.clears && index === config.rolls - 1) {
+      progress.log.push(`${label} — ${scene.state.dice.length} dice, clears`);
+      await hold(scene, config.closingMs);
+      break;
     }
     const settled = await settle(scene, mine);
     if (generation !== mine) return;

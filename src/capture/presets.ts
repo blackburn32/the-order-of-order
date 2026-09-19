@@ -30,7 +30,8 @@ export interface CapturePreset {
     | "late-grid"
     | "dice-zoom"
     | "roll-callout"
-    | "roll-callout-skip";
+    | "roll-callout-skip"
+    | "roll-callout-clear";
 }
 
 export const CAPTURE_PRESETS = [
@@ -165,6 +166,24 @@ export const CAPTURE_PRESETS = [
     defaultFormat: "wide",
     readyDelayMs: 700,
     script: "roll-callout-skip",
+  },
+  {
+    id: "roll-callout-goal",
+    label: "Roll callout — the roll that meets the goal",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 700,
+    script: "roll-callout-clear",
+  },
+  {
+    id: "roll-callout-first-roll",
+    label: "Roll callout — the goal met on the first roll",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 700,
+    script: "roll-callout-clear",
   },
   {
     id: "gameplay-eclipse",

@@ -60,6 +60,7 @@ import { rollBreakdown } from "../systems/RollBreakdown";
 import {
   breakdownRows,
   playRollBreakdown,
+  type RollAcclaim,
   type RollBreakdownView,
 } from "../ui/rollBreakdown";
 import { buildItemCard } from "../ui/itemCard";
@@ -3287,6 +3288,24 @@ export class GameScene extends Phaser.Scene {
     );
     // Centred between the HUD and the seal, rows fitted to that band; compact
     // landscape, whose seal sits beside the grid, hangs it under the HUD.
+    // Did this roll carry the trial past its goal, and was it the trial's
+    // first? The callout stages a flare for each (see ui/rollBreakdown). Read
+    // from the score this roll left behind minus the points it added, so a roll
+    // that merely scored inside an already-cleared trial says nothing. The duel
+    // has no goal to cross — it is decided by who is ahead when the rolls run
+    // out — so it never acclaims.
+    const goal = goalFor(s);
+    const crossedGoal =
+      !isMirrorTrial(s.trial) &&
+      goal > 0n &&
+      s.score >= goal &&
+      s.score - result.points < goal;
+    const acclaim: RollAcclaim | undefined = !crossedGoal
+      ? undefined
+      : s.roll === 1
+        ? "firstRoll"
+        : "goal";
+
     const band = this.layout.calloutBand;
     let floatY = breakdown ? 150 : 195;
     const rowCount =
@@ -3315,6 +3334,7 @@ export class GameScene extends Phaser.Scene {
           return object;
         },
         pace: autoReroll ? 2.5 : 1,
+        acclaim,
         onBonus: (index) => audio.multiply(index),
         onStep: (index) => audio.multiply(index),
       });

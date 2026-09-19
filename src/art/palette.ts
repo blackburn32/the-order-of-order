@@ -41,6 +41,9 @@ export const CSS = {
   inkSoft: "#5a4a2e",
   gold: "#c9a227",
   goldLight: "#e6c65a",
+  // The brightest gold on the table, kept for the moments that earn it — the
+  // roll that met the goal, and the light every burst is drawn in.
+  glow: "#ffd977",
   steel: "#cfd6df",
   dim: "#8c7a55",
   red: "#d96a5a",

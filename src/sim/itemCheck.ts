@@ -45,6 +45,7 @@ import {
   scoreRoll,
 } from "../systems/Scoring";
 import { trialRollTarget } from "../systems/Trial";
+import { playerLeadsDuel } from "../systems/Rival";
 import {
   INNER_CIRCLE_POUR,
   setCardReworksForSimulation,
@@ -130,6 +131,71 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
   check(
     !itemDisabledDuringTrialByAffliction(item("amplifier"), "eclipse"),
     "Eclipse should halve the total without deactivating Amplifier",
+  );
+}
+
+// The edge is a base-set rare at the low price band. It waits through ordinary
+// trial resets, then banks one real point only after the final mirror is taken.
+// A deterministic d1 grid proves that point breaks an otherwise exact tie.
+{
+  const edge = ITEMS.find((def) => def.id === "the_edge");
+  check(
+    edge?.name === "The edge" &&
+      edge.priceBand === "low" &&
+      edge.rarity === "rare" &&
+      edge.unique === true &&
+      edge.unlock === undefined &&
+      edge.available === undefined,
+    "The edge should be an always-available, unique low-cost Rare",
+  );
+
+  const state = newRun();
+  check(
+    availableIds(state).includes("the_edge"),
+    "The edge should be in a fresh run's shop pool",
+  );
+  check(
+    applyOffer(state, { ...offerFor("the_edge", state), cost: 0 }) &&
+      state.hasEdge,
+    "buying The edge should arm its duel point",
+  );
+
+  state.trialOpenPending = true;
+  openTrial(state);
+  check(
+    state.score === 0n && state.totalScore === 0n,
+    "The edge should not score in an ordinary trial",
+  );
+
+  state.trial = WIN_TRIAL;
+  state.trialOpenPending = true;
+  state.dice = DicePool.fromDice(Array.from({ length: 9 }, () => makeDie(1)));
+  state.hasAmplifier = true;
+  prepareDuel(state);
+  openTrial(state);
+  check(
+    state.score === 1n &&
+      state.trialScore === 1n &&
+      state.totalScore === 1n &&
+      state.rival?.score === 0n &&
+      state.itemPoints.the_edge === 1n,
+    "The edge should bank one attributed point that the mirror does not receive",
+  );
+  openTrial(state);
+  check(
+    state.score === 1n,
+    "The edge should not score twice on a resumed duel",
+  );
+
+  for (let roll = 0; roll < trialRollTarget(state); roll++) {
+    rollPool(state, state.dice, () => 0);
+    resolveRoll(state, () => 0, { recordHistory: false });
+  }
+  check(
+    state.score === (state.rival?.score ?? 0n) + 1n &&
+      playerLeadsDuel(state) &&
+      resolveTrialEnd(state).phase === "victory",
+    "The edge should turn an exactly mirrored d1 duel into a one-point victory",
   );
 }
 

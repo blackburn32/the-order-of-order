@@ -57,6 +57,7 @@ import {
 export type ShopItemId =
   | "extra_die"
   | "extra_dice"
+  | "the_edge"
   | "extra_point"
   | "extra_number"
   | "mult2"
@@ -197,6 +198,7 @@ export type ItemTheme =
 /** Boolean run flags an item can switch on (Snake Eyes, Ledger, etc.). */
 type RunFlag =
   | "ownedLedger"
+  | "hasEdge"
   | "hasSnakeEyes"
   | "hasAmplifier"
   | "hasVault"
@@ -977,6 +979,15 @@ export const ITEMS: ItemDef[] = [
     unique: true,
     desc: "Shops offer 5 loose cards, and booster packs reveal 5 choices.",
     effects: [setFlag("ownedLedger")],
+  },
+  {
+    id: "the_edge",
+    name: "The edge",
+    priceBand: "low",
+    rarity: "rare",
+    unique: true,
+    desc: "Adds a single point to your score which cannot be mirrored.",
+    effects: [setFlag("hasEdge")],
   },
   {
     id: "extra_point",
@@ -2840,6 +2851,7 @@ export function enforceGridCap(
 export const ITEM_THEMES: Record<ShopItemId, ItemTheme[]> = {
   extra_die: ["swarm"],
   extra_dice: ["swarm"],
+  the_edge: ["tempo"],
   chip: ["swarm", "precision"],
   spike: ["swarm", "precision"],
   twin: ["swarm"],

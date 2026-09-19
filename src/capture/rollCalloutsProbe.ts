@@ -1,5 +1,7 @@
 // Print what each roll-callout clip will show, without a browser: the rolls use
-// the same seeded streams GameScene does, so these are the clips' numbers.
+// the same seeded streams GameScene does, so these are the clips' numbers — and
+// which of them cross the trial's goal, which is what the callout's acclaim is
+// staged off (see ui/rollBreakdown).
 //
 //   node node_modules/tsx/dist/cli.mjs src/capture/rollCalloutsProbe.ts
 
@@ -11,7 +13,7 @@ import { streamFor } from "../systems/Rng";
 import { formatScore } from "../ui/formatScore";
 import {
   ROLL_CALLOUT_PRESET_IDS,
-  ROLL_CALLOUT_REEL,
+  rollCalloutReel,
   rollCalloutRun,
 } from "./rollCallouts";
 
@@ -21,12 +23,14 @@ for (const id of ROLL_CALLOUT_PRESET_IDS) {
   console.log(
     `\n${id}: ${run.dice.length.toLocaleString()} dice, goal ${formatScore(goalFor(run))}`,
   );
-  for (let index = 0; index < ROLL_CALLOUT_REEL.rolls; index++) {
+  const reel = rollCalloutReel(id);
+  for (let index = 0; index < reel.rolls; index++) {
     if (trialComplete(run)) {
       console.log(`  roll ${index + 1}: the trial is already over`);
       failed = true;
       break;
     }
+    const scoreBefore = run.score;
     rollPool(
       run,
       run.dice,
@@ -52,9 +56,16 @@ for (const id of ROLL_CALLOUT_PRESET_IDS) {
           .map((s) => `${s.name} ${s.factor} (×${formatMultiplier(s.after)})`)
           .join(" → "),
     );
+    const goal = goalFor(run);
+    const acclaim =
+      scoreBefore < goal && run.score >= goal
+        ? run.roll === 1
+          ? " — ACCLAIM: first roll clear"
+          : " — ACCLAIM: goal met"
+        : "";
     console.log(
       `    = ×${formatMultiplier(breakdown.multiplier)} → +${formatScore(breakdown.points)}` +
-        ` (score ${formatScore(run.score)} of ${formatScore(goalFor(run))})`,
+        ` (score ${formatScore(run.score)} of ${formatScore(goal)})${acclaim}`,
     );
   }
 }

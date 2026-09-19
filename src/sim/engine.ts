@@ -809,7 +809,19 @@ export function openTrial(state: RunState): number {
   // last trial ended: that one predates the shop and these passives, and the
   // rival is meant to hold the very grid the player sits down with. Nothing
   // reads the rival before the trial opens, and it cannot have rolled yet.
-  if (isMirrorTrial(state.trial)) state.rival = createRival(state);
+  if (isMirrorTrial(state.trial)) {
+    state.rival = createRival(state);
+    // The edge belongs to the player rather than the grid the Order copies.
+    // Bank it only when the duel actually opens, after the mirror is taken, so
+    // buying it early survives every ordinary trial reset and a resumed duel
+    // cannot award it twice.
+    if (state.hasEdge) {
+      state.score += 1n;
+      state.trialScore = state.score;
+      state.totalScore += 1n;
+      state.itemPoints.the_edge = (state.itemPoints.the_edge ?? 0n) + 1n;
+    }
+  }
   return added;
 }
 

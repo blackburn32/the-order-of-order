@@ -28,6 +28,7 @@ export interface ItemPurchaseEvent {
 export const ITEM_VALUE_KIND: Record<ShopItemId, ItemValueKind> = {
   extra_die: "diceAdded",
   extra_dice: "diceAdded",
+  the_edge: "points",
   extra_point: "points",
   extra_number: "scoringNumbersAdded",
   mult2: "diceAdded",

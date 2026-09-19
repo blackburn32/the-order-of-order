@@ -105,6 +105,7 @@ export interface RunState {
   bonusRollsThisRound: number; // Overtime — consumed at trial end
   bonusRollsPerRound: number; // Metronome — permanent
   ownedLedger: boolean;
+  hasEdge: boolean; // grants one unmirrored point when the final duel opens
   hasSnakeEyes: boolean;
   hasAmplifier: boolean;
   hasVault: boolean; // raises the gold interest cap
@@ -318,6 +319,7 @@ export function newRun(
     bonusRollsThisRound: 0,
     bonusRollsPerRound: 0,
     ownedLedger: false,
+    hasEdge: false,
     hasSnakeEyes: false,
     hasAmplifier: false,
     hasVault: false,

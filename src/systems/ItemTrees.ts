@@ -434,6 +434,10 @@ export const OUTSIDE_TREES: Partial<Record<ShopItemId, OutsidePlacement>> = {
     status: "neutral",
     note: "The free fallback when a shop row is out of reach.",
   },
+  the_edge: {
+    status: "neutral",
+    note: "Its unmirrored duel point serves every strategy alike.",
+  },
   pocket_change: {
     status: "neutral",
     note: "A starter card, sold only to small grids.",

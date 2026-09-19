@@ -23,7 +23,11 @@ import {
   type RollReelConfig,
   type RollReelProgress,
 } from "./rollReel";
-import { ROLL_CALLOUT_REEL, ROLL_CALLOUT_SKIP_REEL } from "./rollCallouts";
+import {
+  ROLL_CALLOUT_CLEAR_REEL,
+  ROLL_CALLOUT_REEL,
+  ROLL_CALLOUT_SKIP_REEL,
+} from "./rollCallouts";
 import {
   parkShopCursor,
   playShopLoop,
@@ -80,6 +84,7 @@ const ROLL_REELS: Record<string, RollReelConfig> = {
   "late-grid": LATE_GRID_REEL,
   "roll-callout": ROLL_CALLOUT_REEL,
   "roll-callout-skip": ROLL_CALLOUT_SKIP_REEL,
+  "roll-callout-clear": ROLL_CALLOUT_CLEAR_REEL,
 };
 
 function rollReelFor(preset: CapturePresetDefinition): RollReelConfig | null {

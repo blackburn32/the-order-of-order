@@ -1,11 +1,15 @@
 // Fixtures for the roll-callout clips: the same callout (ui/rollBreakdown) at
 // four scales, from a handful of dice with nothing to multiply them to a 20,000-
-// die grid whose multiplier climbs through a dozen cards and two growth engines.
+// die grid whose multiplier climbs through a dozen cards and two growth engines,
+// plus the two clips that are *about* a trial ending — the goal met, and the
+// goal met on the trial's first roll.
 //
 // Each run is built straight from `newRun` rather than from the marketing
-// fixtures, so a clip shows exactly the cards named here and nothing else. The
-// trials are picked so two rolls cannot clear them: a cleared trial hands the
-// scene to the results screen mid-clip. `npm run capture:callouts` records them;
+// fixtures, so a clip shows exactly the cards named here and nothing else. Every
+// fixture but the clearing pair is meant to survive its whole reel, since a
+// cleared trial hands the scene to the results screen mid-clip; the clearing
+// pair says so with `clears` on its reel, and its single roll is the clip.
+// `npm run capture:callouts` records them;
 // `node node_modules/tsx/dist/cli.mjs src/capture/rollCalloutsProbe.ts` prints
 // what each roll will show without opening a browser.
 
@@ -21,6 +25,8 @@ export const ROLL_CALLOUT_PRESET_IDS = [
   "roll-callout-hundred",
   "roll-callout-multitude",
   "roll-callout-skip",
+  "roll-callout-goal",
+  "roll-callout-first-roll",
 ] as const;
 
 export type RollCalloutPresetId = (typeof ROLL_CALLOUT_PRESET_IDS)[number];
@@ -50,6 +56,27 @@ export const ROLL_CALLOUT_SKIP_REEL: RollReelConfig = {
   // multiplier is still counting.
   pressEveryMs: 950,
 };
+
+/** One roll, left alone: it carries the trial past its goal, so GameScene
+ *  holds the acclaimed callout and then leaves for the results screen. The
+ *  closing rest covers the whole callout — tumble, count, flare and fade — and
+ *  stops before the table slides away. */
+export const ROLL_CALLOUT_CLEAR_REEL: RollReelConfig = {
+  rolls: 1,
+  openingMs: 300,
+  betweenRollsMs: 0,
+  closingMs: 3300,
+  clears: true,
+};
+
+/** The reel each fixture is performed with. The clearing pair are single-roll
+ *  reels; everything else plays the standard two. */
+export function rollCalloutReel(id: RollCalloutPresetId): RollReelConfig {
+  if (id === "roll-callout-skip") return ROLL_CALLOUT_SKIP_REEL;
+  if (id === "roll-callout-goal" || id === "roll-callout-first-roll")
+    return ROLL_CALLOUT_CLEAR_REEL;
+  return ROLL_CALLOUT_REEL;
+}
 
 /** A deterministic grid in the given die mix. */
 function mixedDice(
@@ -175,6 +202,22 @@ export function rollCalloutRun(id: RollCalloutPresetId): RunState {
       run.momentum = 1;
       run.hasCatechism = true;
       run.growthRollsAt = { catechism: counts({ 10: 6 }) };
+      return run;
+    }
+    // The same hundred-die build twice over, for the two tiers of acclaim the
+    // callout stages when a roll carries the trial past its goal (see
+    // ui/rollBreakdown). `goal` opens part-way through the trial so the roll
+    // that crosses is not its first; `first-roll` opens on a fresh trial and
+    // crosses on the opening press, which is the louder of the two.
+    case "roll-callout-goal":
+    case "roll-callout-first-roll": {
+      const run = rollCalloutRun("roll-callout-hundred");
+      if (id === "roll-callout-goal") {
+        run.roll = 1;
+        run.score = 24_000n;
+        run.trialScore = run.score;
+        run.totalScore = run.score;
+      }
       return run;
     }
     // Twenty thousand dice: a long climb through stacked cards and two engines.
