@@ -112,7 +112,7 @@ build says _Press_ and _pinching_, every other build _Click_ and _scrolling_.
 ### 20. When you're ready, press here to get to the next trial.
 
 - Spotlight: the Continue to Trials button
-- Continue: presses the button
+- Also advances: pressing the button
 
 ## Trial overview (second and third visits)
 
