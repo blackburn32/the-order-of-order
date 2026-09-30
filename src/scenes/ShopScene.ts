@@ -2,7 +2,13 @@ import Phaser from "phaser";
 import { CSS, SERIF, COLORS } from "../art/palette";
 import type { RarityWeights } from "../config";
 import { getRun, RunState } from "../state/RunState";
-import { canLoad, canShrink, Die } from "../systems/Dice";
+import {
+  canLoad,
+  canShrink,
+  Die,
+  isVoiceDie,
+  VOICE_SOURCE,
+} from "../systems/Dice";
 import {
   applyCouponFreebie,
   applyBoosterChoice,
@@ -33,7 +39,14 @@ import {
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { DieSprite, setDieAuraSource } from "../ui/DieSprite";
-import { runAuras } from "../systems/DieEffects";
+import {
+  dieEffects,
+  dieEffectsKey,
+  runAuras,
+  type DieEffect,
+} from "../systems/DieEffects";
+import { dieBodyTexture } from "../art/textures";
+import { formatSci } from "../ui/formatScore";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { addFelt, bannerButton } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
@@ -156,6 +169,10 @@ interface ShopBackdrop {
   ambient: AmbientLayer;
   titleGlow: Phaser.GameObjects.Image;
 }
+
+/** Height of one line in the size picker's list of the kinds of die a size
+ *  holds. */
+const VARIANT_LINE_H = 20;
 
 export class ShopScene extends Phaser.Scene {
   private state!: RunState;
@@ -3160,18 +3177,50 @@ export class ShopScene extends Phaser.Scene {
       count: number;
       index: number;
       eligible: boolean;
+      /** The distinct kinds of die this size holds, by their effects. */
+      variants: Map<string, { effects: DieEffect[]; count: number }>;
+      /** Per-die traits every die of the size shares, for the shown die. */
+      shared: {
+        maxFaceBonus: number | null;
+        loaded: boolean;
+        wild: boolean;
+        voice: boolean;
+      };
     }
+    const auras = runAuras(this.state);
     const bySize = new Map<number, SizeEntry>();
-    for (const group of this.state.dice.groups()) {
+    for (const group of this.state.dice.groups([], true)) {
       const eligible = this.eligibleFor(offer, group.die);
-      const entry = bySize.get(group.die.sides);
+      const effects = dieEffects(group.die, auras);
+      const variantKey = dieEffectsKey(effects);
+      let entry = bySize.get(group.die.sides);
       if (!entry) {
-        bySize.set(group.die.sides, {
+        entry = {
           die: group.die,
-          count: group.count,
+          count: 0,
           index: group.firstIndex,
           eligible,
-        });
+          variants: new Map(),
+          shared: {
+            maxFaceBonus: group.die.maxFaceBonus,
+            loaded: group.die.loaded,
+            wild: group.die.wildFace,
+            voice: isVoiceDie(group.die),
+          },
+        };
+        bySize.set(group.die.sides, entry);
+      }
+      const variant = entry.variants.get(variantKey);
+      if (variant) variant.count += group.count;
+      else entry.variants.set(variantKey, { effects, count: group.count });
+      const shared = entry.shared;
+      if (shared.maxFaceBonus !== group.die.maxFaceBonus)
+        shared.maxFaceBonus = null;
+      shared.loaded &&= group.die.loaded;
+      shared.wild &&= group.die.wildFace;
+      shared.voice &&= isVoiceDie(group.die);
+      if (entry.count === 0) {
+        entry.count = group.count;
         continue;
       }
       entry.count += group.count;
@@ -3184,23 +3233,52 @@ export class ShopScene extends Phaser.Scene {
     const entries = [...bySize.values()].sort(
       (a, b) => b.die.sides - a.die.sides,
     );
-    const { scale, positions } = computeGridPositions(
-      entries.length,
-      area,
-      112,
-    );
+    // A size holding more than one kind of die lists them under its count, so
+    // each row of sizes is given that much more height than the dice need.
+    const listHeight = (entry: SizeEntry) =>
+      entry.variants.size > 1 ? entry.variants.size * VARIANT_LINE_H + 16 : 0;
+    const extra = Math.max(0, ...entries.map(listHeight));
+    let layout = computeGridPositions(entries.length, area, 112);
+    if (extra > 0)
+      layout = computeGridPositions(
+        entries.length,
+        {
+          ...area,
+          height: Math.max(
+            area.height * 0.4,
+            area.height - layout.rows * extra,
+          ),
+        },
+        112,
+      );
+    const { scale, cell, cols, rows } = layout;
+    const positions = layout.positions.map((p, i) => ({
+      x: p.x,
+      y: p.y + (Math.floor(i / cols) - (rows - 1) / 2) * extra - extra / 2,
+    }));
 
     const items: Phaser.GameObjects.GameObject[] = [];
     entries.forEach((entry, i) => {
       const { x, y } = positions[i];
-      const sprite = new DieSprite(this, x, y, entry.die);
+      // The card acts on the whole size, so the die shown for it wears only
+      // what every die of the size shares: the size's own auras, and any trait
+      // no die of it lacks. The kinds it holds are laid out beneath.
+      const shown: Die = {
+        ...entry.die,
+        maxFaceBonus: entry.shared.maxFaceBonus ?? 0,
+        loaded: entry.shared.loaded,
+        wildFace: entry.shared.wild,
+        source: entry.shared.voice ? VOICE_SOURCE : "starter",
+      };
+      const sprite = new DieSprite(this, x, y, shown);
       sprite.setScale(scale);
       sprite.showFace(null);
       items.push(sprite);
 
+      const countY = y + 50 * scale;
       items.push(
         this.add
-          .text(x, y + 50 * scale, `×${entry.count}`, {
+          .text(x, countY, `×${entry.count}`, {
             fontFamily: SERIF,
             fontSize: "15px",
             color: CSS.goldLight,
@@ -3208,6 +3286,16 @@ export class ShopScene extends Phaser.Scene {
           })
           .setOrigin(0.5),
       );
+      if (entry.variants.size > 1)
+        items.push(
+          this.buildVariantList(
+            entry.die.sides,
+            [...entry.variants.values()],
+            x,
+            countY + 12 + VARIANT_LINE_H / 2,
+            cell,
+          ),
+        );
 
       if (entry.eligible) {
         sprite.setSize(104, 104);
@@ -3222,6 +3310,45 @@ export class ShopScene extends Phaser.Scene {
     return items;
   }
 
+  /** A size's distinct kinds of die, one line each — a small shaded icon and
+   *  its count — stacked under the size from `y`, centred on `x` and shrunk to
+   *  the picker cell's width. Plain dice lead, then the largest groups. */
+  private buildVariantList(
+    sides: number,
+    variants: { effects: DieEffect[]; count: number }[],
+    x: number,
+    y: number,
+    cell: number,
+  ): Phaser.GameObjects.Container {
+    const list = this.add.container(x, y);
+    const icon = VARIANT_LINE_H - 2;
+    const sorted = [...variants].sort(
+      (a, b) => a.effects.length - b.effects.length || b.count - a.count,
+    );
+    let widest = 1;
+    sorted.forEach((variant, k) => {
+      const lineY = k * VARIANT_LINE_H;
+      const image = this.add
+        .image(0, lineY, dieBodyTexture(this, sides, variant.effects, false))
+        .setDisplaySize(icon, icon);
+      const label = this.add
+        .text(0, lineY, `×${formatSci(variant.count)}`, {
+          fontFamily: SERIF,
+          fontSize: "12px",
+          color: CSS.parchmentDark,
+        })
+        .setOrigin(0, 0.5);
+      // Each line is centred on its own width, icon and count together.
+      const width = icon + 3 + label.width;
+      image.x = -width / 2 + icon / 2;
+      label.x = -width / 2 + icon + 3;
+      widest = Math.max(widest, width);
+      list.add([image, label]);
+    });
+    list.setScale(Math.min(1, (cell - 8) / widest));
+    return list;
+  }
+
   /** One representative sprite + count badge per distinct (sides, maxFaceBonus,
    *  loaded, wildFace) combination — grouping on all four flags keeps every
    *  group homogeneous w.r.t. `eligibleFor`, so a group's single representative
@@ -3232,7 +3359,7 @@ export class ShopScene extends Phaser.Scene {
     area: GridArea,
   ): Phaser.GameObjects.GameObject[] {
     const entries = this.state.dice
-      .groups(this.pickedIndices)
+      .groups(this.pickedIndices, true)
       .sort((a, b) => b.die.sides - a.die.sides);
     const { scale, positions } = computeGridPositions(
       entries.length,

@@ -80,6 +80,10 @@ export class DieSprite extends Phaser.GameObjects.Container {
   private typeImage: Phaser.GameObjects.Image;
   // The effects this die is currently shaded for (see systems/DieEffects).
   private effects: DieEffect[] = [];
+  // Whether the body carries the clear plate a numeral sits on. A die showing
+  // no face (an unrolled die, or one offered in the shop's picker) drops it,
+  // since a blank plate would only hide the texture that names its effects.
+  private plated = true;
   // The cross an inert die wears (see setInert), hidden on every other die.
   private strikeImage: Phaser.GameObjects.Image;
   // Border overlay for effect flashes. Created up front (not lazily) so the
@@ -180,7 +184,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
     // were already there.
     this.effects = dieEffects(this.die, auraSource());
     this.bodyImage.setTexture(
-      dieBodyTexture(this.scene, this.die.sides, this.effects),
+      dieBodyTexture(this.scene, this.die.sides, this.effects, this.plated),
     );
     this.typeImage.setFrame(`label-d${this.die.sides}`);
     if (this.sharp) this.drawSharp();
@@ -192,6 +196,13 @@ export class DieSprite extends Phaser.GameObjects.Container {
    *  destroyed, which is what keeps a rolling grid cheap. */
   showFace(value: number | null): void {
     this.faceValue = value;
+    if (this.plated !== (value !== null)) {
+      this.plated = value !== null;
+      this.bodyImage.setTexture(
+        dieBodyTexture(this.scene, this.die.sides, this.effects, this.plated),
+      );
+      if (this.sharp) this.drawSharp();
+    }
     if (value === null) {
       this.faceImage.setVisible(false);
       this.sharpFace?.setVisible(false);
@@ -291,7 +302,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
 
     if (this.sharpBody) {
       this.sharpBody.clear();
-      drawDieBody(this.sharpBody, sides, this.effects);
+      drawDieBody(this.sharpBody, sides, this.effects, this.plated);
     }
 
     this.sharpLabel

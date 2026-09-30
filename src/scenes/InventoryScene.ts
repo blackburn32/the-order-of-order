@@ -675,7 +675,7 @@ export class InventoryScene extends Phaser.Scene {
   private diceRows(run: RunState): DiceRow[] {
     const auras = runAuras(run);
     const rows = new Map<string, DiceRow>();
-    for (const group of run.dice.groups()) {
+    for (const group of run.dice.groups([], true)) {
       const effects = dieEffects(group.die, auras);
       const key = `${group.die.sides}|${dieEffectsKey(effects)}`;
       const row = rows.get(key);
