@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { isMirrorTrial, rankOf, trialInRank } from "../config";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { artImage, artScale, bossSigilTexture } from "../art/textures";
+import { DIE_SIZE } from "../art/dieArt";
 import { getRun, type RunState } from "../state/RunState";
 import type { Die } from "../systems/Dice";
 import {
@@ -78,6 +79,7 @@ import {
 } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
 import { DuelShowdown } from "../ui/duelShowdown";
+import { ChainLightning, type ChainGroup } from "../ui/chainLightning";
 import {
   advanceFrom,
   advanceTutorial,
@@ -537,6 +539,8 @@ export class GameScene extends Phaser.Scene {
   private tumbleStartedAt = 0;
   private settleTimer?: Phaser.Time.TimerEvent;
   private effectTimer?: Phaser.Time.TimerEvent;
+  /** The arcs linking the dice of this roll's multi-die effects, while lit. */
+  private chainLightning?: ChainLightning;
   private finishEffects?: (skipHold: boolean) => void;
   private pendingAdvance?: Phaser.Time.TimerEvent;
   private hudRank!: Phaser.GameObjects.Text;
@@ -605,6 +609,7 @@ export class GameScene extends Phaser.Scene {
     this.settleTimer = undefined;
     this.effectTimer = undefined;
     this.finishEffects = undefined;
+    this.chainLightning = undefined;
     this.pendingAdvance = undefined;
     this.endedTrialHud = undefined;
     this.sprites = new Map();
@@ -1548,6 +1553,8 @@ export class GameScene extends Phaser.Scene {
    *  Used for the initial build, resize, and every pan/zoom step. */
   private syncGrid(layout: Layout, spawned?: number): void {
     this.layout = layout;
+    // The arcs are drawn between cells of the layout being replaced.
+    this.clearChainLightning();
     const n = this.state.dice.length;
     const firstLayout = this.gridCount < 0;
     const countChanged = n !== this.gridCount;
@@ -2386,6 +2393,54 @@ export class GameScene extends Phaser.Scene {
     };
   }
 
+  /**
+   * Link the dice of each effect that needs several dice at once (Consensus,
+   * The Congregation) with chain lightning — see ui/chainLightning. Called from
+   * the same per-die branch that pulses borders, so it follows the same detail
+   * levels, and only dice pulsing this roll are linked: every arc lands on a die
+   * that is visibly flashing, and the pulse budget bounds the arcs too.
+   */
+  private playChainLightning(
+    modifiers: ScoreModifier[],
+    hitsByModifier: Map<ScoreModifier, number[]>,
+    pulsed: Set<number>,
+    rolled: Map<number, Die>,
+  ): void {
+    this.clearChainLightning();
+    const groups: ChainGroup[] = [];
+    let dieSize = 0;
+    for (const mod of modifiers) {
+      if (!mod.chain) continue;
+      const byKey = new Map<number, { x: number; y: number }[]>();
+      for (const i of hitsByModifier.get(mod) ?? []) {
+        const sprite = this.sprites.get(i);
+        if (!sprite || !pulsed.has(i)) continue;
+        dieSize = Math.max(dieSize, sprite.scaleX * DIE_SIZE);
+        const key =
+          mod.chain === "byFace" ? (rolled.get(i) ?? sprite.die).value : 0;
+        const points = byKey.get(key) ?? [];
+        points.push({ x: sprite.x, y: sprite.y });
+        byKey.set(key, points);
+      }
+      for (const points of byKey.values()) {
+        if (points.length >= 2) groups.push({ color: mod.color, points });
+      }
+    }
+    if (groups.length === 0) return;
+    const chain = new ChainLightning(this, this.gridContainer, groups, {
+      dieSize,
+      motion: fx.motion,
+    });
+    this.cameras.main.ignore(chain.object);
+    this.overlayCamera?.ignore(chain.object);
+    this.chainLightning = chain;
+  }
+
+  private clearChainLightning(): void {
+    this.chainLightning?.destroy();
+    this.chainLightning = undefined;
+  }
+
   /** Identify dice added by an automatic passive after the grid has been
    *  re-laid. Foundry and Genesis otherwise change the grid silently; Double
    *  the Fun already identifies the parent die that triggered each copy, and
@@ -2856,6 +2911,7 @@ export class GameScene extends Phaser.Scene {
     this.rolling = true;
     this.tumbling = true;
     this.finishBreakdown();
+    this.clearChainLightning();
 
     // Each die picks its own rocking motion for this roll; `update()` advances
     // all of them per frame from this timestamp.
@@ -3211,7 +3267,7 @@ export class GameScene extends Phaser.Scene {
                 : id === "snakeEyes"
                   ? (s.dice.agg().valueCounts.get(die.value) ?? 0) >= 2
                   : id === "jackpot"
-                    ? (s.dice.agg().valueCounts.get(die.value) ?? 0) >= 3
+                    ? scoring
                     : id === "windfall"
                       ? windfall
                       : id === "royalSeal"
@@ -3241,12 +3297,16 @@ export class GameScene extends Phaser.Scene {
       // Sample by grid index rather than taking the first hits, spreading the
       // feedback across the viewport while keeping Graphics/tween cost fixed.
       const pulseCandidates = [...dieColors].sort(([a], [b]) => a - b);
-      for (const [i, colors] of evenlySample(
-        pulseCandidates,
-        MAX_PULSED_DICE,
-      )) {
+      const pulsed = evenlySample(pulseCandidates, MAX_PULSED_DICE);
+      for (const [i, colors] of pulsed) {
         this.sprites.get(i)?.pulseEffects(colors, bigDice.has(i));
       }
+      this.playChainLightning(
+        result.modifiers,
+        hitsByModifier,
+        new Set(pulsed.map(([i]) => i)),
+        rolledVisible,
+      );
 
       const floatRows = new Map<number, number>();
       const dieFloat = (

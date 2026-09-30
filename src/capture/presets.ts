@@ -186,6 +186,15 @@ export const CAPTURE_PRESETS = [
     script: "roll-callout-clear",
   },
   {
+    id: "roll-callout-chain",
+    label: "Roll callout — chain lightning",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 700,
+    script: "roll-callout",
+  },
+  {
     id: "gameplay-eclipse",
     label: "Gameplay — Eclipse arrival",
     kind: "gameplay",

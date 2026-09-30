@@ -445,6 +445,10 @@ export interface ScoreModifier {
   dice: number[]; // indices of dice this modifier flashes (empty when bucketed)
   bigPulse: boolean; // stronger bounce on those dice (Jackpot)
   float: ScoreFloat;
+  // Effects that need several dice at once link the dice they hit with chain
+  // lightning: `byFace` joins each set of dice sharing a face (Snake Eyes),
+  // `together` joins every die it hit as one chain (Jackpot).
+  chain?: "byFace" | "together";
   // Some item effects identify points already included in another modifier
   // (Extra Number / Wild Face). This lets the UI list that contribution without
   // adding it to the subtotal a second time.
@@ -728,6 +732,7 @@ export function scoreRoll(
         dice: flash,
         bigPulse: false,
         float: "aggregate",
+        chain: "byFace",
       });
     }
   }
@@ -747,6 +752,7 @@ export function scoreRoll(
       dice: scoringDice,
       bigPulse: true,
       float: "aggregate",
+      chain: "together",
     });
   }
 
