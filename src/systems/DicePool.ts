@@ -2217,9 +2217,14 @@ export class DicePool {
   /** Distinct dice groups by (sides, flags) — ignoring source — each with a
    *  representative die, its total count, and the grid index of its first member.
    *  O(buckets) in bucket mode, so a target picker can show one icon + a count per
-   *  group instead of a sprite per die. */
+   *  group instead of a sprite per die.
+   *
+   *  `splitVoice` also keeps A New Voice's dice apart from the rest of their
+   *  size: their rule is carried by their source rather than a flag, so a
+   *  display that shows what each group does has to ask for it. */
   groups(
     excludedIndices: readonly number[] = [],
+    splitVoice = false,
   ): { die: Die; count: number; firstIndex: number }[] {
     const map = new Map<
       string,
@@ -2231,7 +2236,10 @@ export class DicePool {
       mfb: number,
       loaded: boolean,
       wild: boolean,
-    ) => `${sides}|${mfb}|${loaded ? 1 : 0}|${wild ? 1 : 0}`;
+      source: string,
+    ) =>
+      `${sides}|${mfb}|${loaded ? 1 : 0}|${wild ? 1 : 0}` +
+      (splitVoice && isVoiceDie({ source }) ? "|voice" : "");
     if (this.mode === "list") {
       this.list.forEach((die, i) => {
         if (excluded.has(i)) return;
@@ -2240,6 +2248,7 @@ export class DicePool {
           die.maxFaceBonus,
           die.loaded,
           die.wildFace,
+          die.source,
         );
         const g = map.get(key);
         if (g) g.count += 1;
@@ -2249,7 +2258,13 @@ export class DicePool {
     }
     let offset = 0;
     for (const b of this.buckets) {
-      const key = flagsKey(b.sides, b.maxFaceBonus, b.loaded, b.wildFace);
+      const key = flagsKey(
+        b.sides,
+        b.maxFaceBonus,
+        b.loaded,
+        b.wildFace,
+        b.source,
+      );
       let excludedInBucket = 0;
       let firstIndex = offset;
       while (firstIndex < offset + b.count && excluded.has(firstIndex))

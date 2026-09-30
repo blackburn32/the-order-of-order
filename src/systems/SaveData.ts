@@ -2,6 +2,7 @@ import { HALL_SIZE, rankOf, trialInRank } from "../config";
 import type { RunState } from "../state/RunState";
 import { clearActiveRun } from "./ActiveRunPersistence";
 import type { DiceStack } from "./DicePool";
+import type { DieAuras } from "./DieEffects";
 import { windfallFactor } from "./Dice";
 import { isRetired } from "./CardReworks";
 import {
@@ -48,6 +49,10 @@ export interface HallEntry {
   endless?: boolean; // true if the run continued past the final rank
   goldEarned?: number; // lifetime gold earned during the run
   dice: DiceStack[];
+  // The size-wide rules the grid ended under (Royal Seal, Ballast, The Anvil),
+  // so the final grid can shade its dice the way the table did. Optional:
+  // entries recorded before it existed show those dice plain.
+  auras?: DieAuras;
   // Per-item point attribution for the run (see systems/ItemPoints). Optional so
   // pre-existing entries load fine; the Hall's analysis button is hidden when
   // absent. Full fidelity locally (no size cap).
@@ -123,6 +128,7 @@ export function loadHall(): HallEntry[] {
             count: d.count ?? 1,
           } as DiceStack;
         }),
+        auras: hallAuras(entry.auras),
         dicePoints: bigintMap(entry.dicePoints),
         itemPoints: bigintMap(entry.itemPoints),
         history: hydrateRollHistory(entry.history),
@@ -139,6 +145,19 @@ export function loadHall(): HallEntry[] {
 
 /** Rigged-roll keys as read back off storage, or off another player's shared
  *  run. Anything not shaped like `trial:roll` is dropped rather than trusted. */
+/** A Hall entry's size-wide rules as read back off storage. */
+function hallAuras(value: unknown): DieAuras | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const sizes = (v: unknown) =>
+    Array.isArray(v) ? v.filter((n): n is number => typeof n === "number") : [];
+  return {
+    royalSealSizes: sizes(raw.royalSealSizes),
+    ballastSizes: sizes(raw.ballastSizes),
+    anvil: Boolean(raw.anvil),
+  };
+}
+
 function rollKeys(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter(
@@ -400,6 +419,11 @@ export function recordRunEnd(
     endless: state.endless,
     goldEarned: state.goldEarned,
     dice: state.dice.summarize(),
+    auras: {
+      royalSealSizes: [...state.royalSealSizes],
+      ballastSizes: [...state.ballastSizes],
+      anvil: state.hasAnvil,
+    },
     dicePoints: { ...state.dicePoints },
     itemPoints: { ...state.itemPoints },
     history: state.rollHistory.map((sample) => ({

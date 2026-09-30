@@ -5,7 +5,6 @@ import {
   DIE_SIZE,
   FACE_CELL,
   drawDieBody,
-  drawDiePip,
   drawDieStrike,
   faceLabelStyle,
   faceNumeralOffset,
@@ -15,6 +14,7 @@ import { DPR } from "../renderQuality";
 import { DIE_LADDER } from "../systems/Dice";
 import type { AfflictionId } from "../systems/Afflictions";
 import type { BossModifierId } from "../systems/Boss";
+import { dieEffectsKey, type DieEffect } from "../systems/DieEffects";
 
 // Square so it stretches evenly onto any viewport aspect ratio via setDisplaySize.
 const FELT_SIZE = 1024;
@@ -79,8 +79,6 @@ const BAKE_SCALE: Record<string, number> = {
   "btn-corners-vine": ART_SCALE,
   "btn-corners-scroll": ART_SCALE,
   banner: ART_SCALE,
-  "pip-gold": ART_SCALE,
-  "pip-voice": ART_SCALE,
   "die-atlas": ART_SCALE,
   ...Object.fromEntries(DIE_LADDER.map((sides) => [`die-${sides}`, ART_SCALE])),
 };
@@ -190,7 +188,6 @@ function bakeGraphics(
 export function buildTextures(scene: Phaser.Scene): void {
   buildFelt(scene);
   buildDice(scene);
-  buildPips(scene);
   buildDiceAtlas(scene);
   buildCard(scene);
   buildPlaque(scene);
@@ -1179,15 +1176,27 @@ function buildDice(scene: Phaser.Scene): void {
   }
 }
 
-function buildPips(scene: Phaser.Scene): void {
+/**
+ * The body texture for a die of `sides` carrying `effects`: the plain
+ * `die-N` for a die with none, otherwise a variant baked the first time some
+ * die asks for it. Baked on demand rather than at boot because the set of
+ * effect combinations is large and a run meets only a handful of them.
+ * `plate: false` is for an icon drawn without a face (see `drawDieBody`).
+ */
+export function dieBodyTexture(
+  scene: Phaser.Scene,
+  sides: number,
+  effects: readonly DieEffect[],
+  plate = true,
+): string {
+  if (effects.length === 0) return `die-${sides}`;
+  const key = `die-${sides}~${dieEffectsKey(effects)}${plate ? "" : "~bare"}`;
+  if (scene.textures.exists(key)) return key;
+  BAKE_SCALE[key] = ART_SCALE;
   const g = scene.add.graphics();
-  g.translateCanvas(6, 6);
-  drawDiePip(g);
-  bakeGraphics(g, "pip-gold", 12, 12);
-  const voice = scene.add.graphics();
-  voice.translateCanvas(6, 6);
-  drawDiePip(voice, COLORS.voicePip);
-  bakeGraphics(voice, "pip-voice", 12, 12);
+  drawDieBody(g, sides, effects, plate);
+  bakeGraphics(g, key, DIE_SIZE, DIE_SIZE);
+  return key;
 }
 
 /**

@@ -1,7 +1,9 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { setArtScale } from "../art/textures";
+import { dieBodyTexture, setArtScale } from "../art/textures";
 import type { Die } from "../systems/Dice";
+import { dieEffects } from "../systems/DieEffects";
+import { currentDieAuras } from "./DieSprite";
 import type { DiceRegionSummary } from "../systems/DicePool";
 import { drawEffectBorder, BORDER_WIDTH } from "./dieBorder";
 import { formatCompactCount, formatScore } from "./formatScore";
@@ -13,7 +15,6 @@ interface DieTypeRow {
   icon: Phaser.GameObjects.Container;
   body: Phaser.GameObjects.Image;
   face: Phaser.GameObjects.Image;
-  marker: Phaser.GameObjects.Image;
   border: Phaser.GameObjects.Graphics;
   label: Phaser.GameObjects.Text;
   die: Die;
@@ -168,6 +169,7 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
           Number(die?.maxFaceBonus ?? false),
           Number(die?.loaded ?? false),
           Number(die?.wildFace ?? false),
+          die?.source ?? "",
         ];
       }),
     ].join("|");
@@ -205,7 +207,14 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
       row.die = { ...representative };
       row.count = summary.bySides[side];
       row.face.setFrame(`face-${side}-${representative.value}`);
-      row.marker.setVisible(representative.maxFaceBonus > 0);
+      // The row wears its representative's shade, as the die it stands for.
+      row.body.setTexture(
+        dieBodyTexture(
+          this.scene,
+          side,
+          dieEffects(representative, currentDieAuras()),
+        ),
+      );
     }
 
     // Face changes do not affect geometry, but the set of rows, the footer, and
@@ -367,7 +376,6 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
       // to the object scale each texture's own bake resolution asks for.
       setArtScale(row.body.setPosition(0, 0), scale);
       setArtScale(row.face.setPosition(0, -4 * scale), scale);
-      setArtScale(row.marker.setPosition(34 * scale, -34 * scale), scale);
       // The outline path is in the same design space, so one plain scale on the
       // Graphics carries the geometry and its stroke together.
       row.border.setScale(scale);
@@ -650,17 +658,20 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
   private createRow(die: Die): DieTypeRow {
     const container = this.scene.add.container(0, 0);
     const icon = this.scene.add.container(0, 0);
-    const body = this.scene.add.image(0, 0, `die-${die.sides}`);
+    const body = this.scene.add.image(
+      0,
+      0,
+      dieBodyTexture(this.scene, die.sides, dieEffects(die, currentDieAuras())),
+    );
     const face = this.scene.add.image(
       0,
       0,
       "die-atlas",
       `face-${die.sides}-${die.value}`,
     );
-    const marker = this.scene.add.image(0, 0, "pip-gold");
     const border = this.scene.add.graphics();
     border.setAlpha(0);
-    icon.add([body, face, marker, border]);
+    icon.add([body, face, border]);
     const label = this.scene.add
       .text(0, 0, "", {
         fontFamily: SERIF,
@@ -676,7 +687,6 @@ export class DiceSummaryCard extends Phaser.GameObjects.Container {
       icon,
       body,
       face,
-      marker,
       border,
       label,
       die: { ...die },
