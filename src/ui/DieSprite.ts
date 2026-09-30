@@ -1,19 +1,22 @@
 import Phaser from "phaser";
-import { artBakeScale, artImage } from "../art/textures";
+import { artBakeScale, artImage, dieBodyTexture } from "../art/textures";
 import {
   DIE_CENTER,
   FACE_OFFSET_Y,
   LABEL_OFFSET_Y,
   drawDieBody,
-  drawDiePip,
   drawDieStrike,
   faceLabelStyle,
   faceNumeralOffset,
   faceNumeralStyle,
 } from "../art/dieArt";
 import { drawEffectBorder } from "./dieBorder";
-import { COLORS } from "../art/palette";
-import { Die, isVoiceDie } from "../systems/Dice";
+import { Die } from "../systems/Dice";
+import {
+  dieEffects,
+  type DieAuras,
+  type DieEffect,
+} from "../systems/DieEffects";
 
 /** How long a newly won die takes to reach its full size in the grid. */
 export const SPAWN_MS = 260;
@@ -52,29 +55,35 @@ const SHARP_THRESHOLD = 1.25;
  */
 const MAX_SHARP_RESOLUTION = 16;
 
-/** A corner pip: gold top-right on a die whose highest face always scores
- *  (Rollplayer, Centurion, Ascension), blue top-left on one of A New Voice's
- *  dice, which scores when alone on its face. */
-interface Pip {
-  baked: Phaser.GameObjects.Image;
-  sharp?: Phaser.GameObjects.Graphics;
-  wanted: boolean;
+/**
+ * Where the dice in play read the run's size-wide rules from (Royal Seal,
+ * Ballast, The Anvil), which shade every die of a size rather than one die.
+ * Set by whichever scene is showing the run's dice; a scene showing none leaves
+ * the last one in place, which is harmless since it is read only on refresh.
+ */
+let auraSource: () => DieAuras = () => ({});
+
+export function setDieAuraSource(source: () => DieAuras): void {
+  auraSource = source;
 }
 
-const PIPS = {
-  gold: { x: 34, key: "pip-gold", color: COLORS.gold },
-  voice: { x: -34, key: "pip-voice", color: COLORS.voicePip },
-} as const;
+/** The size-wide rules the dice in play are currently shaded by. */
+export function currentDieAuras(): DieAuras {
+  return auraSource();
+}
 
-type PipKind = keyof typeof PIPS;
-
-/** A die in the grid: ivory body, baked face (pips/numeral), type label. */
+/** A die in the grid: ivory body (shaded by its effects), baked face, type label. */
 export class DieSprite extends Phaser.GameObjects.Container {
   die: Die;
   private bodyImage: Phaser.GameObjects.Image;
   private faceImage: Phaser.GameObjects.Image;
   private typeImage: Phaser.GameObjects.Image;
-  private pips: Partial<Record<PipKind, Pip>> = {};
+  // The effects this die is currently shaded for (see systems/DieEffects).
+  private effects: DieEffect[] = [];
+  // Whether the body carries the clear plate a numeral sits on. A die showing
+  // no face (an unrolled die, or one offered in the shop's picker) drops it,
+  // since a blank plate would only hide the texture that names its effects.
+  private plated = true;
   // The cross an inert die wears (see setInert), hidden on every other die.
   private strikeImage: Phaser.GameObjects.Image;
   // Border overlay for effect flashes. Created up front (not lazily) so the
@@ -122,13 +131,17 @@ export class DieSprite extends Phaser.GameObjects.Container {
 
     // The offsets are in the die's own 96-unit design space, which is also
     // what `artImage` draws these at whatever resolution they were baked at.
-    this.bodyImage = artImage(scene, 0, 0, `die-${die.sides}`);
+    this.effects = dieEffects(die, auraSource());
+    this.bodyImage = artImage(
+      scene,
+      0,
+      0,
+      dieBodyTexture(scene, die.sides, this.effects),
+    );
     this.typeImage = artImage(scene, 0, 36, "die-atlas", `label-d${die.sides}`);
     // Placeholder frame; showFace() below sets the real one immediately.
     this.faceImage = artImage(scene, 0, -4, "die-atlas", `face-${die.sides}-1`);
     this.add([this.bodyImage, this.typeImage, this.faceImage]);
-
-    this.syncPips();
 
     // Over the face, under the effect border, so a die that is both inert and
     // flashing still reads as struck out. Built for every die rather than on
@@ -165,9 +178,15 @@ export class DieSprite extends Phaser.GameObjects.Container {
 
   /** Update body texture/label/face after the die type changed (shrink). */
   refreshType(): void {
-    this.bodyImage.setTexture(`die-${this.die.sides}`);
+    // Re-read on every refresh rather than fixed at construction: the grid
+    // re-points a sprite at other dice as it shifts, Ascension marks a die the
+    // grid already holds, and a size aura bought in the shop shades dice that
+    // were already there.
+    this.effects = dieEffects(this.die, auraSource());
+    this.bodyImage.setTexture(
+      dieBodyTexture(this.scene, this.die.sides, this.effects, this.plated),
+    );
     this.typeImage.setFrame(`label-d${this.die.sides}`);
-    this.syncPips();
     if (this.sharp) this.drawSharp();
     this.showFace(this.die.value > 0 ? this.die.value : null);
   }
@@ -177,6 +196,13 @@ export class DieSprite extends Phaser.GameObjects.Container {
    *  destroyed, which is what keeps a rolling grid cheap. */
   showFace(value: number | null): void {
     this.faceValue = value;
+    if (this.plated !== (value !== null)) {
+      this.plated = value !== null;
+      this.bodyImage.setTexture(
+        dieBodyTexture(this.scene, this.die.sides, this.effects, this.plated),
+      );
+      if (this.sharp) this.drawSharp();
+    }
     if (value === null) {
       this.faceImage.setVisible(false);
       this.sharpFace?.setVisible(false);
@@ -251,59 +277,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
     this.sharpStrike = scene.add.graphics();
     drawDieStrike(this.sharpStrike);
 
-    for (const kind of Object.keys(this.pips) as PipKind[])
-      this.pips[kind]!.sharp = this.sharpPip(kind);
-
     this.addSharp();
-  }
-
-  /** The live counterpart of a pip, drawn where its baked image sits. */
-  private sharpPip(kind: PipKind): Phaser.GameObjects.Graphics {
-    const pip = this.scene.add.graphics();
-    pip.setPosition(PIPS[kind].x, -34);
-    drawDiePip(pip, PIPS[kind].color);
-    return pip;
-  }
-
-  /**
-   * Show the pips this die has earned and hide the rest. Re-read on every
-   * refresh rather than fixed at construction: the grid re-points a sprite at
-   * other dice as it shifts, and Ascension marks a die the grid already holds.
-   * A pip is built the first time a die wants one and kept after, hidden.
-   */
-  private syncPips(): void {
-    const wants: Record<PipKind, boolean> = {
-      gold: this.die.maxFaceBonus > 0,
-      voice: isVoiceDie(this.die),
-    };
-    let added = false;
-    for (const kind of Object.keys(PIPS) as PipKind[]) {
-      let pip = this.pips[kind];
-      if (!pip && wants[kind]) {
-        pip = {
-          baked: artImage(this.scene, PIPS[kind].x, -34, PIPS[kind].key),
-          wanted: true,
-        };
-        this.add(pip.baked);
-        if (this.sharpBody) {
-          pip.sharp = this.sharpPip(kind);
-          this.add(pip.sharp);
-        }
-        this.pips[kind] = pip;
-        added = true;
-      }
-      if (!pip) continue;
-      pip.wanted = wants[kind];
-      pip.baked.setVisible(pip.wanted && !this.sharp);
-      pip.sharp?.setVisible(pip.wanted && this.sharp);
-    }
-    // A late pip was appended above the strike and the effect border, which are
-    // drawn over every other part of the die.
-    if (added && this.strikeImage) {
-      this.bringToTop(this.strikeImage);
-      if (this.sharpStrike) this.bringToTop(this.sharpStrike);
-      this.bringToTop(this.effectBorder);
-    }
   }
 
   /** Add the live children, in the baked children's own stacking order. */
@@ -313,7 +287,6 @@ export class DieSprite extends Phaser.GameObjects.Container {
         this.sharpBody,
         this.sharpLabel,
         this.sharpFace,
-        ...Object.values(this.pips).map((pip) => pip.sharp),
         this.sharpStrike,
       ].filter((child) => child !== undefined),
     );
@@ -329,7 +302,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
 
     if (this.sharpBody) {
       this.sharpBody.clear();
-      drawDieBody(this.sharpBody, sides);
+      drawDieBody(this.sharpBody, sides, this.effects, this.plated);
     }
 
     this.sharpLabel
@@ -348,10 +321,6 @@ export class DieSprite extends Phaser.GameObjects.Container {
 
     this.bodyImage.setVisible(!sharp);
     this.typeImage.setVisible(!sharp);
-    for (const pip of Object.values(this.pips)) {
-      pip.baked.setVisible(pip.wanted && !sharp);
-      pip.sharp?.setVisible(pip.wanted && sharp);
-    }
     this.sharpBody?.setVisible(sharp);
     this.sharpLabel?.setVisible(sharp);
 

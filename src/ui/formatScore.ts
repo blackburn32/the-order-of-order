@@ -77,3 +77,17 @@ export function formatCompactCount(value: number): string {
   // parseFloat drops a trailing zero, so 4.10K reads as 4.1K.
   return `${parseFloat(scaled.toFixed(digits(scaled)))}${COMPACT_UNITS[unit]}`;
 }
+
+/**
+ * A count in the shortest form that still reads as a number: exact below a
+ * thousand, otherwise two significant digits in scientific notation — 12,345
+ * is "1.2e4", 3,000 is "3e3". For a row that lists many counts side by side,
+ * where every label has to stay a few characters wide.
+ */
+export function formatSci(value: number): string {
+  if (!Number.isFinite(value)) return String(value);
+  const rounded = Math.round(value);
+  if (Math.abs(rounded) < 1000) return String(rounded);
+  const [mantissa, exponent] = rounded.toExponential(1).split("e");
+  return `${mantissa.replace(/\.0$/, "")}e${Number(exponent)}`;
+}

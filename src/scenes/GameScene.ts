@@ -53,7 +53,13 @@ import { evaluateAndUnlock } from "../systems/SaveData";
 import { finalizeRun } from "../systems/RunEnd";
 import { saveActiveRun } from "../systems/ActiveRunPersistence";
 import { AmbientLayer } from "../ui/AmbientLayer";
-import { DEPART_MS, DieSprite, SPAWN_MS } from "../ui/DieSprite";
+import {
+  DEPART_MS,
+  DieSprite,
+  SPAWN_MS,
+  setDieAuraSource,
+} from "../ui/DieSprite";
+import { runAuras } from "../systems/DieEffects";
 import { DiceSummaryCard, type CardEffectChance } from "../ui/DiceSummaryCard";
 import { formatScore } from "../ui/formatScore";
 import { rollBreakdown } from "../systems/RollBreakdown";
@@ -592,6 +598,7 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.state = getRun(this.registry);
+    setDieAuraSource(() => runAuras(this.state));
     this.rolling = false;
     this.tumbling = false;
     this.tumbleEvent = undefined;
