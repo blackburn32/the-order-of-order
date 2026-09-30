@@ -210,9 +210,12 @@ const PLATE_MIX = 0.2;
  * die's centre on every shape.
  */
 function platesFor(sides: number): Pt[][] {
-  const cy = DIE_CENTER + FACE_OFFSET_Y;
-  if (sides <= 2) return [ellipsePoints(DIE_CENTER, cy - 1, 22, 22)];
-  if (sides === 4) return [ellipsePoints(DIE_CENTER, cy + 3, 18, 18)];
+  // Centred on the digits' ink rather than on `FACE_OFFSET_Y`: every face but
+  // the d6's is lifted a little above that point (see `numeralYOffset`), and a
+  // plate centred below its numeral reads as having slipped.
+  const cy = DIE_CENTER + FACE_OFFSET_Y - numeralInkLift(sides);
+  if (sides <= 2) return [ellipsePoints(DIE_CENTER, cy, 22, 22)];
+  if (sides === 4) return [ellipsePoints(DIE_CENTER, cy, 18, 18)];
   if (sides === 6)
     return [
       ellipsePoints(DIE_CENTER, cy, 28, 25),
@@ -541,6 +544,27 @@ function numeralYOffset(
   const opticalLift = numberHeight * liftFraction;
 
   return inkCenteringOffset - opticalLift;
+}
+
+/** How far above `FACE_OFFSET_Y` a face numeral's ink is centred, in designed
+ *  pixels: the optical lift `numeralYOffset` applies, measured against the
+ *  same font. Measured once and kept, since plates are baked on demand. */
+const inkLiftCache = new Map<number, number>();
+function numeralInkLift(sides: number): number {
+  const lift = sides === 6 ? NUMERAL_LIFT_D6 : NUMERAL_LIFT;
+  let cached = inkLiftCache.get(lift);
+  if (cached === undefined) {
+    const ctx = document.createElement("canvas").getContext("2d");
+    let height = FACE_NUMERAL_PX * 0.7;
+    if (ctx) {
+      ctx.font = `bold ${FACE_NUMERAL_PX}px ${SERIF}`;
+      const digits = ctx.measureText("0123456789");
+      height = digits.actualBoundingBoxAscent + digits.actualBoundingBoxDescent;
+    }
+    cached = height * lift;
+    inkLiftCache.set(lift, cached);
+  }
+  return cached;
 }
 
 /**
