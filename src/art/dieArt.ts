@@ -99,7 +99,7 @@ export function drawDieBody(
     g.fillStyle(0xffffff, 0.1);
     g.fillEllipse(cx - 8, 34, 24, 14);
     g.lineStyle(5, border, 1);
-    g.strokePoints(outline, true, true);
+    strokeClosed(g, outline);
   } else if (sides === 6) {
     g.fillStyle(0x000000, 0.08);
     g.fillRoundedRect(6, 58, 84, 32, { tl: 0, tr: 0, bl: 14, br: 14 });
@@ -109,8 +109,22 @@ export function drawDieBody(
     g.fillStyle(0xffffff, 0.1);
     g.fillEllipse(cx - 9, 28, 24, 14);
     g.lineStyle(5, border, 1);
-    g.strokePoints(outline, true, true);
+    strokeClosed(g, outline);
   }
+}
+
+/**
+ * Stroke a closed polygon outline. Phaser's WebGL renderer never joins a closed
+ * path's last segment back onto its first, so `strokePoints(pts, true)` leaves a
+ * notch at the starting vertex — invisible in the canvas-baked texture, but
+ * plain on the live bodies a magnified die draws. Running the path one segment
+ * past its start lets that corner get the same join as every other.
+ */
+function strokeClosed(
+  g: Phaser.GameObjects.Graphics,
+  pts: Phaser.Math.Vector2[],
+): void {
+  g.strokePoints([...pts, pts[0], pts[1]], false, false);
 }
 
 /** Where a coin (d1/d2) sits: a touch high, so its label has clear air. */
