@@ -84,7 +84,7 @@ export function drawDieBody(
     g.fillStyle(0xffffff, 0.1);
     g.fillEllipse(cx - 8, 34, 24, 14);
     g.lineStyle(5, border, 1);
-    g.strokePoints(pts, true, true);
+    strokeClosed(g, pts);
   } else if (sides === 6) {
     g.fillStyle(COLORS.ivory, 1);
     g.fillRoundedRect(0, 0, 96, 96, 18);
@@ -99,7 +99,7 @@ export function drawDieBody(
     g.fillStyle(0xffffff, 0.1);
     g.fillEllipse(cx - 9, 28, 24, 14);
     g.lineStyle(5, border, 1);
-    g.strokePoints(pts, true, true);
+    strokeClosed(g, pts);
   } else {
     // d20+: flat-top/flat-bottom hex, the classic "d20 icon" silhouette.
     const pts = polygonPoints(cx, 40, 43, 6, 0);
@@ -108,8 +108,22 @@ export function drawDieBody(
     g.fillStyle(0xffffff, 0.1);
     g.fillEllipse(cx - 9, 28, 24, 14);
     g.lineStyle(5, border, 1);
-    g.strokePoints(pts, true, true);
+    strokeClosed(g, pts);
   }
+}
+
+/**
+ * Stroke a closed polygon outline. Phaser's WebGL renderer never joins a closed
+ * path's last segment back onto its first, so `strokePoints(pts, true)` leaves a
+ * notch at the starting vertex — invisible in the canvas-baked texture, but
+ * plain on the live bodies a magnified die draws. Running the path one segment
+ * past its start lets that corner get the same join as every other.
+ */
+function strokeClosed(
+  g: Phaser.GameObjects.Graphics,
+  pts: Phaser.Math.Vector2[],
+): void {
+  g.strokePoints([...pts, pts[0], pts[1]], false, false);
 }
 
 /** The cross an inert die wears, centred on the origin. */
