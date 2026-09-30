@@ -109,8 +109,9 @@ export class EndingScene extends Phaser.Scene {
 
     // The button takes whatever the block has left once the dots are spoken
     // for, so a short viewport shrinks it rather than pushing it off the foot
-    // of the screen or into the column beside it.
-    const label = last ? this.def.button : STORY_BUTTONS.continue;
+    // of the screen or into the column beside it. Its label is the same on the
+    // last page as on every other: an act ends by being continued out of.
+    const label = STORY_BUTTONS.continue;
     const button = bannerButton(
       this,
       blockX,

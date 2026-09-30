@@ -24,6 +24,7 @@ import {
 import { addCamera, cameraOrigin, setCameraViewport } from "../ui/camera";
 import { recordSelection } from "../systems/SaveData";
 import {
+  advanceFrom,
   advanceTutorial,
   getTutorial,
   TutorialStage,
@@ -208,11 +209,12 @@ export class ShopScene extends Phaser.Scene {
   };
   private pickedIndices: number[] = []; // dice chosen so far for a multi-target offer (Grindstone)
   private pickerOffer?: ShopOffer;
-  // Screen rects of the card row and the booster pair, and the live tutorial
-  // callout (first-game only). The shop's step lights both bands, since the
-  // gold it is talking about buys from either.
+  // Screen rects of the card row, the booster pair and the two run controls,
+  // and the live tutorial callout (first-game only), which lights each in turn.
   private cardBand?: Phaser.Geom.Rectangle;
   private packBand?: Phaser.Geom.Rectangle;
+  private rerollRect?: Phaser.Geom.Rectangle;
+  private leaveRect?: Phaser.Geom.Rectangle;
   private tutorialCallout?: CalloutHandle;
   private purchasesMade = 0;
   private rerollsThisVisit = 0;
@@ -424,22 +426,56 @@ export class ShopScene extends Phaser.Scene {
     return { felt, ambient, titleGlow };
   }
 
-  /** First-game tutorial: a callout over the loose cards and the boosters,
-   *  prompting the player to spend. Both bands are left open so cards stay
-   *  selectable and the carousel scrolls; only what surrounds them dims, and
-   *  the panel takes whatever room is left over neither. Picking an item ends
-   *  the step, but a player who would rather save their gold can dismiss it
-   *  with Continue. */
+  /** First-game tutorial: the loose cards, the reroll, the boosters and the
+   *  way out, one callout each. Whatever is lit stays live, and using it is as
+   *  good as Continue — buying a card, rerolling and opening a pack each end
+   *  their own step (see endShopStep). The way out has no Continue at all:
+   *  leaving is how it is dismissed.
+   *
+   *  Held off while the die picker or a pack is open over the shop: this runs
+   *  from every build, and those sub-screens are laid over a build. */
   private renderShopTutorial(): void {
+    this.tutorialCallout?.destroy();
+    this.tutorialCallout = undefined;
+    this.removeCalloutCamera();
     const t = getTutorial(this.registry);
-    if (!t.active || t.stage !== TutorialStage.Shop || !this.cardBand) return;
-    const bands = [this.cardBand];
-    if (this.packBand) bands.push(this.packBand);
+    if (!t.active || this.pickerOffer || this.openingPack) return;
+
+    let anchor: Phaser.Geom.Rectangle | undefined;
+    let onContinue: (() => void) | undefined = () => {
+      advanceTutorial(this.registry);
+      this.renderShopTutorial();
+    };
+    switch (t.stage) {
+      case TutorialStage.LooseCards:
+        anchor = this.cardBand;
+        break;
+      case TutorialStage.Reroll:
+        anchor = this.rerollRect;
+        break;
+      case TutorialStage.Boosters:
+        // A visit with no packs on offer has nothing to show this step with.
+        if (!this.packBand) {
+          advanceTutorial(this.registry);
+          this.renderShopTutorial();
+          return;
+        }
+        anchor = this.packBand;
+        break;
+      case TutorialStage.LeaveShop:
+        anchor = this.leaveRect;
+        onContinue = undefined;
+        break;
+      default:
+        return;
+    }
+    if (!anchor) return;
+
     this.ensureCalloutCamera();
     this.tutorialCallout = showCallout(this, {
-      anchor: bands,
-      text: TUTORIAL_TEXT[TutorialStage.Shop],
-      onContinue: () => this.endShopTutorial(),
+      anchor,
+      text: TUTORIAL_TEXT[t.stage],
+      onContinue,
       interactiveAnchor: true,
     });
     // Exactly one camera may draw the callout: a second pass would lay another
@@ -457,7 +493,7 @@ export class ShopScene extends Phaser.Scene {
    *
    *  The flip side of that snapshot is that anything added to the scene later
    *  would also be drawn by this camera, so the callout has to be torn down —
-   *  via endShopTutorial or rebuildShop — before any new sub-screen opens. */
+   *  via endShopStep or rebuildShop — before any new sub-screen opens. */
   private ensureCalloutCamera(): Phaser.Cameras.Scene2D.Camera {
     this.removeCalloutCamera();
     const cam = addCamera(this, 0, 0, this.scale.width, this.scale.height);
@@ -1240,6 +1276,10 @@ export class ShopScene extends Phaser.Scene {
     const bottomY = buttonGap / 2 + bh / 2;
     const reroll = make(topY, label, canReroll, () => this.rerollStore());
     const next = make(bottomY, "Continue to Trials", true, () => this.exit());
+    const plateRect = (yy: number) =>
+      new Phaser.Geom.Rectangle(x - w * 0.44, y + yy - bh / 2, w * 0.88, bh);
+    this.rerollRect = plateRect(topY);
+    this.leaveRect = plateRect(bottomY);
     return this.add.container(x, y, [...reroll, ...next]).setSize(w, h);
   }
 
@@ -2434,10 +2474,9 @@ export class ShopScene extends Phaser.Scene {
       audio.deny();
       return;
     }
-    // Buying a pack is spending gold, which is all the shop step asks for.
-    // It also has to clear the callout before the pack overlay is built —
-    // see ensureCalloutCamera.
-    this.endShopTutorial();
+    // Opening a pack ends the step about packs. It also has to clear the
+    // callout before the pack overlay is built — see ensureCalloutCamera.
+    this.endShopStep(TutorialStage.Boosters);
     const choices = openBooster(
       this.state,
       pack,
@@ -2713,12 +2752,11 @@ export class ShopScene extends Phaser.Scene {
     });
   }
 
-  /** Close the shop step for good: advancing is what keeps it from coming back
-   *  on the next rebuild (a reroll, a resize, the die picker). */
-  private endShopTutorial(): void {
-    const t = getTutorial(this.registry);
-    if (!t.active || t.stage !== TutorialStage.Shop) return;
-    advanceTutorial(this.registry);
+  /** The player used what `stage` points at, which dismisses it. Only clears
+   *  the callout: whatever the player did rebuilds the shop (or leaves it), and
+   *  the rebuild is what shows the next step. */
+  private endShopStep(stage: TutorialStage): void {
+    if (!advanceFrom(this.registry, stage)) return;
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
     this.removeCalloutCamera();
@@ -2738,14 +2776,16 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private choose(offer: ShopOffer): void {
-    // Selecting any item satisfies the tutorial's shop step (fires for both
-    // direct and target-picking offers, since both funnel through here).
-    this.endShopTutorial();
+    // Taking a loose card ends the step about them — whether it is bought
+    // outright or goes through the die picker first. A pack's cards funnel
+    // through here too, by which point that step is long gone.
     if (offer.needsTarget) {
+      this.endShopStep(TutorialStage.LooseCards);
       this.enterPickMode(offer);
       return;
     }
     if (this.applyChosenOffer(offer)) {
+      this.endShopStep(TutorialStage.LooseCards);
       this.completeChosenOffer(offer);
     } else {
       audio.deny();
@@ -3298,6 +3338,7 @@ export class ShopScene extends Phaser.Scene {
     const leaving = this.offers
       .map((offer) => this.offerCards.get(offer))
       .filter((card): card is Phaser.GameObjects.Container => !!card);
+    this.endShopStep(TutorialStage.Reroll);
     spendGold(this.state, price);
     if (freeByBell)
       addItemValue(
@@ -3357,6 +3398,7 @@ export class ShopScene extends Phaser.Scene {
   }
 
   private exit(): void {
+    this.endShopStep(TutorialStage.LeaveShop);
     // Abstinence pays for a visit that took nothing, before the run is saved
     // on its way out.
     leaveShop(this.state, this.purchasesMade > 0);

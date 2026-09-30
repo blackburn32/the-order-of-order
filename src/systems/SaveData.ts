@@ -28,6 +28,7 @@ import { recordPlayerStatsRun, resetPlayerStats } from "./PlayerStats";
 const KEY_SCORES = "ooo_high_scores_v2";
 const KEY_SETTINGS = "ooo_settings_v2";
 const KEY_PROGRESS = "ooo_progress_v2";
+const KEY_TUTORIAL_SEEN = "ooo_tutorial_seen_v1";
 
 /** Schema stamp on every Hall entry written by this version. Entries without
  *  it are dropped on load. */
@@ -78,7 +79,7 @@ export interface Settings {
   musicVol: number; // 0..1
   sfxVol: number; // 0..1
   showIntro: boolean; // play the 3-page intro when a run starts from the menu
-  showTutorial: boolean; // play the first-game callout tutorial; self-disables after one run
+  showTutorial: boolean; // play the callout tutorial; self-disables once every step has been seen
   // Master switch for every non-essential visual flourish (see systems/Effects).
   // On by default; how much it actually turns on is capped by the device's
   // effect tier and the OS reduce-motion preference.
@@ -229,6 +230,32 @@ export function saveSettings(settings: Settings): void {
     localStorage.setItem(KEY_SETTINGS, JSON.stringify(settings));
   } catch {
     // non-fatal
+  }
+}
+
+/** The tutorial steps the player has already been shown, by name, across every
+ *  run. Kept apart from Settings: the settings screen saves the copy it opened
+ *  with, which would otherwise write back a stale list over steps seen since.
+ *  Names rather than enum values, so reordering the script cannot mark the
+ *  wrong steps seen. */
+export function loadTutorialSeen(): string[] {
+  try {
+    const parsed: unknown = JSON.parse(
+      localStorage.getItem(KEY_TUTORIAL_SEEN) ?? "[]",
+    );
+    return Array.isArray(parsed)
+      ? parsed.filter((name): name is string => typeof name === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveTutorialSeen(seen: readonly string[]): void {
+  try {
+    localStorage.setItem(KEY_TUTORIAL_SEEN, JSON.stringify(seen));
+  } catch {
+    // non-fatal: the steps just show again next run
   }
 }
 

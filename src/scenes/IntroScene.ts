@@ -62,9 +62,10 @@ export class IntroScene extends Phaser.Scene {
     this.buildControls();
   }
 
-  /** The block under the chapter: the Continue button, the skip row on the last
-   *  page, and the dots. None of it moves between pages, so it is drawn outside
-   *  the chapter's container and redrawn in place as the page changes. */
+  /** The block under the chapter: the Continue button — which says the same
+   *  thing on the last page as on the first — the skip row on the last page,
+   *  and the dots. None of it moves between pages, so it is drawn outside the
+   *  chapter's container and redrawn in place as the page changes. */
   private buildControls(): void {
     for (const control of this.controls) control.destroy();
     this.controls = [];
@@ -75,7 +76,7 @@ export class IntroScene extends Phaser.Scene {
     // The button takes whatever the block has left once the row and the dots
     // are spoken for, so a short viewport shrinks it rather than pushing it off
     // the foot of the screen or into the column beside it.
-    const label = last ? STORY_BUTTONS.beginRun : STORY_BUTTONS.continue;
+    const label = STORY_BUTTONS.continue;
     const button = bannerButton(
       this,
       blockX,

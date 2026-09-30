@@ -20,6 +20,7 @@ export interface ItemCardOptions {
   // "x1" would be every card in the collection saying it.
   copies?: number;
   showCaption?: boolean; // default true; false drops the bottom caption entirely
+  captionText?: string; // replaces the "Selected N times" line (ignored while locked)
   displayScale?: number; // render directly at this size instead of scaling the finished Text textures
   // A line printed inside the card's lower half, where the shop prints a price.
   // The trial results screen puts the deed that earned the card there, so the
@@ -315,7 +316,8 @@ export function buildItemCard(
     ? lockedBy
       ? describeCriterion(lockedBy)
       : "Locked"
-    : `Selected ${opts.count ?? 0} time${opts.count === 1 ? "" : "s"}`;
+    : (opts.captionText ??
+      `Selected ${opts.count ?? 0} time${opts.count === 1 ? "" : "s"}`);
   const caption = showCaption
     ? scene.add
         .text(0, CAPTION_Y * scale, captionText, {

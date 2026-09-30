@@ -73,7 +73,9 @@ import {
 import { showCallout, CalloutHandle } from "../ui/Callout";
 import { DuelShowdown } from "../ui/duelShowdown";
 import {
+  advanceFrom,
   advanceTutorial,
+  atStage,
   getTutorial,
   tutorialBlocksScore,
   tutorialForcesRoll,
@@ -570,15 +572,9 @@ export class GameScene extends Phaser.Scene {
   // The live tutorial callout, if any — re-anchored to fresh HUD objects on
   // every rebuild (see renderTutorial). Only present during the first game.
   private tutorialCallout?: CalloutHandle;
-  // The Boss tutorial step waits out the "presides" banner, which the callout's
-  // dim would otherwise bury (the banner sits below it).
-  private bossCalloutHeld = true;
-  // Screen rect of the boss pills as actually laid out, which the Boss tutorial
-  // step spotlights. The ribbon's layout cell is only the space the row was
-  // offered — the pills shrink to their copy inside it and a one-modifier trial
-  // leaves most of a roomy strip empty — so the rect is measured at build time
-  // rather than taken from the cell. Cleared when no boss presides.
-  private bossRibbonRect?: Phaser.Geom.Rectangle;
+  // A pan or zoom step that the player has just satisfied, advancing after a
+  // beat so they see the grid answer the gesture before the next step dims it.
+  private tutorialGestureTimer?: Phaser.Time.TimerEvent;
   // Unlocks still persist at the moment their criterion is met, but their
   // presentation waits for TrialResults so the roll itself stays readable.
   private trialUnlocks: ShopItemId[] = [];
@@ -641,7 +637,7 @@ export class GameScene extends Phaser.Scene {
     this.scoreRevealAt = 0;
     this.sealBreathe = undefined;
     this.trialUnlocks = [...this.trialUnlocks];
-    this.bossCalloutHeld = true;
+    this.tutorialGestureTimer = undefined;
     this.gridContainer = this.add.container(0, 0);
     this.diceContainer = this.add.container(0, 0);
     this.cardContainer = this.add.container(0, 0);
@@ -751,14 +747,16 @@ export class GameScene extends Phaser.Scene {
     const t = getTutorial(this.registry);
     if (!t.active) return;
 
-    const plaqueRect = (key: HudStatKey) => {
-      const c = this.layout.hud[key];
-      return new Phaser.Geom.Rectangle(c.x - c.w / 2, c.y - c.h / 2, c.w, c.h);
-    };
     const advance = () => {
       advanceTutorial(this.registry);
       this.renderTutorial();
     };
+    const grid = new Phaser.Geom.Rectangle(
+      this.layout.gridFrame.x,
+      this.layout.gridFrame.y,
+      this.layout.gridFrame.width,
+      this.layout.gridFrame.height,
+    );
 
     let anchor: Phaser.Geom.Rectangle;
     let onContinue: (() => void) | undefined;
@@ -768,9 +766,17 @@ export class GameScene extends Phaser.Scene {
     // the copy comes from the shared script, keyed off the same stage.
     const stage = t.stage;
     switch (stage) {
-      case TutorialStage.Score:
-        anchor = plaqueRect("score");
+      case TutorialStage.Grid:
+      case TutorialStage.RollOne:
+        anchor = grid;
         onContinue = advance;
+        break;
+      case TutorialStage.Pan:
+      case TutorialStage.Zoom:
+        // Dismissed by doing it (see noteGridGesture), so the grid stays live.
+        // The seal sits inside it, but onRoll holds it off until its own step.
+        anchor = grid;
+        interactiveAnchor = true;
         break;
       case TutorialStage.Roll: {
         const r = SEAL_RADIUS * this.layout.button.scale;
@@ -783,38 +789,8 @@ export class GameScene extends Phaser.Scene {
         interactiveAnchor = true; // the roll press itself advances the tutorial
         break;
       }
-      case TutorialStage.Viewport:
-        anchor = new Phaser.Geom.Rectangle(
-          this.layout.gridFrame.x,
-          this.layout.gridFrame.y,
-          this.layout.gridFrame.width,
-          this.layout.gridFrame.height,
-        );
-        onContinue = advance;
-        break;
-      case TutorialStage.Goal:
-        anchor = plaqueRect("target");
-        onContinue = advance;
-        break;
-      case TutorialStage.Rolls:
-        anchor = plaqueRect("roll");
-        onContinue = advance;
-        break;
-      case TutorialStage.Boss: {
-        // Nothing to point at until a Boss Trial is actually running, and
-        // nothing to read while its banner is still on screen.
-        if (this.bossCalloutHeld || !activeBoss(this.state)) return;
-        // The pills are what the step is about — they name the modifier and
-        // spell out its rule. The goal plaque only shows the number that rule
-        // moved, so spotlighting it left the lesson pointing at the wrong
-        // thing. (The rect is built alongside the pills; fall back to the
-        // plaque if a boss somehow presides without a ribbon on screen.)
-        anchor = this.bossRibbonRect ?? plaqueRect("target");
-        onContinue = advance;
-        break;
-      }
       default:
-        // Route, rank, Results and Shop steps belong to their own scenes.
+        // Route, Results and Shop steps belong to their own scenes.
         return;
     }
 
@@ -827,6 +803,19 @@ export class GameScene extends Phaser.Scene {
     // If the grid has gone windowed, route the callout through the overlay
     // camera so the grid camera's later dice pass cannot cover it.
     this.overlay(this.tutorialCallout.objects);
+  }
+
+  /** The player just panned or zoomed the grid. On the step that asked for
+   *  that gesture, move on — after a beat, so the grid is seen to answer it.
+   *  Counted by the gesture rather than by the viewport moving, since a single
+   *  die can leave the grid nowhere to go. */
+  private noteGridGesture(kind: "pan" | "zoom"): void {
+    const stage = kind === "pan" ? TutorialStage.Pan : TutorialStage.Zoom;
+    if (this.tutorialGestureTimer || !atStage(this.registry, stage)) return;
+    this.tutorialGestureTimer = this.time.delayedCall(450, () => {
+      this.tutorialGestureTimer = undefined;
+      if (advanceFrom(this.registry, stage)) this.renderTutorial();
+    });
   }
 
   private build(): void {
@@ -1135,7 +1124,6 @@ export class GameScene extends Phaser.Scene {
     // its own framed pill rather than sharing one ribbon's punctuation.
     const bosses = activeBosses(this.state);
     const cell = layout.bossRibbon;
-    this.bossRibbonRect = undefined;
     if (!bosses.length || !cell) return undefined;
 
     const container = this.add.container(cell.x, cell.y);
@@ -1147,21 +1135,12 @@ export class GameScene extends Phaser.Scene {
     );
 
     if (cell.compact) {
-      let widest = 0;
       pills.forEach((pill, index) => {
-        const width = Math.min(cell.w, pill.fixedWidth + pill.textWidth);
-        pill.place(width);
+        pill.place(Math.min(cell.w, pill.fixedWidth + pill.textWidth));
         pill.container.setY(
           -cell.h / 2 + rowH / 2 + index * (rowH + BOSS_PILL_GAP),
         );
-        widest = Math.max(widest, width);
       });
-      this.bossRibbonRect = new Phaser.Geom.Rectangle(
-        cell.x - widest / 2,
-        cell.y - cell.h / 2,
-        widest,
-        cell.h,
-      );
     } else {
       // Share the strip out: every pill keeps its frame and sigil at full
       // size, and the copy inside them all shrinks by the same factor until
@@ -1185,12 +1164,6 @@ export class GameScene extends Phaser.Scene {
         pill.container.setX(left + widths[index] / 2);
         left += widths[index] + gap;
       });
-      this.bossRibbonRect = new Phaser.Geom.Rectangle(
-        cell.x - row / 2,
-        cell.y - cell.h / 2,
-        row,
-        cell.h,
-      );
     }
 
     container.add(pills.map((pill) => pill.container));
@@ -2451,6 +2424,12 @@ export class GameScene extends Phaser.Scene {
 
     let dragging = false;
     let start = { x: 0, y: 0, scrollX: 0, scrollY: 0 };
+    // How far the current drag has travelled, and whether the current pinch
+    // has changed the finger spread — what the tutorial counts as having
+    // panned or zoomed.
+    let dragTravel = 0;
+    let pinched = false;
+    const PAN_TUTORIAL_TRAVEL = 40;
     // Live touches that began inside the grid, keyed by pointer id. A second
     // one promotes the drag into a pinch, and lifting one demotes it back.
     const touches = new Map<number, { x: number; y: number }>();
@@ -2558,6 +2537,7 @@ export class GameScene extends Phaser.Scene {
 
     const beginDrag = (x: number, y: number) => {
       dragging = true;
+      dragTravel = 0;
       start = {
         x,
         y,
@@ -2577,6 +2557,7 @@ export class GameScene extends Phaser.Scene {
           const span = pinchSpan();
           const world = worldAt(span.x, span.y);
           dragging = false;
+          pinched = false;
           pinch = {
             distance: span.distance,
             zoom: this.viewport.zoom,
@@ -2596,6 +2577,7 @@ export class GameScene extends Phaser.Scene {
       }
       if (pinch && touches.size === 2) {
         const span = pinchSpan();
+        if (Math.abs(span.distance - pinch.distance) > 12) pinched = true;
         // The midpoint doubles as the pan anchor, so a pinch that also slides
         // across the screen drags the grid with it.
         zoomAround((pinch.zoom * span.distance) / pinch.distance, span, {
@@ -2608,6 +2590,10 @@ export class GameScene extends Phaser.Scene {
         this.input.setDefaultCursor(inBounds(p) ? "grab" : "default");
         return;
       }
+      dragTravel = Math.max(
+        dragTravel,
+        Math.hypot(p.x - start.x, p.y - start.y),
+      );
       // A screen-pixel drag covers more virtual ground the further zoomed out we are.
       this.viewport.scrollX =
         start.scrollX - (p.x - start.x) / this.viewport.zoom;
@@ -2617,8 +2603,12 @@ export class GameScene extends Phaser.Scene {
     };
     const onUp = (p: Phaser.Input.Pointer) => {
       touches.delete(p.id);
+      if (dragging && dragTravel >= PAN_TUTORIAL_TRAVEL) {
+        this.noteGridGesture("pan");
+      }
       dragging = false;
       if (!pinch) return;
+      if (pinched) this.noteGridGesture("zoom");
       pinch = null;
       // One finger still down: hand the gesture back to it as a fresh drag, so
       // lifting the other finger doesn't jump the grid to a stale origin.
@@ -2633,6 +2623,7 @@ export class GameScene extends Phaser.Scene {
     ) => {
       if (!inBounds(p)) return;
       this.finishGridGlide();
+      this.noteGridGesture("zoom");
       const screen = { x: p.x, y: p.y };
       const now = this.time.now;
       const keepsGesture =
@@ -2769,6 +2760,17 @@ export class GameScene extends Phaser.Scene {
   // ---- roll flow -----------------------------------------------------------
 
   private onRoll(): void {
+    // The pan and zoom steps light the whole grid, seal included, so the seal
+    // has to hold itself off until the step that introduces it.
+    const t = getTutorial(this.registry);
+    if (
+      t.active &&
+      (t.stage === TutorialStage.Grid ||
+        t.stage === TutorialStage.Pan ||
+        t.stage === TutorialStage.Zoom)
+    ) {
+      return;
+    }
     this.stopSealBreathe();
     this.setSealScale(this.sealScale * 0.96);
     this.time.delayedCall(120, () => {
@@ -2786,10 +2788,8 @@ export class GameScene extends Phaser.Scene {
     if (press) this.overlay(press);
 
     // Tutorial "Roll" step: pressing the seal advances it. Clear the callout for
-    // the roll; the viewport step appears once the roll settles.
-    const t = getTutorial(this.registry);
-    if (t.active && t.stage === TutorialStage.Roll) {
-      advanceTutorial(this.registry);
+    // the roll; the step after it appears once the roll settles.
+    if (advanceFrom(this.registry, TutorialStage.Roll)) {
       this.tutorialCallout?.destroy();
       this.tutorialCallout = undefined;
     }
@@ -3405,7 +3405,7 @@ export class GameScene extends Phaser.Scene {
         }
       }
       this.updateHud();
-      // Surface the next tutorial step (e.g. "Viewport" after the first roll).
+      // Surface the next tutorial step (e.g. "RollOne" after the first roll).
       this.renderTutorial();
       if (skipHold) {
         this.afterRoll(true);
@@ -3662,13 +3662,6 @@ export class GameScene extends Phaser.Scene {
         `${bosses.map((b) => b.name).join(" and ")} preside${bosses.length > 1 ? "" : "s"}`,
         { holdMs, detail: bosses.map((b) => b.desc).join(" ") },
       );
-    // The Boss tutorial step waits for the banner it would otherwise dim.
-    if (getTutorial(this.registry).active) {
-      this.time.delayedCall(holdMs + 500, () => {
-        this.bossCalloutHeld = false;
-        this.renderTutorial();
-      });
-    }
   }
 
   /** Resolve the end of a trial (win/lose/advance) with the matching audio,

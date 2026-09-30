@@ -11,6 +11,7 @@ import {
   Settings,
 } from "../systems/SaveData";
 import { finalizeRun } from "../systems/RunEnd";
+import { resetTutorialProgress } from "../systems/Tutorial";
 import {
   addFelt,
   bannerButton,
@@ -258,6 +259,9 @@ export class SettingsScene extends Phaser.Scene {
       this.apply();
     });
     toggle("Show Tutorial", this.settings.showTutorial, (value) => {
+      // Turning it on asks for the tutorial again, so it plays from the top
+      // rather than resuming past the steps already seen.
+      if (value) resetTutorialProgress();
       this.settings.showTutorial = value;
       this.apply();
     });
@@ -297,6 +301,8 @@ export class SettingsScene extends Phaser.Scene {
         }, true),
     };
 
+    let pinned = false;
+    let scrollH = viewportH;
     if (compact) {
       // Both actions live under the masthead, in the other column and outside
       // `content` — a screen this short would otherwise scroll them off, and
@@ -332,53 +338,58 @@ export class SettingsScene extends Phaser.Scene {
         back.setY(stackTop + reset.height + gap + back.height / 2);
       }
     } else {
+      // The destructive button ends the scrolling content, so on a short screen
+      // it has to be scrolled to. "Return" is pinned to the foot of the screen
+      // whenever everything doesn't fit, so it is never out of reach.
       y += ACTIONS_GAP;
-
-      if (this.returnTo !== "Menu") {
-        content.add(
-          bannerButton(
-            this,
-            cx,
-            y + BUTTON_STEP / 2,
-            abandon.label,
-            abandon.onClick,
-            btnMaxW,
-          ),
-        );
-      } else {
-        content.add(this.buildResetButton(cx, y + BUTTON_STEP / 2, btnMaxW));
-      }
-      y += BUTTON_STEP;
-
       content.add(
-        bannerButton(
-          this,
-          cx,
-          y + BUTTON_STEP / 2,
-          backLabel,
-          () => this.close(),
-          btnMaxW,
-        ),
+        this.returnTo !== "Menu"
+          ? bannerButton(
+              this,
+              cx,
+              y + BUTTON_STEP / 2,
+              abandon.label,
+              abandon.onClick,
+              btnMaxW,
+            )
+          : this.buildResetButton(cx, y + BUTTON_STEP / 2, btnMaxW),
       );
       y += BUTTON_STEP;
+
+      pinned = y + BUTTON_STEP - viewportTop > viewportH;
+      const back = bannerButton(
+        this,
+        cx,
+        pinned
+          ? viewportTop + viewportH - BUTTON_STEP / 2
+          : y + BUTTON_STEP / 2,
+        backLabel,
+        () => this.close(),
+        btnMaxW,
+      );
+      if (pinned) scrollH = viewportH - BUTTON_STEP;
+      else {
+        content.add(back);
+        y += BUTTON_STEP;
+      }
     }
 
     const contentH = (compact ? rowsBottom : y) - viewportTop;
-    if (contentH > viewportH - HINT_H) {
+    if (contentH > scrollH - HINT_H) {
       this.enableScroll(
         content,
         this.children.list.filter((obj) => obj !== content),
         viewportX,
         viewportTop,
         viewportW,
-        viewportH - HINT_H,
+        scrollH - HINT_H,
         contentH,
         formCx,
       );
     } else {
       // Nothing to scroll: centre the form in the band it was given rather than
       // leaving it hanging off the masthead with all the slack below it.
-      content.y = (viewportH - contentH) / 2;
+      content.y = (scrollH - contentH) / 2;
     }
   }
 
@@ -552,7 +563,8 @@ export class SettingsScene extends Phaser.Scene {
       },
       maxWidth,
     );
-    return button;
+    // Destructive and rarely wanted: sits back from "Return" until touched.
+    return button.setAlpha(0.6);
   }
 
   private apply(): void {

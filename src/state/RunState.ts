@@ -88,9 +88,11 @@ export interface RunState {
   // its record. Reproducing a run needs this AND `shopUnlocks` below: the seed
   // fixes the dice, the snapshot fixes which cards the shop was drawing from.
   seed: number;
-  // Whether the run began with the tutorial armed. The tutorial rigs dice (see
-  // systems/Tutorial), so a run played under it is not a run the seed alone
-  // describes — this is what tells a replay to rig them the same way.
+  // Whether the run began with the tutorial armed to teach the first trial. The
+  // tutorial rigs that trial's dice (see systems/Tutorial), so a run played
+  // under it is not a run the seed alone describes — this is what tells a
+  // replay to rig them the same way. A run that resumes the tutorial past the
+  // table's steps is not armed: nothing in it is rigged.
   tutorialArmed: boolean;
   // The rolls the tutorial actually forced to come up all ones, as the same
   // `trial:roll` keys the dice streams are named by.

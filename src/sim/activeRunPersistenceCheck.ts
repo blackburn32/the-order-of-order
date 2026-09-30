@@ -30,7 +30,7 @@ function registry(
   run: RunState,
   tutorial: TutorialState = {
     active: true,
-    stage: TutorialStage.Shop,
+    stage: TutorialStage.LooseCards,
     deferred: [],
   },
 ): Phaser.Data.DataManager {

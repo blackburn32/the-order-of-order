@@ -31,7 +31,7 @@ import {
   slideSceneOut,
 } from "../ui/sceneSlide";
 import { isRetired } from "../systems/CardReworks";
-import { metaUnlockOwner } from "../systems/Shop";
+import { metaUnlockOwner, type ShopItemId } from "../systems/Shop";
 import { buildItemCard } from "../ui/itemCard";
 import { attachCardHover } from "../ui/cardHover";
 import {
@@ -48,6 +48,26 @@ type CodexTab = "cards" | "stats";
 export interface ItemsData {
   /** Active scene to reveal when an in-game Codex overlay closes. */
   returnTo?: string;
+  /** Dev panel only: the gallery as a card picker (see `CardPicker`). */
+  picker?: CardPicker;
+}
+
+/**
+ * Turns the Codex into a picker for the dev panel: every card is shown as
+ * though unlocked, prototypes included, and a tap hands the card to `onPick`
+ * rather than opening its analysis. Each tap is a pick of its own, so one card
+ * can be taken as many times as it is pressed.
+ */
+export interface CardPicker {
+  title: string;
+  /** The line under a card before it has been picked on this visit. */
+  caption: (id: ShopItemId) => string;
+  /** The copies to print on a card's face. */
+  copies: (id: ShopItemId) => number;
+  /** Take the card; returns the line to print under it afterwards. */
+  onPick: (id: ShopItemId) => string;
+  /** Called once the picker has closed. */
+  onClose: () => void;
 }
 
 // Native card box plus caption room below — used for grid spacing/scaling.
@@ -132,6 +152,8 @@ interface Gallery {
    *  localStorage on every call. */
   counts: Record<string, number | undefined>;
   built: Set<number>;
+  /** The built cards by index, so a picked card can be redrawn in place. */
+  cards: Map<number, Phaser.GameObjects.Container>;
   cols: number;
   cellW: number;
   cellH: number;
@@ -159,6 +181,7 @@ type WheelHandler = (
  */
 export class ItemsScene extends Phaser.Scene {
   private returnTo = "Menu";
+  private picker?: CardPicker;
   private openedAsOverlay = false;
   private returnInputWasEnabled = true;
   private gridCamera?: Phaser.Cameras.Scene2D.Camera;
@@ -196,6 +219,7 @@ export class ItemsScene extends Phaser.Scene {
 
   init(data: ItemsData): void {
     this.returnTo = data?.returnTo ?? "Menu";
+    this.picker = data?.picker;
   }
 
   create(): void {
@@ -305,7 +329,7 @@ export class ItemsScene extends Phaser.Scene {
     const columns = compactColumns(this, { leftFraction: 0.36 });
 
     const header = buildSceneHeader(this, {
-      title: "The Codex of Items",
+      title: this.picker?.title ?? "The Codex of Items",
       y: compact ? columns.top + 24 : Math.max(48, Math.min(H * 0.12, 92)),
       width: compact ? columns.left.width : Math.min(W, 760),
       ...(compact ? { x: columns.left.cx } : {}),
@@ -314,17 +338,22 @@ export class ItemsScene extends Phaser.Scene {
 
     // The tabs take the line the masthead's subtitle used to hold: what sits
     // under the title is what the screen is showing, and it is now a choice.
-    const tabsBottom = this.buildTabs(
-      compact ? columns.left.cx : cx,
-      header.bottom + (compact ? 16 : 22),
-      compact ? columns.left.width : Math.min(W - 32, 420),
-    );
+    // The picker has no record of its own to show, so it has no tabs either.
+    const tabsBottom = this.picker
+      ? header.bottom
+      : this.buildTabs(
+          compact ? columns.left.cx : cx,
+          header.bottom + (compact ? 16 : 22),
+          compact ? columns.left.width : Math.min(W - 32, 420),
+        );
 
     // The back button is created before the (camera-clipped) content so it is
     // part of the "everything except the track" set the clip camera ignores.
-    const backLabel = this.openedAsOverlay
-      ? "Close Codex"
-      : "Return to the Vestibule";
+    const backLabel = this.picker
+      ? "Done"
+      : this.openedAsOverlay
+        ? "Close Codex"
+        : "Return to the Vestibule";
     const back = compact
       ? bannerButton(
           this,
@@ -480,12 +509,19 @@ export class ItemsScene extends Phaser.Scene {
   private close(): void {
     if (this.leaving) return;
     this.leaving = true;
+    const picker = this.picker;
     if (this.openedAsOverlay && this.overlayFelt) {
-      slideOverlayOut(this, this.overlayFelt, () => this.scene.stop());
+      slideOverlayOut(this, this.overlayFelt, () => {
+        this.scene.stop();
+        picker?.onClose();
+      });
     } else {
       slideSceneOut(
         this,
-        () => this.scene.start(this.returnTo),
+        () => {
+          this.scene.start(this.returnTo);
+          picker?.onClose();
+        },
         this.slideBackdrop,
       );
     }
@@ -582,12 +618,13 @@ export class ItemsScene extends Phaser.Scene {
     unlocked: Set<string>,
     counts: Record<string, number | undefined>,
   ): ItemDef[] {
-    const isLocked = (def: ItemDef) => itemLocked(def, unlocked);
+    const isLocked = (def: ItemDef) => this.isLocked(def, unlocked);
     const filtering = this.rarityFilter !== "all" || this.themeFilter !== "all";
     const items = ITEMS.filter((def) => {
       // A prototype is not a card the player can find yet, nor a retired one
-      // any longer.
-      if (def.prototype || isRetired(def.id)) return false;
+      // any longer. The picker offers prototypes: testing them is its use.
+      if (isRetired(def.id)) return false;
+      if (def.prototype && !this.picker) return false;
       if (isLocked(def)) return !filtering;
       if (this.rarityFilter !== "all" && def.rarity !== this.rarityFilter) {
         return false;
@@ -642,6 +679,7 @@ export class ItemsScene extends Phaser.Scene {
       unlocked,
       counts,
       built: new Set(),
+      cards: new Map(),
       cols,
       cellW,
       cellH,
@@ -843,22 +881,31 @@ export class ItemsScene extends Phaser.Scene {
     for (let i = from; i <= to; i++) this.buildCard(i);
   }
 
-  /** Build card `index` if it isn't there yet; true when one was made. */
-  private buildCard(index: number): boolean {
+  /** Build card `index` if it isn't there yet; true when one was made.
+   *  `caption` replaces the line under it — the picker's report of a pick. */
+  private buildCard(index: number, caption?: string): boolean {
     const g = this.gallery;
     if (!g || g.built.has(index)) return false;
     const def = g.items[index];
+    const locked = this.isLocked(def, g.unlocked);
+    const picker = this.picker;
     const card = buildItemCard(this, def, {
-      locked: itemLocked(def, g.unlocked),
+      locked,
       count: g.counts[def.id] ?? 0,
       displayScale: g.cardScale,
+      ...(picker
+        ? {
+            captionText: caption ?? picker.caption(def.id),
+            copies: picker.copies(def.id),
+          }
+        : {}),
     });
     card.setPosition(
       (index % g.cols) * g.cellW + g.cellW / 2,
       Math.floor(index / g.cols) * g.cellH + g.cellH / 2,
     );
     g.track.add(card);
-    if (!itemLocked(def, g.unlocked)) {
+    if (!locked) {
       let pressX = 0;
       let pressY = 0;
       card.setInteractive({ useHandCursor: true });
@@ -873,6 +920,13 @@ export class ItemsScene extends Phaser.Scene {
           10
         )
           return;
+        if (picker) {
+          audio.click();
+          const report = picker.onPick(def.id);
+          // Redrawn a tick later: the input plugin is still walking this card.
+          this.time.delayedCall(0, () => this.redrawCard(index, report));
+          return;
+        }
         card.setScale(1);
         this.scene.launch("ItemAnalysis", {
           returnTo: "Items",
@@ -886,7 +940,22 @@ export class ItemsScene extends Phaser.Scene {
     // unclipped, straight over the rest of the scene.
     this.cameras.main.ignore(card);
     g.built.add(index);
+    g.cards.set(index, card);
     return true;
+  }
+
+  /** Replace a built card with a fresh one carrying `caption`. */
+  private redrawCard(index: number, caption: string): void {
+    const g = this.gallery;
+    if (!g || this.leaving) return;
+    g.cards.get(index)?.destroy();
+    g.cards.delete(index);
+    g.built.delete(index);
+    this.buildCard(index, caption);
+  }
+
+  private isLocked(def: ItemDef, unlocked: ReadonlySet<string>): boolean {
+    return !this.picker && itemLocked(def, unlocked);
   }
 
   /** Fill in the cards the window hasn't asked for, a few per frame, so a

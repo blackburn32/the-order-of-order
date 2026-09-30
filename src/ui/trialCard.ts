@@ -29,7 +29,15 @@ export interface TrialCardData {
   title: string;
   /** Pre-formatted, since goals reach scientific notation in endless. */
   goal: string;
+  /** What the goal number is, in words, when "points needed to clear" is not
+   *  what it is: the duel has no threshold to reach, so its card shows `???`
+   *  and says here what it is racing instead. Two lengths, because the
+   *  side-by-side composition has half a card's width for the line. */
+  goalCaption?: { long: string; short: string };
   rolls: string;
+  /** Likewise for the roll count, whose default line ("rolls to reach it")
+   *  points at a goal the duel's card does not show. */
+  rollsCaption?: { long: string; short: string };
   /** The rank's modifier — on the Boss Trial's card only. */
   curse?: { name: string; desc: string };
 }
@@ -161,6 +169,9 @@ function requiredHeight(blocks: Block[]): number {
 export interface TrialCardHandle {
   /** Index into `VARIANTS`; higher is a plainer composition. */
   variant: number;
+  /** Where the GOAL figure (label, number and caption) came to rest, so the
+   *  first-run tutorial can point at it. */
+  goalRect: Phaser.Geom.Rectangle;
   destroy(): void;
 }
 
@@ -186,7 +197,7 @@ export function buildTrialCardRow(
     data: TrialCardData;
     status: TrialCardStatus;
   }[],
-): void {
+): Phaser.Geom.Rectangle[] {
   const built = cards.map((card) =>
     buildTrialCard(
       scene,
@@ -204,11 +215,12 @@ export function buildTrialCardRow(
     : 0;
   // Nothing has rendered yet — this all runs inside one `build()` — so a card
   // rebuilt here is not a visible flicker, just a discarded first attempt.
-  built.forEach((handle, i) => {
-    if (handle.variant >= floor) return;
+  // Returns each card's goal rect, in the order the cards were given.
+  return built.map((handle, i) => {
+    if (handle.variant >= floor) return handle.goalRect;
     handle.destroy();
     const card = cards[i];
-    buildTrialCard(
+    return buildTrialCard(
       scene,
       card.x,
       card.y,
@@ -218,7 +230,7 @@ export function buildTrialCardRow(
       card.data,
       card.status,
       floor,
-    );
+    ).goalRect;
   });
 }
 
@@ -336,6 +348,7 @@ function buildTrialCard(
 
   let blocks: Block[] = [];
   let content: Phaser.GameObjects.GameObject[] = [];
+  let goal: StatPart | undefined;
   let variant = minVariant;
   for (; variant < VARIANTS.length; variant++) {
     const built = buildContent(
@@ -352,6 +365,7 @@ function buildTrialCard(
     );
     blocks = built.blocks;
     content = built.objects;
+    goal = built.goal;
     // The last variant is the floor: take it whether it fits or not.
     if (requiredHeight(blocks) <= innerH || variant === VARIANTS.length - 1) {
       break;
@@ -384,6 +398,7 @@ function buildTrialCard(
 
   return {
     variant,
+    goalRect: goal!.bounds(),
     destroy: () => {
       for (const object of [card, watermark, ...content]) {
         // The entrance tweens outlive their targets otherwise, and would go on
@@ -398,6 +413,7 @@ function buildTrialCard(
 interface CardContent {
   blocks: Block[];
   objects: Phaser.GameObjects.GameObject[];
+  goal: StatPart;
 }
 
 function buildContent(
@@ -507,6 +523,7 @@ function buildContent(
     ? size(0.17, 0.15, 19, 42)
     : size(0.115, 0.13, 17, 34);
   const statGapBefore = Phaser.Math.Clamp(h * 0.018, 4, 9);
+  let goalPart: StatPart;
 
   const stat = (label: string, value: string, caption: string, maxW: number) =>
     buildStat(
@@ -522,8 +539,18 @@ function buildContent(
     );
 
   if (column) {
-    const goal = stat("GOAL", data.goal, GOAL_CAPTION, innerW);
-    const rolls = stat("ROLLS", data.rolls, ROLLS_CAPTION, innerW);
+    const goal = (goalPart = stat(
+      "GOAL",
+      data.goal,
+      data.goalCaption?.long ?? GOAL_CAPTION,
+      innerW,
+    ));
+    const rolls = stat(
+      "ROLLS",
+      data.rolls,
+      data.rollsCaption?.long ?? ROLLS_CAPTION,
+      innerW,
+    );
     const divider = keep(scene.add.graphics().setDepth(4));
     divider.lineStyle(1, palette.rule, 0.28);
     const dashHalf = Math.min(innerW * 0.34, 78);
@@ -553,8 +580,18 @@ function buildContent(
   } else {
     const gap = Phaser.Math.Clamp(w * 0.05, 10, 24);
     const colW = (innerW - gap) / 2;
-    const goal = stat("GOAL", data.goal, GOAL_CAPTION_SHORT, colW);
-    const rolls = stat("ROLLS", data.rolls, ROLLS_CAPTION_SHORT, colW);
+    const goal = (goalPart = stat(
+      "GOAL",
+      data.goal,
+      data.goalCaption?.short ?? GOAL_CAPTION_SHORT,
+      colW,
+    ));
+    const rolls = stat(
+      "ROLLS",
+      data.rolls,
+      data.rollsCaption?.short ?? ROLLS_CAPTION_SHORT,
+      colW,
+    );
     const rowH = Math.max(goal.height, rolls.height);
     const divider = keep(scene.add.graphics().setDepth(4));
     divider.lineStyle(1, palette.rule, 0.3);
@@ -617,7 +654,7 @@ function buildContent(
     });
   }
 
-  return { blocks, objects };
+  return { blocks, objects, goal: goalPart };
 }
 
 /** One number with its label above and its plain-English line below. */
@@ -625,6 +662,8 @@ interface StatPart {
   height: number;
   /** Positions the group centred on `cx`, with its top edge at `top`. */
   place(cx: number, top: number): void;
+  /** Where the group sits once placed: its widest line by its full height. */
+  bounds(): Phaser.Geom.Rectangle;
 }
 
 function buildStat(
@@ -692,9 +731,18 @@ function buildStat(
     valueText.height +
     (captionText ? captionGap + captionText.height : 0);
 
+  const width = Math.max(
+    labelText.displayWidth,
+    valueText.displayWidth,
+    captionText?.displayWidth ?? 0,
+  );
+  let at = { cx: 0, top: 0 };
   return {
     height,
+    bounds: () =>
+      new Phaser.Geom.Rectangle(at.cx - width / 2, at.top, width, height),
     place: (cx, top) => {
+      at = { cx, top };
       let cursor = top;
       labelText.setPosition(cx, cursor + labelText.height / 2);
       cursor += labelText.height + labelGap;

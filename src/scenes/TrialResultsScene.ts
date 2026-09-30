@@ -27,6 +27,7 @@ import { buildItemCard } from "../ui/itemCard";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { CalloutHandle, showCallout } from "../ui/Callout";
 import {
+  advanceFrom,
   advanceTutorial,
   deferTutorialStage,
   getTutorial,
@@ -36,6 +37,7 @@ import {
 } from "../systems/Tutorial";
 import { getRun } from "../state/RunState";
 import { endingAfterTrial, type EndingDef } from "../systems/Endings";
+import { STORY_BUTTONS } from "../story";
 import {
   createFreshShopCheckpoint,
   saveActiveRun,
@@ -109,14 +111,26 @@ const STRUCK_FIGURE_GAP = 8;
  *  script; only where they point, and whether this receipt has anything for
  *  them to point at, is decided here. */
 type ResultsStep =
-  TutorialStage.Results | TutorialStage.EarlyGold | TutorialStage.Interest;
+  | TutorialStage.Cleared
+  | TutorialStage.Gold
+  | TutorialStage.EarlyGold
+  | TutorialStage.Interest
+  | TutorialStage.EnterShop;
 
 function isResultsStep(stage: TutorialStage): stage is ResultsStep {
   return (
-    stage === TutorialStage.Results ||
+    stage === TutorialStage.Cleared ||
+    stage === TutorialStage.Gold ||
     stage === TutorialStage.EarlyGold ||
-    stage === TutorialStage.Interest
+    stage === TutorialStage.Interest ||
+    stage === TutorialStage.EnterShop
   );
+}
+
+/** The two steps a receipt may have nothing to show for, which are set aside
+ *  until one does rather than shown against nothing. */
+function isDeferrableStep(stage: TutorialStage): boolean {
+  return stage === TutorialStage.EarlyGold || stage === TutorialStage.Interest;
 }
 
 /** The itemised gold lines worth printing: every source that paid, plus the
@@ -186,6 +200,10 @@ export class TrialResultsScene extends Phaser.Scene {
   private complete = false;
   private leaving = false;
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
+  // Screen rects of the verdict with the trial line under it, and of the way
+  // on, for the tutorial steps that point at them.
+  private headlineRect?: Phaser.Geom.Rectangle;
+  private buttonRect?: Phaser.Geom.Rectangle;
   // Screen rect of the gold receipt, which the first-run tutorial points at
   // once the reveal has finished.
   private receiptRect?: Phaser.Geom.Rectangle;
@@ -288,6 +306,19 @@ export class TrialResultsScene extends Phaser.Scene {
     );
 
     const { button, buttonY } = layout;
+    this.headlineRect = layout.headline
+      .filter(
+        (object): object is Phaser.GameObjects.Text =>
+          object instanceof Phaser.GameObjects.Text,
+      )
+      .map((text) => text.getBounds())
+      .reduce((all, rect) => Phaser.Geom.Rectangle.Union(all, rect));
+    this.buttonRect = new Phaser.Geom.Rectangle(
+      button.x - button.width / 2,
+      buttonY - button.height / 2,
+      button.width,
+      button.height,
+    );
     if (!animate || !fx.motion) {
       this.revealAll();
       return;
@@ -563,12 +594,12 @@ export class TrialResultsScene extends Phaser.Scene {
     y: number,
     maxWidth: number,
   ): Phaser.GameObjects.Container {
-    // An act closing on this trial names its own way on ("The King's Messenger
-    // Arrives"), because the button is the last beat before the story takes
-    // over and "Enter the Shop" would give the wrong one.
+    // An act closing on this trial leads into the story rather than to a room,
+    // so the button says what the story pages themselves say: Continue. Naming
+    // the destination is only right when there is a destination to name.
     const ending = this.endingAhead();
     const label = ending
-      ? ending.button
+      ? STORY_BUTTONS.continue
       : this.dataIn.outcome.phase === "victory"
         ? "Witness the Ascension"
         : "Enter the Shop";
@@ -680,13 +711,15 @@ export class TrialResultsScene extends Phaser.Scene {
   private stepAnchor(step: TutorialStage): Phaser.Geom.Rectangle | undefined {
     if (!isResultsStep(step)) return undefined;
     switch (step) {
-      case TutorialStage.Results:
+      case TutorialStage.Cleared:
+        return this.headlineRect;
+      case TutorialStage.Gold:
         return this.receiptRect;
       // Both of these can find nothing to say, and then say nothing: a trial
       // cleared on its last roll pays no rolls-left gold, and a purse under
       // five pays no interest, and a receipt prints neither row at +0. Each
-      // step waits — as the Boss step waits for a boss — for the first clear
-      // that gives it the line it is explaining.
+      // step is set aside for the first clear that gives it the line it is
+      // explaining.
       case TutorialStage.EarlyGold:
         return this.dataIn.outcome.goldBreakdown.rolls > 0
           ? this.rollsRect
@@ -695,30 +728,44 @@ export class TrialResultsScene extends Phaser.Scene {
         return this.dataIn.outcome.goldBreakdown.interest > 0
           ? this.interestRect
           : undefined;
+      case TutorialStage.EnterShop:
+        return this.buttonRect;
     }
   }
 
-  /** The first run's results-screen steps: what the clear just paid, what the
-   *  rolls it did not need were worth, and the line that pays for holding gold
-   *  rather than earning it. All wait for the reveal to finish, so a callout
-   *  never dims a receipt that is still counting itself up.
+  /** The first run's results-screen steps: the verdict, what the clear just
+   *  paid, what the rolls it did not need were worth, the line that pays for
+   *  holding gold rather than earning it, and the way into the shop. All wait
+   *  for the reveal to finish, so a callout never dims a receipt that is still
+   *  counting itself up.
    *
    *  A step this screen owns but this receipt cannot illustrate is deferred
    *  rather than shown or dropped: the script moves straight on to the next
    *  step — which may be showable here, hence the recursion — and the deferred
-   *  one comes back on the first later clear that does print its line. */
+   *  one comes back on the first later clear that does print its line, even
+   *  once the script itself has finished. */
   private renderTutorial(): void {
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
     const t = getTutorial(this.registry);
-    if (!t.active) return;
 
-    if (isResultsStep(t.stage)) {
-      const anchor = this.stepAnchor(t.stage);
+    if (t.active && isResultsStep(t.stage)) {
+      const stage = t.stage;
+      const anchor = this.stepAnchor(stage);
       if (anchor) {
-        this.showStep(t.stage, anchor, () => advanceTutorial(this.registry));
+        // The way on is dismissed by taking it (see continue), not by Continue.
+        if (stage === TutorialStage.EnterShop) {
+          this.tutorialCallout = showCallout(this, {
+            anchor,
+            text: TUTORIAL_TEXT[stage],
+            interactiveAnchor: true,
+          });
+          return;
+        }
+        this.showStep(stage, anchor, () => advanceTutorial(this.registry));
         return;
       }
+      if (!isDeferrableStep(stage)) return;
       deferTutorialStage(this.registry);
       this.renderTutorial();
       return;
@@ -1172,6 +1219,7 @@ export class TrialResultsScene extends Phaser.Scene {
   private continue(): void {
     if (!this.complete || this.leaving) return;
     this.leaving = true;
+    advanceFrom(this.registry, TutorialStage.EnterShop);
     // An act takes precedence over both ordinary ways on: the final clear
     // reaches Victory through its closing sequence rather than instead of it,
     // and the rank 3, 6 and 9 clears reach the shop through theirs.

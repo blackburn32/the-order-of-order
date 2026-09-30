@@ -1,6 +1,12 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { TRIALS_PER_RANK, rankOf, trialInRank, trialName } from "../config";
+import {
+  TRIALS_PER_RANK,
+  isMirrorTrial,
+  rankOf,
+  trialInRank,
+  trialName,
+} from "../config";
 import { getRun, type RunState } from "../state/RunState";
 import { goalForTrial, rankBosses } from "../systems/Boss";
 import { audio } from "../systems/Audio";
@@ -19,8 +25,8 @@ import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildTrialCardRow, TRIAL_ORDINALS } from "../ui/trialCard";
 import { CalloutHandle, showCallout } from "../ui/Callout";
 import {
+  advanceFrom,
   advanceTutorial,
-  atStage,
   getTutorial,
   TutorialStage,
   TUTORIAL_TEXT,
@@ -39,6 +45,20 @@ const RANK_SUBTITLE = "Three trials stand between you and ascension";
 /** The Boss Trial's card, relative to its two neighbours, when the route is
  *  stacked into a column. It shows everything they do plus the rank's curse. */
 const BOSS_CARD_WEIGHT = 1.5;
+
+/** The duel has no goal: it is won by being ahead of the Order of Disorder when
+ *  the rolls run out, and how many points that takes is whatever the mirror
+ *  scores. Showing the ladder's number there would promise a threshold the
+ *  trial never checks, so the card withholds it and says what the race is. */
+const DUEL_GOAL = "???";
+const DUEL_GOAL_CAPTION = {
+  long: "outscore the Order of Disorder",
+  short: "outscore the Disorder",
+};
+const DUEL_ROLLS_CAPTION = {
+  long: "rolls to get ahead",
+  short: "rolls to do it",
+};
 
 /** Room the stacked masthead takes below the rank, and the air left between the
  *  route and the start button. Both are deliberately close: a small handset in
@@ -65,6 +85,8 @@ export class TrialOverviewScene extends Phaser.Scene {
   // Screen rects of the three trial cards, so the first-run tutorial can point
   // at them. Rebuilt with the rest of the scene on every resize.
   private cardRects: Phaser.Geom.Rectangle[] = [];
+  // And the GOAL figure on each, for the steps about what a trial asks for.
+  private goalRects: Phaser.Geom.Rectangle[] = [];
   // Screen rect of the start button, for the step that points at it. Captured
   // before the entrance tween offsets the button, so it describes where the
   // button comes to rest rather than where it starts.
@@ -178,6 +200,7 @@ export class TrialOverviewScene extends Phaser.Scene {
     for (let slot = 0; slot < TRIALS_PER_RANK; slot++) {
       const trial = rankStart + slot;
       const boss = slot === TRIALS_PER_RANK - 1;
+      const duel = isMirrorTrial(trial);
       const cardH = cardHeightFor(boss);
       const x = portrait
         ? W / 2
@@ -196,7 +219,9 @@ export class TrialOverviewScene extends Phaser.Scene {
         data: {
           ordinal: TRIAL_ORDINALS[slot] ?? String(slot + 1),
           title: trialName(trial),
-          goal: formatScore(goalForTrial(this.state, trial)),
+          goal: duel ? DUEL_GOAL : formatScore(goalForTrial(this.state, trial)),
+          goalCaption: duel ? DUEL_GOAL_CAPTION : undefined,
+          rollsCaption: duel ? DUEL_ROLLS_CAPTION : undefined,
           rolls: String(trialRollTargetFor(this.state, trial)),
           // A rank can hold more than one modifier (The Long Night); the card
           // has room for one line of each, so they are joined rather than
@@ -213,7 +238,7 @@ export class TrialOverviewScene extends Phaser.Scene {
     }
     // Built as a set rather than one at a time, so the three agree on one
     // composition however much room the boss's curse leaves them.
-    buildTrialCardRow(this, cards);
+    this.goalRects = buildTrialCardRow(this, cards);
 
     if (fx.motion) {
       start.setAlpha(0).setY(buttonY + 24);
@@ -370,11 +395,13 @@ export class TrialOverviewScene extends Phaser.Scene {
     return glow;
   }
 
-  /** The route's tutorial steps: what a rank is and the button that starts the
-   *  first one, then — a rank later, once the first boss is down — that the
-   *  three trials come round again with steeper goals, and how far the ladder
-   *  runs. They point at the cards and the masthead themselves, which is the
-   *  whole reason they live here rather than on the HUD. */
+  /** The route's tutorial steps: the opening lesson on what a rank is, what a
+   *  trial asks for and the button that starts the first one; then, on the
+   *  second trial's route, that the goals climb; on the Boss Trial's, the boss
+   *  and what beating it earns; and on the next rank's, that the order has
+   *  climbed, how far the goals have, and the send-off. They point at the cards and the masthead
+   *  themselves, which is the whole reason they live here rather than on the
+   *  HUD. */
   private renderTutorial(): void {
     this.tutorialCallout?.destroy();
     this.tutorialCallout = undefined;
@@ -385,39 +412,65 @@ export class TrialOverviewScene extends Phaser.Scene {
       advanceTutorial(this.registry);
       this.renderTutorial();
     };
-    let anchor: Phaser.Geom.Rectangle;
-    let text: string;
+    const slot = trialInRank(this.state.trial) - 1;
+    let anchor: Phaser.Geom.Rectangle | Phaser.Geom.Rectangle[];
     // The start step is dismissed by the press it asks for, not by Continue.
     let onContinue: (() => void) | undefined = advance;
     let interactiveAnchor = false;
-    // The two steps that speak about the rank as a whole point at the whole
-    // route; the one about the ladder points at the masthead that names it.
-    const allCards = () =>
-      this.cardRects.reduce(
-        (all, rect) => Phaser.Geom.Rectangle.Union(all, rect),
-        this.cardRects[0],
-      );
-    if (t.stage === TutorialStage.Route) {
-      anchor = allCards();
-      text = TUTORIAL_TEXT[TutorialStage.Route];
-    } else if (t.stage === TutorialStage.RankGoal && this.rankRect) {
-      anchor = this.rankRect;
-      text = TUTORIAL_TEXT[TutorialStage.RankGoal];
-    } else if (t.stage === TutorialStage.RankReset) {
-      anchor = allCards();
-      text = TUTORIAL_TEXT[TutorialStage.RankReset];
-    } else if (t.stage === TutorialStage.RouteStart && this.startRect) {
-      anchor = this.startRect;
-      text = TUTORIAL_TEXT[TutorialStage.RouteStart];
-      onContinue = undefined;
-      interactiveAnchor = true; // starting the trial is what advances this step
-    } else {
-      return;
+    switch (t.stage) {
+      case TutorialStage.Welcome:
+      case TutorialStage.RankCount:
+        if (!this.rankRect) return;
+        anchor = this.rankRect;
+        break;
+      case TutorialStage.Trials:
+        anchor = this.cardRects.reduce(
+          (all, rect) => Phaser.Geom.Rectangle.Union(all, rect),
+          this.cardRects[0],
+        );
+        break;
+      case TutorialStage.TrialGoal:
+      case TutorialStage.Points:
+        anchor = this.goalRects[slot];
+        break;
+      case TutorialStage.GoalGrows:
+        // About a goal that has grown, so it waits for a run that has cleared
+        // a trial — one resumed past the steps before it may not have yet.
+        if (this.state.trial === 1) return;
+        anchor = this.goalRects[slot];
+        break;
+      case TutorialStage.Begin:
+        if (!this.startRect) return;
+        anchor = this.startRect;
+        onContinue = undefined;
+        interactiveAnchor = true; // starting the trial is what advances this step
+        break;
+      case TutorialStage.Boss:
+        // Waits in place for the route to reach the rank's Boss Trial.
+        if (slot !== TRIALS_PER_RANK - 1) return;
+        anchor = this.cardRects[slot];
+        break;
+      case TutorialStage.BossAdvance:
+        anchor = this.cardRects[slot];
+        break;
+      case TutorialStage.NewRank:
+        // Waits in place for the route to reach the rank after that boss.
+        if (rankOf(this.state.trial) < 2 || !this.rankRect) return;
+        anchor = this.rankRect;
+        break;
+      case TutorialStage.GoalsGrown:
+        anchor = this.goalRects;
+        break;
+      case TutorialStage.Finale:
+        anchor = []; // nothing lit: the callout takes the middle of the screen
+        break;
+      default:
+        return;
     }
 
     this.tutorialCallout = showCallout(this, {
       anchor,
-      text,
+      text: TUTORIAL_TEXT[t.stage],
       onContinue,
       interactiveAnchor,
     });
@@ -428,9 +481,7 @@ export class TrialOverviewScene extends Phaser.Scene {
     this.leaving = true;
     // The step that points at this button has no Continue; pressing it is the
     // dismissal, and leaves the Game scene showing the next step.
-    if (atStage(this.registry, TutorialStage.RouteStart)) {
-      advanceTutorial(this.registry);
-    }
+    advanceFrom(this.registry, TutorialStage.Begin);
     // One act stands in FRONT of its trial rather than after it: the Order of
     // Disorder has to be introduced before the player sits down opposite it.
     // The sequence hands off to the Game itself, so this is a detour rather

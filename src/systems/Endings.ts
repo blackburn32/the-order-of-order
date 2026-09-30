@@ -18,7 +18,7 @@
 // below rather than testing rank numbers of their own.
 
 import { RunState } from "../state/RunState";
-import { ENDING_BUTTONS, ENDING_PAGES } from "../story";
+import { ENDING_PAGES } from "../story";
 import type { StoryPage } from "../ui/storyPage";
 import { AFFLICTIONS, type AfflictionId } from "./Afflictions";
 
@@ -34,8 +34,6 @@ export interface EndingDef {
   when: "afterClear" | "beforeTrial";
   /** The act's pages, written in `src/story.ts`. */
   pages: readonly StoryPage[];
-  /** What the last page's button says, written in `src/story.ts`. */
-  button: string;
   /** The scene the last page hands off to. */
   next: "Tribute" | "Shop" | "Game" | "Victory";
   /** The drawback the Tribute scene grants, when `next` is "Tribute". */
@@ -47,7 +45,6 @@ export const ENDINGS: readonly EndingDef[] = [
     id: "tribute",
     trial: 9, // rank 3's Boss Trial
     when: "afterClear",
-    button: ENDING_BUTTONS.tribute,
     next: "Tribute",
     gift: "kingsDemands",
     pages: ENDING_PAGES.tribute,
@@ -56,7 +53,6 @@ export const ENDINGS: readonly EndingDef[] = [
     id: "betrayal",
     trial: 18, // rank 6's Boss Trial
     when: "afterClear",
-    button: ENDING_BUTTONS.betrayal,
     next: "Tribute",
     gift: "betrayal",
     pages: ENDING_PAGES.betrayal,
@@ -68,7 +64,6 @@ export const ENDINGS: readonly EndingDef[] = [
     id: "summons",
     trial: 27, // rank 9's Boss Trial
     when: "afterClear",
-    button: ENDING_BUTTONS.summons,
     next: "Shop",
     pages: ENDING_PAGES.summons,
   },
@@ -76,7 +71,6 @@ export const ENDINGS: readonly EndingDef[] = [
     id: "disorder",
     trial: 30, // rank 10's Boss Trial — the duel
     when: "beforeTrial",
-    button: ENDING_BUTTONS.disorder,
     next: "Game",
     pages: ENDING_PAGES.disorder,
   },
@@ -84,7 +78,6 @@ export const ENDINGS: readonly EndingDef[] = [
     id: "peace",
     trial: 30,
     when: "afterClear",
-    button: ENDING_BUTTONS.peace,
     next: "Victory",
     pages: ENDING_PAGES.peace,
   },

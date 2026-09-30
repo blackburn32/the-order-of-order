@@ -5,7 +5,8 @@ import { addPanel, bannerButton } from "./widgets";
 export interface CalloutOptions {
   /** Screen-space rectangle of the element being pointed at. Pass several when
    *  one step is about more than one region (the shop's cards *and* its
-   *  boosters): every rect stays lit, and the panel is kept clear of all. */
+   *  boosters): every rect stays lit, and the panel is kept clear of all.
+   *  An empty list lights nothing and centres the panel. */
   anchor: Phaser.Geom.Rectangle | Phaser.Geom.Rectangle[];
   /** Body copy shown in the parchment panel. */
   text: string;
@@ -180,6 +181,10 @@ export function showCallout(
       candidates.push([(W * col) / SWEEP, (H * row) / SWEEP]);
     }
   }
+
+  // With nothing lit there is nothing to keep clear of, and the middle of the
+  // screen is where a message addressed to no element belongs.
+  if (holes.length === 0) candidates.unshift([W / 2, H / 2]);
 
   let spot = placed(candidates[0][0], candidates[0][1]);
   let spotCover = covers(spot);

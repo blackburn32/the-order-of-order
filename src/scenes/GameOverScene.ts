@@ -34,8 +34,9 @@ export class GameOverScene extends Phaser.Scene {
 
   create(): void {
     this.leaving = false;
-    // Every ended run lands here — a loss or an abandon. The tutorial plays for
-    // one run, so retire it whether or not the player reached its last step.
+    // Every ended run lands here — a loss or an abandon. Stop this run's
+    // tutorial; the steps the player never reached are still unseen, so the
+    // next run picks the script up from there.
     completeTutorial(this.registry);
     responsive(this, () => this.build());
     slideSceneIn(this, this.slideBackdrop);
