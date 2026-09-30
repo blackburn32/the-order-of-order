@@ -21,7 +21,13 @@ import {
   type GlobalRunAnalysis,
 } from "../systems/GlobalScores";
 import { toNumberPointMap } from "../systems/ItemPoints";
-import { formatScore } from "../ui/formatScore";
+import { formatSci, formatScore } from "../ui/formatScore";
+import { dieBodyTexture } from "../art/textures";
+import {
+  dieEffects,
+  dieEffectsKey,
+  type DieEffect,
+} from "../systems/DieEffects";
 
 type PointerHandler = (pointer: Phaser.Input.Pointer) => void;
 type WheelHandler = (
@@ -49,6 +55,13 @@ const MIN_ROW_STEP = 28;
 
 /** Strip under a list reserved for its hint line. */
 const HINT_RESERVE = 22;
+/** The most kinds of die a final grid lists before it folds the smallest into
+ *  an ellipsis, and how many it keeps when it does — one fewer, so the
+ *  ellipsis takes the last slot rather than widening the row. */
+const GRID_LIST_MAX_KINDS = 5;
+const GRID_LIST_SHOWN_WHEN_CROWDED = 4;
+/** Past this many kinds, a final grid's counts go to scientific notation. */
+const GRID_LIST_PLAIN_MAX_KINDS = 3;
 
 /** A scene-space rectangle a tab lays its table out in. */
 interface Area {
@@ -557,37 +570,63 @@ export class HallScene extends Phaser.Scene {
   }
 
   /**
-   * One run's final grid: every die size it ended with, once, followed by how
-   * many of that size it held. Built left-anchored at x = 0 so the caller can
-   * measure the row before deciding where it goes.
+   * One run's final grid: each distinct die it ended with — a size and the
+   * effects it carried, shaded the way the table showed it — followed by how
+   * many it held. A grid of many kinds keeps its largest few and counts the
+   * rest off after an ellipsis, so one row never swamps the table. Built
+   * left-anchored at x = 0 so the caller can measure the row before deciding
+   * where it goes.
    */
   private buildGridList(
     entry: HallEntry,
     iconSize: number,
     countSize: number,
   ): { container: Phaser.GameObjects.Container; width: number } {
-    // A saved grid can contain several stacks of the same die size because
-    // source and special flags are persisted separately. Collapse those stacks
-    // so the row shows every size once, with its total count.
-    const counts = new Map<number, number>();
+    // A saved grid can hold several stacks of one kind of die, because the
+    // source that granted each is persisted too. Collapse them to what the
+    // player can tell apart.
+    const kinds = new Map<
+      string,
+      { sides: number; effects: DieEffect[]; count: number }
+    >();
     for (const stack of entry.dice) {
-      counts.set(stack.sides, (counts.get(stack.sides) ?? 0) + stack.count);
+      const effects = dieEffects(stack, entry.auras);
+      const key = `${stack.sides}|${dieEffectsKey(effects)}`;
+      const kind = kinds.get(key);
+      if (kind) kind.count += stack.count;
+      else kinds.set(key, { sides: stack.sides, effects, count: stack.count });
     }
-    const diceTypes = [...counts.entries()].sort(
-      ([sidesA], [sidesB]) => sidesB - sidesA,
+    const all = [...kinds.values()];
+    const crowded = all.length > GRID_LIST_MAX_KINDS;
+    // The largest buckets are the grid's shape; the rest fold into the tail.
+    const shown = crowded
+      ? [...all]
+          .sort((a, b) => b.count - a.count || b.sides - a.sides)
+          .slice(0, GRID_LIST_SHOWN_WHEN_CROWDED)
+      : all;
+    shown.sort(
+      (a, b) => b.sides - a.sides || a.effects.length - b.effects.length,
     );
+    const extra = all
+      .filter((kind) => !shown.includes(kind))
+      .reduce((sum, kind) => sum + kind.count, 0);
+    // A row of many kinds prints its counts in scientific form, which keeps
+    // every label to a few characters however large the grid grew.
+    const format = (n: number) =>
+      all.length > GRID_LIST_PLAIN_MAX_KINDS ? formatSci(n) : formatScore(n);
+
     const itemPadding = Math.max(8, iconSize * 0.4);
     const container = this.add.container(0, 0);
     let listX = 0;
 
-    diceTypes.forEach(([sides, count]) => {
+    shown.forEach(({ sides, effects, count }) => {
       // Sized rather than scaled: the die body is baked above layout
       // resolution, and a display size is the one form that normalises itself.
       const icon = this.add
-        .image(listX + iconSize / 2, 0, `die-${sides}`)
+        .image(listX + iconSize / 2, 0, dieBodyTexture(this, sides, effects))
         .setDisplaySize(iconSize, iconSize);
       const label = this.add
-        .text(listX + iconSize + 3, 0, `×${formatScore(count)}`, {
+        .text(listX + iconSize + 3, 0, `×${format(count)}`, {
           fontFamily: SERIF,
           fontSize: `${countSize}px`,
           color: CSS.parchmentDark,
@@ -596,6 +635,18 @@ export class HallScene extends Phaser.Scene {
       container.add([icon, label]);
       listX += iconSize + 3 + label.width + itemPadding;
     });
+
+    if (extra > 0) {
+      const more = this.add
+        .text(listX, 0, `…+${format(extra)}`, {
+          fontFamily: SERIF,
+          fontSize: `${countSize}px`,
+          color: CSS.dim,
+        })
+        .setOrigin(0, 0.5);
+      container.add(more);
+      listX += more.width + itemPadding;
+    }
 
     return { container, width: Math.max(1, listX - itemPadding) };
   }

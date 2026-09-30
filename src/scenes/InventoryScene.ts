@@ -1,7 +1,15 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { getRun, RunState } from "../state/RunState";
-import { DIE_LADDER, DieSides } from "../systems/Dice";
+import type { DieSides } from "../systems/Dice";
+import {
+  DIE_EFFECTS,
+  dieEffects,
+  dieEffectsKey,
+  runAuras,
+  type DieEffect,
+} from "../systems/DieEffects";
+import { dieBodyTexture } from "../art/textures";
 import type { AfflictionId } from "../systems/Afflictions";
 import { afflictionCard, afflictionOf, ITEMS, ItemDef } from "../systems/Items";
 import { audio } from "../systems/Audio";
@@ -90,14 +98,6 @@ const HINT_H = 22;
  *  reference rather than a hoard, deliberately sorts the other way. */
 const RARITY_ORDER = { rare: 0, uncommon: 1, common: 2 } as const;
 
-/** One badge on a dice row: a die size's persistent auras and windfall
- *  multipliers, in the colour that tells them apart at a glance. */
-interface ChipSpec {
-  label: string;
-  color: number;
-  css: string;
-}
-
 /** One card on the item shelf: an owned item with the copies held, or a
  *  curse the run was handed, which owns nothing and is carried once. */
 interface ShelfEntry {
@@ -105,10 +105,12 @@ interface ShelfEntry {
   copies: number;
 }
 
+/** One line of the dice list: every die of one size carrying one set of
+ *  effects, which is what the player can tell apart at the table. */
 interface DiceRow {
   sides: DieSides;
+  effects: DieEffect[];
   count: number;
-  chips: ChipSpec[];
 }
 
 /**
@@ -530,9 +532,11 @@ export class InventoryScene extends Phaser.Scene {
         : this.buildItemShelf(track, area, run);
 
     if (contentH <= area.height) {
-      // Nothing to scroll: centre a short list in the band it was given rather
-      // than leaving it hanging off the tabs with all the slack below it.
-      track.y = area.y + (area.height - contentH) / 2;
+      // Nothing to scroll. The dice list reads down from its heads like a
+      // ledger, so it stays at the top of the band; the shelf is centred in
+      // the band it was given rather than hanging off the tabs with all the
+      // slack below it.
+      if (this.tab !== "dice") track.y = area.y + (area.height - contentH) / 2;
       return;
     }
     this.enableScroll(track, area, contentH);
@@ -662,78 +666,31 @@ export class InventoryScene extends Phaser.Scene {
 
   // --- Dice -----------------------------------------------------------------
 
-  /** One line per die size, largest first, with the auras riding on that size
-   *  collected into badges. Sizes are read through `groups()`, which is O(dice
-   *  buckets) — a grid of millions still resolves to a handful of lines. */
+  /** One line per distinct die — a size and the effects it carries — largest
+   *  size first, a plain die ahead of its shaded kin. Read through `groups()`,
+   *  which is O(dice buckets), so a grid of millions still resolves to a
+   *  handful of lines. */
   private diceRows(run: RunState): DiceRow[] {
-    interface Tally {
-      count: number;
-      loaded: number;
-      wild: number;
-      /** Windfall multiplier -> how many dice of this size carry it. */
-      maxFace: Map<number, number>;
-    }
-    const bySides = new Map<number, Tally>();
+    const auras = runAuras(run);
+    const rows = new Map<string, DiceRow>();
     for (const group of run.dice.groups()) {
-      let tally = bySides.get(group.die.sides);
-      if (!tally) {
-        tally = { count: 0, loaded: 0, wild: 0, maxFace: new Map() };
-        bySides.set(group.die.sides, tally);
-      }
-      tally.count += group.count;
-      if (group.die.loaded) tally.loaded += group.count;
-      if (group.die.wildFace) tally.wild += group.count;
-      if (group.die.maxFaceBonus > 0) {
-        const factor = group.die.maxFaceBonus;
-        tally.maxFace.set(
-          factor,
-          (tally.maxFace.get(factor) ?? 0) + group.count,
-        );
-      }
+      const effects = dieEffects(group.die, auras);
+      const key = `${group.die.sides}|${dieEffectsKey(effects)}`;
+      const row = rows.get(key);
+      if (row) row.count += group.count;
+      else
+        rows.set(key, { sides: group.die.sides, effects, count: group.count });
     }
-
-    return [...DIE_LADDER]
-      .sort((a, b) => b - a)
-      .filter((sides) => bySides.has(sides))
-      .map((sides) => {
-        const tally = bySides.get(sides)!;
-        // An aura bought as a size aura covers every die of that size, while a
-        // windfall die arrives one at a time. Naming the share only when it is
-        // a share keeps the common "all of them" case uncluttered.
-        const share = (n: number) =>
-          n < tally.count ? ` (${formatScore(n)})` : "";
-        const chips: ChipSpec[] = [];
-        for (const factor of [...tally.maxFace.keys()].sort((a, b) => b - a)) {
-          chips.push({
-            // Ascension's dice score on their highest face without multiplying.
-            label: `${factor > 1 ? `×${factor} ON MAX` : "MAX SCORES"}${share(tally.maxFace.get(factor)!)}`,
-            color: COLORS.goldLight,
-            css: CSS.goldLight,
-          });
-        }
-        if (tally.wild > 0) {
-          chips.push({
-            label: `WILD FACE${share(tally.wild)}`,
-            color: COLORS.rarityRare,
-            css: CSS.rarityRare,
-          });
-        }
-        if (run.royalSealSizes.includes(sides)) {
-          chips.push({
-            label: "ROYAL SEAL",
-            color: COLORS.rarityUncommon,
-            css: CSS.rarityUncommon,
-          });
-        }
-        if (tally.loaded > 0) {
-          chips.push({
-            label: `LOADED${share(tally.loaded)}`,
-            color: COLORS.glowSteel,
-            css: CSS.steel,
-          });
-        }
-        return { sides, count: tally.count, chips };
-      });
+    const rank = (effects: DieEffect[]) =>
+      effects.length === 0
+        ? -1
+        : Math.min(...effects.map((e) => DIE_EFFECTS.indexOf(e)));
+    return [...rows.values()].sort(
+      (a, b) =>
+        b.sides - a.sides ||
+        a.effects.length - b.effects.length ||
+        rank(a.effects) - rank(b.effects),
+    );
   }
 
   private buildDiceList(
@@ -746,21 +703,18 @@ export class InventoryScene extends Phaser.Scene {
       return this.emptyMessage(track, area, "No dice in the grid.");
     }
 
-    const rowH = Phaser.Math.Clamp(
-      (area.height - HEAD_H) / rows.length,
-      40,
-      64,
-    );
-    const iconSize = Math.min(rowH * 0.78, 46);
-    const nameSize = Math.round(Phaser.Math.Clamp(rowH * 0.34, 15, 23));
-    const chipSize = Math.round(Phaser.Math.Clamp(rowH * 0.21, 10, 13));
+    const rowH = Phaser.Math.Clamp(area.height * 0.1, 46, 62);
+    // The die's shade is what tells one row from its neighbour, so the icon
+    // takes most of the row.
+    const iconSize = rowH * 0.82;
+    const nameSize = Math.round(Phaser.Math.Clamp(rowH * 0.36, 15, 23));
     const headSize = Math.round(Phaser.Math.Clamp(area.width * 0.024, 10, 14));
     const pad = Math.max(8, area.width * 0.015);
-    const gap = Math.max(14, area.width * 0.028);
+    const gap = Math.max(24, area.width * 0.05);
 
     // Both text columns are built at x = 0 and placed only once all of them
-    // have been measured, so the size, the count, and the badges cannot collide
-    // whatever the font size or the digit count.
+    // have been measured, so the size and the count cannot collide whatever
+    // the font size or the digit count.
     const names = rows.map((row) =>
       this.add
         .text(0, 0, `d${row.sides}`, {
@@ -793,27 +747,23 @@ export class InventoryScene extends Phaser.Scene {
           letterSpacing: 2,
         })
         .setOrigin(originX, 0.5);
-    const heads = [head("DIE", 0), head("COUNT", 1), head("MODIFIERS", 0)];
+    const heads = [head("DIE", 0), head("COUNT", 1)];
 
     const nameW = Math.max(heads[0].width, ...names.map((t) => t.width));
     const countW = Math.max(heads[1].width, ...counts.map((t) => t.width));
 
-    const badges = rows.map((row) => this.buildChips(row.chips, chipSize));
-
     // The list is laid out at the width it actually occupies and then centred,
     // rather than stretched across the whole band: a handful of short lines
     // ruled edge to edge reads as a table with its right half missing.
-    const leftW = iconSize + 14 + nameW + gap + countW;
-    const badgeW = Math.max(heads[2].width, ...badges.map((b) => b.width));
-    const roomForBadges = Math.max(48, area.width - pad * 2 - leftW - gap);
-    const chipsColW = Math.min(badgeW, roomForBadges);
-    const blockW = Math.min(area.width, pad * 2 + leftW + gap + chipsColW);
+    const blockW = Math.min(
+      area.width,
+      pad * 2 + iconSize + 14 + nameW + gap + countW,
+    );
     const blockLeft = (area.width - blockW) / 2;
 
     const iconX = blockLeft + pad + iconSize / 2;
     const nameX = blockLeft + pad + iconSize + 14;
     const countRight = nameX + nameW + gap + countW;
-    const chipsX = countRight + gap;
     // Banding and the head's rule run a little past the ink on either side, the
     // way ruling on a page does.
     const bandW = Math.min(area.width, blockW + 28);
@@ -821,10 +771,6 @@ export class InventoryScene extends Phaser.Scene {
 
     heads[0].setX(nameX);
     heads[1].setX(countRight);
-    heads[2].setX(chipsX);
-    // Only the modifiers head can still outrun its column — the band may be too
-    // narrow to give the badges the room the word wants.
-    fitTextWidth(heads[2], chipsColW);
     // A hairline under the column heads — the one piece of ruling the list
     // needs to separate its head from its body.
     const rule = this.add.graphics();
@@ -853,77 +799,23 @@ export class InventoryScene extends Phaser.Scene {
       }
 
       // The die body alone, with neither a face nor its baked type label: a row
-      // is a size held in the grid rather than a die mid-roll, and at this size
-      // the baked label is illegible beside the one the row already carries.
-      // Sized rather than scaled: the die body is baked above layout
+      // is a kind of die held in the grid rather than a die mid-roll, and at
+      // this size the baked label is illegible beside the one the row already
+      // carries. Sized rather than scaled: the die body is baked above layout
       // resolution, and a display size is the one form that normalises itself.
       container.add(
         this.add
-          .image(iconX, 0, `die-${row.sides}`)
+          .image(iconX, 0, dieBodyTexture(this, row.sides, row.effects))
           .setDisplaySize(iconSize, iconSize),
       );
 
       container.add(names[i].setPosition(nameX, 0));
       container.add(counts[i].setPosition(countRight, 0));
-      const badge = badges[i];
-      badge.container.setX(chipsX);
-      if (badge.width > chipsColW) {
-        badge.container.setScale(chipsColW / badge.width);
-      }
-      container.add(badge.container);
 
       track.add(this.stagger(container, i));
     });
 
     return HEAD_H + rows.length * rowH;
-  }
-
-  /** The badges at the right of a dice row, laid left to right from x = 0 and
-   *  reported with the width they came to — the caller places the column and
-   *  shrinks the row as a unit when its own width ran out. */
-  private buildChips(
-    chips: ChipSpec[],
-    fontSize: number,
-  ): { container: Phaser.GameObjects.Container; width: number } {
-    const row = this.add.container(0, 0);
-    if (chips.length === 0) {
-      const dash = this.add
-        .text(0, 0, "—", {
-          fontFamily: SERIF,
-          fontSize: `${fontSize + 2}px`,
-          color: CSS.dim,
-        })
-        .setOrigin(0, 0.5);
-      row.add(dash);
-      return { container: row, width: dash.width };
-    }
-
-    const padX = Math.max(6, fontSize * 0.7);
-    const height = fontSize + 12;
-    const gap = 7;
-    let cursor = 0;
-    for (const chip of chips) {
-      const label = this.add
-        .text(0, 0, chip.label, {
-          fontFamily: SERIF,
-          fontSize: `${fontSize}px`,
-          color: chip.css,
-          fontStyle: "bold",
-          letterSpacing: 1,
-        })
-        .setOrigin(0.5);
-      const width = label.width + padX * 2;
-      const plate = this.add.graphics();
-      plate.fillStyle(chip.color, 0.12);
-      plate.fillRoundedRect(cursor, -height / 2, width, height, height / 2);
-      plate.lineStyle(1, chip.color, 0.55);
-      plate.strokeRoundedRect(cursor, -height / 2, width, height, height / 2);
-      label.setPosition(cursor + width / 2, 0);
-      row.add([plate, label]);
-      cursor += width + gap;
-    }
-
-    return { container: row, width: Math.max(1, cursor - gap) };
   }
 
   // --- Scrolling ------------------------------------------------------------

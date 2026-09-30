@@ -32,7 +32,8 @@ import {
 } from "../systems/Tutorial";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
-import { DieSprite } from "../ui/DieSprite";
+import { DieSprite, setDieAuraSource } from "../ui/DieSprite";
+import { runAuras } from "../systems/DieEffects";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { addFelt, bannerButton } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
@@ -263,6 +264,7 @@ export class ShopScene extends Phaser.Scene {
 
   create(): void {
     this.state = getRun(this.registry);
+    setDieAuraSource(() => runAuras(this.state));
     const checkpoint =
       this.initialCheckpoint ?? createFreshShopCheckpoint(this.state);
     this.initialCheckpoint = undefined;
