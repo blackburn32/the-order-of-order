@@ -453,8 +453,9 @@ export class ShopScene extends Phaser.Scene {
   /** First-game tutorial: the loose cards, the reroll, the boosters and the
    *  way out, one callout each. Whatever is lit stays live, and using it is as
    *  good as Continue — buying a card, rerolling and opening a pack each end
-   *  their own step (see endShopStep). The way out has no Continue at all:
-   *  leaving is how it is dismissed.
+   *  their own step (see endShopStep). The way out keeps its Continue too, so
+   *  the player can clear it and go on browsing before leaving; either moves
+   *  the script on to the trial overview's steps, which the shop never shows.
    *
    *  Held off while the die picker or a pack is open over the shop: this runs
    *  from every build, and those sub-screens are laid over a build. */
@@ -466,7 +467,7 @@ export class ShopScene extends Phaser.Scene {
     if (!t.active || this.pickerOffer || this.openingPack) return;
 
     let anchor: Phaser.Geom.Rectangle | undefined;
-    let onContinue: (() => void) | undefined = () => {
+    const onContinue = () => {
       advanceTutorial(this.registry);
       this.renderShopTutorial();
     };
@@ -488,7 +489,6 @@ export class ShopScene extends Phaser.Scene {
         break;
       case TutorialStage.LeaveShop:
         anchor = this.leaveRect;
-        onContinue = undefined;
         break;
       default:
         return;
