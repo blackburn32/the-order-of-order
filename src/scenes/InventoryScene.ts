@@ -21,6 +21,7 @@ import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildItemCard } from "../ui/itemCard";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import { formatScore } from "../ui/formatScore";
+import { DieTooltip } from "../ui/dieTooltip";
 import {
   compactColumns,
   destroyAllChildren,
@@ -161,6 +162,9 @@ export class InventoryScene extends Phaser.Scene {
     wheel: WheelHandler;
   };
 
+  /** Spells out a dice row's modifiers while the pointer is over it. */
+  private dieTooltip!: DieTooltip;
+
   constructor() {
     super("Inventory");
   }
@@ -171,6 +175,7 @@ export class InventoryScene extends Phaser.Scene {
   }
 
   create(): void {
+    this.dieTooltip = new DieTooltip(this);
     // Block the scene underneath from reacting to taps/hovers while we're open.
     const base = this.scene.get(this.returnTo);
     if (base) base.input.enabled = false;
@@ -828,6 +833,16 @@ export class InventoryScene extends Phaser.Scene {
         badge.container.setScale(chipsColW / badge.width);
       }
       container.add(badge.container);
+
+      // The whole row answers a hover, so the rule behind a badge is a glance
+      // away wherever on the line the pointer lands.
+      const hit = this.add.zone(area.width / 2, 0, bandW, rowH);
+      this.dieTooltip.attach(hit, () => ({
+        sides: row.sides,
+        effects: row.effects,
+        count: row.count,
+      }));
+      container.add(hit);
 
       track.add(this.stagger(container, i));
     });

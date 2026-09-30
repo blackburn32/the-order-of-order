@@ -22,6 +22,7 @@ import {
 } from "../systems/GlobalScores";
 import { toNumberPointMap } from "../systems/ItemPoints";
 import { formatSci, formatScore } from "../ui/formatScore";
+import { DieTooltip } from "../ui/dieTooltip";
 import { dieBodyTexture } from "../art/textures";
 import {
   dieEffects,
@@ -111,11 +112,15 @@ export class HallScene extends Phaser.Scene {
     wheel: WheelHandler;
   };
 
+  /** Spells out a final grid's die while the pointer is over it. */
+  private dieTooltip!: DieTooltip;
+
   constructor() {
     super("Hall");
   }
 
   create(): void {
+    this.dieTooltip = new DieTooltip(this);
     this.tab = "local";
     this.globalRows = null;
     this.globalStatus = "idle";
@@ -636,8 +641,11 @@ export class HallScene extends Phaser.Scene {
           color: CSS.parchmentDark,
         })
         .setOrigin(0, 0.5);
-      container.add([icon, label]);
-      listX += iconSize + 3 + label.width + itemPadding;
+      const width = iconSize + 3 + label.width;
+      const hit = this.add.zone(listX + width / 2, 0, width, iconSize + 6);
+      this.dieTooltip.attach(hit, () => ({ sides, effects, count }));
+      container.add([icon, label, hit]);
+      listX += width + itemPadding;
     });
 
     if (extra > 0) {

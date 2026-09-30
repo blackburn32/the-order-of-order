@@ -81,6 +81,35 @@ export const DIE_EFFECT_LABEL: Record<DieEffect, string> = {
   anvil: "Never below 50",
 };
 
+/** The whole rule, for a tooltip — what the die does, spelled out. */
+export const DIE_EFFECT_DETAIL: Record<DieEffect, string> = {
+  windfall4:
+    "Its highest face always scores, and quadruples every point that roll.",
+  windfall2:
+    "Its highest face always scores, and doubles every point that roll.",
+  ascension: "Its highest face always scores.",
+  royalSeal:
+    "Its highest face scores its own value. Every die of this size has it.",
+  voice: "Scores whenever no other die shows the same face.",
+  wild: "Scores on every face it rolls.",
+  loaded: "Never rolls its two highest faces.",
+  ballast: "Never rolls its two lowest faces. Every die of this size has it.",
+  anvil: "Never rolls below 50. Every d100 has it.",
+};
+
+/** The card that gives each effect, by item id, so a tooltip can name it. */
+export const DIE_EFFECT_SOURCE: Record<DieEffect, string> = {
+  windfall4: "centurion",
+  windfall2: "rollplayer",
+  ascension: "ascension",
+  royalSeal: "royal_seal",
+  voice: "a_new_voice",
+  wild: "wild_face",
+  loaded: "loaded_die",
+  ballast: "ballast",
+  anvil: "the_anvil",
+};
+
 /** The size-wide rules a run currently holds. */
 export function runAuras(state: {
   royalSealSizes: readonly number[];

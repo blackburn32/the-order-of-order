@@ -40,6 +40,7 @@ import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { DieSprite, setDieAuraSource } from "../ui/DieSprite";
 import {
+  DIE_EFFECTS,
   dieEffects,
   dieEffectsKey,
   runAuras,
@@ -47,6 +48,7 @@ import {
 } from "../systems/DieEffects";
 import { dieBodyTexture } from "../art/textures";
 import { formatSci } from "../ui/formatScore";
+import { DieTooltip } from "../ui/dieTooltip";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { addFelt, bannerButton } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
@@ -179,6 +181,8 @@ export class ShopScene extends Phaser.Scene {
   private offers: ShopOffer[] = [];
   private cardGroup!: Phaser.GameObjects.Container;
   private pickGroup?: Phaser.GameObjects.Container;
+  /** Explains a picker die's shading while the pointer is over it. */
+  private dieTooltip!: DieTooltip;
   private packGroup?: Phaser.GameObjects.Container;
   // The pack screen after its choice has been taken: no longer live (nothing in
   // it is interactive, `packGroup` has already let go of it), just the shade and
@@ -282,6 +286,7 @@ export class ShopScene extends Phaser.Scene {
   create(): void {
     this.state = getRun(this.registry);
     setDieAuraSource(() => runAuras(this.state));
+    this.dieTooltip = new DieTooltip(this);
     const checkpoint =
       this.initialCheckpoint ?? createFreshShopCheckpoint(this.state);
     this.initialCheckpoint = undefined;
@@ -3152,7 +3157,13 @@ export class ShopScene extends Phaser.Scene {
         sprite.on("pointerdown", () => this.onPick(offer, i));
       } else {
         sprite.setAlpha(0.35);
+        // Still hoverable: why a die cannot be picked is worth reading.
+        sprite.setSize(104, 104);
       }
+      this.dieTooltip.attach(sprite, () => ({
+        sides: die.sides,
+        effects: dieEffects(die, runAuras(this.state)),
+      }));
       items.push(sprite);
     });
     return items;
@@ -3305,7 +3316,17 @@ export class ShopScene extends Phaser.Scene {
         sprite.on("pointerdown", () => this.onPick(offer, entry.index));
       } else {
         sprite.setAlpha(0.35);
+        // Still hoverable: why a die cannot be picked is worth reading.
+        sprite.setSize(104, 104);
       }
+      this.dieTooltip.attach(sprite, () => ({
+        sides: entry.die.sides,
+        // Everything any die of the size carries; the list below says which.
+        effects: DIE_EFFECTS.filter((effect) =>
+          [...entry.variants.values()].some((v) => v.effects.includes(effect)),
+        ),
+        count: entry.count,
+      }));
     });
     return items;
   }
@@ -3343,7 +3364,13 @@ export class ShopScene extends Phaser.Scene {
       image.x = -width / 2 + icon / 2;
       label.x = -width / 2 + icon + 3;
       widest = Math.max(widest, width);
-      list.add([image, label]);
+      const hit = this.add.zone(0, lineY, width + 6, VARIANT_LINE_H);
+      this.dieTooltip.attach(hit, () => ({
+        sides,
+        effects: variant.effects,
+        count: variant.count,
+      }));
+      list.add([image, label, hit]);
     });
     list.setScale(Math.min(1, (cell - 8) / widest));
     return list;
@@ -3395,7 +3422,14 @@ export class ShopScene extends Phaser.Scene {
         sprite.on("pointerdown", () => this.onPick(offer, group.firstIndex));
       } else {
         sprite.setAlpha(0.35);
+        // Still hoverable: why a die cannot be picked is worth reading.
+        sprite.setSize(104, 104);
       }
+      this.dieTooltip.attach(sprite, () => ({
+        sides: die.sides,
+        effects: dieEffects(die, runAuras(this.state)),
+        count: group.count,
+      }));
     });
     return items;
   }
