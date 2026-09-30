@@ -59,7 +59,8 @@ const NUMERAL_LIFT_D6 = 0;
  *
  * A die carrying per-die effects (see `systems/DieEffects`) swaps its ivory for
  * each effect's shade and texture — one vertical slice of the body per effect,
- * so a die carrying two reads as half one, half the other.
+ * so a die carrying two reads as half one, half the other. `plate` keeps a
+ * clear patch behind the type; pass false for an icon drawn without a face.
  *
  * Lays down fill and stroke only — no transform of its own — so the bake can
  * scale the Graphics before generating a texture from it and the live path can
@@ -69,6 +70,7 @@ export function drawDieBody(
   g: Phaser.GameObjects.Graphics,
   sides: number,
   effects: readonly DieEffect[] = [],
+  plate = true,
 ): void {
   const border = DIE_BORDER[sides];
   const cx = DIE_CENTER;
@@ -82,7 +84,7 @@ export function drawDieBody(
     else if (sides === 6) g.fillRoundedRect(0, 0, 96, 96, 18);
     else g.fillPoints(outline, true);
   } else {
-    drawEffectFill(g, outline, effects);
+    drawEffectFill(g, sides, outline, effects, plate);
   }
 
   if (sides <= 2) {
@@ -195,13 +197,48 @@ const SHADE_MIX = 0.62;
 /** How far toward black an effect's texture is taken from its colour. */
 const TEXTURE_DARKEN = 0.3;
 const TEXTURE_ALPHA = 0.55;
+/** How far toward an effect's colour the clear plate under the numeral goes:
+ *  enough to belong to the slice it sits in, not so much that the ink on it
+ *  loses contrast. */
+const PLATE_MIX = 0.2;
 
-/** Fill `outline` with one slice per effect, each its shade plus texture. */
+/**
+ * The untextured plates a shaded die keeps clear behind its type, so the
+ * numeral (and, on a d6, the "d6" printed on the body) is never read through a
+ * pattern. Sized per shape to sit inside the body with a margin of texture
+ * still showing around it; the numeral's centre is `FACE_OFFSET_Y` above the
+ * die's centre on every shape.
+ */
+function platesFor(sides: number): Pt[][] {
+  const cy = DIE_CENTER + FACE_OFFSET_Y;
+  if (sides <= 2) return [ellipsePoints(DIE_CENTER, cy - 1, 22, 22)];
+  if (sides === 4) return [ellipsePoints(DIE_CENTER, cy + 3, 18, 18)];
+  if (sides === 6)
+    return [
+      ellipsePoints(DIE_CENTER, cy, 28, 25),
+      roundedRectPoints(
+        DIE_CENTER - 17,
+        DIE_CENTER + LABEL_OFFSET_Y - 8,
+        34,
+        16,
+        8,
+      ),
+    ];
+  if (sides === 8 || sides === 10)
+    return [ellipsePoints(DIE_CENTER, cy, 28, 23)];
+  return [ellipsePoints(DIE_CENTER, cy, 31, 23)];
+}
+
+/** Fill `outline` with one slice per effect, each its shade plus texture, and
+ *  a clear plate behind the type. */
 function drawEffectFill(
   g: Phaser.GameObjects.Graphics,
+  sides: number,
   outline: Pt[],
   effects: readonly DieEffect[],
+  plate: boolean,
 ): void {
+  const slices: Pt[][] = [];
   const xs = outline.map((p) => p.x);
   const left = Math.min(...xs);
   const right = Math.max(...xs);
@@ -217,6 +254,7 @@ function drawEffectFill(
       { x: x1, y: 106 },
       { x: x0, y: 106 },
     ]);
+    slices[i] = slice;
     if (slice.length < 3) return;
     const style = DIE_EFFECT_STYLE[effect];
     g.fillStyle(mixColor(COLORS.ivory, style.color, SHADE_MIX), 1);
@@ -244,6 +282,30 @@ function drawEffectFill(
       g.lineBetween(x, Math.min(...ys), x, Math.max(...ys));
     }
   }
+  // The plates go down last, over the seams too: a seam through the numeral
+  // is as hard to read past as a texture. Each is cut to the slices so a
+  // mixed die keeps its halves right through the plate.
+  // An icon that carries no numeral (a list's die, a badge's swatch) has
+  // nothing to keep clear, and a blank plate would only hide the texture.
+  if (!plate) return;
+  const plates = platesFor(sides);
+  effects.forEach((effect, i) => {
+    const slice = slices[i];
+    if (!slice || slice.length < 3) return;
+    const color = DIE_EFFECT_STYLE[effect].color;
+    g.fillStyle(mixColor(COLORS.ivory, color, PLATE_MIX), 1);
+    for (const plate of plates) {
+      const clipped = clipPolygon(plate, slice);
+      if (clipped.length >= 3) g.fillPoints(clipped, true);
+    }
+  });
+  g.lineStyle(1.5, COLORS.ink, 0.28);
+  for (const plate of plates)
+    g.strokePoints(
+      plate.map((p) => new Phaser.Math.Vector2(p.x, p.y)),
+      true,
+      true,
+    );
 }
 
 /** Every convex piece of a texture, laid over the whole 96x96 box. The caller
@@ -363,6 +425,15 @@ function rect(x: number, y: number, w: number, h: number): Pt[] {
     { x: x + w, y: y + h },
     { x, y: y + h },
   ];
+}
+
+function ellipsePoints(cx: number, cy: number, rx: number, ry: number): Pt[] {
+  const pts: Pt[] = [];
+  for (let i = 0; i < 40; i++) {
+    const a = (Math.PI * 2 * i) / 40;
+    pts.push({ x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * ry });
+  }
+  return pts;
 }
 
 function circlePoints(cx: number, cy: number, r: number): Pt[] {

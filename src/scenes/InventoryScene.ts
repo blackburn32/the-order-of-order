@@ -3,6 +3,7 @@ import { COLORS, CSS, SERIF } from "../art/palette";
 import { getRun, RunState } from "../state/RunState";
 import type { DieSides } from "../systems/Dice";
 import {
+  DIE_EFFECT_LABEL,
   DIE_EFFECTS,
   dieEffects,
   dieEffectsKey,
@@ -10,6 +11,7 @@ import {
   type DieEffect,
 } from "../systems/DieEffects";
 import { dieBodyTexture } from "../art/textures";
+import { DIE_EFFECT_STYLE } from "../art/dieArt";
 import type { AfflictionId } from "../systems/Afflictions";
 import { afflictionCard, afflictionOf, ITEMS, ItemDef } from "../systems/Items";
 import { audio } from "../systems/Audio";
@@ -708,9 +710,10 @@ export class InventoryScene extends Phaser.Scene {
     // takes most of the row.
     const iconSize = rowH * 0.82;
     const nameSize = Math.round(Phaser.Math.Clamp(rowH * 0.36, 15, 23));
+    const chipSize = Math.round(Phaser.Math.Clamp(rowH * 0.21, 10, 13));
     const headSize = Math.round(Phaser.Math.Clamp(area.width * 0.024, 10, 14));
     const pad = Math.max(8, area.width * 0.015);
-    const gap = Math.max(24, area.width * 0.05);
+    const gap = Math.max(14, area.width * 0.028);
 
     // Both text columns are built at x = 0 and placed only once all of them
     // have been measured, so the size and the count cannot collide whatever
@@ -747,23 +750,27 @@ export class InventoryScene extends Phaser.Scene {
           letterSpacing: 2,
         })
         .setOrigin(originX, 0.5);
-    const heads = [head("DIE", 0), head("COUNT", 1)];
+    const heads = [head("DIE", 0), head("COUNT", 1), head("MODIFIERS", 0)];
 
     const nameW = Math.max(heads[0].width, ...names.map((t) => t.width));
     const countW = Math.max(heads[1].width, ...counts.map((t) => t.width));
 
+    const badges = rows.map((row) => this.buildChips(row.effects, chipSize));
+
     // The list is laid out at the width it actually occupies and then centred,
     // rather than stretched across the whole band: a handful of short lines
     // ruled edge to edge reads as a table with its right half missing.
-    const blockW = Math.min(
-      area.width,
-      pad * 2 + iconSize + 14 + nameW + gap + countW,
-    );
+    const leftW = iconSize + 14 + nameW + gap + countW;
+    const badgeW = Math.max(heads[2].width, ...badges.map((b) => b.width));
+    const roomForBadges = Math.max(48, area.width - pad * 2 - leftW - gap);
+    const chipsColW = Math.min(badgeW, roomForBadges);
+    const blockW = Math.min(area.width, pad * 2 + leftW + gap + chipsColW);
     const blockLeft = (area.width - blockW) / 2;
 
     const iconX = blockLeft + pad + iconSize / 2;
     const nameX = blockLeft + pad + iconSize + 14;
     const countRight = nameX + nameW + gap + countW;
+    const chipsX = countRight + gap;
     // Banding and the head's rule run a little past the ink on either side, the
     // way ruling on a page does.
     const bandW = Math.min(area.width, blockW + 28);
@@ -771,6 +778,10 @@ export class InventoryScene extends Phaser.Scene {
 
     heads[0].setX(nameX);
     heads[1].setX(countRight);
+    heads[2].setX(chipsX);
+    // Only the modifiers head can still outrun its column — the band may be too
+    // narrow to give the badges the room the word wants.
+    fitTextWidth(heads[2], chipsColW);
     // A hairline under the column heads — the one piece of ruling the list
     // needs to separate its head from its body.
     const rule = this.add.graphics();
@@ -805,17 +816,82 @@ export class InventoryScene extends Phaser.Scene {
       // resolution, and a display size is the one form that normalises itself.
       container.add(
         this.add
-          .image(iconX, 0, dieBodyTexture(this, row.sides, row.effects))
+          .image(iconX, 0, dieBodyTexture(this, row.sides, row.effects, false))
           .setDisplaySize(iconSize, iconSize),
       );
 
       container.add(names[i].setPosition(nameX, 0));
       container.add(counts[i].setPosition(countRight, 0));
+      const badge = badges[i];
+      badge.container.setX(chipsX);
+      if (badge.width > chipsColW) {
+        badge.container.setScale(chipsColW / badge.width);
+      }
+      container.add(badge.container);
 
       track.add(this.stagger(container, i));
     });
 
     return HEAD_H + rows.length * rowH;
+  }
+
+  /** A dice row's effects as badges, laid left to right from x = 0 and
+   *  reported with the width they came to — the caller places the column and
+   *  shrinks the row as a unit when its own width ran out. Each badge leads
+   *  with a swatch of the shade it names and is inked in that shade's colour,
+   *  so the badge is the key to the die beside it. */
+  private buildChips(
+    effects: DieEffect[],
+    fontSize: number,
+  ): { container: Phaser.GameObjects.Container; width: number } {
+    const row = this.add.container(0, 0);
+    if (effects.length === 0) {
+      const dash = this.add
+        .text(0, 0, "—", {
+          fontFamily: SERIF,
+          fontSize: `${fontSize + 2}px`,
+          color: CSS.dim,
+        })
+        .setOrigin(0, 0.5);
+      row.add(dash);
+      return { container: row, width: dash.width };
+    }
+
+    const padX = Math.max(6, fontSize * 0.7);
+    const height = fontSize + 12;
+    const swatch = height - 6;
+    const gap = 7;
+    let cursor = 0;
+    for (const effect of effects) {
+      const color = DIE_EFFECT_STYLE[effect].color;
+      const label = this.add
+        .text(0, 0, DIE_EFFECT_LABEL[effect].toUpperCase(), {
+          fontFamily: SERIF,
+          fontSize: `${fontSize}px`,
+          color: `#${color.toString(16).padStart(6, "0")}`,
+          fontStyle: "bold",
+          letterSpacing: 1,
+        })
+        .setOrigin(0, 0.5);
+      const width = 3 + swatch + 6 + label.width + padX;
+      const plate = this.add.graphics();
+      plate.fillStyle(color, 0.12);
+      plate.fillRoundedRect(cursor, -height / 2, width, height, height / 2);
+      plate.lineStyle(1, color, 0.55);
+      plate.strokeRoundedRect(cursor, -height / 2, width, height, height / 2);
+      const icon = this.add
+        .image(
+          cursor + 3 + swatch / 2,
+          0,
+          dieBodyTexture(this, 1, [effect], false),
+        )
+        .setDisplaySize(swatch, swatch);
+      label.setPosition(cursor + 3 + swatch + 6, 0);
+      row.add([plate, icon, label]);
+      cursor += width + gap;
+    }
+
+    return { container: row, width: Math.max(1, cursor - gap) };
   }
 
   // --- Scrolling ------------------------------------------------------------

@@ -1181,18 +1181,20 @@ function buildDice(scene: Phaser.Scene): void {
  * `die-N` for a die with none, otherwise a variant baked the first time some
  * die asks for it. Baked on demand rather than at boot because the set of
  * effect combinations is large and a run meets only a handful of them.
+ * `plate: false` is for an icon drawn without a face (see `drawDieBody`).
  */
 export function dieBodyTexture(
   scene: Phaser.Scene,
   sides: number,
   effects: readonly DieEffect[],
+  plate = true,
 ): string {
   if (effects.length === 0) return `die-${sides}`;
-  const key = `die-${sides}~${dieEffectsKey(effects)}`;
+  const key = `die-${sides}~${dieEffectsKey(effects)}${plate ? "" : "~bare"}`;
   if (scene.textures.exists(key)) return key;
   BAKE_SCALE[key] = ART_SCALE;
   const g = scene.add.graphics();
-  drawDieBody(g, sides, effects);
+  drawDieBody(g, sides, effects, plate);
   bakeGraphics(g, key, DIE_SIZE, DIE_SIZE);
   return key;
 }

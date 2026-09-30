@@ -67,18 +67,18 @@ export function dieEffectsKey(effects: readonly DieEffect[]): string {
   return effects.join("+");
 }
 
-/** The name each effect goes by, for anywhere the player is told what a shade
- *  on a die means. */
+/** What each effect does to its die, in a few words — the line the player
+ *  reads beside a shaded die to learn what the shade means. */
 export const DIE_EFFECT_LABEL: Record<DieEffect, string> = {
   windfall4: "×4 on max",
   windfall2: "×2 on max",
-  ascension: "Max scores",
-  royalSeal: "Royal Seal",
-  voice: "A New Voice",
-  wild: "Wild face",
-  loaded: "Loaded",
-  ballast: "Ballast",
-  anvil: "The Anvil",
+  ascension: "Max always scores",
+  royalSeal: "Max scores its face",
+  voice: "Scores when alone",
+  wild: "Scores on every face",
+  loaded: "Never rolls top two",
+  ballast: "Never rolls bottom two",
+  anvil: "Never below 50",
 };
 
 /** The size-wide rules a run currently holds. */
