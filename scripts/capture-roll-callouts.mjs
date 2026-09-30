@@ -29,6 +29,7 @@ const PRESETS = [
   "roll-callout-skip",
   "roll-callout-goal",
   "roll-callout-first-roll",
+  "roll-callout-chain",
 ];
 
 const projectRoot = process.cwd();

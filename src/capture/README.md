@@ -129,6 +129,9 @@ The `roll-callout-*` presets show the roll's score callout
 multiplier, 100 dice with several cards and The Catechism, and 20,000 dice with
 a long climb through stacked cards and two growth engines. Their runs live in
 `rollCallouts.ts`; each reel makes two rolls and waits out the whole callout.
+`roll-callout-chain` is a sixteen-die run under Consensus and The Congregation,
+the two effects that need several dice at once, so each roll shows the chain
+lightning (`src/ui/chainLightning.ts`) that links the dice that fired them.
 `roll-callout-skip` presses again mid-count, the way an impatient player does: the
 callout should jump to its total, land the score, and clear as the next roll
 tumbles.

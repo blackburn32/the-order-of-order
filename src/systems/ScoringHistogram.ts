@@ -532,6 +532,7 @@ export function scoreRollHistogram(
         dice: noDice,
         bigPulse: false,
         float: "aggregate",
+        chain: "byFace",
       });
     }
   }
@@ -547,6 +548,7 @@ export function scoreRollHistogram(
       dice: noDice,
       bigPulse: true,
       float: "aggregate",
+      chain: "together",
     });
   }
 

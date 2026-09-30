@@ -27,6 +27,7 @@ export const ROLL_CALLOUT_PRESET_IDS = [
   "roll-callout-skip",
   "roll-callout-goal",
   "roll-callout-first-roll",
+  "roll-callout-chain",
 ] as const;
 
 export type RollCalloutPresetId = (typeof ROLL_CALLOUT_PRESET_IDS)[number];
@@ -218,6 +219,22 @@ export function rollCalloutRun(id: RollCalloutPresetId): RunState {
         run.trialScore = run.score;
         run.totalScore = run.score;
       }
+      return run;
+    }
+    // Sixteen dice under Consensus and The Congregation, the two effects that
+    // need several dice at once, so each roll lights the chain lightning that
+    // links the dice that fired them.
+    case "roll-callout-chain": {
+      const run = baseRun(0x5eed0005);
+      run.trial = 18;
+      run.roll = 0;
+      run.dice = DicePool.fromDice(mixedDice(16, [[6, 1]], 0xc4a1));
+      run.scoringNumbers = [1, 2, 3, 4];
+      run.extraNumberCount = 2;
+      run.hasSnakeEyes = true;
+      run.jackpot = 1;
+      run.purchases = { snake_eyes: 1, jackpot: 1 };
+      run.ownedUnique = ["snake_eyes"];
       return run;
     }
     // Twenty thousand dice: a long climb through stacked cards and two engines.
