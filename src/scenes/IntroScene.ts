@@ -39,7 +39,7 @@ export class IntroScene extends Phaser.Scene {
   private frame!: StoryFrame;
   private chapter!: Phaser.GameObjects.Container;
   /** The page turn in flight, if any. Continue stays live while it runs, and a
-   *  press then lands it at once instead of starting another. */
+   *  press then lands it at once and moves on to the step after it. */
   private turn?: PageTurn;
   /** Where the skip row's slot sits under the button. */
   private rowY = 0;
@@ -150,12 +150,10 @@ export class IntroScene extends Phaser.Scene {
   }
 
   /** Continue: turn to the next chapter, or leave from the last one. Pressed
-   *  while a page is still turning, it lands that turn at once instead. */
+   *  while a page is still turning, it lands that turn at once and carries on
+   *  to the step after it, rather than waiting the animation out. */
   private advance(): void {
-    if (this.turn) {
-      this.turn.finish();
-      return;
-    }
+    this.turn?.finish();
     if (this.page === INTRO_PAGES.length - 1) {
       this.leave(() => this.scene.start("Character"));
     } else {

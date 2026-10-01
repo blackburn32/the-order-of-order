@@ -233,7 +233,8 @@ export interface PageTurn {
  * Unlike the scene slides, a page turn never closes the scene's input. The
  * control block holds its place while the page travels, so it stays live
  * throughout, and a reader who presses it again mid-turn calls `finish` to
- * land the page at once rather than waiting on the animation.
+ * land the page at once before moving on, rather than waiting on the
+ * animation.
  *
  * Returns nothing when there is no motion to wait on: the page has already
  * turned, and `settled` has already run, by the time the call returns.
