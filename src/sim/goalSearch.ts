@@ -288,6 +288,108 @@ interface SearchSummary {
   /** Every table this search derived, keyed by `scheduleName`, for
    *  `GOALS=<this file>#<key>` and for goalSweep.ts. */
   tables: Record<string, DerivedTable>;
+  /** Where the late spread comes from, at a few trials (see `engineBreakdown`). */
+  engines: EngineBreakdown[];
+}
+
+/**
+ * How much of a trial's score spread the strategy trees' engines explain.
+ *
+ * Read as log10 variance, split three ways: which engine a run owns (or none),
+ * then the trial that engine arrived on, then what is left over between runs
+ * that own the same engine from the same trial. The last share is the spread
+ * equalizing the engines cannot touch.
+ */
+export interface EngineBreakdown {
+  trial: number;
+  /** Share of runs that own no engine going into this trial. */
+  noEngine: number;
+  /** p10-p90 of every run's score, in decades. */
+  spread: number;
+  /** Shares of the log10 variance (they sum to 1). */
+  byEngine: number;
+  byArrival: number;
+  leftOver: number;
+  /** Median score (log10) per engine among runs that owned it by trial 9, so
+   *  engines are compared at equal timing; with the runs counted. */
+  atEqualTiming: Record<string, { median: number; runs: number }>;
+  /** Median decades between a run's opening roll and its full budget: how wide
+   *  the window is in which a goal needs most of the trial's rolls. */
+  openingRollGap: number;
+}
+
+const EARLY_ENGINE_TRIAL = 9;
+
+function engineBreakdown(
+  results: GridResult[],
+  trial: number,
+): EngineBreakdown {
+  const variance = (xs: number[]) => {
+    const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+    return xs.reduce((a, x) => a + (x - m) ** 2, 0) / xs.length;
+  };
+  const pooledWithin = (groups: Map<string, number[]>) => {
+    let n = 0;
+    let v = 0;
+    for (const g of groups.values()) {
+      v += variance(g) * g.length;
+      n += g.length;
+    }
+    return n ? v / n : 0;
+  };
+  const rows = results.flatMap((r) => {
+    const t = r.trials[trial - 1];
+    if (!t) return [];
+    const first = r.engines
+      .filter((e) => e.trial <= trial)
+      .sort((a, b) => a.trial - b.trial)[0];
+    return [
+      {
+        y: t.log10,
+        gap: t.rolls && t.rolls[0] >= 0 ? t.log10 - t.rolls[0] : null,
+        tree: (first?.tree ?? "none") as string,
+        at: first?.trial ?? 0,
+      },
+    ];
+  });
+  const total = variance(rows.map((r) => r.y)) || 1;
+  const byType = new Map<string, number[]>();
+  const byTypeAndArrival = new Map<string, number[]>();
+  for (const r of rows) {
+    (byType.get(r.tree) ?? byType.set(r.tree, []).get(r.tree)!).push(r.y);
+    const key = `${r.tree}@${r.at}`;
+    (byTypeAndArrival.get(key) ?? byTypeAndArrival.set(key, []).get(key)!).push(
+      r.y,
+    );
+  }
+  const afterType = pooledWithin(byType);
+  const afterArrival = pooledWithin(byTypeAndArrival);
+  const early = new Map<string, number[]>();
+  for (const r of rows) {
+    if (r.tree === "none" || r.at > EARLY_ENGINE_TRIAL) continue;
+    (early.get(r.tree) ?? early.set(r.tree, []).get(r.tree)!).push(r.y);
+  }
+  const sorted = sortedCopy(rows.map((r) => r.y));
+  return {
+    trial,
+    noEngine: rows.filter((r) => r.tree === "none").length / rows.length,
+    spread: nearestRank(sorted, 0.9) - nearestRank(sorted, 0.1),
+    byEngine: 1 - afterType / total,
+    byArrival: (afterType - afterArrival) / total,
+    leftOver: afterArrival / total,
+    atEqualTiming: Object.fromEntries(
+      [...early.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([tree, ys]) => [
+          tree,
+          { median: nearestRank(sortedCopy(ys), 0.5), runs: ys.length },
+        ]),
+    ),
+    openingRollGap: nearestRank(
+      sortedCopy(rows.map((r) => r.gap).filter((g): g is number => g !== null)),
+      0.5,
+    ),
+  };
 }
 
 /** Each trial's scores, sorted, one list per seed (index = trial - 1). */
@@ -483,6 +585,10 @@ function summarise(raw: RawSearch): SearchSummary {
     shopGold,
     goals: primary.goals,
     tables,
+    // Old raw files predate engine tracking; skip the breakdown for them.
+    engines: results.some((r) => r.engines)
+      ? [13, 19, 25, 29].map((t) => engineBreakdown(results, t))
+      : [],
   };
 }
 
@@ -513,6 +619,24 @@ function printSummary(s: SearchSummary): void {
     console.log(
       `  rank ${String(g.rank).padStart(2)}  p25 ${g.p25}  p50 ${g.p50}  p75 ${g.p75}  · rerolls affordable ${afford}`,
     );
+  }
+  if (s.engines.length > 0) {
+    console.log(
+      "\nWhere the spread comes from (log10 variance; engines compared among runs that owned one by trial 9):",
+    );
+    for (const e of s.engines) {
+      const equal = Object.entries(e.atEqualTiming)
+        .map(([tree, v]) => `${tree} ${v.median.toFixed(1)}`)
+        .join(", ");
+      console.log(
+        `  trial ${String(e.trial).padStart(2)}: spread ${e.spread.toFixed(1)} decades · no engine ${pct(e.noEngine)} · ` +
+          `which engine ${pct(e.byEngine)}, when it arrived ${pct(e.byArrival)}, left over ${pct(e.leftOver)} · ` +
+          `opening roll is ${e.openingRollGap.toFixed(1)} decades under the full budget`,
+      );
+      console.log(
+        `           engines at equal timing (log10 median): ${equal}`,
+      );
+    }
   }
   console.log("\nEvery derived table, against these runs (uncensored):");
   console.log(

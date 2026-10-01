@@ -53,9 +53,11 @@ import {
   type CharacterId,
 } from "../systems/Characters";
 import { DEFAULT_CONFIG, SimConfig, UNLOCK_POOLS } from "./config";
+import type { ShopItemId } from "../systems/Items";
 import { installStorage, seedGlobalRandom } from "./localStorageShim";
 import { simulateRun, type StrategyName } from "./bot";
 import { setCulling, setFullBudgetAllTrials } from "./engine";
+import { ITEM_TREES, type TreeId } from "../systems/ItemTrees";
 
 export const ALL_GRID_STRATEGIES: StrategyName[] = [
   "greedy",
@@ -191,7 +193,16 @@ export interface GridResult {
   trialReached: number;
   goldEarned: number;
   trials: GridTrial[];
+  /** Every strategy tree's engine (its tier-3 card) the run came to own, with
+   *  the first trial it was owned going into. Engines compound for the rest of
+   *  the run, so WHEN one arrived explains much of a late score. */
+  engines: { tree: TreeId; trial: number }[];
 }
+
+/** Each tree's engine card — the third link of its chain — to its tree. */
+const ENGINE_TREE = new Map<string, TreeId>(
+  ITEM_TREES.map((tree) => [tree.nodes[2].id, tree.id]),
+);
 
 function applyMode(job: GridJob): void {
   setTrialRollCadenceForSimulation(job.cadence);
@@ -213,6 +224,7 @@ export function runGridJob(job: GridJob): GridResult {
   applyMode(job);
   seedGlobalRandom(job.seed);
   installStorage([...UNLOCK_POOLS[job.point.pool]]);
+  const engines: GridResult["engines"] = [];
   const cfg: SimConfig = {
     ...DEFAULT_CONFIG,
     unlockedAtStart: [...UNLOCK_POOLS[job.point.pool]],
@@ -221,6 +233,13 @@ export function runGridJob(job: GridJob): GridResult {
     traceRollsLog10: job.mode === "search",
     assumedClearGold:
       job.mode === "search" ? (job.clearGold ?? undefined) : undefined,
+    onTrialStart: (state) => {
+      for (const [id, tree] of ENGINE_TREE) {
+        if ((state.purchases[id as ShopItemId] ?? 0) === 0) continue;
+        if (!engines.some((e) => e.tree === tree))
+          engines.push({ tree, trial: state.trial });
+      }
+    },
   };
   const record = simulateRun(job.point.strategy, job.seed, cfg);
   const round = (x: number) => Math.round(x * 10_000) / 10_000;
@@ -230,6 +249,7 @@ export function runGridJob(job: GridJob): GridResult {
     won: record.won,
     trialReached: record.trialReached,
     goldEarned: record.goldEarned,
+    engines,
     trials: record.trajectory.map((t) => ({
       trial: t.trial,
       log10: round(t.trialScoreLog10),

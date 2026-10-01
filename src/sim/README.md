@@ -509,6 +509,16 @@ Its printout previews each table against the very runs it was measured on:
 the share of runs whose full budget reaches the goal, the share whose opening
 roll alone does, and the share that would reach all 29 goals.
 
+It also says **where the late spread comes from**. Every grid run records which
+strategy tree's engine (the tier-3 card) it owns and the trial it arrived on, and
+at trials 13, 19, 25 and 29 the search splits the log10 variance of the scores
+into which engine a run owns (or none), when that engine arrived, and what is
+left over between runs with the same engine from the same trial. Beside it are
+each engine's median score among runs that owned it by trial 9 (engines at equal
+timing; noisy below a few hundred seeds) and the gap between a run's opening
+roll and its full budget, which is how wide the window is in which a goal needs
+most of a trial's rolls.
+
 | env           | default                        | what it does                                 |
 | ------------- | ------------------------------ | -------------------------------------------- |
 | `SEEDS`       | 120                            | seeds; every grid point plays every one      |
