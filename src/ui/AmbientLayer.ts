@@ -31,6 +31,18 @@ const SIGIL_SPIN_MS = 120_000;
 const RING_SPIN_MS = 165_000;
 
 const MORPH_MS = 560;
+
+/** The roll's multiplier pulse (see `pulse`): how long the light takes to
+ *  pass, how far behind the sigil the outer ring lights, and how bright the
+ *  light gets on top of the sigil's own alpha at the weakest and strongest
+ *  pulse — kept low, so the backdrop answers the roll without competing with
+ *  the dice in front of it. */
+const PULSE_MS = 900;
+const PULSE_RING_DELAY_MS = 160;
+const PULSE_ALPHA_MIN = 0.12;
+const PULSE_ALPHA_MAX = 0.24;
+/** How far the light swells past the sigil as it passes. */
+const PULSE_SWELL = 0.05;
 const MORPH_EXPIRY_MS = 500;
 
 interface AmbientMorphSnapshot {
@@ -90,6 +102,7 @@ export class AmbientLayer extends Phaser.GameObjects.Container {
   private morphRing?: Phaser.GameObjects.Image;
   private morphStart?: Phaser.Time.TimerEvent;
   private morphCleanup?: Phaser.Time.TimerEvent;
+  private pulseLights: Phaser.GameObjects.Image[] = [];
   private areaW = 0;
   private areaH = 0;
 
@@ -301,6 +314,72 @@ export class AmbientLayer extends Phaser.GameObjects.Container {
   }
 
   /**
+   * A wave of pale light through the sigil, once per roll, as the roll's
+   * multiplier lands. A copy of the sigil, lit, brightens and swells a little
+   * past it as it fades, and the outer ring's copy follows a beat later, so the
+   * light reads as passing outward. `strength` (0..1) sets how bright it gets
+   * within a deliberately narrow band. Under reduced motion it brightens and
+   * fades in place.
+   */
+  pulse(strength: number): void {
+    if (!fx.on) return;
+    this.clearPulse();
+    const peak =
+      PULSE_ALPHA_MIN +
+      (PULSE_ALPHA_MAX - PULSE_ALPHA_MIN) * Phaser.Math.Clamp(strength, 0, 1);
+    const sources: [Phaser.GameObjects.Image | undefined, number][] = [
+      [this.sigil, 0],
+      [this.ring, PULSE_RING_DELAY_MS],
+    ];
+    for (const [source, delay] of sources) {
+      if (!source) continue;
+      const light = this.scene.add
+        .image(source.x, source.y, source.texture.key)
+        .setTint(COLORS.parchment)
+        .setBlendMode(Phaser.BlendModes.ADD)
+        .setRotation(source.rotation)
+        .setScale(source.scaleX, source.scaleY)
+        .setAlpha(0);
+      this.addAt(light, this.getIndex(source) + 1);
+      this.pulseLights.push(light);
+      const swell = fx.motion ? 1 + PULSE_SWELL : 1;
+      // The sigil keeps turning, faster as the score climbs, so the light
+      // follows it rather than drifting off its strokes.
+      const follow = () => light.setRotation(source.rotation);
+      this.scene.tweens.add({
+        targets: light,
+        alpha: { from: 0, to: peak },
+        duration: PULSE_MS * 0.3,
+        delay,
+        ease: "Sine.easeOut",
+        onUpdate: follow,
+      });
+      this.scene.tweens.add({
+        targets: light,
+        alpha: 0,
+        scaleX: source.scaleX * swell,
+        scaleY: source.scaleY * swell,
+        duration: PULSE_MS * 0.7,
+        delay: delay + PULSE_MS * 0.3,
+        ease: "Sine.easeIn",
+        onUpdate: follow,
+        onComplete: () => {
+          light.destroy();
+          this.pulseLights = this.pulseLights.filter((l) => l !== light);
+        },
+      });
+    }
+  }
+
+  private clearPulse(): void {
+    for (const light of this.pulseLights) {
+      this.scene?.tweens.killTweensOf(light);
+      light.destroy();
+    }
+    this.pulseLights = [];
+  }
+
+  /**
    * Hold decorative motion at one deterministic pose for a looped capture.
    * Gameplay never calls this: the zoom reel needs its closing frame to match
    * its opening frame, while still leaving scene-level LOD tweens enabled.
@@ -384,6 +463,7 @@ export class AmbientLayer extends Phaser.GameObjects.Container {
     this.morphRing = undefined;
     for (const mote of this.motes) this.scene?.tweens.killTweensOf(mote);
     this.motes = [];
+    this.clearPulse();
     super.destroy(fromScene);
   }
 }
