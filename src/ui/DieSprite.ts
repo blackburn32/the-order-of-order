@@ -102,6 +102,9 @@ export class DieSprite extends Phaser.GameObjects.Container {
   private spawnTween?: Phaser.Tweens.Tween;
   private spawnScale = 1;
   private spawnEndsAt = 0;
+  /** The resting scale a shockwave swelled this die from, while it is swollen
+   *  (see poseLift). */
+  private liftBase?: number;
   // Whether this die is currently struck out. Held because the pop-in and the
   // pulse both write `alpha`, and an inert die does not rest at 1.
   private inert = false;
@@ -488,6 +491,27 @@ export class DieSprite extends Phaser.GameObjects.Container {
     this.setRotation(0);
   }
 
+  /**
+   * Swell the die by `amount` of its size as a shockwave passes over it (see
+   * ui/gridShockwave), or put it back at rest for 0. Driven per frame by the
+   * wave rather than tweened, so overlapping waves add instead of fighting over
+   * the scale. A die already animating its scale — popping in, pulsing — is
+   * left to that tween, which owns the scale until it ends.
+   */
+  poseLift(amount: number): void {
+    if (amount <= 0) {
+      if (this.liftBase === undefined) return;
+      this.setScale(this.liftBase);
+      this.liftBase = undefined;
+      return;
+    }
+    if (this.liftBase === undefined) {
+      if (this.spawnTween || this.scene.tweens.isTweening(this)) return;
+      this.liftBase = this.scaleX;
+    }
+    this.setScale(this.liftBase * (1 + amount));
+  }
+
   /** Stop an in-flight pulse tween without waiting for it to finish — the
    *  tween's own scale writes would otherwise fight a relayout's setScale().
    *  Also squares up a die caught mid-settle, since killing that tween would
@@ -497,6 +521,8 @@ export class DieSprite extends Phaser.GameObjects.Container {
     this.scene.tweens.killTweensOf(this.effectBorder);
     this.effectBorder.clear();
     this.effectBorder.setAlpha(0);
+    // The relayout that called this sets the scale itself.
+    this.liftBase = undefined;
     // The kill above takes any pop-in with it, which would leave the die
     // stranded small and invisible. The caller owns the scale (it sets it
     // right after), so only the fade has to be undone here — back to whatever

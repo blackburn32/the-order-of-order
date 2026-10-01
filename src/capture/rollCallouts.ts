@@ -28,6 +28,9 @@ export const ROLL_CALLOUT_PRESET_IDS = [
   "roll-callout-goal",
   "roll-callout-first-roll",
   "roll-callout-chain",
+  "roll-callout-spotlight",
+  "roll-callout-procession",
+  "roll-callout-sigil",
 ] as const;
 
 export type RollCalloutPresetId = (typeof ROLL_CALLOUT_PRESET_IDS)[number];
@@ -235,6 +238,85 @@ export function rollCalloutRun(id: RollCalloutPresetId): RunState {
       run.jackpot = 1;
       run.purchases = { snake_eyes: 1, jackpot: 1 };
       run.ownedUnique = ["snake_eyes"];
+      return run;
+    }
+    // Big dice, so most faces turn up once: Counterpoint and The Canticle
+    // both pay for the dice standing alone, which the spotlight picks out, and
+    // The Canticle's multiplier sends its shockwave across the grid.
+    case "roll-callout-spotlight": {
+      const run = baseRun(0x5eed0006);
+      run.trial = 18;
+      run.roll = 2;
+      run.dice = DicePool.fromDice(
+        mixedDice(
+          12,
+          [
+            [8, 1],
+            [10, 2],
+            [20, 2],
+          ],
+          0x5907,
+        ),
+      );
+      run.scoringNumbers = [1, 2, 3];
+      run.extraNumberCount = 2;
+      run.hasCounterpoint = true;
+      run.hasCanticle = true;
+      run.purchases = { counterpoint: 1, the_canticle: 1 };
+      run.ownedUnique = ["counterpoint", "the_canticle"];
+      return run;
+    }
+    // Small dice under The Procession and a stack of multipliers: a 1, a 2 and
+    // a 3 hop in turn, then each multiplier the callout lands sends a
+    // shockwave from the seal.
+    case "roll-callout-procession": {
+      const run = baseRun(0x5eed0007);
+      run.trial = 18;
+      run.roll = 0;
+      run.dice = DicePool.fromDice(
+        mixedDice(
+          16,
+          [
+            [6, 2],
+            [4, 1],
+          ],
+          0x1230,
+        ),
+      );
+      run.scoringNumbers = [1, 2, 3, 4];
+      run.extraNumberCount = 1;
+      run.hasParade = true;
+      run.hasAmplifier = true;
+      run.hasHourglass = true;
+      run.prism = 1;
+      run.purchases = { parade: 1, amplifier: 1, hourglass: 1, prism: 1 };
+      run.ownedUnique = ["parade", "amplifier", "hourglass"];
+      return run;
+    }
+    // Top faces: Royal Seal on the d4s and d6s, and a handful of Windfall dice
+    // whose top face multiplies the roll, so the sigil flares off each.
+    case "roll-callout-sigil": {
+      const run = baseRun(0x5eed0008);
+      run.trial = 18;
+      run.roll = 2;
+      const dice = mixedDice(
+        16,
+        [
+          [4, 1],
+          [6, 1],
+        ],
+        0x5161,
+      );
+      for (const index of [2, 7, 11, 14]) {
+        const windfall = makeDie(dice[index].sides, { maxFaceBonus: true });
+        windfall.value = dice[index].value;
+        dice[index] = windfall;
+      }
+      run.dice = DicePool.fromDice(dice);
+      run.scoringNumbers = [1, 2, 3];
+      run.extraNumberCount = 2;
+      run.royalSealSizes = [4, 6];
+      run.purchases = { royal_seal: 1 };
       return run;
     }
     // Twenty thousand dice: a long climb through stacked cards and two engines.

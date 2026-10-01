@@ -238,6 +238,8 @@ export function treeMultiplierModifiers(
     dice: [],
     bigPulse: false,
     float: "aggregate" as const,
+    // The Canticle pays for the faces no other die shares.
+    flourish: mult.id === "canticle" ? ("spotlight" as const) : undefined,
   }));
 }
 
@@ -432,6 +434,17 @@ export function isHourglassRoll(state: RunState): boolean {
  *  - `perDie`: a text-only float at each die it hit (Windfall). */
 export type ScoreFloat = "none" | "aggregate" | "perDie";
 
+/** How a modifier's dice show what they did, beyond the border pulse:
+ *  - `chainByFace`: chain lightning joins each set of dice sharing a face
+ *    (Snake Eyes); `chainTogether` joins every die it hit (Jackpot).
+ *  - `spotlight`: the dice paid for standing alone on their face are lit while
+ *    the rest of the grid dims (Counterpoint, A New Voice, The Canticle).
+ *  - `sigilBurst`: the Order's sigil flares off a die that rolled its top face
+ *    (Windfall, Royal Seal).
+ *  - `procession`: one 1, one 2 and one 3 hop in turn (The Procession). */
+export type DieFlourish =
+  "chainByFace" | "chainTogether" | "spotlight" | "sigilBurst" | "procession";
+
 /** One source of points in a roll. The UI iterates these to flash dice and
  *  float text; the total is the sum of their `points` times any run multiplier.
  *  Adding a new scoring rule means pushing another modifier here, not adding a
@@ -445,10 +458,9 @@ export interface ScoreModifier {
   dice: number[]; // indices of dice this modifier flashes (empty when bucketed)
   bigPulse: boolean; // stronger bounce on those dice (Jackpot)
   float: ScoreFloat;
-  // Effects that need several dice at once link the dice they hit with chain
-  // lightning: `byFace` joins each set of dice sharing a face (Snake Eyes),
-  // `together` joins every die it hit as one chain (Jackpot).
-  chain?: "byFace" | "together";
+  // The grid flourish this modifier plays on the dice it hit, beyond the
+  // border pulse every modifier gets (see DieFlourish).
+  flourish?: DieFlourish;
   // Some item effects identify points already included in another modifier
   // (Extra Number / Wild Face). This lets the UI list that contribution without
   // adding it to the subtotal a second time.
@@ -668,6 +680,7 @@ export function scoreRoll(
       dice: [],
       bigPulse: false,
       float: "aggregate",
+      flourish: "sigilBurst",
     });
   }
 
@@ -732,7 +745,7 @@ export function scoreRoll(
         dice: flash,
         bigPulse: false,
         float: "aggregate",
-        chain: "byFace",
+        flourish: "chainByFace",
       });
     }
   }
@@ -752,7 +765,7 @@ export function scoreRoll(
       dice: scoringDice,
       bigPulse: true,
       float: "aggregate",
-      chain: "together",
+      flourish: "chainTogether",
     });
   }
 
@@ -770,6 +783,7 @@ export function scoreRoll(
       dice: [],
       bigPulse: false,
       float: "aggregate",
+      flourish: "spotlight",
     });
   }
 
@@ -787,6 +801,7 @@ export function scoreRoll(
       dice: [],
       bigPulse: false,
       float: "aggregate",
+      flourish: "spotlight",
     });
   }
 
@@ -806,6 +821,7 @@ export function scoreRoll(
       dice: windfallDice,
       bigPulse: true,
       float: "perDie",
+      flourish: "sigilBurst",
     });
   }
 
@@ -967,6 +983,7 @@ export function scoreRoll(
       dice: [],
       bigPulse: false,
       float: "aggregate",
+      flourish: "procession",
     });
   }
   if (menagerieActive) {

@@ -132,6 +132,11 @@ a long climb through stacked cards and two growth engines. Their runs live in
 `roll-callout-chain` is a sixteen-die run under Consensus and The Congregation,
 the two effects that need several dice at once, so each roll shows the chain
 lightning (`src/ui/chainLightning.ts`) that links the dice that fired them.
+The other grid flourishes each have a run of their own: `roll-callout-spotlight`
+(Counterpoint and The Canticle light the dice standing alone, `ui/spotlight.ts`),
+`roll-callout-procession` (The Procession's 1-2-3 hop, and the shockwave each
+multiplier sends from the seal, `ui/gridShockwave.ts`) and `roll-callout-sigil`
+(Royal Seal and Windfall top faces, `ui/sigilBurst.ts`).
 `roll-callout-skip` presses again mid-count, the way an impatient player does: the
 callout should jump to its total, land the score, and clear as the next roll
 tumbles.

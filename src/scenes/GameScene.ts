@@ -4,7 +4,7 @@ import { COLORS, CSS, SERIF } from "../art/palette";
 import { artImage, artScale, bossSigilTexture } from "../art/textures";
 import { DIE_SIZE } from "../art/dieArt";
 import { getRun, type RunState } from "../state/RunState";
-import type { Die } from "../systems/Dice";
+import { isVoiceDie, type Die } from "../systems/Dice";
 import {
   itemDisabledDuringTrialByAffliction,
   ITEMS,
@@ -63,7 +63,11 @@ import {
 import { runAuras } from "../systems/DieEffects";
 import { DiceSummaryCard, type CardEffectChance } from "../ui/DiceSummaryCard";
 import { formatScore } from "../ui/formatScore";
-import { rollBreakdown } from "../systems/RollBreakdown";
+import {
+  ONE,
+  rollBreakdown,
+  type MultiplierStep,
+} from "../systems/RollBreakdown";
 import {
   breakdownRows,
   playRollBreakdown,
@@ -80,6 +84,9 @@ import {
 import { showCallout, CalloutHandle } from "../ui/Callout";
 import { DuelShowdown } from "../ui/duelShowdown";
 import { ChainLightning, type ChainGroup } from "../ui/chainLightning";
+import { Spotlight } from "../ui/spotlight";
+import { SigilBurst } from "../ui/sigilBurst";
+import { GridShockwave } from "../ui/gridShockwave";
 import {
   advanceFrom,
   advanceTutorial,
@@ -299,6 +306,18 @@ const TRIAL_OPEN_DELAY_MS = 220;
 
 /** Keep roll feedback bounded even when a modifier hits the whole grid. */
 const MAX_PULSED_DICE = 64;
+/** The Procession's first hop waits out the roll's own border pulse (a 260ms
+ *  bounce), so the hop is not read as more of it — and so its scale tween
+ *  starts from the die at rest. */
+const PROCESSION_START_MS = 320;
+const PROCESSION_STEP_MS = 170;
+/** How many of the 1s on screen the march is tried from. */
+const PROCESSION_CANDIDATES = 24;
+
+/** A grid flourish GameScene tracks until the next roll or relayout. */
+type Flourish =
+  | { readonly object: Phaser.GameObjects.GameObject; destroy(): void }
+  | { readonly objects: Phaser.GameObjects.GameObject[]; destroy(): void };
 // Ceiling on how often a summary-card icon flashes any one effect. Above the
 // card threshold most rules catch nearly every die, and an outline on every
 // icon every roll reads as a static border rather than as an effect firing.
@@ -539,8 +558,11 @@ export class GameScene extends Phaser.Scene {
   private tumbleStartedAt = 0;
   private settleTimer?: Phaser.Time.TimerEvent;
   private effectTimer?: Phaser.Time.TimerEvent;
-  /** The arcs linking the dice of this roll's multi-die effects, while lit. */
-  private chainLightning?: ChainLightning;
+  /** This roll's grid flourishes while they play: chain lightning, the
+   *  spotlight, sigil bursts, the callout's shockwaves. See playFlourishes. */
+  private flourishes: Flourish[] = [];
+  private flourishTimers: Phaser.Time.TimerEvent[] = [];
+  private shockwave?: GridShockwave;
   private finishEffects?: (skipHold: boolean) => void;
   private pendingAdvance?: Phaser.Time.TimerEvent;
   private hudRank!: Phaser.GameObjects.Text;
@@ -609,7 +631,9 @@ export class GameScene extends Phaser.Scene {
     this.settleTimer = undefined;
     this.effectTimer = undefined;
     this.finishEffects = undefined;
-    this.chainLightning = undefined;
+    this.flourishes = [];
+    this.flourishTimers = [];
+    this.shockwave = undefined;
     this.pendingAdvance = undefined;
     this.endedTrialHud = undefined;
     this.sprites = new Map();
@@ -1553,8 +1577,8 @@ export class GameScene extends Phaser.Scene {
    *  Used for the initial build, resize, and every pan/zoom step. */
   private syncGrid(layout: Layout, spawned?: number): void {
     this.layout = layout;
-    // The arcs are drawn between cells of the layout being replaced.
-    this.clearChainLightning();
+    // Flourishes are drawn against the cells of the layout being replaced.
+    this.clearFlourishes();
     const n = this.state.dice.length;
     const firstLayout = this.gridCount < 0;
     const countChanged = n !== this.gridCount;
@@ -2394,51 +2418,245 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Link the dice of each effect that needs several dice at once (Consensus,
-   * The Congregation) with chain lightning — see ui/chainLightning. Called from
-   * the same per-die branch that pulses borders, so it follows the same detail
-   * levels, and only dice pulsing this roll are linked: every arc lands on a die
-   * that is visibly flashing, and the pulse budget bounds the arcs too.
+   * Play the grid flourish each modifier asks for on the dice it hit (see
+   * `DieFlourish`): chain lightning between the dice that fired together, a
+   * spotlight on the ones paid for standing alone, a sigil burst off a top
+   * face, The Procession's 1-2-3 hop. Called from the same per-die branch that
+   * pulses borders, so every flourish follows the same detail levels, and only
+   * dice pulsing this roll take part: each one lands on a die that is visibly
+   * flashing, and the pulse budget bounds them too.
    */
-  private playChainLightning(
+  private playFlourishes(
     modifiers: ScoreModifier[],
     hitsByModifier: Map<ScoreModifier, number[]>,
     pulsed: Set<number>,
     rolled: Map<number, Die>,
   ): void {
-    this.clearChainLightning();
-    const groups: ChainGroup[] = [];
-    let dieSize = 0;
+    this.clearFlourishes();
+    const dieSize = this.gridDieSize();
+    const chains: ChainGroup[] = [];
+    const lit = new Set<DieSprite>();
+    let spotlightColor: number | undefined;
+    const sigils: DieSprite[] = [];
+    let sigilColor: number | undefined;
+
     for (const mod of modifiers) {
-      if (!mod.chain) continue;
-      const byKey = new Map<number, { x: number; y: number }[]>();
-      for (const i of hitsByModifier.get(mod) ?? []) {
-        const sprite = this.sprites.get(i);
-        if (!sprite || !pulsed.has(i)) continue;
-        dieSize = Math.max(dieSize, sprite.scaleX * DIE_SIZE);
-        const key =
-          mod.chain === "byFace" ? (rolled.get(i) ?? sprite.die).value : 0;
-        const points = byKey.get(key) ?? [];
-        points.push({ x: sprite.x, y: sprite.y });
-        byKey.set(key, points);
+      if (!mod.flourish) continue;
+      const hits = hitsByModifier.get(mod) ?? [];
+      if (mod.flourish === "procession") {
+        this.playProcession(hits, rolled, mod.color);
+        continue;
       }
-      for (const points of byKey.values()) {
-        if (points.length >= 2) groups.push({ color: mod.color, points });
+      const sprites = hits.flatMap((i) => {
+        const sprite = this.sprites.get(i);
+        return sprite && pulsed.has(i) ? [{ i, sprite }] : [];
+      });
+      switch (mod.flourish) {
+        case "chainByFace":
+        case "chainTogether": {
+          const byKey = new Map<number, { x: number; y: number }[]>();
+          for (const { i, sprite } of sprites) {
+            const key =
+              mod.flourish === "chainByFace"
+                ? (rolled.get(i) ?? sprite.die).value
+                : 0;
+            const points = byKey.get(key) ?? [];
+            points.push({ x: sprite.x, y: sprite.y });
+            byKey.set(key, points);
+          }
+          for (const points of byKey.values()) {
+            if (points.length >= 2) chains.push({ color: mod.color, points });
+          }
+          break;
+        }
+        case "spotlight":
+          for (const { sprite } of sprites) lit.add(sprite);
+          if (sprites.length > 0) spotlightColor ??= mod.color;
+          break;
+        case "sigilBurst":
+          for (const { sprite } of sprites) sigils.push(sprite);
+          if (sprites.length > 0) sigilColor ??= mod.color;
+          break;
       }
     }
-    if (groups.length === 0) return;
-    const chain = new ChainLightning(this, this.gridContainer, groups, {
-      dieSize,
-      motion: fx.motion,
-    });
-    this.cameras.main.ignore(chain.object);
-    this.overlayCamera?.ignore(chain.object);
-    this.chainLightning = chain;
+
+    const at = (sprite: DieSprite) => ({ x: sprite.x, y: sprite.y });
+    if (lit.size > 0 && spotlightColor !== undefined) {
+      const crowd = [...this.sprites.values()].filter((s) => !lit.has(s));
+      this.addFlourish(
+        new Spotlight(
+          this,
+          this.gridContainer,
+          [...lit].map(at),
+          crowd.map(at),
+          {
+            dieSize,
+            color: spotlightColor,
+            motion: fx.motion,
+          },
+        ),
+      );
+    }
+    if (chains.length > 0) {
+      this.addFlourish(
+        new ChainLightning(this, this.gridContainer, chains, {
+          dieSize,
+          motion: fx.motion,
+        }),
+      );
+    }
+    if (sigils.length > 0 && sigilColor !== undefined) {
+      this.addFlourish(
+        new SigilBurst(this, this.gridContainer, sigils.map(at), {
+          dieSize,
+          color: sigilColor,
+          motion: fx.motion,
+        }),
+      );
+    }
   }
 
-  private clearChainLightning(): void {
-    this.chainLightning?.destroy();
-    this.chainLightning = undefined;
+  /**
+   * The Procession: one 1, one 2 and one 3 hop in turn, after the roll's own
+   * pulses have finished with them. Of the dice on screen showing those faces
+   * it picks the three closest together, so the parade reads as one short
+   * march rather than a leap across the grid.
+   */
+  private playProcession(
+    hits: number[],
+    rolled: Map<number, Die>,
+    color: number,
+  ): void {
+    const byFace = new Map<number, DieSprite[]>();
+    for (const i of hits) {
+      const sprite = this.sprites.get(i);
+      const face = (rolled.get(i) ?? sprite?.die)?.value;
+      if (!sprite || face === undefined || face < 1 || face > 3) continue;
+      const list = byFace.get(face) ?? [];
+      list.push(sprite);
+      byFace.set(face, list);
+    }
+    const nearest = (from: DieSprite, list: DieSprite[]) =>
+      list.reduce((best, sprite) =>
+        Phaser.Math.Distance.Between(from.x, from.y, sprite.x, sprite.y) <
+        Phaser.Math.Distance.Between(from.x, from.y, best.x, best.y)
+          ? sprite
+          : best,
+      );
+    const [ones, twos, threes] = [1, 2, 3].map((face) => byFace.get(face));
+    if (!ones || !twos || !threes) return;
+    let march: DieSprite[] | undefined;
+    let shortest = Infinity;
+    for (const one of evenlySample(ones, PROCESSION_CANDIDATES)) {
+      const two = nearest(one, twos);
+      const three = nearest(two, threes);
+      const length =
+        Phaser.Math.Distance.Between(one.x, one.y, two.x, two.y) +
+        Phaser.Math.Distance.Between(two.x, two.y, three.x, three.y);
+      if (length < shortest) {
+        shortest = length;
+        march = [one, two, three];
+      }
+    }
+    march?.forEach((sprite, step) => {
+      this.flourishTimers.push(
+        this.time.delayedCall(
+          PROCESSION_START_MS + step * PROCESSION_STEP_MS,
+          () => {
+            if (sprite.active) sprite.pulseEffects([color], true);
+          },
+        ),
+      );
+    });
+  }
+
+  /**
+   * Send a shockwave from the seal across the grid for one step of the roll
+   * callout's multiplier (see ui/gridShockwave), sized by that step's factor.
+   * The ring is one Graphics, so it plays at every detail level the player has
+   * motion on for; the dice only swell at the levels that pulse per-die
+   * borders, where each die is its own sprite.
+   */
+  private sendShockwave(steps: readonly MultiplierStep[], index: number): void {
+    const step = steps[index];
+    const cam = this.gridCamera;
+    if (!fx.motion || !step || step.id === "penalty" || !cam) return;
+    const before = index > 0 ? steps[index - 1].after : ONE;
+    const factor =
+      Number(
+        (step.after.num * before.den * 1000n) / (step.after.den * before.num),
+      ) / 1000;
+    const origin = this.gridWorldPosition(this.sealImage.x, this.sealImage.y);
+    if (!this.shockwave) {
+      const view = cam.worldView;
+      const reach = Math.max(
+        ...[
+          [view.left, view.top],
+          [view.right, view.top],
+          [view.left, view.bottom],
+          [view.right, view.bottom],
+        ].map(([x, y]) =>
+          Phaser.Math.Distance.Between(origin.x, origin.y, x, y),
+        ),
+      );
+      const wave = new GridShockwave(
+        this,
+        this.gridContainer,
+        () =>
+          fx.on &&
+          (this.gridDetail === "full" || this.gridDetail === "noCallouts")
+            ? this.sprites.values()
+            : [],
+        { worldPerPixel: 1 / cameraZoom(cam), color: COLORS.goldLight, reach },
+      );
+      this.addFlourish(wave);
+      this.shockwave = wave;
+    }
+    this.shockwave.send(origin, factor);
+  }
+
+  /** Track a flourish until the next roll or relayout ends it, and keep it out
+   *  of the cameras that do not draw the grid. */
+  private addFlourish(flourish: Flourish): void {
+    const objects =
+      "objects" in flourish ? flourish.objects : [flourish.object];
+    this.cameras.main.ignore(objects);
+    this.overlayCamera?.ignore(objects);
+    this.flourishes.push(flourish);
+  }
+
+  /** End every flourish still playing: they are drawn against the cells of a
+   *  layout about to change, or a roll about to tumble. */
+  private clearFlourishes(): void {
+    for (const flourish of this.flourishes) flourish.destroy();
+    this.flourishes = [];
+    this.shockwave = undefined;
+    for (const timer of this.flourishTimers) timer.remove();
+    this.flourishTimers = [];
+  }
+
+  /** A die's drawn edge length in grid-world units: every sprite in a layout
+   *  shares one scale. */
+  private gridDieSize(): number {
+    for (const sprite of this.sprites.values()) return sprite.scaleX * DIE_SIZE;
+    return DIE_SIZE;
+  }
+
+  /** The inverse of dieScreenPosition: the grid-world point under a
+   *  layout-pixel screen position. */
+  private gridWorldPosition(x: number, y: number): { x: number; y: number } {
+    const cam = this.gridCamera;
+    if (!cam) return { x, y };
+    const origin = cameraOrigin(cam);
+    const pose = this.gridGlide?.to ?? {
+      zoom: cameraZoom(cam),
+      scrollX: cam.scrollX,
+      scrollY: cam.scrollY,
+    };
+    return {
+      x: pose.scrollX + (x - origin.x) / pose.zoom,
+      y: pose.scrollY + (y - origin.y) / pose.zoom,
+    };
   }
 
   /** Identify dice added by an automatic passive after the grid has been
@@ -2911,7 +3129,7 @@ export class GameScene extends Phaser.Scene {
     this.rolling = true;
     this.tumbling = true;
     this.finishBreakdown();
-    this.clearChainLightning();
+    this.clearFlourishes();
 
     // Each die picks its own rocking motion for this roll; `update()` advances
     // all of them per frame from this timestamp.
@@ -3246,6 +3464,10 @@ export class GameScene extends Phaser.Scene {
       const visibleHits = (id: string): number[] => {
         const hits: number[] = [];
         for (const [index, die] of rolledVisible) {
+          // Alone on its face across the whole rolled pool, not just the
+          // dice on screen: the rules Counterpoint, A New Voice and The
+          // Canticle pay by.
+          const lone = rolledAgg.valueCounts.get(die.value) === 1;
           const windfall =
             die.maxFaceBonus > 0 && !die.loaded && die.value === die.sides;
           const royalSeal =
@@ -3274,7 +3496,16 @@ export class GameScene extends Phaser.Scene {
                         ? royalSeal
                         : id === "luckySeven"
                           ? String(die.value).includes("7")
-                          : false;
+                          : id === "aNewVoice"
+                            ? lone && !scoring && isVoiceDie(die)
+                            : id === "counterpoint"
+                              ? lone &&
+                                !rolledAgg.scoringValueCounts.get(die.value)
+                              : id === "canticle"
+                                ? lone
+                                : id === "parade"
+                                  ? die.value >= 1 && die.value <= 3
+                                  : false;
           if (hit) hits.push(index);
         }
         return hits;
@@ -3286,6 +3517,8 @@ export class GameScene extends Phaser.Scene {
         ]),
       );
       for (const mod of result.modifiers) {
+        // The Procession's dice hop in turn once these pulses are over.
+        if (mod.flourish === "procession") continue;
         for (const i of hitsByModifier.get(mod) ?? []) {
           if (addColor(i, mod.color) && mod.bigPulse) bigDice.add(i);
         }
@@ -3301,7 +3534,7 @@ export class GameScene extends Phaser.Scene {
       for (const [i, colors] of pulsed) {
         this.sprites.get(i)?.pulseEffects(colors, bigDice.has(i));
       }
-      this.playChainLightning(
+      this.playFlourishes(
         result.modifiers,
         hitsByModifier,
         new Set(pulsed.map(([i]) => i)),
@@ -3403,7 +3636,10 @@ export class GameScene extends Phaser.Scene {
         pace: autoReroll ? 2.5 : 1,
         acclaim,
         onBonus: (index) => audio.multiply(index),
-        onStep: (index) => audio.multiply(index),
+        onStep: (index) => {
+          audio.multiply(index);
+          this.sendShockwave(breakdown.steps, index);
+        },
       });
       this.breakdownView = view;
       this.scoreRevealAt = this.time.now + view.totalAtMs;

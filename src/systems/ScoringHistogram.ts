@@ -476,6 +476,7 @@ export function scoreRollHistogram(
       dice: noDice,
       bigPulse: false,
       float: "aggregate",
+      flourish: "sigilBurst",
     });
   }
 
@@ -532,7 +533,7 @@ export function scoreRollHistogram(
         dice: noDice,
         bigPulse: false,
         float: "aggregate",
-        chain: "byFace",
+        flourish: "chainByFace",
       });
     }
   }
@@ -548,7 +549,7 @@ export function scoreRollHistogram(
       dice: noDice,
       bigPulse: true,
       float: "aggregate",
-      chain: "together",
+      flourish: "chainTogether",
     });
   }
 
@@ -564,6 +565,7 @@ export function scoreRollHistogram(
       dice: noDice,
       bigPulse: false,
       float: "aggregate",
+      flourish: "spotlight",
     });
   }
 
@@ -581,6 +583,7 @@ export function scoreRollHistogram(
       dice: noDice,
       bigPulse: false,
       float: "aggregate",
+      flourish: "spotlight",
     });
   }
 
@@ -596,6 +599,7 @@ export function scoreRollHistogram(
       dice: noDice,
       bigPulse: true,
       float: "perDie",
+      flourish: "sigilBurst",
     });
   }
 
@@ -743,6 +747,7 @@ export function scoreRollHistogram(
       dice: noDice,
       bigPulse: false,
       float: "aggregate",
+      flourish: "procession",
     });
   }
   if (menagerieActive) {
