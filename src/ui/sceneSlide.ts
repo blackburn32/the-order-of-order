@@ -55,9 +55,9 @@ function slideTargets(
 }
 
 /** Move an explicit set of objects in from off screen, restoring the scene's
- * input lock once they arrive. The whole-scene entrance is one caller, coming
- * in from the left; a story sequence turning a page is the other, and it passes
- * the mirrored `travel` so its page arrives from the right instead.
+ * input lock once they arrive — the whole-scene entrance, coming in from the
+ * left by default. (A story page turn travels the mirrored way but keeps input
+ * live throughout; see `turnPage`.)
  *
  * `arrived` runs once they have come to rest — and immediately when there is no
  * slide to wait for — so a caller can hold deferred work (see the Codex's card
@@ -213,4 +213,95 @@ export function slideOverlayOut(
     ease: "Quad.easeIn",
   });
   slideSceneOut(scene, complete, [felt]);
+}
+
+/** A story page turn in flight. */
+export interface PageTurn {
+  /** Land the turn now: the outgoing page is gone, the incoming one stands at
+   *  rest, and the turn's `settled` callback has run. */
+  finish(): void;
+  /** Abandon the turn without landing it — for a rebuild that has already
+   *  destroyed both pages and is about to draw the current one fresh. */
+  cancel(): void;
+}
+
+/**
+ * Turn a story page: send `outgoing` off, then draw the next page with
+ * `incoming` and bring it on — the mirrored travel by default, so the page
+ * leaves to the left and the next arrives from the right, as in a book.
+ *
+ * Unlike the scene slides, a page turn never closes the scene's input. The
+ * control block holds its place while the page travels, so it stays live
+ * throughout, and a reader who presses it again mid-turn calls `finish` to
+ * land the page at once rather than waiting on the animation.
+ *
+ * Returns nothing when there is no motion to wait on: the page has already
+ * turned, and `settled` has already run, by the time the call returns.
+ */
+export function turnPage(
+  scene: Phaser.Scene,
+  outgoing: SlideObject,
+  incoming: () => SlideObject,
+  settled: () => void,
+  travel: SlideTravel = PAGE_TURN,
+): PageTurn | undefined {
+  let tween: Phaser.Tweens.Tween | undefined;
+  let page: SlideObject | undefined;
+  let destinationX = 0;
+  let done = false;
+
+  const swap = () => {
+    outgoing.destroy();
+    page = incoming();
+    destinationX = page.x;
+  };
+  const settle = () => {
+    if (done) return;
+    done = true;
+    tween = undefined;
+    settled();
+  };
+
+  if (!fx.motion) {
+    swap();
+    settle();
+    return undefined;
+  }
+
+  const distance = scene.scale.width * travel;
+  tween = scene.tweens.add({
+    targets: outgoing,
+    x: outgoing.x + distance,
+    duration: SLIDE_MS,
+    ease: "Cubic.easeIn",
+    onComplete: () => {
+      swap();
+      page!.x = destinationX - distance;
+      tween = scene.tweens.add({
+        targets: page,
+        x: destinationX,
+        duration: SLIDE_MS,
+        ease: "Cubic.easeOut",
+        onComplete: settle,
+      });
+    },
+  });
+
+  return {
+    finish: () => {
+      if (done) return;
+      // `stop` drops the tween without firing its `onComplete`, so the swap and
+      // the settle below each happen exactly once.
+      tween?.stop();
+      if (!page) swap();
+      page!.x = destinationX;
+      settle();
+    },
+    cancel: () => {
+      if (done) return;
+      done = true;
+      tween?.stop();
+      tween = undefined;
+    },
+  };
 }
