@@ -34,8 +34,11 @@ export const WIN_TRIAL = WIN_RANK * TRIALS_PER_RANK; // 30
 
 /** Rolls granted by each trial in a rank, indexed by `trialInRank() - 1`. The
  *  Lesser Trial is deliberately the shortest: it is a sprint against a small
- *  goal, not a gentler version of the same thing. */
-export const ROLLS_PER_TRIAL = [7, 14, 18] as const;
+ *  goal, not a gentler version of the same thing. The Greater and Boss Trials
+ *  share a budget of ten: a longer trial mostly hands a strong build more rolls
+ *  to compound over, which is what let the old 14 / 18 cadence be cleared on
+ *  its opening roll. */
+export const ROLLS_PER_TRIAL = [7, 10, 10] as const;
 export type TrialRollCadence = readonly [number, number, number];
 
 // Simulation-only override for duration experiments. Shipping code never sets
@@ -53,11 +56,12 @@ export function setTrialRollCadenceForSimulation(
  * The duel's roll budget, fixed.
  *
  * The final Boss Trial is not a score to reach but a race against a copy of the
- * player's own grid, and a race that runs eighteen rolls is decided long before it
- * ends: two identical engines compounding side by side settle into their gap
- * early and then simply widen it. Ten rolls keeps the lead inside the range a
- * single roll can overturn, so the last trial of a run stays live to its last
- * throw.
+ * player's own grid, and a long race is decided long before it ends: two
+ * identical engines compounding side by side settle into their gap early and
+ * then simply widen it. Ten rolls keeps the lead inside the range a single roll
+ * can overturn, so the last trial of a run stays live to its last throw. It is
+ * the same ten every Boss Trial grants, but it is fixed separately because
+ * nothing may move it (below).
  *
  * It is a flat count rather than a base, and `Trial.trialRollTargetFor` returns
  * it without consulting anything else: Metronome, Overtime, Rain Check and every
@@ -117,35 +121,65 @@ export function rollsForTrial(trial: number): number {
 
 // ---- Goal curve ------------------------------------------------------------
 //
-// Winning is gated on an ENGINE: a strategy tree's tier-3 card, which compounds
-// for the rest of the run (see systems/ItemTrees). The curve is shaped so that
-// building one carries a run to the duel and nothing short of one does, which
-// is why it is written as a growth RATE per trial rather than as a table of
-// measured quantiles — a curve written as a formula in the trial number (t², kᵗ,
-// t!) cannot tell an engine from a strong shop, but a fixed per-trial growth
-// that sits below an engine's and above everything else can.
+// The goals are MEASURED, not derived from a formula. `npm run goals:search`
+// (src/sim/goalSearch.ts) plays a grid of 43 bot strategies — every shopping
+// bot, at three curse appetites — over hundreds of seeds with the goals taken
+// away: every trial plays its whole roll budget, nothing is culled, and each
+// trial pays out as a clear plus an assumed 1-3 gold of early-completion pay.
+// For each seed and trial it takes a percentile of the grid's scores, and the
+// goal is the median of that across seeds, rounded to three significant figures.
 //
-// Rank 1 keeps the goals it was tuned to: the opening's real difficulty is
-// trial 1's single d6, not a number here. From trial 4 the goal PER ROLL grows
-// by a fixed factor every trial, and each trial asks for that rate times its own
-// roll budget:
-//   ranks 2-3   ×1.6  the shop is still assembling a build
-//   ranks 4-6   ×2.2  the build deadline: an engine has to land here
-//   ranks 7-10  ×2.4  a little above act 2, below a finished engine's growth,
-//                     so a finished engine pulls away and anything else falls
+// The percentile is set per rank (GOAL_PERCENTILE_BY_RANK). Trial 1 keeps its
+// goal of a single point: the opening's difficulty is the lone starting d6, and
+// that wall was already the right height.
 //
-// Asking per roll keeps the SAWTOOTH: a rank opens with a seven-roll Lesser
-// Trial and closes with an eighteen-roll Boss Trial, so the Lesser Trial of one
-// rank asks for less than the Boss Trial before it. The engines compound per
-// roll TAKEN, which is what keeps a finished engine spending most of a trial's
-// rolls rather than clearing it on the first.
+// A goal is never lower than the trial before it in its own rank, nor than the
+// same slot a rank down. A rank opens on a seven-roll Lesser Trial, so it can
+// still ask less than the ten-roll Boss Trial that closed the rank before it.
 //
-// Measured with the engine experiment (src/sim/catechismExperiment.ts, trees ×3,
-// the card reworks on): builders reach the duel ~35-55% of the time, runs with
-// no engine ~0-2%, and builders spend a third or more of their rolls in ranks
-// 7-10. That experiment sweeps the two later rates through `engineGateGoals`.
+// To retune: rerun the search (and `goals:sweep` to compare percentiles), paste
+// the printed table here, and grade it with `goals:validate` and
+// `goals:report`. See src/sim/README.md, "The goal search".
 
-/** Rank 1's goals, as authored. */
+/** The percentile of the strategy grid's full-budget scores each rank's goals
+ *  were taken at — the record of how MEASURED_GOALS was made, not an input to
+ *  anything at runtime. */
+export const GOAL_PERCENTILE_BY_RANK = [
+  0.5, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
+] as const;
+
+/**
+ * The goal for every trial of the ladder (index = trial - 1), as decimal
+ * strings so a retuned table whose late goals pass Number's exact integer range
+ * pastes in unchanged. Lesser / Greater / Boss across each row. The final
+ * entry is the duel's, which has no goal at all (see isMirrorTrial); it is
+ * still a real number because the endless ladder walks out from it.
+ */
+// prettier-ignore
+const MEASURED_GOALS: readonly string[] = [
+  "1", "15", "32",                            // rank 1
+  "90", "192", "316",                         // rank 2
+  "484", "1020", "1370",                      // rank 3
+  "1810", "3730", "5230",                     // rank 4
+  "7480", "18400", "26200",                   // rank 5
+  "52700", "151000", "281000",                // rank 6
+  "689000", "1220000", "2180000",             // rank 7
+  "5550000", "18600000", "31700000",          // rank 8
+  "122000000", "453000000", "1070000000",     // rank 9
+  "4080000000", "18100000000", "55400000000", // rank 10
+];
+
+export const TRIAL_GOALS: bigint[] = MEASURED_GOALS.map((g) => BigInt(g));
+
+// ---- The previous curve, kept for the engine experiment ----------------------
+//
+// Before the measured table, winning was gated on an ENGINE (a strategy tree's
+// tier-3 card): the goal PER ROLL grew by a fixed factor every trial — ×1.6
+// through rank 3, ×2.2 through rank 6, ×2.4 to the duel — placed below a
+// finished engine's growth and above everything else. src/sim/catechismExperiment.ts
+// still sweeps those rates through `engineGateGoals`; nothing ships them.
+
+/** Rank 1's goals under the engine-gated curve. */
 const OPENING_GOALS = [1, 2, 3] as const;
 
 /** Growth of the goal per roll, per trial, in each act after rank 1. */
@@ -159,9 +193,8 @@ export const GOAL_GROWTH_PER_TRIAL = {
 } as const;
 
 /**
- * The engine-gated goal for every trial of the ladder (index = trial - 1). The
- * two later acts' growth may be moved apart to find which act a tree's builds
- * die in; the shipping ladder uses GOAL_GROWTH_PER_TRIAL.
+ * The engine-gated goal for every trial of the ladder (index = trial - 1), for
+ * experiments that compare against it.
  *
  * Only multiplication and ceil touch the floats, both exactly specified by
  * IEEE 754, so every device derives the same table (unlike Math.pow — see the
@@ -182,10 +215,6 @@ export function engineGateGoals(
   return goals;
 }
 
-// The final entry is the duel's, which has no goal at all (see isMirrorTrial);
-// it is still a real number because the endless ladder walks out from it.
-export const TRIAL_GOALS: bigint[] = engineGateGoals().map(BigInt);
-
 // Endless growth past WIN_TRIAL. A flat geometric ratio can be outrun forever,
 // because builds themselves grow geometrically (3^prism, 4^lastCall compound
 // every roll). So the growth RATE itself grows: each trial past the win is
@@ -194,10 +223,10 @@ export const TRIAL_GOALS: bigint[] = engineGateGoals().map(BigInt);
 //
 //   goal(t) = goal(t-1) × ENDLESS_BASE^(1 + (t - 1 - WIN_TRIAL) × ENDLESS_ACCEL)
 //
-// The base is the ladder's own growth carried forward: ranks 7-10 grow the goal
-// per roll ×2.4 a trial, so endless opens at about the rate the run was already
-// climbing rather than handing the player three easy trials as a reward for
-// finishing.
+// The base is about the ladder's own late growth carried forward (the measured
+// goals grow roughly ×2.5-×4 a trial through ranks 7-10), so endless opens at
+// about the rate the run was already climbing rather than handing the player
+// three easy trials as a reward for finishing.
 //
 // Base and acceleration are held as exact integer quantities rather than as the
 // floats they read as, because this multiplier has to come out bit-for-bit
@@ -217,9 +246,9 @@ export const ENDLESS_ACCEL = 1 / ENDLESS_ACCEL_DEN; // 0.05
 // balance simulation sets this to trial alternate difficulty curves without
 // editing TRIAL_GOALS; a null/undefined entry (or a null table) falls back to
 // the authored table. The shipping game never sets it.
-let TRIAL_GOAL_OVERRIDES: (number | null | undefined)[] | null = null;
+let TRIAL_GOAL_OVERRIDES: (number | bigint | null | undefined)[] | null = null;
 export function setTrialGoals(
-  goals: (number | null | undefined)[] | null,
+  goals: (number | bigint | null | undefined)[] | null,
 ): void {
   TRIAL_GOAL_OVERRIDES = goals;
   ENDLESS_CACHE.length = 0;

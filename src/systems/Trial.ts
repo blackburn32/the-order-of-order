@@ -10,7 +10,7 @@ import { afflictionsForTrial } from "./Afflictions";
 
 /** This trial's roll budget: its base length, plus Metronome's permanent bonus
  *  and Overtime's this-trial-only bonus, minus whatever every affliction in
- *  force takes off it (The Hunger's five, Crunch Time's three) or adds to it
+ *  force takes off it (The Hunger's three, Crunch Time's three) or adds to it
  *  (The Long Night's five).
  *  Never drops below 1 — an affliction that shortens a trial must not erase it. */
 export function trialRollTarget(s: RunState): number {
