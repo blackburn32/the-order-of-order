@@ -10,11 +10,10 @@ import {
   type StoryFrame,
 } from "../ui/storyPage";
 import {
-  PAGE_TURN,
-  slideObjectsIn,
-  slideObjectsOut,
   slideSceneIn,
   slideSceneOut,
+  turnPage,
+  type PageTurn,
 } from "../ui/sceneSlide";
 
 /** Fixed sigil brightness for the backdrop. Set below the other rooms' values:
@@ -39,9 +38,15 @@ export class IntroScene extends Phaser.Scene {
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
   private frame!: StoryFrame;
   private chapter!: Phaser.GameObjects.Container;
-  /** The button, the skip row and the dots. Held so the block can be rebuilt
-   *  where it stands when the page turns, rather than rebuilt with the scene. */
-  private controls: Phaser.GameObjects.GameObject[] = [];
+  /** The page turn in flight, if any. Continue stays live while it runs, and a
+   *  press then lands it at once and moves on to the step after it. */
+  private turn?: PageTurn;
+  /** Where the skip row's slot sits under the button. */
+  private rowY = 0;
+  /** The skip row and the dots — the parts of the control block that change
+   *  with the page. Held so they can be redrawn in place as the page turns,
+   *  while the button itself stays put and stays live. */
+  private marks: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super("Intro");
@@ -56,6 +61,11 @@ export class IntroScene extends Phaser.Scene {
   }
 
   private build(): void {
+    // A resize rebuilds the scene from nothing, pages and all; the page index
+    // already names the page being turned to, so draw that one at rest.
+    this.turn?.cancel();
+    this.turn = undefined;
+    this.marks = [];
     this.frame = buildStoryFrame(this, INTRO_PAGES, INTRO_AMBIENCE, BLOCK_TAIL);
     this.slideBackdrop = this.frame.backdrop;
     this.chapter = this.frame.page(INTRO_PAGES[this.page]);
@@ -65,13 +75,10 @@ export class IntroScene extends Phaser.Scene {
   /** The block under the chapter: the Continue button — which says the same
    *  thing on the last page as on the first — the skip row on the last page,
    *  and the dots. None of it moves between pages, so it is drawn outside the
-   *  chapter's container and redrawn in place as the page changes. */
+   *  chapter's container; the button is built once and the rest is redrawn in
+   *  place as the page changes. */
   private buildControls(): void {
-    for (const control of this.controls) control.destroy();
-    this.controls = [];
-
     const { blockTop, blockX, blockWidth, blockBottom } = this.frame;
-    const last = this.page === INTRO_PAGES.length - 1;
 
     // The button takes whatever the block has left once the row and the dots
     // are spoken for, so a short viewport shrinks it rather than pushing it off
@@ -82,21 +89,27 @@ export class IntroScene extends Phaser.Scene {
       blockX,
       0,
       label,
-      () => {
-        if (last) this.leave(() => this.scene.start("Character"));
-        else this.nextPage();
-      },
+      () => this.advance(),
       blockWidth,
       Math.max(1, blockBottom - blockTop - BLOCK_TAIL),
     );
     button.y = blockTop + button.height / 2;
-    this.controls.push(button);
 
     // The skip row only exists on the last page, but its height is reserved on
     // every page: the dots are part of the furniture now, and they must not
     // step down the screen when the row appears under them.
-    const rowY = button.y + button.height / 2 + ROW_GAP;
-    if (last) {
+    this.rowY = button.y + button.height / 2 + ROW_GAP;
+    this.buildMarks();
+  }
+
+  /** The skip row, on the last page, and the dots under it. */
+  private buildMarks(): void {
+    for (const mark of this.marks) mark.destroy();
+    this.marks = [];
+
+    const { blockX, blockWidth } = this.frame;
+    const rowY = this.rowY;
+    if (this.page === INTRO_PAGES.length - 1) {
       this.skip = !loadSettings().showIntro;
       const row = checkboxRow(
         this,
@@ -122,10 +135,10 @@ export class IntroScene extends Phaser.Scene {
         },
       );
       row.setDepth(1);
-      this.controls.push(row);
+      this.marks.push(row);
     }
 
-    this.controls.push(
+    this.marks.push(
       ...buildPageDots(
         this,
         blockX,
@@ -136,36 +149,35 @@ export class IntroScene extends Phaser.Scene {
     );
   }
 
+  /** Continue: turn to the next chapter, or leave from the last one. Pressed
+   *  while a page is still turning, it lands that turn at once and carries on
+   *  to the step after it, rather than waiting the animation out. */
+  private advance(): void {
+    this.turn?.finish();
+    if (this.page === INTRO_PAGES.length - 1) {
+      this.leave(() => this.scene.start("Character"));
+    } else {
+      this.nextPage();
+    }
+  }
+
   /** Send the current chapter to the left, draw the next one, then bring it in
    *  from the right — a page turning in a book. Only the chapter travels — the
    *  room behind it and the controls beneath it hold their place, so the page
    *  turns within the screen rather than the whole screen turning over. */
   private nextPage(): void {
-    if (this.transitioning) return;
-    this.transitioning = true;
-    const outgoing = this.chapter;
-    slideObjectsOut(
+    this.page += 1;
+    this.turn = turnPage(
       this,
-      [outgoing],
+      this.chapter,
       () => {
-        outgoing.destroy();
-        this.page += 1;
         this.chapter = this.frame.page(INTRO_PAGES[this.page]);
-        this.buildControls();
-        // slideObjectsOut disables input before invoking its completion. Re-arm
-        // it so slideObjectsIn can own the incoming chapter's lock and restore
-        // it.
-        this.input.enabled = true;
-        slideObjectsIn(
-          this,
-          [this.chapter],
-          () => {
-            this.transitioning = false;
-          },
-          PAGE_TURN,
-        );
+        this.buildMarks();
+        return this.chapter;
       },
-      PAGE_TURN,
+      () => {
+        this.turn = undefined;
+      },
     );
   }
 

@@ -20,11 +20,10 @@ import {
   type StoryFrame,
 } from "../ui/storyPage";
 import {
-  PAGE_TURN,
-  slideObjectsIn,
-  slideObjectsOut,
   slideSceneIn,
   slideSceneOut,
+  turnPage,
+  type PageTurn,
 } from "../ui/sceneSlide";
 import { bannerButton } from "../ui/widgets";
 import { streamFor } from "../systems/Rng";
@@ -62,8 +61,14 @@ export class EndingScene extends Phaser.Scene {
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
   private frame!: StoryFrame;
   private act!: Phaser.GameObjects.Container;
-  /** The button and the dots — the block that holds its place as pages turn. */
-  private controls: Phaser.GameObjects.GameObject[] = [];
+  /** The page turn in flight, if any. Continue stays live while it runs, and a
+   *  press then lands it at once and moves on to the step after it. */
+  private turn?: PageTurn;
+  /** Where the dots sit under the button. */
+  private dotsY = 0;
+  /** The dots — the one part of the control block that changes with the page.
+   *  The button is built once and stays put, and live, as pages turn. */
+  private dots: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super("Ending");
@@ -87,6 +92,11 @@ export class EndingScene extends Phaser.Scene {
   }
 
   private build(): void {
+    // A resize rebuilds the scene from nothing, pages and all; the page index
+    // already names the page being turned to, so draw that one at rest.
+    this.turn?.cancel();
+    this.turn = undefined;
+    this.dots = [];
     this.frame = buildStoryFrame(
       this,
       this.def.pages,
@@ -98,14 +108,10 @@ export class EndingScene extends Phaser.Scene {
     this.buildControls();
   }
 
-  /** The block under the act. Drawn outside the page's container and redrawn
-   *  where it stands as the page turns, so only the story travels. */
+  /** The block under the act. Drawn outside the page's container, so only the
+   *  story travels; the dots are redrawn where they stand as the page turns. */
   private buildControls(): void {
-    for (const control of this.controls) control.destroy();
-    this.controls = [];
-
     const { blockTop, blockX, blockWidth, blockBottom } = this.frame;
-    const last = this.page === this.def.pages.length - 1;
 
     // The button takes whatever the block has left once the dots are spoken
     // for, so a short viewport shrinks it rather than pushing it off the foot
@@ -117,55 +123,52 @@ export class EndingScene extends Phaser.Scene {
       blockX,
       0,
       label,
-      () => {
-        if (last) this.finish();
-        else this.nextPage();
-      },
+      () => this.advance(),
       blockWidth,
       Math.max(1, blockBottom - blockTop - BLOCK_TAIL),
     );
     button.y = blockTop + button.height / 2;
-    this.controls.push(button);
 
-    this.controls.push(
-      ...buildPageDots(
-        this,
-        blockX,
-        button.y + button.height / 2 + DOTS_GAP,
-        this.def.pages.length,
-        this.page,
-      ),
+    this.dotsY = button.y + button.height / 2 + DOTS_GAP;
+    this.buildDots();
+  }
+
+  private buildDots(): void {
+    for (const dot of this.dots) dot.destroy();
+    this.dots = buildPageDots(
+      this,
+      this.frame.blockX,
+      this.dotsY,
+      this.def.pages.length,
+      this.page,
     );
+  }
+
+  /** Continue: turn to the next page, or leave from the last one. Pressed
+   *  while a page is still turning, it lands that turn at once and carries on
+   *  to the step after it, rather than waiting the animation out. */
+  private advance(): void {
+    this.turn?.finish();
+    if (this.page === this.def.pages.length - 1) this.finish();
+    else this.nextPage();
   }
 
   /** Send the current page to the left and bring the next one in from the
    *  right — the intro's page turn, for the same reason: the room and the
    *  controls stay put, and only the act itself moves. */
   private nextPage(): void {
-    if (this.transitioning) return;
-    this.transitioning = true;
-    const outgoing = this.act;
-    slideObjectsOut(
+    this.page += 1;
+    this.turn = turnPage(
       this,
-      [outgoing],
+      this.act,
       () => {
-        outgoing.destroy();
-        this.page += 1;
         this.act = this.frame.page(this.def.pages[this.page]);
-        this.buildControls();
-        // slideObjectsOut disables input before invoking its completion. Re-arm
-        // it so slideObjectsIn can own the incoming page's lock and restore it.
-        this.input.enabled = true;
-        slideObjectsIn(
-          this,
-          [this.act],
-          () => {
-            this.transitioning = false;
-          },
-          PAGE_TURN,
-        );
+        this.buildDots();
+        return this.act;
       },
-      PAGE_TURN,
+      () => {
+        this.turn = undefined;
+      },
     );
   }
 
