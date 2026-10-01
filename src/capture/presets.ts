@@ -205,7 +205,7 @@ export const CAPTURE_PRESETS = [
   },
   {
     id: "roll-callout-procession",
-    label: "Roll callout — procession and shockwaves",
+    label: "Roll callout — procession and sigil pulse",
     kind: "gameplay",
     defaultBackdrop: "felt",
     defaultFormat: "wide",

@@ -242,7 +242,7 @@ export function rollCalloutRun(id: RollCalloutPresetId): RunState {
     }
     // Big dice, so most faces turn up once: Counterpoint and The Canticle
     // both pay for the dice standing alone, which the spotlight picks out, and
-    // The Canticle's multiplier sends its shockwave across the grid.
+    // The Canticle's multiplier pulses the background sigil.
     case "roll-callout-spotlight": {
       const run = baseRun(0x5eed0006);
       run.trial = 18;
@@ -267,8 +267,8 @@ export function rollCalloutRun(id: RollCalloutPresetId): RunState {
       return run;
     }
     // Small dice under The Procession and a stack of multipliers: a 1, a 2 and
-    // a 3 hop in turn, then each multiplier the callout lands sends a
-    // shockwave from the seal.
+    // a 3 hop in turn, and once the callout's multiplier has climbed through
+    // them all the background sigil pulses.
     case "roll-callout-procession": {
       const run = baseRun(0x5eed0007);
       run.trial = 18;

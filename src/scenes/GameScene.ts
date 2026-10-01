@@ -63,11 +63,7 @@ import {
 import { runAuras } from "../systems/DieEffects";
 import { DiceSummaryCard, type CardEffectChance } from "../ui/DiceSummaryCard";
 import { formatScore } from "../ui/formatScore";
-import {
-  ONE,
-  rollBreakdown,
-  type MultiplierStep,
-} from "../systems/RollBreakdown";
+import { rollBreakdown, type MultiplierStep } from "../systems/RollBreakdown";
 import {
   breakdownRows,
   playRollBreakdown,
@@ -86,7 +82,6 @@ import { DuelShowdown } from "../ui/duelShowdown";
 import { ChainLightning, type ChainGroup } from "../ui/chainLightning";
 import { Spotlight } from "../ui/spotlight";
 import { SigilBurst } from "../ui/sigilBurst";
-import { GridShockwave } from "../ui/gridShockwave";
 import {
   advanceFrom,
   advanceTutorial,
@@ -559,10 +554,9 @@ export class GameScene extends Phaser.Scene {
   private settleTimer?: Phaser.Time.TimerEvent;
   private effectTimer?: Phaser.Time.TimerEvent;
   /** This roll's grid flourishes while they play: chain lightning, the
-   *  spotlight, sigil bursts, the callout's shockwaves. See playFlourishes. */
+   *  spotlight, sigil bursts. See playFlourishes. */
   private flourishes: Flourish[] = [];
   private flourishTimers: Phaser.Time.TimerEvent[] = [];
-  private shockwave?: GridShockwave;
   private finishEffects?: (skipHold: boolean) => void;
   private pendingAdvance?: Phaser.Time.TimerEvent;
   private hudRank!: Phaser.GameObjects.Text;
@@ -633,7 +627,6 @@ export class GameScene extends Phaser.Scene {
     this.finishEffects = undefined;
     this.flourishes = [];
     this.flourishTimers = [];
-    this.shockwave = undefined;
     this.pendingAdvance = undefined;
     this.endedTrialHud = undefined;
     this.sprites = new Map();
@@ -2571,48 +2564,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Send a shockwave from the seal across the grid for one step of the roll
-   * callout's multiplier (see ui/gridShockwave), sized by that step's factor.
-   * The ring is one Graphics, so it plays at every detail level the player has
-   * motion on for; the dice only swell at the levels that pulse per-die
-   * borders, where each die is its own sprite.
+   * Pulse the background sigil as the roll's multiplier lands: once per roll,
+   * on the callout's last multiplier step, however many cards stacked up to it
+   * (see AmbientLayer.pulse). Brighter for a bigger multiplier, within a narrow
+   * band — the backdrop answers the roll without competing with the dice.
    */
-  private sendShockwave(steps: readonly MultiplierStep[], index: number): void {
-    const step = steps[index];
-    const cam = this.gridCamera;
-    if (!fx.motion || !step || step.id === "penalty" || !cam) return;
-    const before = index > 0 ? steps[index - 1].after : ONE;
-    const factor =
-      Number(
-        (step.after.num * before.den * 1000n) / (step.after.den * before.num),
-      ) / 1000;
-    const origin = this.gridWorldPosition(this.sealImage.x, this.sealImage.y);
-    if (!this.shockwave) {
-      const view = cam.worldView;
-      const reach = Math.max(
-        ...[
-          [view.left, view.top],
-          [view.right, view.top],
-          [view.left, view.bottom],
-          [view.right, view.bottom],
-        ].map(([x, y]) =>
-          Phaser.Math.Distance.Between(origin.x, origin.y, x, y),
-        ),
-      );
-      const wave = new GridShockwave(
-        this,
-        this.gridContainer,
-        () =>
-          fx.on &&
-          (this.gridDetail === "full" || this.gridDetail === "noCallouts")
-            ? this.sprites.values()
-            : [],
-        { worldPerPixel: 1 / cameraZoom(cam), color: COLORS.goldLight, reach },
-      );
-      this.addFlourish(wave);
-      this.shockwave = wave;
-    }
-    this.shockwave.send(origin, factor);
+  private pulseForMultiplier(
+    steps: readonly MultiplierStep[],
+    index: number,
+  ): void {
+    if (index !== steps.length - 1) return;
+    const after = steps[index].after;
+    const multiplier = Number((after.num * 100n) / after.den) / 100;
+    if (!(multiplier > 1)) return;
+    // ×2 is the faintest pulse; ×100 and beyond the brightest.
+    this.ambient?.pulse(Math.log(multiplier) / Math.log(100));
   }
 
   /** Track a flourish until the next roll or relayout ends it, and keep it out
@@ -2630,7 +2596,6 @@ export class GameScene extends Phaser.Scene {
   private clearFlourishes(): void {
     for (const flourish of this.flourishes) flourish.destroy();
     this.flourishes = [];
-    this.shockwave = undefined;
     for (const timer of this.flourishTimers) timer.remove();
     this.flourishTimers = [];
   }
@@ -2640,23 +2605,6 @@ export class GameScene extends Phaser.Scene {
   private gridDieSize(): number {
     for (const sprite of this.sprites.values()) return sprite.scaleX * DIE_SIZE;
     return DIE_SIZE;
-  }
-
-  /** The inverse of dieScreenPosition: the grid-world point under a
-   *  layout-pixel screen position. */
-  private gridWorldPosition(x: number, y: number): { x: number; y: number } {
-    const cam = this.gridCamera;
-    if (!cam) return { x, y };
-    const origin = cameraOrigin(cam);
-    const pose = this.gridGlide?.to ?? {
-      zoom: cameraZoom(cam),
-      scrollX: cam.scrollX,
-      scrollY: cam.scrollY,
-    };
-    return {
-      x: pose.scrollX + (x - origin.x) / pose.zoom,
-      y: pose.scrollY + (y - origin.y) / pose.zoom,
-    };
   }
 
   /** Identify dice added by an automatic passive after the grid has been
@@ -3638,7 +3586,7 @@ export class GameScene extends Phaser.Scene {
         onBonus: (index) => audio.multiply(index),
         onStep: (index) => {
           audio.multiply(index);
-          this.sendShockwave(breakdown.steps, index);
+          this.pulseForMultiplier(breakdown.steps, index);
         },
       });
       this.breakdownView = view;
