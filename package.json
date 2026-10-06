@@ -46,6 +46,7 @@
     "goals:sweep": "tsx src/sim/goalSweep.ts",
     "goals:validate": "tsx src/sim/goalValidate.ts",
     "goals:report": "tsx src/sim/goalReport.ts",
+    "goals:raise": "tsx src/sim/goalRaise.ts",
     "persistence:check": "tsx src/sim/activeRunPersistenceCheck.ts",
     "history:check": "tsx src/sim/runHistoryCheck.ts",
     "stats:check": "tsx src/sim/playerStatsCheck.ts",

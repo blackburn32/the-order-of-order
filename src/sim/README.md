@@ -469,6 +469,7 @@ npm run goals:search      # seeds × strategy grid, goals removed → a goal tab
 npm run goals:sweep       # every table played with culling on, on held-out seeds
 npm run goals:validate    # one table (the live one by default), in detail
 npm run goals:report      # before/after page → sim-out/goal-report.html
+npm run goals:raise       # what raising the late goals costs in wins and buys in roll-1 clears
 ```
 
 **The grid.** A grid point is one way of playing: a strategy, the unlock pool it
@@ -549,6 +550,33 @@ could buy. `EXPERT_SEEDS=N` adds the expert on N seeds;
 new goals over the search's percentile band and per-seed max, survival by trial,
 first-roll clears and budget use per trial, win rate by strategy, the
 percentile trade-off, reroll affordability and Boss Trial clear rates.
+
+**Raising the late goals** (`goals:raise`) answers one question about a table
+that already exists: what does multiplying its late goals cost in wins, and how
+many roll-1 clears does it remove? Every goal from `FROM_RANK` (default 5) on is
+multiplied by each of `FACTORS` (default ×1.5 to ×1000) — `SHAPE=flat` for the
+same factor everywhere, `SHAPE=ramp` for one that grows rank by rank to the full
+factor at rank 10 — and the grid plays each table with culling. Per factor it
+prints the win rate, the win rate of the runs that reached the first raised
+trial, the share of raised-trial clears that came on roll 1, the budget share a
+clear used, and where the raised goal sits in the goals-removed field of
+`SEARCH_RAW` (as a percentile). A raised goal cannot change a trial before it,
+so only the runs that reached the first raised trial are replayed (checked
+against their base run), which makes thousands of seeds cheap. The expert is
+the exception — its roll-outs play the ladder ahead, so it shops differently
+from its first visit — and every expert run (`EXPERT_SEEDS`) is replayed whole.
+
+| env            | default                      | what it does                                 |
+| -------------- | ---------------------------- | -------------------------------------------- |
+| `GOALS`        | `live`                       | the base table, as `goals:validate` reads it |
+| `FROM_RANK`    | 5                            | comma list of first raised ranks             |
+| `FACTORS`      | 1.5,2,3,5,10,30,100,1000     | multipliers tried at each `FROM_RANK`        |
+| `SHAPE`        | `flat`                       | `flat` or `ramp`                             |
+| `SEEDS`        | 2000                         | grid seeds (`0` for an expert-only pass)     |
+| `EXPERT_SEEDS` | 0                            | also run the expert on N seeds               |
+| `SEED`         | 3                            | base seed, held out from search and validate |
+| `SEARCH_RAW`   | sim-out/goal-search-raw.json | the field a goal's percentile is read from   |
+| `OUT`          | sim-out/goal-raise.json      | every variant's measurements                 |
 
 To redo the whole pass after a rules change:
 
@@ -794,6 +822,7 @@ crosses the bucket threshold.
 | `goalSweep.ts`           | Every table a search derived, played with culling on held-out seeds, side by side.               |
 | `goalValidate.ts`        | One goal table played by the grid with culling: survival, roll-1 clears, strategies, bosses.     |
 | `goalReport.ts`          | Before/after HTML page from a search and two validations.                                        |
+| `goalRaise.ts`           | Late goals × a range of factors: wins against roll-1 clears, replaying only survivors.           |
 | `benchmark.ts`           | An exported run measured against every series at the same trial. Start here.                     |
 | `expertTune.ts`          | The expert's knobs swept against those runs, over a matched seed stream.                         |
 | `importRun.ts`           | Reads a dev-panel run export (or a raw active-run save) back into a `RunState`.                  |
