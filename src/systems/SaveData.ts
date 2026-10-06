@@ -114,6 +114,7 @@ export function loadHall(): HallEntry[] {
         goldEarned: Number(entry.goldEarned ?? 0),
         dice: (Array.isArray(entry.dice) ? entry.dice : []).map((rawDie) => {
           const d = rawDie as Partial<DiceStack>;
+          const scores = hallScores(d.scores);
           return {
             sides: d.sides ?? 6,
             // Older hall entries stored this as a boolean. Resolve it from the
@@ -126,6 +127,9 @@ export function loadHall(): HallEntry[] {
             wildFace: d.wildFace ?? false,
             source: d.source ?? "starter",
             count: d.count ?? 1,
+            // The Vigil's tally, for the final grid's tooltips. Entries
+            // recorded before it was kept carry none.
+            ...(scores ? { scores } : {}),
           } as DiceStack;
         }),
         auras: hallAuras(entry.auras),
@@ -141,6 +145,15 @@ export function loadHall(): HallEntry[] {
   } catch {
     return [];
   }
+}
+
+/** A saved die's Vigil tally, or nothing when it holds no real counts. */
+function hallScores(value: unknown): number[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const scores = value.map((count) =>
+    Math.max(0, Math.floor(Number(count) || 0)),
+  );
+  return scores.some((count) => count > 0) ? scores : undefined;
 }
 
 /** Rigged-roll keys as read back off storage, or off another player's shared

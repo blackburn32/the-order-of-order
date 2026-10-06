@@ -23,6 +23,8 @@ import {
 import { toNumberPointMap } from "../systems/ItemPoints";
 import { formatSci, formatScore } from "../ui/formatScore";
 import { DieTooltip } from "../ui/dieTooltip";
+import { vigilGroups } from "../ui/vigilTally";
+import type { DiceStack } from "../systems/DicePool";
 import { dieBodyTexture } from "../art/textures";
 import {
   dieEffects,
@@ -592,14 +594,28 @@ export class HallScene extends Phaser.Scene {
     // player can tell apart.
     const kinds = new Map<
       string,
-      { sides: number; effects: DieEffect[]; count: number }
+      {
+        sides: number;
+        effects: DieEffect[];
+        count: number;
+        stacks: DiceStack[];
+      }
     >();
     for (const stack of entry.dice) {
       const effects = dieEffects(stack, entry.auras);
       const key = `${stack.sides}|${dieEffectsKey(effects)}`;
       const kind = kinds.get(key);
-      if (kind) kind.count += stack.count;
-      else kinds.set(key, { sides: stack.sides, effects, count: stack.count });
+      if (kind) {
+        kind.count += stack.count;
+        kind.stacks.push(stack);
+      } else {
+        kinds.set(key, {
+          sides: stack.sides,
+          effects,
+          count: stack.count,
+          stacks: [stack],
+        });
+      }
     }
     const all = [...kinds.values()];
     const crowded = all.length > GRID_LIST_MAX_KINDS;
@@ -624,7 +640,7 @@ export class HallScene extends Phaser.Scene {
     const container = this.add.container(0, 0);
     let listX = 0;
 
-    shown.forEach(({ sides, effects, count }) => {
+    shown.forEach(({ sides, effects, count, stacks }) => {
       // Sized rather than scaled: the die body is baked above layout
       // resolution, and a display size is the one form that normalises itself.
       const icon = this.add
@@ -643,7 +659,10 @@ export class HallScene extends Phaser.Scene {
         .setOrigin(0, 0.5);
       const width = iconSize + 3 + label.width;
       const hit = this.add.zone(listX + width / 2, 0, width, iconSize + 6);
-      this.dieTooltip.attach(hit, () => ({ sides, effects, count }));
+      // The Vigil's tallies the run ended with, as the shop and the
+      // inventory show them mid-run.
+      const vigil = vigilGroups(stacks);
+      this.dieTooltip.attach(hit, () => ({ sides, effects, count, vigil }));
       container.add([icon, label, hit]);
       listX += width + itemPadding;
     });

@@ -8,16 +8,21 @@ import {
   DIE_EFFECT_SOURCE,
   type DieEffect,
 } from "../systems/DieEffects";
+import type { VigilGroup } from "../systems/GrowthEngines";
 import { ITEMS } from "../systems/Items";
 import { formatScore } from "./formatScore";
+import { formatVigilGrowth, vigilGrowthLog10, vigilScored } from "./vigilTally";
 import { addCamera } from "./camera";
 
 /** What a tooltip describes: a kind of die, the effects it carries, and
- *  optionally how many of it there are. */
+ *  optionally how many of it there are and The Vigil's tallies among them. */
 export interface DieTooltipContent {
   sides: number;
   effects: readonly DieEffect[];
   count?: number;
+  /** The dice that have scored under The Vigil, grouped by tally. Dice the
+   *  groups leave out of `count` have not scored yet. */
+  vigil?: readonly VigilGroup[];
 }
 
 const WIDTH = 290;
@@ -35,6 +40,8 @@ const PRESS_SLOP = 8;
 /** Kept clear above a finger, which hides far more of the screen than a
  *  cursor does. */
 const TOUCH_OFFSET = 44;
+/** The most distinct tallies listed before the rest are counted off. */
+const VIGIL_LINES = 3;
 
 const ITEM_NAMES = new Map<string, string>(
   ITEMS.map((item) => [item.id, item.name]),
@@ -237,6 +244,29 @@ export class DieTooltip {
       y = Math.max(y + SWATCH, source.y + source.height);
     });
 
+    const vigil = vigilLines(content);
+    if (vigil.length > 0) {
+      y += 10;
+      const head = scene.add.text(PAD, y, "The Vigil", {
+        fontFamily: SERIF,
+        fontSize: "15px",
+        color: CSS.gold,
+        fontStyle: "bold",
+      });
+      parts.push(head);
+      y += head.height + 1;
+      for (const line of vigil) {
+        const text = scene.add.text(PAD, y, line, {
+          fontFamily: SERIF,
+          fontSize: "13px",
+          color: CSS.parchment,
+          wordWrap: { width: WIDTH - PAD * 2 },
+        });
+        parts.push(text);
+        y += text.height + 1;
+      }
+    }
+
     const height = y + PAD;
     // As wide as its longest line, up to the width the copy wraps at.
     const width = Math.min(
@@ -291,4 +321,52 @@ export class DieTooltip {
       Phaser.Math.Clamp(y, 8, Math.max(8, H - h - 8)),
     );
   }
+}
+
+function times(n: number): string {
+  return n === 1 ? "once" : `${formatScore(n)} times`;
+}
+
+/** The Vigil's part of a tooltip, a line at a time: what the dice described
+ *  have scored under it and how far that has grown their points. Empty when
+ *  none of them has scored. */
+function vigilLines(content: DieTooltipContent): string[] {
+  const groups = (content.vigil ?? []).filter((group) => group.count > 0);
+  if (groups.length === 0) return [];
+  const tallied = groups.reduce((sum, group) => sum + group.count, 0);
+  const total = Math.max(content.count ?? tallied, tallied);
+  const growth = (scores: readonly number[]) =>
+    formatVigilGrowth(vigilGrowthLog10(scores));
+
+  if (groups.length === 1 && tallied === total) {
+    const { scores } = groups[0];
+    const scored = times(vigilScored(scores));
+    return [
+      `${total === 1 ? "Scored" : "Each scored"} ${scored} · points grow ${growth(scores)}`,
+    ];
+  }
+
+  // The longest vigils lead: they are the dice the tally is worth reading for.
+  const sorted = [...groups].sort(
+    (a, b) =>
+      vigilGrowthLog10(b.scores) - vigilGrowthLog10(a.scores) ||
+      b.count - a.count,
+  );
+  const lines = sorted
+    .slice(0, VIGIL_LINES)
+    .map(
+      (group) =>
+        `×${formatScore(group.count)} scored ${times(vigilScored(group.scores))} · ${growth(group.scores)}`,
+    );
+  const rest = sorted.slice(VIGIL_LINES);
+  if (rest.length > 0) {
+    const dice = rest.reduce((sum, group) => sum + group.count, 0);
+    lines.push(
+      `×${formatScore(dice)} more across ${rest.length} lesser tallies`,
+    );
+  }
+  if (total > tallied) {
+    lines.push(`×${formatScore(total - tallied)} not yet scored`);
+  }
+  return lines;
 }

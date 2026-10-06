@@ -49,6 +49,7 @@ import {
 import { dieBodyTexture } from "../art/textures";
 import { formatSci } from "../ui/formatScore";
 import { DieTooltip } from "../ui/dieTooltip";
+import { vigilGroups } from "../ui/vigilTally";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { addFelt, bannerButton } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
@@ -3165,6 +3166,7 @@ export class ShopScene extends Phaser.Scene {
         () => ({
           sides: die.sides,
           effects: dieEffects(die, runAuras(this.state)),
+          vigil: vigilGroups([{ ...die, count: 1 }]),
         }),
         eligible ? () => this.onPick(offer, i) : undefined,
       );
@@ -3333,6 +3335,10 @@ export class ShopScene extends Phaser.Scene {
             ),
           ),
           count: entry.count,
+          vigil: vigilGroups(
+            this.state.dice.summarize(),
+            (stack) => stack.sides === entry.die.sides,
+          ),
         }),
         entry.eligible ? () => this.onPick(offer, entry.index) : undefined,
       );
@@ -3374,10 +3380,17 @@ export class ShopScene extends Phaser.Scene {
       label.x = -width / 2 + icon + 3;
       widest = Math.max(widest, width);
       const hit = this.add.zone(0, lineY, width + 6, VARIANT_LINE_H);
+      const key = dieEffectsKey(variant.effects);
       this.dieTooltip.attach(hit, () => ({
         sides,
         effects: variant.effects,
         count: variant.count,
+        vigil: vigilGroups(
+          this.state.dice.summarize(),
+          (stack) =>
+            stack.sides === sides &&
+            dieEffectsKey(dieEffects(stack, runAuras(this.state))) === key,
+        ),
       }));
       list.add([image, label, hit]);
     });
@@ -3440,6 +3453,17 @@ export class ShopScene extends Phaser.Scene {
           sides: die.sides,
           effects: dieEffects(die, runAuras(this.state)),
           count: group.count,
+          // The group's own kind of die, voices kept apart as `groups()` keeps
+          // them; dice already picked for this offer are not set aside.
+          vigil: vigilGroups(
+            this.state.dice.summarize(),
+            (stack) =>
+              stack.sides === die.sides &&
+              stack.maxFaceBonus === die.maxFaceBonus &&
+              stack.loaded === die.loaded &&
+              stack.wildFace === die.wildFace &&
+              isVoiceDie(stack) === isVoiceDie(die),
+          ),
         }),
         eligible ? () => this.onPick(offer, group.firstIndex) : undefined,
       );
