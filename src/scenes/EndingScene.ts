@@ -16,6 +16,7 @@ import { STORY_BUTTONS } from "../story";
 import { responsive } from "../ui/layout";
 import {
   buildPageDots,
+  buildSkipLink,
   buildStoryFrame,
   type StoryFrame,
 } from "../ui/storyPage";
@@ -33,12 +34,15 @@ import { streamFor } from "../systems/Rng";
  *  work has just landed, and the room should read as answering it. */
 const ENDING_AMBIENCE = 0.8;
 
-/** Air under the button, before the dots. */
-const DOTS_GAP = 24;
-/** What the control block needs below its button: the gap, the dots and a
- *  little air under them. Declared to the frame so the copy above stops clear
- *  of the whole block rather than of the button alone. */
-const BLOCK_TAIL = DOTS_GAP + 12;
+/** Air under the button, before the skip link. */
+const ROW_GAP = 24;
+/** Air between the skip link and the dots. */
+const DOTS_GAP = 34;
+/** What the control block needs below its button: the skip link's slot — held
+ *  on every page, including the last one that leaves it empty — then the dots
+ *  and a little air under them. Declared to the frame so the copy above stops
+ *  clear of the whole block rather than of the button alone. */
+const BLOCK_TAIL = ROW_GAP + DOTS_GAP + 12;
 
 export interface EndingSceneData {
   id: EndingId;
@@ -64,11 +68,12 @@ export class EndingScene extends Phaser.Scene {
   /** The page turn in flight, if any. Continue stays live while it runs, and a
    *  press then lands it at once and moves on to the step after it. */
   private turn?: PageTurn;
-  /** Where the dots sit under the button. */
-  private dotsY = 0;
-  /** The dots — the one part of the control block that changes with the page.
-   *  The button is built once and stays put, and live, as pages turn. */
-  private dots: Phaser.GameObjects.GameObject[] = [];
+  /** Where the skip link's slot sits under the button. */
+  private rowY = 0;
+  /** The skip link and the dots — the parts of the control block that change
+   *  with the page. The button is built once and stays put, and live, as pages
+   *  turn. */
+  private marks: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
     super("Ending");
@@ -96,7 +101,7 @@ export class EndingScene extends Phaser.Scene {
     // already names the page being turned to, so draw that one at rest.
     this.turn?.cancel();
     this.turn = undefined;
-    this.dots = [];
+    this.marks = [];
     this.frame = buildStoryFrame(
       this,
       this.def.pages,
@@ -129,18 +134,32 @@ export class EndingScene extends Phaser.Scene {
     );
     button.y = blockTop + button.height / 2;
 
-    this.dotsY = button.y + button.height / 2 + DOTS_GAP;
-    this.buildDots();
+    this.rowY = button.y + button.height / 2 + ROW_GAP;
+    this.buildMarks();
   }
 
-  private buildDots(): void {
-    for (const dot of this.dots) dot.destroy();
-    this.dots = buildPageDots(
-      this,
-      this.frame.blockX,
-      this.dotsY,
-      this.def.pages.length,
-      this.page,
+  /** The skip link, on every page but the last, and the dots under it. */
+  private buildMarks(): void {
+    for (const mark of this.marks) mark.destroy();
+    this.marks = [];
+
+    const { blockX, blockWidth } = this.frame;
+    const last = this.def.pages.length - 1;
+    if (this.page < last) {
+      this.marks.push(
+        buildSkipLink(this, blockX, this.rowY, blockWidth, () =>
+          this.skipToEnd(),
+        ),
+      );
+    }
+    this.marks.push(
+      ...buildPageDots(
+        this,
+        blockX,
+        this.rowY + DOTS_GAP,
+        this.def.pages.length,
+        this.page,
+      ),
     );
   }
 
@@ -153,17 +172,30 @@ export class EndingScene extends Phaser.Scene {
     else this.nextPage();
   }
 
-  /** Send the current page to the left and bring the next one in from the
+  /** Skip: turn straight to the act's last page, landing any turn in flight
+   *  first. The act still ends by Continue from there, so its hand-off is the
+   *  same one a reader who turned every page would get. */
+  private skipToEnd(): void {
+    this.turn?.finish();
+    const last = this.def.pages.length - 1;
+    if (this.page < last) this.turnTo(last);
+  }
+
+  private nextPage(): void {
+    this.turnTo(this.page + 1);
+  }
+
+  /** Send the current page to the left and bring the one at `page` in from the
    *  right — the intro's page turn, for the same reason: the room and the
    *  controls stay put, and only the act itself moves. */
-  private nextPage(): void {
-    this.page += 1;
+  private turnTo(page: number): void {
+    this.page = page;
     this.turn = turnPage(
       this,
       this.act,
       () => {
         this.act = this.frame.page(this.def.pages[this.page]);
-        this.buildDots();
+        this.buildMarks();
         return this.act;
       },
       () => {

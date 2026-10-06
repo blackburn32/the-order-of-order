@@ -14,6 +14,7 @@ import {
   compactColumns,
   isCompactLandscape,
 } from "./layout";
+import { audio } from "../systems/Audio";
 import { addFelt, fitTextWidth } from "./widgets";
 
 export interface StoryPage {
@@ -399,4 +400,72 @@ export function buildPageDots(
     dots.push(dot);
   }
   return dots;
+}
+
+/** The least height a skip link's hit area is given, so a thumb finds it as
+ *  easily as a cursor does. */
+const SKIP_HIT_H = 44;
+
+/**
+ * The quiet link under Continue that jumps a sequence to its last page. Smaller
+ * and dimmer than the button above it: Continue is the way through a story, and
+ * this is only the way past it. It lands on the last page rather than leaving
+ * the sequence, so whatever that page carries (the intro's "skip on future
+ * runs" box) is still seen, and the player still leaves by Continue.
+ *
+ * Fires on release, like the banner buttons, so a touch that starts on the
+ * link and slides off it does not skip.
+ */
+export function buildSkipLink(
+  scene: Phaser.Scene,
+  cx: number,
+  y: number,
+  maxWidth: number,
+  onSkip: () => void,
+): Phaser.GameObjects.Text {
+  const link = scene.add
+    .text(cx, y, "Skip to the end", {
+      fontFamily: SERIF,
+      fontSize: "20px",
+      fontStyle: "italic",
+      color: CSS.parchment,
+    })
+    .setOrigin(0.5)
+    .setAlpha(0.75)
+    .setDepth(1);
+  fitTextWidth(link, maxWidth);
+
+  // Measured from the text's top-left; padded out to a comfortable touch
+  // target around the glyphs.
+  const padX = 16;
+  const hitH = Math.max(SKIP_HIT_H, link.height + 16);
+  link.setInteractive({
+    hitArea: new Phaser.Geom.Rectangle(
+      -padX,
+      (link.height - hitH) / 2,
+      link.width + padX * 2,
+      hitH,
+    ),
+    hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+    useHandCursor: true,
+  });
+  let pressed = false;
+  link.on("pointerover", () => link.setAlpha(1).setColor(CSS.goldLight));
+  link.on("pointerout", () => {
+    pressed = false;
+    link.setAlpha(0.75).setColor(CSS.parchment);
+  });
+  link.on("pointerdown", () => {
+    pressed = true;
+    audio.click();
+  });
+  link.on("pointerup", () => {
+    if (!pressed) return;
+    pressed = false;
+    onSkip();
+  });
+  link.on("pointerupoutside", () => {
+    pressed = false;
+  });
+  return link;
 }

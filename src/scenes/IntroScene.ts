@@ -6,6 +6,7 @@ import { responsive } from "../ui/layout";
 import { INTRO_PAGES, STORY_BUTTONS } from "../story";
 import {
   buildPageDots,
+  buildSkipLink,
   buildStoryFrame,
   type StoryFrame,
 } from "../ui/storyPage";
@@ -22,7 +23,8 @@ import {
  *  compete with the art instead of framing it. */
 const INTRO_AMBIENCE = 0.35;
 
-/** Air under the button, before the skip row. */
+/** Air under the button, before the skip row: the link that jumps to the last
+ *  page, or on the last page the box that skips the intro on future runs. */
 const ROW_GAP = 24;
 /** Air between the skip row and the dots. */
 const DOTS_GAP = 34;
@@ -102,7 +104,8 @@ export class IntroScene extends Phaser.Scene {
     this.buildMarks();
   }
 
-  /** The skip row, on the last page, and the dots under it. */
+  /** The skip row and the dots under it. Every page but the last offers the
+   *  jump to the last page; the last page offers to skip the intro next time. */
   private buildMarks(): void {
     for (const mark of this.marks) mark.destroy();
     this.marks = [];
@@ -136,6 +139,10 @@ export class IntroScene extends Phaser.Scene {
       );
       row.setDepth(1);
       this.marks.push(row);
+    } else {
+      this.marks.push(
+        buildSkipLink(this, blockX, rowY, blockWidth, () => this.skipToEnd()),
+      );
     }
 
     this.marks.push(
@@ -161,12 +168,25 @@ export class IntroScene extends Phaser.Scene {
     }
   }
 
-  /** Send the current chapter to the left, draw the next one, then bring it in
-   *  from the right — a page turning in a book. Only the chapter travels — the
-   *  room behind it and the controls beneath it hold their place, so the page
-   *  turns within the screen rather than the whole screen turning over. */
+  /** Skip: turn straight to the last chapter, landing any turn in flight
+   *  first. The player still leaves from there by Continue. */
+  private skipToEnd(): void {
+    this.turn?.finish();
+    if (this.page < INTRO_PAGES.length - 1) {
+      this.turnTo(INTRO_PAGES.length - 1);
+    }
+  }
+
   private nextPage(): void {
-    this.page += 1;
+    this.turnTo(this.page + 1);
+  }
+
+  /** Send the current chapter to the left, draw the one at `page`, then bring
+   *  it in from the right — a page turning in a book. Only the chapter travels —
+   *  the room behind it and the controls beneath it hold their place, so the
+   *  page turns within the screen rather than the whole screen turning over. */
+  private turnTo(page: number): void {
+    this.page = page;
     this.turn = turnPage(
       this,
       this.chapter,
