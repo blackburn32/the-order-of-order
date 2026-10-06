@@ -39,6 +39,11 @@
       canvas {
         display: block;
         touch-action: none;
+        /* A held finger reads a die's tooltip; it must not also raise the
+         browser's own callout or start a text selection. */
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
         max-width: 100%;
         max-height: 100%;
         image-rendering: auto;
