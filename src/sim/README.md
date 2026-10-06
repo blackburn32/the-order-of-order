@@ -624,6 +624,18 @@ Three things this pass established, each worth knowing before the next one:
   trials on its opening roll under every table tried (up to the 95th
   percentile). Fixing that is a mechanics change — the spread of the engines —
   not a goal table.
+- **Raising the late goals makes roll-1 clears more common, not less.**
+  `goals:raise` multiplied every goal from rank 5 on (3,000 grid seeds, 400
+  expert seeds). The grid runs that reached rank 5 won 8.0% of the time at ×1,
+  4.8% at ×2, 2.7% at ×10 and 0.3% at ×100, while the roll-1 share of their
+  rank 5+ clears went 31% → 29% → 32% → 41% (51% at ×1000). The expert's win
+  rate barely moved (3.5% → 2.3% at ×1000, inside the noise of 400 seeds) and
+  its roll-1 share rose from 70% to 96%. A higher goal ends the runs whose
+  whole budget only just reached it — the ones that were using their rolls —
+  and leaves the runaway builds, which still clear on the opening roll: at
+  rank 8 a survivor's opening roll beats the goal by a median of 1.3 decades
+  and a 90th percentile of 5.3. Raising goals only from rank 8 on, or as a
+  ramp up to rank 10, tells the same story.
 
 ## The engine-gated curve (the previous design)
 

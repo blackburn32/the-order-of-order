@@ -338,20 +338,31 @@ async function main(): Promise<void> {
 
 function print(variants: Variant[]): void {
   const pct = (x: number, d = 1) => `${(x * 100).toFixed(d)}%`;
+  const groups = (v: Variant) =>
+    [
+      v.grid.runs > 0 ? { name: "grid", m: v.grid, d: 2 } : null,
+      v.expert ? { name: "expert", m: v.expert, d: 1 } : null,
+    ].filter((g) => g !== null);
   for (const fromRank of new Set(variants.map((v) => v.fromRank))) {
     const rows = variants.filter((v) => v.fromRank === fromRank);
     const base = rows.find((v) => v.factor === 1)!;
-    const hasExpert = base.expert !== null;
+    const reached = groups(base)
+      .map(
+        (g) =>
+          `${g.name} ${pct(g.m.reachedStart / g.m.runs)} (${g.m.reachedStart} runs)`,
+      )
+      .join(", ");
     console.log(
-      `\nGoals from rank ${fromRank} (trial ${base.fromTrial}) on, ${SHAPE}. ` +
-        `Reached it: grid ${pct(base.grid.reachedStart / base.grid.runs)} (${base.grid.reachedStart} runs)` +
-        (hasExpert
-          ? `, expert ${pct(base.expert!.reachedStart / base.expert!.runs)} (${base.expert!.reachedStart} runs)`
-          : ""),
+      `\nGoals from rank ${fromRank} (trial ${base.fromTrial}) on, ${SHAPE}. Reached it: ${reached}`,
     );
     console.log(
-      "  factor | field pct | grid win | of reached | 1-roll | budget" +
-        (hasExpert ? " | expert win | of reached | 1-roll | budget" : ""),
+      "  factor | field pct" +
+        groups(base)
+          .map(
+            (g) =>
+              ` | ${g.name.padStart(6)} win | of reached | 1-roll | budget`,
+          )
+          .join(""),
     );
     for (const v of rows) {
       const cells = [
@@ -360,17 +371,13 @@ function print(variants: Variant[]): void {
           ? "-"
           : `p${(v.fieldPercentile * 100).toFixed(0)}`
         ).padStart(9),
-        pct(v.grid.winRate, 2).padStart(8),
-        pct(v.grid.winGivenStart).padStart(10),
-        pct(v.grid.firstRollShare).padStart(6),
-        pct(v.grid.budgetShare, 0).padStart(6),
       ];
-      if (v.expert)
+      for (const g of groups(v))
         cells.push(
-          pct(v.expert.winRate).padStart(10),
-          pct(v.expert.winGivenStart).padStart(10),
-          pct(v.expert.firstRollShare).padStart(6),
-          pct(v.expert.budgetShare, 0).padStart(6),
+          pct(g.m.winRate, g.d).padStart(10),
+          pct(g.m.winGivenStart).padStart(10),
+          pct(g.m.firstRollShare).padStart(6),
+          pct(g.m.budgetShare, 0).padStart(6),
         );
       console.log(cells.join(" | "));
     }
