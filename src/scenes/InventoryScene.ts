@@ -22,6 +22,9 @@ import { buildItemCard } from "../ui/itemCard";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import { formatScore } from "../ui/formatScore";
 import { DieTooltip } from "../ui/dieTooltip";
+import { vigilGroups } from "../ui/vigilTally";
+import type { VigilGroup } from "../systems/GrowthEngines";
+import type { DiceStack } from "../systems/DicePool";
 import {
   compactColumns,
   destroyAllChildren,
@@ -114,6 +117,8 @@ interface DiceRow {
   sides: DieSides;
   effects: DieEffect[];
   count: number;
+  /** The Vigil's tallies among the row's dice. */
+  vigil: VigilGroup[];
 }
 
 /**
@@ -686,8 +691,25 @@ export class InventoryScene extends Phaser.Scene {
       const row = rows.get(key);
       if (row) row.count += group.count;
       else
-        rows.set(key, { sides: group.die.sides, effects, count: group.count });
+        rows.set(key, {
+          sides: group.die.sides,
+          effects,
+          count: group.count,
+          vigil: [],
+        });
     }
+    // `groups()` folds dice of one kind together whatever they have scored;
+    // the stacks keep each tally apart, so the row's tooltip can tell them.
+    const stacks = new Map<string, DiceStack[]>();
+    for (const stack of run.dice.summarize()) {
+      if (!stack.scores) continue;
+      const key = `${stack.sides}|${dieEffectsKey(dieEffects(stack, auras))}`;
+      const list = stacks.get(key);
+      if (list) list.push(stack);
+      else stacks.set(key, [stack]);
+    }
+    for (const [key, row] of rows)
+      row.vigil = vigilGroups(stacks.get(key) ?? []);
     const rank = (effects: DieEffect[]) =>
       effects.length === 0
         ? -1
@@ -841,6 +863,7 @@ export class InventoryScene extends Phaser.Scene {
         sides: row.sides,
         effects: row.effects,
         count: row.count,
+        vigil: row.vigil,
       }));
       container.add(hit);
 
