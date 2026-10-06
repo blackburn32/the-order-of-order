@@ -6,7 +6,7 @@ toward the current **trial's** goal and nothing else — they reset to zero the 
 ends. The shop runs on a separate currency, **gold**, earned by clearing trials.
 
 A run climbs a ladder of **trials** grouped into **ranks**. Each rank is three trials — the
-Lesser Trial (7 rolls), the Greater Trial (15 rolls), and the Boss Trial (20 rolls). A route
+Lesser Trial (7 rolls), the Greater Trial (10 rolls), and the Boss Trial (10 rolls). A route
 screen previews all three, stamps completed trials, marks the next one, and reveals the rank's
 Boss modifier before play begins. Clearing a trial opens its results, then the shop, then the
 route back to the next trial. Clearing a rank's Boss Trial raises the rank and returns the player
@@ -14,25 +14,38 @@ to a Lesser Trial with every goal raised. **Reaching rank 5 wins the game**; the
 then offers to press on into an endless ladder that no build can outrun forever.
 
 The game is built with Phaser 4 (TypeScript + Vite). Rolling a **1** scores; "Extra Number"
-upgrades add 2 and then 3 as scoring faces. The per-trial goals are a hand-authored table
-(`TRIAL_GOALS` in `src/config.ts`), tuned with the balance simulation in `src/sim` so runs end
-across the whole ladder rather than being decided in the first few trials.
+upgrades add 2 and then 3 as scoring faces. The per-trial goals are a measured table
+(`MEASURED_GOALS` in `src/config.ts`), made with the goal search in `src/sim`: a grid of 43 bot
+strategies plays hundreds of seeds with the goals taken away, and each goal is what the top fifth
+of strategies reach with the trial's whole roll budget (the median for rank 1's last two trials;
+trial 1 keeps its goal of a single point).
 
-The curve is designed to a deliberate attrition shape (measured on the pooled bot field; a
-thinking player does better) — the fraction of the field still alive after each rank:
+The game is meant to be hard, and a trial is meant to take most of its rolls. Measured on the
+same 43-strategy grid playing held-out seeds (a thinking player does better), the share of runs
+still alive after each rank:
 
-| After rank | 1   | 2   | 3   | 4   | 5         |
-| ---------- | --- | --- | --- | --- | --------- |
-| Alive      | 97% | 88% | 70% | 47% | 25% (win) |
+| After rank | 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | 9   | 10 (win) |
+| ---------- | --- | --- | --- | --- | --- | --- | --- | --- | --- | -------- |
+| Bot grid   | 27% | 8%  | 4%  | 3%  | 2%  | 1%  | 1%  | 1%  | 1%  | 0.2%     |
+| Expert bot | 43% | 24% | 19% | 16% | 13% | 11% | 11% | 11% | 11% | 4.7%     |
 
-Early goals remain small integers, but the single starting die deliberately allows bad luck to
-end some runs in the first rank. Within later ranks, most of the cull lands on the Boss Trial,
-whose modifier is already doing work.
+The goal search's validation pass measured that (600 seeds; the expert bot appraises every card
+by playing it out, and is the closest thing in the sim to a strong player). Before this curve,
+the same grid won 9.5% of runs and the expert 18%. Only about one clear in seven now comes on the
+opening roll, against one in two before. Through rank 4 a cleared trial's goal usually falls on
+roll 4 to 6; from rank 5 on, the builds still alive tend to clear in two.
 
-The curve also **saw-tooths**, which is the shape of a rank rather than a mistake: rank 3's
-seven-roll Lesser Trial asks for less than rank 2's twenty-roll Boss Trial. What always rises is
-the same slot from one rank to the next. Design a curve with `src/sim/tuneCurve.ts` and confirm
-it against the real survival gate with `src/sim/validate.ts`.
+Most runs end in the first few ranks. The single starting die still ends some in trial 1 by bad
+luck, and ranks 2-5 end the builds that never came together. A build that survives to rank 7 has
+usually outgrown the ladder: compounding items spread late builds over many orders of magnitude,
+so the strongest still clear late trials on their opening roll. Goals alone cannot change that
+without ending almost every run (see "The goal search" in `src/sim/README.md`).
+
+The curve also **saw-tooths**, which is the shape of a rank rather than a mistake: a rank's
+seven-roll Lesser Trial can ask for less than the ten-roll Boss Trial before it. What always
+rises is the same slot from one rank to the next. Retune it with `npm run goals:search` and
+grade it with `npm run goals:validate` and `npm run goals:report`; see "The goal search" in
+`src/sim/README.md`.
 
 ## Development
 
@@ -232,8 +245,8 @@ itself down ("shrinks out") to keep every die visible on screen.
 | Trial in rank | Name          | Rolls | Notes                         |
 | ------------- | ------------- | ----- | ----------------------------- |
 | 1             | Lesser Trial  | 7     | A sprint against a small goal |
-| 2             | Greater Trial | 15    | Room to build                 |
-| 3             | Boss Trial    | 20    | Carries a hostile modifier    |
+| 2             | Greater Trial | 10    | Room to build                 |
+| 3             | Boss Trial    | 10    | Carries a hostile modifier    |
 
 Meeting the goal ends the trial on the spot — the remaining rolls are forfeit, but they are paid
 out as gold. Falling short ends the run, unless the player owns an Insurance Policy and finished
@@ -263,7 +276,7 @@ modifier never appears in consecutive ranks.
 | The Drought | No dice are added this trial                             |
 | The Eclipse | The roll multiplier is halved (never below ×1)           |
 | The Silence | Only 1s score — the numbers you unlocked are silenced    |
-| The Hunger  | Five fewer rolls                                         |
+| The Hunger  | Three fewer rolls                                        |
 | The Warden  | Snake Eyes, Jackpot and Lucky Seven grant nothing        |
 | The Toll    | A tenth of your dice score nothing                       |
 | The Hoard   | The goal is 40% higher, but clearing it pays double gold |
@@ -314,8 +327,9 @@ keep both rows readable in narrow portrait layouts.
 
 The player may buy **as many loose cards and packs as they can afford**, then continues to the
 trial route. Rerolling refreshes only the loose cards; the two packs remain fixed for the visit.
-A reroll costs 1 gold plus 1 more for each reroll already taken; Dealer's Bell makes the first
-reroll of every shop free. If no loose card is affordable, the free Two Bricks is guaranteed onto
+A reroll costs 5 gold and each further reroll in the same visit costs double the last (5, 10,
+20, 40…), so a typical purse covers one or two; Dealer's Bell makes the first reroll of every shop
+free. If no loose card is affordable, the free Two Bricks is guaranteed onto
 the row so the shop is never a dead screen.
 
 ### Booster packs
@@ -358,10 +372,10 @@ goal curve so "8 gold" means the same thing on trial 1 and trial 15:
 | Strength band  | Price |
 | -------------- | ----: |
 | Free           |     0 |
-| Low            |     3 |
-| Standard       |     5 |
-| Strong         |     8 |
-| Build-defining |    12 |
+| Low            |     4 |
+| Standard       |     6 |
+| Strong         |    10 |
+| Build-defining |    15 |
 
 ```text
 price = band × repeat multiplier × market variation × Shopping Cart − Pawnbroker
@@ -570,18 +584,22 @@ every archetype is viable. Theme membership is declared beside the items in `ITE
 The balancing workflow:
 
 ```bash
-npm run sim                       # the report → sim-out/report.html
-npx tsx src/sim/tuneCurve.ts      # design TRIAL_GOALS against real culling
-CURVE="TUNED (real culling)" npx tsx src/sim/validate.ts   # confirm it
-npx tsx src/sim/endlessCurve.ts   # confirm endless still terminates
+npm run sim               # the report → sim-out/report.html
+npm run goals:search      # seeds × 43 strategies, goals removed → a goal table per percentile
+npm run goals:sweep       # every percentile's table, played with culling on held-out seeds
+npm run goals:validate    # one table (the live one by default), in detail
+npm run goals:report      # before/after page → sim-out/goal-report.html
 ```
 
-`tuneCurve.ts` is the one that matters. It is a fixed-point iteration: simulate the whole field
-under the current curve with culling on, re-pick every goal as the quantile of the peak scores of
-the runs that _actually entered_ that trial, repeat. The older `designTargets.ts` designs from a
-single non-culling pass, which is systematically wrong here — with no clears, no trial pays for
-rolls left in hand and no Boss Trial pays its bonus, so the builds it measures are poorer than
-real ones and its curve lands far too easy (a 23% designed win rate measured 65% in practice).
+`goals:search` is the one that matters. It plays every strategy in the grid on every seed with
+the goals removed — each trial plays its whole roll budget, nothing is culled, and every trial
+pays out as a clear plus an assumed 1-3 gold of early-completion pay — and records, per seed and
+trial, the best score any strategy reached and the score the top fifth reached. The goal is the
+median across seeds of that per-seed percentile. Measuring with the goals removed is what keeps
+an easy curve from looking like a correct one: a trial that ends the moment its goal is met only
+ever reports scores just above that goal. The older tuners (`tuneCurve.ts`, `designTargets.ts`,
+`smartSurvivalCurve.ts`, `pacingCurve.ts`) remain for reference; `src/sim/README.md` says what
+each measures.
 
 Assertion suites, all runnable and all part of the quality gate:
 

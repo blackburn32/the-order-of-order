@@ -85,8 +85,8 @@ export const BOSS_MODIFIERS: BossModifier[] = [
   {
     id: "hunger",
     name: "The Hunger",
-    desc: "Five fewer rolls.",
-    shortDesc: "5 FEWER ROLLS",
+    desc: "Three fewer rolls.",
+    shortDesc: "3 FEWER ROLLS",
   },
   {
     id: "warden",

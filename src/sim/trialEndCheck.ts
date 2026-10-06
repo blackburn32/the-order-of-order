@@ -72,12 +72,12 @@ check(
 );
 check(
   rollsForTrial(1) === 7 &&
-    rollsForTrial(2) === 14 &&
-    rollsForTrial(3) === 18 &&
+    rollsForTrial(2) === 10 &&
+    rollsForTrial(3) === 10 &&
     rollsForTrial(4) === 7 &&
-    rollsForTrial(9) === 18 &&
+    rollsForTrial(9) === 10 &&
     rollsForTrial(10) === 7,
-  "every rank uses the same 7 / 14 / 18 roll cadence",
+  "every rank uses the same 7 / 10 / 10 roll cadence",
 );
 setTrialRollCadenceForSimulation([7, 13, 17]);
 check(
@@ -86,7 +86,7 @@ check(
 );
 setTrialRollCadenceForSimulation(null);
 check(
-  rollsForTrial(2) === 14 && rollsForTrial(3) === 18,
+  rollsForTrial(2) === 10 && rollsForTrial(3) === 10,
   "and restores the authored cadence",
 );
 {
@@ -278,21 +278,24 @@ console.log("\nEndings");
 // ---------------------------------------------------------------------------
 console.log("\nInsurance Policy");
 
-// A trial deep enough that 75% of its goal is an exact integer — the early
-// goals are single digits, where integer division would land below the
-// threshold and test nothing.
-const INSURED_TRIAL = 12;
+// A trial whose goal 75% of is an exact integer — anywhere else integer
+// division lands below the threshold and the test measures nothing. Found
+// rather than named, so a retuned goal table cannot quietly break it.
+const INSURED_TRIAL =
+  Array.from({ length: WIN_TRIAL - 1 }, (_, i) => i + 1).find(
+    (t) => t > 1 && (goalFor(runAt(t)) * 3n) % 4n === 0n,
+  ) ?? 0;
 
 {
+  check(
+    INSURED_TRIAL > 0,
+    "some trial's goal divides cleanly for the 75% test",
+  );
   const state = runAt(INSURED_TRIAL);
   state.hasInsurancePolicy = true;
   state.ownedUnique.push("insurance_policy");
   state.purchases.insurance_policy = 1;
   const goal = goalFor(state);
-  check(
-    (goal * 3n) % 4n === 0n,
-    `trial ${INSURED_TRIAL}'s goal divides cleanly for the 75% test`,
-  );
   state.score = (goal * 3n) / 4n; // exactly 75% of the goal
   const out = resolveTrialEnd(state);
   check(out.phase === "advanced", "insurance saves a trial at 75% of its goal");
@@ -329,10 +332,7 @@ console.log("\nStarting state");
     "with one starting die",
   );
   check(trialGoal(1) === 1n, "with a starting goal of 1");
-  check(
-    trialGoal(2) === 2n,
-    "with a rising onboarding goal on the second trial",
-  );
+  check(trialGoal(2) > trialGoal(1), "with a rising goal on the second trial");
   // The opening purse belongs to the character now (Diebert's is his ability),
   // so a fresh run opens on the default novice's rather than on one constant.
   check(

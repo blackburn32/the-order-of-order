@@ -31,7 +31,12 @@ import {
   markEndingSeen,
   rollKingsDemands,
 } from "../systems/Endings";
-import { GOLD_PER_INTEREST, INTEREST_CAP, spendGold } from "../systems/Gold";
+import {
+  GOLD_PER_INTEREST,
+  grantGold,
+  INTEREST_CAP,
+  spendGold,
+} from "../systems/Gold";
 import {
   applyBoosterChoice,
   applyCouponFreebie,
@@ -65,6 +70,7 @@ import {
 import { isMirrorTrial, rankOf, trialInRank } from "../config";
 import { mulberry32 } from "./localStorageShim";
 import { skepticAllows } from "./skeptic";
+import { log10Big } from "./appraise";
 import { SimConfig } from "./config";
 import { acceptsCurse, afflictionRisk } from "./curseValue";
 import {
@@ -146,6 +152,21 @@ export interface TrialPoint {
    *  `SimConfig.traceRolls` is on — it is what the roll-pacing tuner reads
    *  capacity from, and it is far too much memory to carry by default. */
   rollScores?: number[];
+  /** log10 of the trial's peak score, safe past `Number`'s range (see
+   *  `scoreLog10`). `trialScore` reads Infinity on a late compounding build. */
+  trialScoreLog10: number;
+  /** The `rollScores` trace as log10 (see `scoreLog10`), recorded only when
+   *  `SimConfig.traceRollsLog10` is on. */
+  rollLog10?: number[];
+}
+
+/**
+ * log10 of a score, for statistics over scores that outrun `Number`. A score of
+ * zero reads as -1 rather than -Infinity, so it stays below every real score
+ * (the smallest of which, 1, reads 0) and survives a JSON round trip.
+ */
+export function scoreLog10(score: bigint): number {
+  return score <= 0n ? -1 : log10Big(score);
 }
 
 export interface RunRecord {
@@ -1105,6 +1126,7 @@ export function simulateRun(
   // Reset per trial, below, as the ladder advances.
   let clearedOnRoll: number | null = null;
   let rollScores: number[] | undefined = cfg.traceRolls ? [] : undefined;
+  let rollLog10: number[] | undefined = cfg.traceRollsLog10 ? [] : undefined;
   for (;;) {
     // The state a trial is entered with — after its shop, before its first roll.
     // It is what `benchmark.ts` measures a bot's capacity from, and the same
@@ -1114,6 +1136,7 @@ export function simulateRun(
     resolveRoll(state, rng, { context, recordHistory: false });
     rolls += 1;
     rollScores?.push(Number(state.score));
+    rollLog10?.push(scoreLog10(state.score));
     if (clearedOnRoll === null && state.trialCleared)
       clearedOnRoll = state.roll;
     trackUnlocks(state, record.unlocksAchieved);
@@ -1137,6 +1160,8 @@ export function simulateRun(
         rollBudget: trialRollTarget(state),
         clearedOnRoll,
         rollScores,
+        trialScoreLog10: scoreLog10(state.trialScore),
+        rollLog10,
       });
       const point = record.trajectory[record.trajectory.length - 1];
 
@@ -1152,6 +1177,7 @@ export function simulateRun(
         : clearedOnRoll !== null;
       clearedOnRoll = null;
       rollScores = cfg.traceRolls ? [] : undefined;
+      rollLog10 = cfg.traceRollsLog10 ? [] : undefined;
       for (const id of bosses) {
         const tally = (record.bossesFaced[id] ??= { faced: 0, cleared: 0 });
         tally.faced += 1;
@@ -1164,6 +1190,10 @@ export function simulateRun(
       if (end.phase === "gameOver") {
         record.outcome = "gameOver";
         break;
+      }
+      if (cfg.assumedClearGold) {
+        const [min, max] = cfg.assumedClearGold;
+        grantGold(state, min + Math.floor(rng() * (max - min + 1)));
       }
       applyStoryAfterTrial(state, end.completedTrial, rng, strategy);
       if (cfg.stopAfterTrial !== undefined && point.trial >= cfg.stopAfterTrial)

@@ -428,8 +428,11 @@ console.log("\nShop pricing");
 console.log("\nRerolls");
 
 {
-  check(rerollCost(0) === 1, "the first reroll is cheap");
-  check(rerollCost(3) > rerollCost(0), "and each one costs more");
+  check(rerollCost(0) === 5, "the first reroll costs five gold");
+  check(
+    rerollCost(1) === 10 && rerollCost(2) === 20 && rerollCost(3) === 40,
+    "and each one costs double the last",
+  );
 
   const plain = runAt(1);
   check(!rerollIsFree(plain, 0), "rerolls cost gold by default");

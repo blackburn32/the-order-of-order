@@ -459,15 +459,192 @@ move the whole curve as a side effect of a file being edited. `EXPERT_SERIES`
 and `PLAYER_SERIES` are there to point a tuner at one deliberately, as
 `FIELD=expert` and `FIELD=player`.
 
-## The engine-gated curve
+## The goal search (the shipped curve)
 
-The shipped goals are no longer a table of survival quantiles. Winning is gated
-on building a strategy tree's engine (`systems/ItemTrees`), so `config.ts`
-derives the goals from a growth rate per trial, applied to the goal per roll:
-rank 1 as authored (1, 2, 3), then ×1.6 a trial through rank 3, ×2.2 through
-rank 6 and ×2.4 to the duel (`GOAL_GROWTH_PER_TRIAL`, `engineGateGoals`).
-Asking per roll keeps the 7 / 14 / 18 sawtooth, so a rank's Lesser Trial can ask
-less than the Boss Trial before it.
+The shipped goals are a measured table (`MEASURED_GOALS` in `config.ts`), made
+by four commands that share one strategy grid (`goalGrid.ts`):
+
+```bash
+npm run goals:search      # seeds × strategy grid, goals removed → a goal table per percentile
+npm run goals:sweep       # every table played with culling on, on held-out seeds
+npm run goals:validate    # one table (the live one by default), in detail
+npm run goals:report      # before/after page → sim-out/goal-report.html
+npm run goals:raise       # what raising the late goals costs in wins and buys in roll-1 clears
+```
+
+**The grid.** A grid point is one way of playing: a strategy, the unlock pool it
+shops from, its curse appetite, and the novice it plays as. By default that is
+every bot but the expert × the full pool × appetites 0, 0.5 and 1 × Diebert —
+43 points (the player bot refuses every curse by rule, so it gets one point, not
+three). Every grid point plays the **same seed** for a given seed index, so on
+one seed the grid's spread is the spread of play: trial 1, before any shop,
+is identical across the whole grid.
+
+| env               | default                | axis                                    |
+| ----------------- | ---------------------- | --------------------------------------- |
+| `GRID_STRATEGIES` | every bot but `expert` | strategies (the expert is ~100× slower) |
+| `GRID_POOLS`      | `all`                  | `all`, `none`                           |
+| `GRID_APPETITES`  | `0,0.5,1`              | curse appetites                         |
+| `GRID_CHARACTERS` | `diebert`              | `diebert`, `melodie`, `roland`          |
+| `SIM_WORKERS`     | cores − 1 (max 8)      | worker threads                          |
+
+**The search** (`goalSearch.ts`) plays every grid point on every seed with the
+goals removed: each trial plays its whole roll budget, nothing is culled, and
+each trial is paid as a clear on its final roll (base gold, interest, item gold,
+the Boss bonus and the next shop's Boss boon). No trial ends with rolls in hand,
+so the unused-roll payout is replaced by an assumed early-completion bonus,
+`CLEAR_GOLD` (default 1-3 gold a trial, drawn per trial). For each seed and
+trial it records the best score any strategy reached (the seed's **max**) and the
+`PERCENTILE`-th score across the grid (default the 80th: what the top fifth of
+strategies reach). The goal for a trial is the median across seeds of that
+per-seed percentile, rounded to three significant figures; trials in `PIN`
+(default `1=1`) keep their authored goal, and a goal is raised where needed so
+the table never drops within a rank or from one rank's slot to the next.
+
+`PERCENTILE` may be one value or ten — one per rank — because the field a goal
+has to challenge changes along the ladder (see below). The search also derives a
+flat table for every value in `PERCENTILES`, writes every run's per-trial and
+per-roll scores to `goal-search-raw.json`, and `FROM=sim-out/goal-search-raw.json`
+re-derives any other schedule from that file in seconds, with no simulation.
+Its printout previews each table against the very runs it was measured on:
+the share of runs whose full budget reaches the goal, the share whose opening
+roll alone does, and the share that would reach all 29 goals.
+
+It also says **where the late spread comes from**. Every grid run records which
+strategy tree's engine (the tier-3 card) it owns and the trial it arrived on, and
+at trials 13, 19, 25 and 29 the search splits the log10 variance of the scores
+into which engine a run owns (or none), when that engine arrived, and what is
+left over between runs with the same engine from the same trial. Beside it are
+each engine's median score among runs that owned it by trial 9 (engines at equal
+timing; noisy below a few hundred seeds) and the gap between a run's opening
+roll and its full budget, which is how wide the window is in which a goal needs
+most of a trial's rolls.
+
+| env           | default                        | what it does                                 |
+| ------------- | ------------------------------ | -------------------------------------------- |
+| `SEEDS`       | 120                            | seeds; every grid point plays every one      |
+| `SEED`        | 1                              | base seed (validation defaults to 2)         |
+| `PERCENTILE`  | 0.8                            | the per-seed quantile, or ten (one per rank) |
+| `PERCENTILES` | 0.2,0.3,…,0.9                  | extra flat tables, for the sweep             |
+| `CLEAR_GOLD`  | 1-3                            | assumed early-completion gold per trial      |
+| `PIN`         | 1=1                            | `trial=goal` pairs kept as authored          |
+| `SIG`         | 3                              | significant figures a goal is rounded to     |
+| `OUT` / `RAW` | sim-out/goal-search(-raw).json | the summary and the raw runs                 |
+| `FROM`        | (simulate)                     | re-derive from a raw file instead            |
+
+**The sweep and the validator** play the grid with goals on and real culling,
+on a different base seed (`SEED=2`), so a table is never graded on the runs it
+was measured from. `goals:sweep` grades every table in a search
+(`TABLES="0.5;0.6"` for some; a per-rank schedule's key is its ten values
+comma-separated) and prints, per table, the win rate, survival to ranks 4 and
+7, the share of clears that came on roll 1, and the share of the roll budget a
+clear used. `goals:validate` grades one table in detail — `GOALS=live` (the
+default), `GOALS=sim-out/goal-search.json` for a search's primary table, or
+`GOALS=sim-out/goal-search.json#0.6` for any other — and adds per-strategy win
+rates, Boss Trial clear rates, and how many rerolls the purse at each shop
+could buy. `EXPERT_SEEDS=N` adds the expert on N seeds;
+`GRID_STRATEGIES=expert GRID_APPETITES=0.5` runs it alone.
+
+**The report** (`goals:report`) reads a search and two validations (`BEFORE`,
+`AFTER`, and optionally `SWEEP` and `EXTRA`) and writes one page: the old and
+new goals over the search's percentile band and per-seed max, survival by trial,
+first-roll clears and budget use per trial, win rate by strategy, the
+percentile trade-off, reroll affordability and Boss Trial clear rates.
+
+**Raising the late goals** (`goals:raise`) answers one question about a table
+that already exists: what does multiplying its late goals cost in wins, and how
+many roll-1 clears does it remove? Every goal from `FROM_RANK` (default 5) on is
+multiplied by each of `FACTORS` (default ×1.5 to ×1000) — `SHAPE=flat` for the
+same factor everywhere, `SHAPE=ramp` for one that grows rank by rank to the full
+factor at rank 10 — and the grid plays each table with culling. Per factor it
+prints the win rate, the win rate of the runs that reached the first raised
+trial, the share of raised-trial clears that came on roll 1, the budget share a
+clear used, and where the raised goal sits in the goals-removed field of
+`SEARCH_RAW` (as a percentile). A raised goal cannot change a trial before it,
+so only the runs that reached the first raised trial are replayed (checked
+against their base run), which makes thousands of seeds cheap. The expert is
+the exception — its roll-outs play the ladder ahead, so it shops differently
+from its first visit — and every expert run (`EXPERT_SEEDS`) is replayed whole.
+
+| env            | default                      | what it does                                 |
+| -------------- | ---------------------------- | -------------------------------------------- |
+| `GOALS`        | `live`                       | the base table, as `goals:validate` reads it |
+| `FROM_RANK`    | 5                            | comma list of first raised ranks             |
+| `FACTORS`      | 1.5,2,3,5,10,30,100,1000     | multipliers tried at each `FROM_RANK`        |
+| `SHAPE`        | `flat`                       | `flat` or `ramp`                             |
+| `SEEDS`        | 2000                         | grid seeds (`0` for an expert-only pass)     |
+| `EXPERT_SEEDS` | 0                            | also run the expert on N seeds               |
+| `SEED`         | 3                            | base seed, held out from search and validate |
+| `SEARCH_RAW`   | sim-out/goal-search-raw.json | the field a goal's percentile is read from   |
+| `OUT`          | sim-out/goal-raise.json      | every variant's measurements                 |
+
+To redo the whole pass after a rules change:
+
+```bash
+LABEL=before OUT=sim-out/goal-validate-before.json EXPERT_SEEDS=150 npm run goals:validate  # on the old rules
+# …change the rules…
+SEEDS=300 npm run goals:search
+npm run goals:sweep
+FROM=sim-out/goal-search-raw.json PERCENTILE=<chosen schedule> npm run goals:search
+# paste the printed table into MEASURED_GOALS in config.ts
+LABEL=after EXPERT_SEEDS=150 npm run goals:validate
+npm run goals:report
+```
+
+### What the search found (the 7 / 10 / 10 rebalance)
+
+Measured after the rules change that came with it — Greater and Boss Trials cut
+to 10 rolls, rerolls 5 gold doubling per visit, card bands 4 / 6 / 10 / 15,
+packs about a fifth dearer, The Hunger −3 rolls — over 300 search seeds and 600
+held-out validation seeds:
+
+| goal table                      | grid wins | expert wins | clears on roll 1 | clear rate, trials 2-29 |
+| ------------------------------- | --------- | ----------- | ---------------- | ----------------------- |
+| previous (engine gate, 7/14/18) | 9.5%      | 18%         | 51%              | 96%                     |
+| literal p80, every rank         | 0.05%     | ~3%         | 15%              | 53%                     |
+| **p50 for rank 1, p80 after**   | **0.2%**  | **4.7%**    | **14%**          | **66%**                 |
+| flat p50                        | 2.1%      | ~5%         | 25%              | 83%                     |
+
+(Expert rows marked ~ are 150-run samples on another seed stream.)
+
+Three things this pass established, each worth knowing before the next one:
+
+- **A per-trial percentile compounds.** Every trial set at the grid's 80th
+  percentile is a trial only a fifth of the field reaches with its full budget,
+  and 28 of them in a row leave almost no one: only the correlation between a
+  build's trials keeps the win rate above zero. `goals:sweep` is the way to see
+  that cost before shipping a percentile.
+- **Trial 2 is luck, not play.** One shop in, the grid's spread is mostly dice,
+  so the 80th percentile there (28 points) killed over half of even the expert's
+  runs. Rank 1 uses the median instead (15 and 32).
+- **The late game cannot be paced by goals.** By rank 7 the survivors'
+  full-budget scores span 5-10 orders of magnitude, because the compounding items
+  compound at different rates. Even a goal that ends half of them is cleared on
+  roll 1 by most of the other half, and the expert clears 70-90% of rank 7-10
+  trials on its opening roll under every table tried (up to the 95th
+  percentile). Fixing that is a mechanics change — the spread of the engines —
+  not a goal table.
+- **Raising the late goals makes roll-1 clears more common, not less.**
+  `goals:raise` multiplied every goal from rank 5 on (3,000 grid seeds, 400
+  expert seeds). The grid runs that reached rank 5 won 8.0% of the time at ×1,
+  4.8% at ×2, 2.7% at ×10 and 0.3% at ×100, while the roll-1 share of their
+  rank 5+ clears went 31% → 29% → 32% → 41% (51% at ×1000). The expert's win
+  rate barely moved (3.5% → 2.3% at ×1000, inside the noise of 400 seeds) and
+  its roll-1 share rose from 70% to 96%. A higher goal ends the runs whose
+  whole budget only just reached it — the ones that were using their rolls —
+  and leaves the runaway builds, which still clear on the opening roll: at
+  rank 8 a survivor's opening roll beats the goal by a median of 1.3 decades
+  and a 90th percentile of 5.3. Raising goals only from rank 8 on, or as a
+  ramp up to rank 10, tells the same story.
+
+## The engine-gated curve (the previous design)
+
+Before the goal search, winning was gated on building a strategy tree's engine
+(`systems/ItemTrees`), and `config.ts` derived the goals from a growth rate per
+trial, applied to the goal per roll: rank 1 as authored (1, 2, 3), then ×1.6 a
+trial through rank 3, ×2.2 through rank 6 and ×2.4 to the duel
+(`GOAL_GROWTH_PER_TRIAL`, `engineGateGoals`, both still exported for the engine
+experiment). Nothing ships that curve now.
 
 The strategy trees (×3 odds for an opened card), the card reworks
 (`systems/CardReworks`) and every tree's cards are the game's rules. The
@@ -652,6 +829,12 @@ crosses the bucket threshold.
 
 | File                     | Role                                                                                             |
 | ------------------------ | ------------------------------------------------------------------------------------------------ |
+| `goalGrid.ts`            | The strategy grid, its search/validate modes, and the worker pool the goal tools share.          |
+| `goalSearch.ts`          | Shipped tuner: seeds × grid with goals removed → per-seed max and percentile → a goal table.     |
+| `goalSweep.ts`           | Every table a search derived, played with culling on held-out seeds, side by side.               |
+| `goalValidate.ts`        | One goal table played by the grid with culling: survival, roll-1 clears, strategies, bosses.     |
+| `goalReport.ts`          | Before/after HTML page from a search and two validations.                                        |
+| `goalRaise.ts`           | Late goals × a range of factors: wins against roll-1 clears, replaying only survivors.           |
 | `benchmark.ts`           | An exported run measured against every series at the same trial. Start here.                     |
 | `expertTune.ts`          | The expert's knobs swept against those runs, over a matched seed stream.                         |
 | `importRun.ts`           | Reads a dev-panel run export (or a raw active-run save) back into a `RunState`.                  |
@@ -668,7 +851,7 @@ crosses the bucket threshold.
 | `series.ts`              | The eleven series, their seed offsets, the named fields, and `seriesConfig`.                     |
 | `localStorageShim.ts`    | In-memory `localStorage` + seeded `Math.random` for Node/reproducibility.                        |
 | `runBatch.ts`            | CLI entry (`npm run sim`).                                                                       |
-| `smartSurvivalCurve.ts`  | Shipped tuner: designs absolute survival checkpoints from the smart field.                       |
+| `smartSurvivalCurve.ts`  | Previous tuner: designs absolute survival checkpoints from the smart field.                      |
 | `pacingCurve.ts`         | Alternate tuner: designs from uncensored capacity and reports roll tempo.                        |
 | `pacingFeasibility.ts`   | Tests whether one score goal can meet survival and duration targets, without changing rules.     |
 | `economyExperiment.ts`   | Matched-seed payout and item-access experiments; never mutates the live authored values.         |

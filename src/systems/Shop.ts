@@ -78,10 +78,10 @@ export interface ShopOffer {
  */
 export const PRICE_BANDS: Record<PriceBand, number> = {
   free: 0,
-  low: 3,
-  standard: 5,
-  strong: 8,
-  build: 12,
+  low: 4,
+  standard: 6,
+  strong: 10,
+  build: 15,
 };
 
 /** Each appearance rolls a visible ±25% market adjustment, so price stays an
@@ -104,12 +104,19 @@ const PAWNBROKER_DISCOUNT = 2;
 /** How many times Sealed Doors runs a purchased card's effects. */
 const SEALED_DOORS_APPLICATIONS = 2;
 
-/** A reroll costs this, plus one more for each reroll already taken in the
- *  visit — cheap enough to use, expensive enough to be a real choice. */
-export const REROLL_BASE_COST = 1;
+/** The first reroll of a visit costs this, and every reroll after it costs
+ *  REROLL_GROWTH times the one before (5, 10, 20, 40…). A reroll is a real
+ *  decision rather than a reflex: a typical purse covers one or two of them a
+ *  visit, and buying a third means passing on a card to do it. */
+export const REROLL_BASE_COST = 5;
+export const REROLL_GROWTH = 2;
 
 export function rerollCost(rerollsThisVisit: number): number {
-  return REROLL_BASE_COST + rerollsThisVisit;
+  // Repeated integer multiplication rather than Math.pow, for the same reason
+  // as the stack surcharge below: every device must agree to the gold.
+  let cost = REROLL_BASE_COST;
+  for (let i = 0; i < rerollsThisVisit; i++) cost *= REROLL_GROWTH;
+  return cost;
 }
 
 /** Whether this shop visit's reroll is free (Dealer's Bell covers the first). */
@@ -494,7 +501,7 @@ export const BOOSTER_PACKS: readonly BoosterPackDef[] = [
     id: "common_pack",
     name: "Common Parcel",
     desc: "Choose one Common card.",
-    cost: 4,
+    cost: 5,
     color: 0xa98b2b,
     rarity: "common",
   },
@@ -502,7 +509,7 @@ export const BOOSTER_PACKS: readonly BoosterPackDef[] = [
     id: "uncommon_pack",
     name: "Uncommon Folio",
     desc: "Choose one Uncommon card.",
-    cost: 6,
+    cost: 7,
     color: 0x3569a9,
     rarity: "uncommon",
   },
@@ -510,7 +517,7 @@ export const BOOSTER_PACKS: readonly BoosterPackDef[] = [
     id: "rare_pack",
     name: "Rare Reliquary",
     desc: "Choose one Rare card.",
-    cost: 9,
+    cost: 11,
     color: 0x763aa0,
     rarity: "rare",
   },
@@ -518,7 +525,7 @@ export const BOOSTER_PACKS: readonly BoosterPackDef[] = [
     id: "swarm_pack",
     name: "Gathering Pack",
     desc: "Choose one grid-growth card.",
-    cost: 6,
+    cost: 7,
     color: 0x9b5a2d,
     theme: "swarm",
   },
@@ -526,7 +533,7 @@ export const BOOSTER_PACKS: readonly BoosterPackDef[] = [
     id: "multiplier_pack",
     name: "Ritual Pack",
     desc: "Choose one multiplier card.",
-    cost: 7,
+    cost: 8,
     color: 0x7e315d,
     theme: "multiplier",
   },
@@ -534,7 +541,7 @@ export const BOOSTER_PACKS: readonly BoosterPackDef[] = [
     id: "precision_pack",
     name: "Artificer's Pack",
     desc: "Choose one precision card.",
-    cost: 6,
+    cost: 7,
     color: 0x2f7770,
     theme: "precision",
   },
@@ -542,7 +549,7 @@ export const BOOSTER_PACKS: readonly BoosterPackDef[] = [
     id: "economy_pack",
     name: "Treasury Pack",
     desc: "Choose one economy card.",
-    cost: 6,
+    cost: 7,
     color: 0x8a6f1d,
     theme: "economy",
   },
@@ -550,7 +557,7 @@ export const BOOSTER_PACKS: readonly BoosterPackDef[] = [
     id: "tempo_pack",
     name: "Hourglass Pack",
     desc: "Choose one tempo card.",
-    cost: 5,
+    cost: 6,
     color: 0x526d93,
     theme: "tempo",
   },

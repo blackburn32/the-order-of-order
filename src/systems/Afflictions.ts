@@ -140,7 +140,7 @@ export const AFFLICTIONS: Record<AfflictionId, Affliction> = {
   drought: { blocksGrowth: true },
   eclipse: { halveMultiplier: true },
   silence: { suppress: ["extraNumber"] },
-  hunger: { rollDelta: -5 },
+  hunger: { rollDelta: -3 },
   warden: { suppress: ["patterns"] },
   toll: { deadDiceFraction: 0.1 },
   hoard: { goalMultMilli: 1_400 },
@@ -207,7 +207,7 @@ export const AFFLICTION_COPY: Record<AfflictionId, AfflictionCopy> = {
   },
   hunger: {
     name: "The Short Rites",
-    desc: "Five fewer rolls in every trial from here.",
+    desc: "Three fewer rolls in every trial from here.",
   },
   warden: {
     name: "The Warden's Seal",

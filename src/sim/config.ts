@@ -81,6 +81,26 @@ export interface SimConfig {
    */
   traceRolls?: boolean;
 
+  /**
+   * Record every trial's per-roll cumulative score as log10 into its
+   * `TrialPoint.rollLog10`. The same trace as `traceRolls`, but safe past
+   * `Number`'s range: a late trial's score is a bigint that `Number()` turns
+   * into Infinity, and the goal search (sim/goalSearch.ts) reads exactly those.
+   */
+  traceRollsLog10?: boolean;
+
+  /**
+   * Simulation-only: gold granted at every trial that ends, on top of its
+   * ordinary payout — a whole number drawn uniformly from `[min, max]`.
+   *
+   * The goal search plays every trial to the end of its budget with no goal,
+   * so no trial ever ends with rolls in hand and the unused-roll payout is
+   * always zero. A real run under goals hard enough to be worth designing
+   * still clears a roll or two early now and then; this is that income, stated
+   * as an assumption rather than left out.
+   */
+  assumedClearGold?: readonly [number, number];
+
   /** End the run once this trial has been resolved, whatever the outcome. The
    *  roll-pacing tuner calibrates one trial at a time and has no use for the
    *  ladder past the trial it is measuring. */
