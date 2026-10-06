@@ -1045,7 +1045,9 @@ export class HallScene extends Phaser.Scene {
         dragging &&
         Math.abs(p.x - startPointerX) < 6 &&
         Math.abs(p.y - startPointerY) < 6 &&
-        inBounds(p)
+        inBounds(p) &&
+        // Holding a die to read it is not a tap on its row.
+        !this.dieTooltip.tookPress
       ) {
         const i = rowAt(p);
         if (i >= 0 && opts.tappable(i)) opts.onTap(i);

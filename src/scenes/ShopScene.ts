@@ -3150,22 +3150,26 @@ export class ShopScene extends Phaser.Scene {
       sprite.setScale(scale);
       sprite.showFace(null);
 
-      if (this.eligibleFor(offer, die)) {
+      const eligible = this.eligibleFor(offer, die);
+      if (eligible) {
         sprite.setSize(104, 104);
         sprite.setInteractive({ useHandCursor: true });
         sprite.on("pointerover", () => sprite.setScale(scale * 1.12));
         sprite.on("pointerout", () => sprite.setScale(scale));
-        sprite.on("pointerdown", () => this.onPick(offer, i));
       } else {
         sprite.setAlpha(0.35);
         // Still hoverable: why a die cannot be picked is worth reading.
         sprite.setSize(104, 104);
       }
-      this.dieTooltip.attach(sprite, () => ({
-        sides: die.sides,
-        effects: dieEffects(die, runAuras(this.state)),
-        vigil: vigilGroups([{ ...die, count: 1 }]),
-      }));
+      this.dieTooltip.attach(
+        sprite,
+        () => ({
+          sides: die.sides,
+          effects: dieEffects(die, runAuras(this.state)),
+          vigil: vigilGroups([{ ...die, count: 1 }]),
+        }),
+        eligible ? () => this.onPick(offer, i) : undefined,
+      );
       items.push(sprite);
     });
     return items;
@@ -3315,24 +3319,29 @@ export class ShopScene extends Phaser.Scene {
         sprite.setInteractive({ useHandCursor: true });
         sprite.on("pointerover", () => sprite.setScale(scale * 1.12));
         sprite.on("pointerout", () => sprite.setScale(scale));
-        sprite.on("pointerdown", () => this.onPick(offer, entry.index));
       } else {
         sprite.setAlpha(0.35);
         // Still hoverable: why a die cannot be picked is worth reading.
         sprite.setSize(104, 104);
       }
-      this.dieTooltip.attach(sprite, () => ({
-        sides: entry.die.sides,
-        // Everything any die of the size carries; the list below says which.
-        effects: DIE_EFFECTS.filter((effect) =>
-          [...entry.variants.values()].some((v) => v.effects.includes(effect)),
-        ),
-        count: entry.count,
-        vigil: vigilGroups(
-          this.state.dice.summarize(),
-          (stack) => stack.sides === entry.die.sides,
-        ),
-      }));
+      this.dieTooltip.attach(
+        sprite,
+        () => ({
+          sides: entry.die.sides,
+          // Everything any die of the size carries; the list below says which.
+          effects: DIE_EFFECTS.filter((effect) =>
+            [...entry.variants.values()].some((v) =>
+              v.effects.includes(effect),
+            ),
+          ),
+          count: entry.count,
+          vigil: vigilGroups(
+            this.state.dice.summarize(),
+            (stack) => stack.sides === entry.die.sides,
+          ),
+        }),
+        entry.eligible ? () => this.onPick(offer, entry.index) : undefined,
+      );
     });
     return items;
   }
@@ -3427,33 +3436,37 @@ export class ShopScene extends Phaser.Scene {
           .setOrigin(0.5),
       );
 
-      if (this.eligibleFor(offer, die)) {
+      const eligible = this.eligibleFor(offer, die);
+      if (eligible) {
         sprite.setSize(104, 104);
         sprite.setInteractive({ useHandCursor: true });
         sprite.on("pointerover", () => sprite.setScale(scale * 1.12));
         sprite.on("pointerout", () => sprite.setScale(scale));
-        sprite.on("pointerdown", () => this.onPick(offer, group.firstIndex));
       } else {
         sprite.setAlpha(0.35);
         // Still hoverable: why a die cannot be picked is worth reading.
         sprite.setSize(104, 104);
       }
-      this.dieTooltip.attach(sprite, () => ({
-        sides: die.sides,
-        effects: dieEffects(die, runAuras(this.state)),
-        count: group.count,
-        // The group's own kind of die, voices kept apart as `groups()` keeps
-        // them; dice already picked for this offer are not set aside.
-        vigil: vigilGroups(
-          this.state.dice.summarize(),
-          (stack) =>
-            stack.sides === die.sides &&
-            stack.maxFaceBonus === die.maxFaceBonus &&
-            stack.loaded === die.loaded &&
-            stack.wildFace === die.wildFace &&
-            isVoiceDie(stack) === isVoiceDie(die),
-        ),
-      }));
+      this.dieTooltip.attach(
+        sprite,
+        () => ({
+          sides: die.sides,
+          effects: dieEffects(die, runAuras(this.state)),
+          count: group.count,
+          // The group's own kind of die, voices kept apart as `groups()` keeps
+          // them; dice already picked for this offer are not set aside.
+          vigil: vigilGroups(
+            this.state.dice.summarize(),
+            (stack) =>
+              stack.sides === die.sides &&
+              stack.maxFaceBonus === die.maxFaceBonus &&
+              stack.loaded === die.loaded &&
+              stack.wildFace === die.wildFace &&
+              isVoiceDie(stack) === isVoiceDie(die),
+          ),
+        }),
+        eligible ? () => this.onPick(offer, group.firstIndex) : undefined,
+      );
     });
     return items;
   }
