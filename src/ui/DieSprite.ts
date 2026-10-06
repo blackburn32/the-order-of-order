@@ -11,6 +11,9 @@ import {
   faceNumeralStyle,
 } from "../art/dieArt";
 import { drawEffectBorder } from "./dieBorder";
+import { formatVigilGrowth, vigilGrowthLog10 } from "./vigilTally";
+import { COLORS, CSS, SERIF } from "../art/palette";
+import { scoresKey } from "../systems/GrowthEngines";
 import { Die } from "../systems/Dice";
 import {
   dieEffects,
@@ -54,6 +57,15 @@ const SHARP_THRESHOLD = 1.25;
  * texture atlas.
  */
 const MAX_SHARP_RESOLUTION = 16;
+
+/** The growth badge, in the die's 96-unit design space: type size, the pill
+ *  around it, and where the pill's top-right corner sits. Pinned inside the
+ *  die's own box so it never spills onto the neighbouring cell. */
+const BADGE_FONT_PX = 15;
+const BADGE_PAD_X = 5;
+const BADGE_HEIGHT = 20;
+const BADGE_RIGHT = 47;
+const BADGE_TOP = -47;
 
 /**
  * Where the dice in play read the run's size-wide rules from (Royal Seal,
@@ -124,6 +136,19 @@ export class DieSprite extends Phaser.GameObjects.Container {
   // Resolution the live glyphs were last rasterized at, so a pan that leaves
   // the magnification alone does not re-render every face on screen.
   private sharpResolution = 0;
+  // The Vigil's growth on this die, pinned over its top-right corner (see
+  // refreshGrowth). Built the first time a die has any growth to show, and
+  // only on the dice that ask for it — the game's grid does, the shop's
+  // pickers do not.
+  private growthBadge?: Phaser.GameObjects.Container;
+  private growthPill?: Phaser.GameObjects.Graphics;
+  private growthText?: Phaser.GameObjects.Text;
+  // The tally the badge was last drawn for, so a refresh of an unchanged die
+  // touches nothing.
+  private growthKey = "";
+  // What the badge's glyphs are rasterized at; follows setMagnification so the
+  // number stays crisp however far the grid camera zooms in.
+  private badgeResolution = 1;
 
   constructor(scene: Phaser.Scene, x: number, y: number, die: Die) {
     super(scene, x, y);
@@ -157,6 +182,59 @@ export class DieSprite extends Phaser.GameObjects.Container {
 
     this.showFace(die.value > 0 ? die.value : null);
     scene.add.existing(this);
+  }
+
+  /**
+   * Show how much The Vigil has grown this die — "×3.8" over its top-right
+   * corner — or hide the badge when it has not grown at all. The number is
+   * the same one the die's tooltip gives (see ui/vigilTally), so the player
+   * can read at a glance which dice carry the grid.
+   *
+   * Call again whenever the die may have scored, or the sprite was re-pointed
+   * at another die.
+   */
+  refreshGrowth(): void {
+    const key = scoresKey(this.die.scores);
+    if (key === this.growthKey) return;
+    this.growthKey = key;
+    const label = key
+      ? formatVigilGrowth(vigilGrowthLog10(this.die.scores!))
+      : "";
+    if (!label || label === "×1") {
+      this.growthBadge?.setVisible(false);
+      return;
+    }
+
+    if (!this.growthBadge) {
+      this.growthPill = this.scene.add.graphics();
+      this.growthText = this.scene.add
+        .text(0, 0, "", {
+          fontFamily: SERIF,
+          fontSize: `${BADGE_FONT_PX}px`,
+          fontStyle: "bold",
+          color: CSS.goldLight,
+          resolution: this.badgeResolution,
+        })
+        .setOrigin(1, 0.5);
+      this.growthBadge = this.scene.add.container(BADGE_RIGHT, BADGE_TOP, [
+        this.growthPill,
+        this.growthText,
+      ]);
+      this.add(this.growthBadge);
+    }
+    // Above everything but the effect border, which flashes over the die.
+    this.bringToTop(this.growthBadge);
+    this.bringToTop(this.effectBorder);
+
+    const text = this.growthText!.setText(label);
+    const width = text.width + BADGE_PAD_X * 2;
+    text.setPosition(-BADGE_PAD_X, BADGE_HEIGHT / 2);
+    this.growthPill!.clear()
+      .fillStyle(COLORS.feltDark, 0.92)
+      .fillRoundedRect(-width, 0, width, BADGE_HEIGHT, BADGE_HEIGHT / 2)
+      .lineStyle(1.5, COLORS.gold, 1)
+      .strokeRoundedRect(-width, 0, width, BADGE_HEIGHT, BADGE_HEIGHT / 2);
+    this.growthBadge.setVisible(true);
   }
 
   /**
@@ -237,6 +315,16 @@ export class DieSprite extends Phaser.GameObjects.Container {
    * fit a few of.
    */
   setMagnification(magnification: number): void {
+    this.badgeResolution = Phaser.Math.Clamp(
+      Math.ceil(magnification),
+      1,
+      MAX_SHARP_RESOLUTION,
+    );
+    if (
+      this.growthText &&
+      this.growthText.style.resolution !== this.badgeResolution
+    )
+      this.growthText.setResolution(this.badgeResolution);
     // One decision for the whole die rather than one per child: the body and
     // the glyphs come from different textures, and `fitAtlasScale` can bake the
     // atlas a step below the bodies, but a vector body carrying a soft numeral
@@ -290,8 +378,9 @@ export class DieSprite extends Phaser.GameObjects.Container {
         this.sharpStrike,
       ].filter((child) => child !== undefined),
     );
-    // They were appended above the effect border, which is drawn over every
-    // other part of the die.
+    // They were appended above the growth badge and the effect border, which
+    // are drawn over every other part of the die.
+    if (this.growthBadge) this.bringToTop(this.growthBadge);
     this.bringToTop(this.effectBorder);
   }
 

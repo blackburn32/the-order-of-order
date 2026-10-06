@@ -1773,6 +1773,7 @@ export class GameScene extends Phaser.Scene {
         // draws itself live instead.
         sprite.setMagnification(scale * view.zoom * DPR);
         sprite.setInert(index < inertCount);
+        sprite.refreshGrowth();
         if (!animate || !from) continue;
         // Three kinds of die end up here: one that was already on screen and
         // has to slide to its new cell, one the player has just won, and one
@@ -3364,6 +3365,14 @@ export class GameScene extends Phaser.Scene {
       // state alone is one less thing a reload can lose.
       streamFor(s.seed, "roll", `${s.trial}:${s.roll}:resolve`),
     );
+    // The Vigil has just counted this roll on every die that scored, so the
+    // growth each one wears goes up with the points it earned.
+    for (const [index, sprite] of this.sprites) {
+      const die = s.dice.dieAt(index);
+      if (!die) continue;
+      sprite.die = die;
+      sprite.refreshGrowth();
+    }
     // Resolve and unlock evaluation form one committed gameplay transaction.
     // Save it before presenting any effects so a reload during the presentation
     // returns after this roll rather than charging/scoring it again.
