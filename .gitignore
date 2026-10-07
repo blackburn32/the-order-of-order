@@ -9,3 +9,4 @@ AGENTS.md
 art-out/
 .wrangler/
 worker/node_modules/
+worker/backups/

@@ -79,6 +79,22 @@ npm run dev             # serves on http://localhost:8787 with local D1 + R2
 
 Point the game at it with `VITE_LEADERBOARD_API=http://localhost:8787`.
 
+## Resetting the board
+
+After a rebalance, when old scores no longer compare with new ones:
+
+```bash
+npm run board:reset                  # remote; backs up, then asks you to type the db name
+npm run board:reset -- --local       # the `wrangler dev` database instead
+npm run board:reset -- --keep-blobs  # clear D1 only, leave R2 alone
+npm run board:reset -- --yes         # skip the prompt
+```
+
+It exports the `runs` table to `backups/` (gitignored, since it holds initials and
+device ids), deletes every row in `runs` and `throttle`, then deletes the R2 blob of
+each row that had an analysis. The schema stays, so no redeploy or `db:init` is
+needed. Players' local Halls are untouched; they live in each device's storage.
+
 ## API
 
 | Route                  | Purpose                                                            |

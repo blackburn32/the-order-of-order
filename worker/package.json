@@ -4,11 +4,12 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "wrangler dev --config wrangler.toml",
+    "deploy": "wrangler deploy --config wrangler.toml",
     "typecheck": "tsc --noEmit",
-    "db:init": "wrangler d1 execute order-of-order --remote --file=./schema.sql",
-    "db:init:local": "wrangler d1 execute order-of-order --local --file=./schema.sql"
+    "db:init": "wrangler d1 execute order-of-order --remote --config wrangler.toml --file=./schema.sql",
+    "db:init:local": "wrangler d1 execute order-of-order --local --config wrangler.toml --file=./schema.sql",
+    "board:reset": "node scripts/reset-board.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
