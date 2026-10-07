@@ -27,11 +27,11 @@ rank:
 
 | After rank | 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | 9   | 10 (win) |
 | ---------- | --- | --- | --- | --- | --- | --- | --- | --- | --- | -------- |
-| Bot grid   | 68% | 49% | 38% | 30% | 24% | 19% | 18% | 16% | 15% | 4.8%     |
-| Expert bot | 65% | 60% | 55% | 49% | 43% | 38% | 37% | 33% | 31% | 12%      |
+| Bot grid   | 63% | 49% | 38% | 30% | 24% | 19% | 18% | 16% | 14% | 4.6%     |
+| Expert bot | 65% | 61% | 55% | 50% | 46% | 42% | 37% | 34% | 31% | 14%      |
 
-The lone starting die ends about 29% of runs in trial 1 by bad luck, which is nearly all of
-rank 1's share, so rank 1's other two trials ask for very little. Ranks 7-9 lose only a point or
+Rank 1's goals are authored (1, 2 and 3 points) rather than fitted: the lone starting die ends
+about 29% of runs in trial 1 by bad luck, so rank 1 lands a little under 70%. Ranks 7-9 lose only a point or
 two each because the duel at rank 10 ends most of the runs that reach it.
 
 The curve also **saw-tooths**, which is the shape of a rank rather than a mistake: a rank's

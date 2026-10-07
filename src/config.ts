@@ -137,9 +137,10 @@ export function rollsForTrial(trial: number): number {
 // rounded to three significant figures. The last goal is fitted to the win
 // rate itself, since the duel decides who reaching it wins.
 //
-// Trial 1 keeps its goal of a single point: the opening's difficulty is the
-// lone starting d6, which by itself ends nearly 30% of runs, so rank 1's other
-// two trials are left almost nothing to take.
+// Rank 1 is authored, not fitted: 1, 2 and 3 points. The opening's difficulty
+// is the lone starting d6, which by itself ends nearly 30% of runs in trial 1,
+// so rank 1 lands a little under its 70% checkpoint (about 63%) and the later
+// ranks are fitted from whoever it leaves alive.
 //
 // A goal is never lower than the trial before it in its own rank, nor than the
 // same slot a rank down. A rank opens on a seven-roll Lesser Trial, so it can
@@ -168,16 +169,16 @@ export const SURVIVAL_CHECKPOINTS = {
  */
 // prettier-ignore
 const MEASURED_GOALS: readonly string[] = [
-  "1", "1", "1",                              // rank 1
-  "5", "27", "55",                            // rank 2
-  "46", "105", "196",                         // rank 3
-  "134", "336", "630",                        // rank 4
-  "602", "1360", "2530",                      // rank 5
-  "2660", "6700", "14400",                    // rank 6
-  "6560", "14300", "15500",                   // rank 7
-  "22800", "47900", "114000",                 // rank 8
-  "113000", "284000", "559000",               // rank 9
-  "616000", "13000000", "273000000",          // rank 10
+  "1", "2", "3",                              // rank 1
+  "5", "25", "47",                            // rank 2
+  "42", "96", "181",                          // rank 3
+  "125", "329", "616",                        // rank 4
+  "588", "1370", "2540",                      // rank 5
+  "2650", "6960", "15300",                    // rank 6
+  "8310", "13000", "19900",                   // rank 7
+  "24000", "58500", "134000",                 // rank 8
+  "159000", "315000", "716000",               // rank 9
+  "822000", "9100000", "100100000",           // rank 10
 ];
 
 export const TRIAL_GOALS: bigint[] = MEASURED_GOALS.map((g) => BigInt(g));

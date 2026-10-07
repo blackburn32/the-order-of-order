@@ -491,10 +491,10 @@ never drops within a rank, nor below the same slot a rank down.
 **Two things the fit has to work around:**
 
 - **Trial 1 is a lone d6.** Its goal of one point ends about 29% of runs on
-  its own (seven misses in a row), so 70% through rank 1 leaves trials 2 and 3
-  almost nothing to take, and both fit to a goal of 1. Even 2 and 3 would cost
-  about five points of rank-1 survival. A real rank-1 challenge would need
-  trial 1 to be kinder first (more rolls, say), which is a rules change.
+  its own (seven misses in a row), so fitting 70% through rank 1 would leave
+  trials 2 and 3 a goal of 1 each. Rank 1 is authored instead (`PIN`, 1 / 2 /
+  3 points), which lands about 63% through it, and every later rank is fitted
+  from whoever it leaves alive.
 - **The duel ends most of the runs that reach it.** On the grid only about
   37% of the runs that reach the duel win it, and who wins is not a fixed
   share, because it is a race against the run's own grid. So the curve's last
@@ -511,6 +511,7 @@ never drops within a rank, nor below the same slot a rank down.
 | `DUEL_RATE`   | 0.37                      | share of duel entrants who win it               |
 | `SEEDS`       | 300                       | seeds; every grid point plays every one         |
 | `SEED`        | 1                         | base seed (validation defaults to 2)            |
+| `PIN`         | 1=1,2=2,3=3               | `trial=goal` pairs kept as authored             |
 | `SIG`         | 3                         | significant figures a goal is rounded to        |
 | `OUT`         | sim-out/goal-tune.json    | the fitted table, readable by `GOALS=`          |
 
@@ -523,18 +524,19 @@ after each rank:
 | after rank     | 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | 9   | 10 (win) |
 | -------------- | --- | --- | --- | --- | --- | --- | --- | --- | --- | -------- |
 | wanted         | 70% | 53% | 40% | 32% | 25% | 20% | 18% | 16% | 15% | 5%       |
-| grid, fitted   | 68% | 49% | 38% | 30% | 24% | 19% | 18% | 16% | 15% | 4.8%     |
+| grid, fitted   | 63% | 49% | 38% | 30% | 24% | 19% | 18% | 16% | 14% | 4.6%     |
 | grid, before   | 27% | 8%  | 4%  | 2%  | 1%  | 1%  | 1%  | 1%  | 0%  | 0.2%     |
-| expert, fitted | 65% | 60% | 55% | 49% | 43% | 38% | 37% | 33% | 31% | 12%      |
+| expert, fitted | 65% | 61% | 55% | 50% | 46% | 42% | 37% | 34% | 31% | 14%      |
 | expert, before | 43% | 24% | 19% | 16% | 13% | 11% | 11% | 11% | 11% | 4.7%     |
 
-The held-out grid runs a point or two under the fit through rank 6 because
-seed 2's lone d6 clears trial 1 a little less often than seed 1's (71% against
-74%), and every later trial is fitted relative to who got there. The price of
-the gentler curve is pace: 43% of the grid's clears now come on the opening
-roll (14% before), since most of the goals are far lower. The expert, which
-appraises every card by playing it out, survives about twice as far as the
-grid from rank 3 on and wins 12%.
+Rank 1 sits under its checkpoint because it is authored (see above). The
+held-out grid runs a point or two under the fit after that because seed 2's
+lone d6 clears trial 1 a little less often than seed 1's (71% against 74%), and
+every later trial is fitted relative to who got there. The price of the gentler
+curve is pace: 40% of the grid's clears now come on the opening roll (14%
+before), since most of the goals are far lower. The expert, which appraises
+every card by playing it out, survives about twice as far as the grid from
+rank 3 on and wins 14%.
 
 ## The goal search (the previous curve)
 

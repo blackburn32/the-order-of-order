@@ -19,9 +19,10 @@
 //
 // Between checkpoints, survival falls by the same factor every rank (the curve
 // is geometric, so no rank is a cliff), and a rank's losses are weighted
-// toward its Boss Trial (CULL_SHARE). Trial 1 keeps its goal of one point: a
-// lone d6 already ends about a quarter of runs there, so rank 1's other two
-// trials only take what is left of its share. The duel (trial 30) has no goal,
+// toward its Boss Trial (CULL_SHARE). Rank 1 is authored rather than fitted
+// (PIN, 1 / 2 / 3 points): a lone d6 already ends nearly 30% of runs in trial
+// 1, so a fitted rank 1 would ask its other two trials for almost nothing.
+// Later ranks are fitted from whoever rank 1 actually leaves alive. The duel (trial 30) has no goal,
 // and who wins it is not a fixed share of who reaches it, so trial 29 is
 // fitted to the win rate directly: it keeps the strongest entrants until they
 // hold the wanted number of duel wins. The duel ends most of the runs that
@@ -41,6 +42,7 @@
 // |             |                          | sets how many should reach it             |
 // | SEEDS       | 300                      | seeds; every grid point plays every one   |
 // | SEED        | 1                        | base seed (validation defaults to 2)      |
+// | PIN         | 1=1,2=2,3=3              | `trial=goal` pairs kept as authored       |
 // | SIG         | 3                        | significant figures a goal is rounded to  |
 // | OUT         | sim-out/goal-tune.json   | the table (`goals`), readable by GOALS=   |
 // | GRID_*      | see goalGrid.ts          | the strategy grid                         |
@@ -74,8 +76,15 @@ const OUT = process.env.OUT ?? "sim-out/goal-tune.json";
 
 /** A rank's losses, split across its Lesser, Greater and Boss Trials. */
 const CULL_SHARE = [0.15, 0.3, 0.55] as const;
-/** Trials whose goal is authored, not fitted. */
-const PINNED = new Map<number, bigint>([[1, 1n]]);
+/** Trials whose goal is authored, not fitted (`PIN`, `trial=goal` pairs). */
+const PINNED = new Map<number, bigint>(
+  (process.env.PIN ?? "1=1,2=2,3=3").split(",").map((part) => {
+    const [trial, goal] = part.split("=").map((x) => x.trim());
+    if (!/^\d+$/.test(trial) || !/^\d+$/.test(goal))
+      throw new Error(`PIN: "${part}" is not trial=goal`);
+    return [Number(trial), BigInt(goal)];
+  }),
+);
 /** A goal no build reaches: the trial being measured plays its whole budget. */
 const UNREACHABLE = 10n ** 200n;
 
