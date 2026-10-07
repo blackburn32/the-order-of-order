@@ -459,9 +459,86 @@ move the whole curve as a side effect of a file being edited. `EXPERT_SERIES`
 and `PLAYER_SERIES` are there to point a tuner at one deliberately, as
 `FIELD=expert` and `FIELD=player`.
 
-## The goal search (the shipped curve)
+## Fitting a survival curve (the shipped curve)
 
-The shipped goals are a measured table (`MEASURED_GOALS` in `config.ts`), made
+The shipped goals (`MEASURED_GOALS` in `config.ts`) are fitted to a survival
+curve: the share of runs still alive at the end of each rank. The intent is
+stated as checkpoints, and `goals:tune` (`goalTune.ts`) fits every goal so the
+strategy grid lands on the curve through them.
+
+```bash
+npm run goals:tune                                     # fit → sim-out/goal-tune.json
+CHECKPOINTS="1=0.7,3=0.4,6=0.2,10=0.05" SEEDS=1000 npm run goals:tune
+SEEDS=1000 GOALS=sim-out/goal-tune.json npm run goals:validate   # grade it held out
+# paste the printed table into MEASURED_GOALS in config.ts
+```
+
+**The checkpoints.** About 70% of runs get through rank 1, 40% through rank 3,
+20% through rank 6 (just before the defectors), and 5% win. Between two
+checkpoints survival falls by the same factor every rank, and a rank's losses
+are split 15 / 30 / 55% across its Lesser, Greater and Boss Trials. Move a
+checkpoint with `CHECKPOINTS` and rerun.
+
+**The fit** is sequential, with real culling. A goal only changes the trials
+from its own on, so with trials 1..t-1 fitted, trial t is played against an
+unreachable goal: every run that enters it plays its whole budget with the
+build it would really arrive with, and the goal is set at the score the wanted
+share of those entrants reach. Each step measures who is actually alive, so an
+error at one trial is corrected at the next rather than compounding (which is
+what a flat per-trial percentile does; see below). Floors still apply: a goal
+never drops within a rank, nor below the same slot a rank down.
+
+**Two things the fit has to work around:**
+
+- **Trial 1 is a lone d6.** Its goal of one point ends about 29% of runs on
+  its own (seven misses in a row), so 70% through rank 1 leaves trials 2 and 3
+  almost nothing to take, and both fit to a goal of 1. Even 2 and 3 would cost
+  about five points of rank-1 survival. A real rank-1 challenge would need
+  trial 1 to be kinder first (more rolls, say), which is a rules change.
+- **The duel ends most of the runs that reach it.** On the grid only about
+  37% of the runs that reach the duel win it, and who wins is not a fixed
+  share, because it is a race against the run's own grid. So the curve's last
+  point is the share that should _reach_ the duel (win rate ÷ `DUEL_RATE`),
+  and trial 29 is fitted to the win rate itself: the fit plays it once more at
+  its floor to see which entrants go on to win the duel, then keeps the
+  strongest entrants until they hold the wanted wins. That is why ranks 7-9
+  only lose a point or two each: a 7.5% win rate would need about 20% of runs
+  to reach the duel, the same as rank 6, so 5% is the default.
+
+| env           | default                   | what it does                                    |
+| ------------- | ------------------------- | ----------------------------------------------- |
+| `CHECKPOINTS` | 1=0.7,3=0.4,6=0.2,10=0.05 | `rank=share alive after it`; rank 10 = win rate |
+| `DUEL_RATE`   | 0.37                      | share of duel entrants who win it               |
+| `SEEDS`       | 300                       | seeds; every grid point plays every one         |
+| `SEED`        | 1                         | base seed (validation defaults to 2)            |
+| `SIG`         | 3                         | significant figures a goal is rounded to        |
+| `OUT`         | sim-out/goal-tune.json    | the fitted table, readable by `GOALS=`          |
+
+### What the fit found
+
+Fitted on 1,000 seeds (base seed 1) and graded on 1,000 held-out seeds (base
+seed 2) for the grid, and 150 seeds for the expert, the share of runs alive
+after each rank:
+
+| after rank     | 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | 9   | 10 (win) |
+| -------------- | --- | --- | --- | --- | --- | --- | --- | --- | --- | -------- |
+| wanted         | 70% | 53% | 40% | 32% | 25% | 20% | 18% | 16% | 15% | 5%       |
+| grid, fitted   | 68% | 49% | 38% | 30% | 24% | 19% | 18% | 16% | 15% | 4.8%     |
+| grid, before   | 27% | 8%  | 4%  | 2%  | 1%  | 1%  | 1%  | 1%  | 0%  | 0.2%     |
+| expert, fitted | 65% | 60% | 55% | 49% | 43% | 38% | 37% | 33% | 31% | 12%      |
+| expert, before | 43% | 24% | 19% | 16% | 13% | 11% | 11% | 11% | 11% | 4.7%     |
+
+The held-out grid runs a point or two under the fit through rank 6 because
+seed 2's lone d6 clears trial 1 a little less often than seed 1's (71% against
+74%), and every later trial is fitted relative to who got there. The price of
+the gentler curve is pace: 43% of the grid's clears now come on the opening
+roll (14% before), since most of the goals are far lower. The expert, which
+appraises every card by playing it out, survives about twice as far as the
+grid from rank 3 on and wins 12%.
+
+## The goal search (the previous curve)
+
+The previous goals were a measured table, made
 by four commands that share one strategy grid (`goalGrid.ts`):
 
 ```bash
@@ -830,7 +907,8 @@ crosses the bucket threshold.
 | File                     | Role                                                                                             |
 | ------------------------ | ------------------------------------------------------------------------------------------------ |
 | `goalGrid.ts`            | The strategy grid, its search/validate modes, and the worker pool the goal tools share.          |
-| `goalSearch.ts`          | Shipped tuner: seeds × grid with goals removed → per-seed max and percentile → a goal table.     |
+| `goalTune.ts`            | Shipped tuner: fits each goal, trial by trial with culling, to a per-rank survival curve.        |
+| `goalSearch.ts`          | Previous tuner: seeds × grid with goals removed → per-seed max and percentile → a goal table.    |
 | `goalSweep.ts`           | Every table a search derived, played with culling on held-out seeds, side by side.               |
 | `goalValidate.ts`        | One goal table played by the grid with culling: survival, roll-1 clears, strategies, bosses.     |
 | `goalReport.ts`          | Before/after HTML page from a search and two validations.                                        |

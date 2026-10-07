@@ -332,7 +332,12 @@ console.log("\nStarting state");
     "with one starting die",
   );
   check(trialGoal(1) === 1n, "with a starting goal of 1");
-  check(trialGoal(2) > trialGoal(1), "with a rising goal on the second trial");
+  // Rank 1's later goals may match trial 1's: the lone d6 already ends most of
+  // the runs the survival curve wants rank 1 to end (see config.ts).
+  check(
+    trialGoal(2) >= trialGoal(1) && trialGoal(4) > trialGoal(1),
+    "with goals that never fall and rise by rank 2",
+  );
   // The opening purse belongs to the character now (Diebert's is his ability),
   // so a fresh run opens on the default novice's rather than on one constant.
   check(

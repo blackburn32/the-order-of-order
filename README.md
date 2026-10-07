@@ -15,37 +15,30 @@ then offers to press on into an endless ladder that no build can outrun forever.
 
 The game is built with Phaser 4 (TypeScript + Vite). Rolling a **1** scores; "Extra Number"
 upgrades add 2 and then 3 as scoring faces. The per-trial goals are a measured table
-(`MEASURED_GOALS` in `src/config.ts`), made with the goal search in `src/sim`: a grid of 43 bot
-strategies plays hundreds of seeds with the goals taken away, and each goal is what the top fifth
-of strategies reach with the trial's whole roll budget (the median for rank 1's last two trials;
-trial 1 keeps its goal of a single point).
+(`MEASURED_GOALS` in `src/config.ts`) fitted to a survival curve with `npm run goals:tune` in
+`src/sim`: a grid of 43 bot strategies plays hundreds of seeds with real culling, and each goal is
+set, trial by trial, so the share of runs still alive lands on the curve.
 
-The game is meant to be hard, and a trial is meant to take most of its rolls. Measured on the
-same 43-strategy grid playing held-out seeds (a thinking player does better), the share of runs
-still alive after each rank:
+The curve gives the game definite pacing. About 70% of runs get through rank 1, 40% through
+rank 3, 20% through rank 6 (just before the defectors), and 5% win at rank 10, so a casual player
+sees a good part of the ladder and the finish stays a hard ceiling. Measured on the same grid
+playing held-out seeds (a thinking player does better), the share of runs still alive after each
+rank:
 
 | After rank | 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | 9   | 10 (win) |
 | ---------- | --- | --- | --- | --- | --- | --- | --- | --- | --- | -------- |
-| Bot grid   | 27% | 8%  | 4%  | 3%  | 2%  | 1%  | 1%  | 1%  | 1%  | 0.2%     |
-| Expert bot | 43% | 24% | 19% | 16% | 13% | 11% | 11% | 11% | 11% | 4.7%     |
+| Bot grid   | 68% | 49% | 38% | 30% | 24% | 19% | 18% | 16% | 15% | 4.8%     |
+| Expert bot | 65% | 60% | 55% | 49% | 43% | 38% | 37% | 33% | 31% | 12%      |
 
-The goal search's validation pass measured that (600 seeds; the expert bot appraises every card
-by playing it out, and is the closest thing in the sim to a strong player). Before this curve,
-the same grid won 9.5% of runs and the expert 18%. Only about one clear in seven now comes on the
-opening roll, against one in two before. Through rank 4 a cleared trial's goal usually falls on
-roll 4 to 6; from rank 5 on, the builds still alive tend to clear in two.
-
-Most runs end in the first few ranks. The single starting die still ends some in trial 1 by bad
-luck, and ranks 2-5 end the builds that never came together. A build that survives to rank 7 has
-usually outgrown the ladder: compounding items spread late builds over many orders of magnitude,
-so the strongest still clear late trials on their opening roll. Goals alone cannot change that
-without ending almost every run (see "The goal search" in `src/sim/README.md`).
+The lone starting die ends about 29% of runs in trial 1 by bad luck, which is nearly all of
+rank 1's share, so rank 1's other two trials ask for very little. Ranks 7-9 lose only a point or
+two each because the duel at rank 10 ends most of the runs that reach it.
 
 The curve also **saw-tooths**, which is the shape of a rank rather than a mistake: a rank's
 seven-roll Lesser Trial can ask for less than the ten-roll Boss Trial before it. What always
-rises is the same slot from one rank to the next. Retune it with `npm run goals:search` and
-grade it with `npm run goals:validate` and `npm run goals:report`; see "The goal search" in
-`src/sim/README.md`.
+rises is the same slot from one rank to the next. Move the checkpoints with
+`CHECKPOINTS="1=0.7,3=0.4,6=0.2,10=0.05" npm run goals:tune` and grade the result with
+`npm run goals:validate`; see "Fitting a survival curve" in `src/sim/README.md`.
 
 ## Development
 
