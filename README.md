@@ -27,12 +27,13 @@ rank:
 
 | After rank | 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | 9   | 10 (win) |
 | ---------- | --- | --- | --- | --- | --- | --- | --- | --- | --- | -------- |
-| Bot grid   | 63% | 49% | 38% | 30% | 24% | 19% | 18% | 16% | 14% | 4.6%     |
-| Expert bot | 65% | 61% | 55% | 50% | 46% | 42% | 37% | 34% | 31% | 14%      |
+| Bot grid   | 63% | 49% | 38% | 30% | 24% | 19% | 16% | 13% | 11% | 4.7%     |
+| Expert bot | 65% | 61% | 55% | 49% | 46% | 42% | 35% | 31% | 30% | 15%      |
 
 Rank 1's goals are authored (1, 2 and 3 points) rather than fitted: the lone starting die ends
-about 29% of runs in trial 1 by bad luck, so rank 1 lands a little under 70%. Ranks 7-9 lose only a point or
-two each because the duel at rank 10 ends most of the runs that reach it.
+about 29% of runs in trial 1 by bad luck, so rank 1 lands a little under 70%. The duel at rank 10 is a fair coin against a copy of the
+run's own grid, so about half the runs that reach it win, and ranks 7-9 trim the field toward the
+10% or so that a 5% win rate needs to arrive there.
 
 The curve also **saw-tooths**, which is the shape of a rank rather than a mistake: a rank's
 seven-roll Lesser Trial can ask for less than the ten-roll Boss Trial before it. What always

@@ -495,25 +495,30 @@ never drops within a rank, nor below the same slot a rank down.
   trials 2 and 3 a goal of 1 each. Rank 1 is authored instead (`PIN`, 1 / 2 /
   3 points), which lands about 63% through it, and every later rank is fitted
   from whoever it leaves alive.
-- **The duel ends most of the runs that reach it.** On the grid only about
-  37% of the runs that reach the duel win it, and who wins is not a fixed
-  share, because it is a race against the run's own grid. So the curve's last
-  point is the share that should _reach_ the duel (win rate ÷ `DUEL_RATE`),
-  and trial 29 is fitted to the win rate itself: the fit plays it once more at
-  its floor to see which entrants go on to win the duel, then keeps the
-  strongest entrants until they hold the wanted wins. That is why ranks 7-9
-  only lose a point or two each: a 7.5% win rate would need about 20% of runs
-  to reach the duel, the same as rank 6, so 5% is the default.
+- **The duel ends about half the runs that reach it.** It is a fair coin
+  against a copy of the run's own grid (49% of grid entrants win it), so the
+  curve's last point is the share that should _reach_ the duel (win rate ÷
+  `DUEL_RATE`, about 10%), and trial 29 is fitted to the win rate itself: the
+  fit plays it once more at its floor to see which entrants go on to win the
+  duel, then keeps the strongest entrants until they hold the wanted wins.
+  Ranks 7-9 lose two to three points each on the way there. The duel used to
+  convert only 36%: the mirror scored the rival after the player's roll had
+  paid its gold, burned its faces and moved its streaks and roll counter, and
+  never charged it a toll or a gamble. It now scores the rival against the run
+  exactly as the player's roll met it.
+- **`KEEP_THROUGH=n`** keeps the live goals for trials 1..n and fits only the
+  rest, which is all a change to the late checkpoints or the duel needs.
 
-| env           | default                   | what it does                                    |
-| ------------- | ------------------------- | ----------------------------------------------- |
-| `CHECKPOINTS` | 1=0.7,3=0.4,6=0.2,10=0.05 | `rank=share alive after it`; rank 10 = win rate |
-| `DUEL_RATE`   | 0.37                      | share of duel entrants who win it               |
-| `SEEDS`       | 300                       | seeds; every grid point plays every one         |
-| `SEED`        | 1                         | base seed (validation defaults to 2)            |
-| `PIN`         | 1=1,2=2,3=3               | `trial=goal` pairs kept as authored             |
-| `SIG`         | 3                         | significant figures a goal is rounded to        |
-| `OUT`         | sim-out/goal-tune.json    | the fitted table, readable by `GOALS=`          |
+| env            | default                   | what it does                                    |
+| -------------- | ------------------------- | ----------------------------------------------- |
+| `CHECKPOINTS`  | 1=0.7,3=0.4,6=0.2,10=0.05 | `rank=share alive after it`; rank 10 = win rate |
+| `DUEL_RATE`    | 0.5                       | share of duel entrants who win it               |
+| `KEEP_THROUGH` | 0                         | keep the live goals for trials 1..n             |
+| `SEEDS`        | 300                       | seeds; every grid point plays every one         |
+| `SEED`         | 1                         | base seed (validation defaults to 2)            |
+| `PIN`          | 1=1,2=2,3=3               | `trial=goal` pairs kept as authored             |
+| `SIG`          | 3                         | significant figures a goal is rounded to        |
+| `OUT`          | sim-out/goal-tune.json    | the fitted table, readable by `GOALS=`          |
 
 ### What the fit found
 
@@ -523,20 +528,21 @@ after each rank:
 
 | after rank     | 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | 9   | 10 (win) |
 | -------------- | --- | --- | --- | --- | --- | --- | --- | --- | --- | -------- |
-| wanted         | 70% | 53% | 40% | 32% | 25% | 20% | 18% | 16% | 15% | 5%       |
-| grid, fitted   | 63% | 49% | 38% | 30% | 24% | 19% | 18% | 16% | 14% | 4.6%     |
+| wanted         | 70% | 53% | 40% | 32% | 25% | 20% | 17% | 14% | 12% | 5%       |
+| grid, fitted   | 63% | 49% | 38% | 30% | 24% | 19% | 16% | 13% | 11% | 4.7%     |
 | grid, before   | 27% | 8%  | 4%  | 2%  | 1%  | 1%  | 1%  | 1%  | 0%  | 0.2%     |
-| expert, fitted | 65% | 61% | 55% | 50% | 46% | 42% | 37% | 34% | 31% | 14%      |
+| expert, fitted | 65% | 61% | 55% | 49% | 46% | 42% | 35% | 31% | 30% | 15%      |
 | expert, before | 43% | 24% | 19% | 16% | 13% | 11% | 11% | 11% | 11% | 4.7%     |
 
 Rank 1 sits under its checkpoint because it is authored (see above). The
 held-out grid runs a point or two under the fit after that because seed 2's
 lone d6 clears trial 1 a little less often than seed 1's (71% against 74%), and
 every later trial is fitted relative to who got there. The price of the gentler
-curve is pace: 40% of the grid's clears now come on the opening roll (14%
-before), since most of the goals are far lower. The expert, which appraises
-every card by playing it out, survives about twice as far as the grid from
-rank 3 on and wins 14%.
+curve is pace: 37% of the grid's clears now come on the opening roll (14%
+before), since most of the goals are far lower; in ranks 7-9 it is about half
+(61% before the duel was fixed and those ranks refitted). The expert, which
+appraises every card by playing it out, survives about twice as far as the
+grid from rank 3 on and wins 15%.
 
 ## The goal search (the previous curve)
 
@@ -874,6 +880,7 @@ npm run scoring:check    # the two scorers agree, per-die vs bucketed
 npm run persistence:check # an in-progress run survives a save/restore round trip
 npm run history:check    # the per-roll run timeline the analysis screen charts
 npm run expert:check     # the appraiser: its clone, its measurement, its targeting
+npm run duel:check       # the duel is a fair mirror: 50% wins, build by build
 ```
 
 `scoring:check` is the safety net for anything that touches scoring: the live
