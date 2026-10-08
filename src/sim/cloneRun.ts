@@ -46,6 +46,8 @@ export function cloneRunState(state: RunState): RunState {
           dice: state.rival.dice.clone(),
           score: state.rival.score,
           roll: state.rival.roll,
+          scoreStreak: state.rival.scoreStreak,
+          momentumStreak: state.rival.momentumStreak,
         }
       : null,
     shopUnlocks: [...state.shopUnlocks],

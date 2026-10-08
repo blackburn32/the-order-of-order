@@ -39,6 +39,8 @@ interface SerializedRival {
   dice: DiceStack[];
   score: string;
   roll: number;
+  scoreStreak?: number;
+  momentumStreak?: number;
 }
 
 type SerializedRunState = Omit<
@@ -216,6 +218,8 @@ export function serializeRunState(state: RunState): SerializedRunState {
           dice: state.rival.dice.summarize().map((stack) => ({ ...stack })),
           score: state.rival.score.toString(),
           roll: state.rival.roll,
+          scoreStreak: state.rival.scoreStreak,
+          momentumStreak: state.rival.momentumStreak,
         }
       : null,
     shopUnlocks: [...state.shopUnlocks],
@@ -453,7 +457,15 @@ function hydrateRival(value: unknown, ceiling = Infinity): RivalState | null {
   const dice = hydrateDice(value.dice, undefined, ceiling);
   const score = parseBigInt(value.score);
   if (!dice || score === null || !isNonNegativeInteger(value.roll)) return null;
-  return { dice, score, roll: value.roll };
+  // A duel saved before the rival kept streaks of its own resumes with none.
+  const streak = (v: unknown) => (isNonNegativeInteger(v) ? v : 0);
+  return {
+    dice,
+    score,
+    roll: value.roll,
+    scoreStreak: streak(value.scoreStreak),
+    momentumStreak: streak(value.momentumStreak),
+  };
 }
 
 function validSidesArray(value: unknown): boolean {

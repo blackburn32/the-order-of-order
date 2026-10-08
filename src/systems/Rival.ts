@@ -3,20 +3,42 @@
 // The rival is the player, exactly. It opens the duel holding a copy of the
 // player's grid, die for die, and every roll it takes is scored by the same
 // scorer, with the same build, the same scoring numbers, the same afflictions
-// and the same growth passives. It is handed no advantage and given no
-// handicap, so the duel is a fair coin: the last thing the Order faces is
-// itself, and the only question the trial asks is which way the dice fall.
+// and the same growth passives, against the run exactly as the player's own
+// roll met it. Left there, the duel would be a fair coin.
 //
-// That fairness is a property of construction rather than of tuning. Nothing in
-// this file decides how well the rival does; it only routes the player's own
-// rules over a second pool of dice. If the win rate ever drifts off 50%, the
-// bug is a rule being applied to one side and not the other — not a number here
-// that wants changing.
+// It is not left there. The player has fought ten ranks to stand here and the
+// Order has not, so the rival keeps only RIVAL_SHARE of what each roll scores:
+// the duel leans the player's way by a fixed, stated amount, and a build that
+// can only match itself (a grid of d1s ties every roll) now wins rather than
+// losing every time to the tie rule.
+//
+// Everything else is a property of construction rather than of tuning. If the
+// win rate drifts off what the share alone gives (duelCheck measures it), the
+// bug is a rule being applied to one side and not the other — not a number
+// here that wants changing.
 
 import type { RunState } from "../state/RunState";
 import { inertDiceCount, scoringNumbersFor } from "./Afflictions";
 import { DicePool } from "./DicePool";
 import { rollRulesFor } from "./GrowthEngines";
+
+/** The share of each roll's points the rival keeps, as a fraction (numerator
+ *  over denominator, so bigint scores stay exact). */
+export const RIVAL_SHARE = { num: 9n, den: 10n } as const;
+
+let rivalShare: { num: bigint; den: bigint } = RIVAL_SHARE;
+
+/** Sim-only: try another rival share; null restores the shipped one. */
+export function setRivalShareForSimulation(
+  share: { num: bigint; den: bigint } | null,
+): void {
+  rivalShare = share ?? RIVAL_SHARE;
+}
+
+/** What the rival banks from a roll that scored `points` on its grid. */
+export function rivalPointsFor(points: bigint): bigint {
+  return (points * rivalShare.num) / rivalShare.den;
+}
 
 export interface RivalState {
   /** The mirror grid. A copy of the player's as the duel opened, grown and
@@ -24,6 +46,12 @@ export interface RivalState {
   dice: DicePool;
   score: bigint;
   roll: number;
+  /** The rival's own scoring streaks. Scoring a roll advances the run's
+   *  streaks (Rhythm pays on them), so the rival keeps a pair of its own:
+   *  shared ones would advance twice a roll and hand each side's misses to
+   *  the other. */
+  scoreStreak: number;
+  momentumStreak: number;
 }
 
 /** Open the duel: the rival takes the grid the player walks in with — and the
@@ -44,6 +72,8 @@ export function createRival(state: RunState): RivalState {
     ),
     score: 0n,
     roll: 0,
+    scoreStreak: state.scoreStreak,
+    momentumStreak: state.momentumStreak,
   };
 }
 
