@@ -1,7 +1,5 @@
-// The mirror duel is a fair coin before the rival's handicap — this proves
-// it, and is the only thing that can. The check plays with the rival keeping
-// every point it scores (systems/Rival's RIVAL_SHARE is lifted for the run), so
-// what it measures is the mirror itself, not the lean the share adds on top.
+// The mirror duel is a fair coin — this proves it, and is the only thing that
+// can.
 //
 // The final Boss Trial is played against an exact copy of the player's grid,
 // scored by the player's own build under the player's own afflictions. Nothing
@@ -16,13 +14,11 @@
 import { WIN_TRIAL } from "../config";
 import { newRun, type RunState } from "../state/RunState";
 import { type AfflictionId } from "../systems/Afflictions";
-import { playerLeadsDuel, setRivalShareForSimulation } from "../systems/Rival";
+import { playerLeadsDuel } from "../systems/Rival";
 import { trialRollTarget } from "../systems/Trial";
 import { prepareDuel, resolveRoll, rollPool } from "./engine";
 
 const DUELS = 4000;
-
-setRivalShareForSimulation({ num: 1n, den: 1n });
 
 /** A seeded, cheap generator, so a failure can be reproduced exactly. */
 function makeRng(seed: number): () => number {

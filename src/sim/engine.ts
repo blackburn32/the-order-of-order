@@ -18,12 +18,7 @@ import {
 import { bossesForRank, goalFor } from "../systems/Boss";
 import { CHARACTERS, sizeWeights } from "../systems/Characters";
 import type { DicePool } from "../systems/DicePool";
-import {
-  createRival,
-  playerLeadsDuel,
-  rivalPointsFor,
-  rollRival,
-} from "../systems/Rival";
+import { createRival, playerLeadsDuel, rollRival } from "../systems/Rival";
 import {
   applyGoldCeiling,
   EMPTY_BREAKDOWN,
@@ -375,7 +370,7 @@ export function resolveRoll(
   // same rules. Everything the player's roll suffered, this roll suffers too.
   let rivalPoints = 0n;
   if (duel && state.rival && rivalResult) {
-    rivalPoints = rivalPointsFor(rivalResult.points);
+    rivalPoints = rivalResult.points;
     state.rival.score += rivalPoints;
     state.rival.roll += 1;
     applyGridPassives(

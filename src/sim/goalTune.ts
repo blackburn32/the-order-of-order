@@ -22,13 +22,17 @@
 // toward its Boss Trial (CULL_SHARE). Rank 1 is authored rather than fitted
 // (PIN, 1 / 2 / 3 points): a lone d6 already ends nearly 30% of runs in trial
 // 1, so a fitted rank 1 would ask its other two trials for almost nothing.
-// Later ranks are fitted from whoever rank 1 actually leaves alive. The duel (trial 30) has no goal,
-// and who wins it is not a fixed share of who reaches it, so trial 29 is
-// fitted to the win rate directly: it keeps the strongest entrants until they
-// hold the wanted number of duel wins. The duel ends most of the runs that
-// reach it (about 37% win it on the grid), so the curve's last point is the
-// share that should reach the duel, the win rate over DUEL_RATE, and ranks 7-10
-// fall toward that rather than toward the win rate itself.
+// Later ranks are fitted from whoever rank 1 actually leaves alive.
+//
+// The duel (trial 30) has no goal: it is a fair coin against a copy of the
+// run's own grid, so about half the runs that reach it win. The curve's last
+// point is therefore the share that should REACH the duel, the win rate over
+// DUEL_RATE, and ranks 7-10 fall toward that rather than toward the win rate
+// itself. Trial 29 is fitted to the win rate directly: it keeps the strongest
+// entrants until they hold the wanted number of duel wins.
+//
+// KEEP_THROUGH=n keeps the live goals for trials 1..n and fits only the rest,
+// which is all a change to the late checkpoints or the duel needs.
 //
 //   npm run goals:tune
 //   CHECKPOINTS="1=0.7,3=0.4,6=0.2,10=0.05" SEEDS=300 npm run goals:tune
@@ -38,11 +42,12 @@
 // | ----------- | ------------------------ | ----------------------------------------- |
 // | CHECKPOINTS | 1=0.7,3=0.4,6=0.2,10=0.05 | `rank=share alive after it`; rank 10's |
 // |             |                          | share is the win rate                     |
-// | DUEL_RATE   | 0.37                     | share of duel entrants who win it, which  |
+// | DUEL_RATE   | 0.5                      | share of duel entrants who win it, which  |
 // |             |                          | sets how many should reach it             |
 // | SEEDS       | 300                      | seeds; every grid point plays every one   |
 // | SEED        | 1                        | base seed (validation defaults to 2)      |
 // | PIN         | 1=1,2=2,3=3              | `trial=goal` pairs kept as authored       |
+// | KEEP_THROUGH| 0                        | keep the live goals for trials 1..n       |
 // | SIG         | 3                        | significant figures a goal is rounded to  |
 // | OUT         | sim-out/goal-tune.json   | the table (`goals`), readable by GOALS=   |
 // | GRID_*      | see goalGrid.ts          | the strategy grid                         |
@@ -52,6 +57,7 @@ import { dirname, resolve } from "node:path";
 import {
   rankOf,
   TRIALS_PER_RANK,
+  trialGoal,
   trialInRank,
   WIN_RANK,
   WIN_TRIAL,
@@ -68,7 +74,8 @@ import {
 const CHECKPOINTS = parseCheckpoints(
   process.env.CHECKPOINTS ?? "1=0.7,3=0.4,6=0.2,10=0.05",
 );
-const DUEL_RATE = Number(process.env.DUEL_RATE ?? 0.37);
+const KEEP_THROUGH = Number(process.env.KEEP_THROUGH ?? 0);
+const DUEL_RATE = Number(process.env.DUEL_RATE ?? 0.5);
 const SEEDS = Number(process.env.SEEDS ?? 300);
 const SEED = Number(process.env.SEED ?? 1);
 const SIG = Number(process.env.SIG ?? 3);
@@ -198,7 +205,9 @@ async function main(): Promise<void> {
   };
 
   for (let trial = 1; trial < WIN_TRIAL; trial++) {
-    const pinned = PINNED.get(trial);
+    const pinned =
+      PINNED.get(trial) ??
+      (trial <= KEEP_THROUGH ? trialGoal(trial) : undefined);
     if (pinned !== undefined) {
       goals[trial - 1] = pinned;
       continue;
