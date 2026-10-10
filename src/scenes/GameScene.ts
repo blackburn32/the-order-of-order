@@ -2051,7 +2051,10 @@ export class GameScene extends Phaser.Scene {
     const survivors = new Map<number, DieSprite>();
     for (const sprite of this.sprites.values()) {
       const index = indexOf.get(sprite.die);
-      if (index === undefined) departed.push(sprite);
+      // A second sprite on a die that already has one is surplus: dropping it
+      // from the pool without destroying it would leave it drawn where it
+      // stood, over every die that later slides into its cell.
+      if (index === undefined || survivors.has(index)) departed.push(sprite);
       else survivors.set(index, sprite);
     }
     this.sprites = survivors;
@@ -3367,10 +3370,19 @@ export class GameScene extends Phaser.Scene {
     );
     // The Vigil has just counted this roll on every die that scored, so the
     // growth each one wears goes up with the points it earned.
+    //
+    // A per-die pool counts it on the very Die each sprite already holds, so
+    // the sprites keep their dice: re-pointing them by index here would hand a
+    // shattered or burned die's sprite to the die behind it, and the relayout
+    // could then no longer tell which sprite lost its die (see
+    // takeDepartedDice). A bucketed pool synthesises its dice per index, so
+    // there the index is the only way to the new counts.
     for (const [index, sprite] of this.sprites) {
-      const die = s.dice.dieAt(index);
-      if (!die) continue;
-      sprite.die = die;
+      if (s.dice.bucketed) {
+        const die = s.dice.dieAt(index);
+        if (!die) continue;
+        sprite.die = die;
+      }
       sprite.refreshGrowth();
     }
     // Resolve and unlock evaluation form one committed gameplay transaction.
