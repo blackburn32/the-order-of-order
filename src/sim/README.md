@@ -459,9 +459,94 @@ move the whole curve as a side effect of a file being edited. `EXPERT_SERIES`
 and `PLAYER_SERIES` are there to point a tuner at one deliberately, as
 `FIELD=expert` and `FIELD=player`.
 
-## The goal search (the shipped curve)
+## Fitting a survival curve (the shipped curve)
 
-The shipped goals are a measured table (`MEASURED_GOALS` in `config.ts`), made
+The shipped goals (`MEASURED_GOALS` in `config.ts`) are fitted to a survival
+curve: the share of runs still alive at the end of each rank. The intent is
+stated as checkpoints, and `goals:tune` (`goalTune.ts`) fits every goal so the
+strategy grid lands on the curve through them.
+
+```bash
+npm run goals:tune                                     # fit → sim-out/goal-tune.json
+CHECKPOINTS="1=0.7,3=0.4,6=0.2,10=0.05" SEEDS=1000 npm run goals:tune
+SEEDS=1000 GOALS=sim-out/goal-tune.json npm run goals:validate   # grade it held out
+# paste the printed table into MEASURED_GOALS in config.ts
+```
+
+**The checkpoints.** About 70% of runs get through rank 1, 40% through rank 3,
+20% through rank 6 (just before the defectors), and 5% win. Between two
+checkpoints survival falls by the same factor every rank, and a rank's losses
+are split 15 / 30 / 55% across its Lesser, Greater and Boss Trials. Move a
+checkpoint with `CHECKPOINTS` and rerun.
+
+**The fit** is sequential, with real culling. A goal only changes the trials
+from its own on, so with trials 1..t-1 fitted, trial t is played against an
+unreachable goal: every run that enters it plays its whole budget with the
+build it would really arrive with, and the goal is set at the score the wanted
+share of those entrants reach. Each step measures who is actually alive, so an
+error at one trial is corrected at the next rather than compounding (which is
+what a flat per-trial percentile does; see below). Floors still apply: a goal
+never drops within a rank, nor below the same slot a rank down.
+
+**Two things the fit has to work around:**
+
+- **Trial 1 is a lone d6.** Its goal of one point ends about 29% of runs on
+  its own (seven misses in a row), so fitting 70% through rank 1 would leave
+  trials 2 and 3 a goal of 1 each. Rank 1 is authored instead (`PIN`, 1 / 2 /
+  3 points), which lands about 63% through it, and every later rank is fitted
+  from whoever it leaves alive.
+- **The duel ends about half the runs that reach it.** It is a fair coin
+  against a copy of the run's own grid (49% of grid entrants win it), so the
+  curve's last point is the share that should _reach_ the duel (win rate ÷
+  `DUEL_RATE`, about 10%), and trial 29 is fitted to the win rate itself: the
+  fit plays it once more at its floor to see which entrants go on to win the
+  duel, then keeps the strongest entrants until they hold the wanted wins.
+  Ranks 7-9 lose two to three points each on the way there. The duel used to
+  convert only 36%: the mirror scored the rival after the player's roll had
+  paid its gold, burned its faces and moved its streaks and roll counter, and
+  never charged it a toll or a gamble. It now scores the rival against the run
+  exactly as the player's roll met it.
+- **`KEEP_THROUGH=n`** keeps the live goals for trials 1..n and fits only the
+  rest, which is all a change to the late checkpoints or the duel needs.
+
+| env            | default                   | what it does                                    |
+| -------------- | ------------------------- | ----------------------------------------------- |
+| `CHECKPOINTS`  | 1=0.7,3=0.4,6=0.2,10=0.05 | `rank=share alive after it`; rank 10 = win rate |
+| `DUEL_RATE`    | 0.5                       | share of duel entrants who win it               |
+| `KEEP_THROUGH` | 0                         | keep the live goals for trials 1..n             |
+| `SEEDS`        | 300                       | seeds; every grid point plays every one         |
+| `SEED`         | 1                         | base seed (validation defaults to 2)            |
+| `PIN`          | 1=1,2=2,3=3               | `trial=goal` pairs kept as authored             |
+| `SIG`          | 3                         | significant figures a goal is rounded to        |
+| `OUT`          | sim-out/goal-tune.json    | the fitted table, readable by `GOALS=`          |
+
+### What the fit found
+
+Fitted on 1,000 seeds (base seed 1) and graded on 1,000 held-out seeds (base
+seed 2) for the grid, and 150 seeds for the expert, the share of runs alive
+after each rank:
+
+| after rank     | 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | 9   | 10 (win) |
+| -------------- | --- | --- | --- | --- | --- | --- | --- | --- | --- | -------- |
+| wanted         | 70% | 53% | 40% | 32% | 25% | 20% | 17% | 14% | 12% | 5%       |
+| grid, fitted   | 63% | 49% | 38% | 30% | 24% | 19% | 16% | 13% | 11% | 4.7%     |
+| grid, before   | 27% | 8%  | 4%  | 2%  | 1%  | 1%  | 1%  | 1%  | 0%  | 0.2%     |
+| expert, fitted | 65% | 61% | 55% | 49% | 46% | 42% | 35% | 31% | 30% | 15%      |
+| expert, before | 43% | 24% | 19% | 16% | 13% | 11% | 11% | 11% | 11% | 4.7%     |
+
+Rank 1 sits under its checkpoint because it is authored (see above). The
+held-out grid runs a point or two under the fit after that because seed 2's
+lone d6 clears trial 1 a little less often than seed 1's (71% against 74%), and
+every later trial is fitted relative to who got there. The price of the gentler
+curve is pace: 37% of the grid's clears now come on the opening roll (14%
+before), since most of the goals are far lower; in ranks 7-9 it is about half
+(61% before the duel was fixed and those ranks refitted). The expert, which
+appraises every card by playing it out, survives about twice as far as the
+grid from rank 3 on and wins 15%.
+
+## The goal search (the previous curve)
+
+The previous goals were a measured table, made
 by four commands that share one strategy grid (`goalGrid.ts`):
 
 ```bash
@@ -795,6 +880,7 @@ npm run scoring:check    # the two scorers agree, per-die vs bucketed
 npm run persistence:check # an in-progress run survives a save/restore round trip
 npm run history:check    # the per-roll run timeline the analysis screen charts
 npm run expert:check     # the appraiser: its clone, its measurement, its targeting
+npm run duel:check       # the duel is a fair mirror: 50% wins, build by build
 ```
 
 `scoring:check` is the safety net for anything that touches scoring: the live
@@ -830,7 +916,8 @@ crosses the bucket threshold.
 | File                     | Role                                                                                             |
 | ------------------------ | ------------------------------------------------------------------------------------------------ |
 | `goalGrid.ts`            | The strategy grid, its search/validate modes, and the worker pool the goal tools share.          |
-| `goalSearch.ts`          | Shipped tuner: seeds × grid with goals removed → per-seed max and percentile → a goal table.     |
+| `goalTune.ts`            | Shipped tuner: fits each goal, trial by trial with culling, to a per-rank survival curve.        |
+| `goalSearch.ts`          | Previous tuner: seeds × grid with goals removed → per-seed max and percentile → a goal table.    |
 | `goalSweep.ts`           | Every table a search derived, played with culling on held-out seeds, side by side.               |
 | `goalValidate.ts`        | One goal table played by the grid with culling: survival, roll-1 clears, strategies, bosses.     |
 | `goalReport.ts`          | Before/after HTML page from a search and two validations.                                        |

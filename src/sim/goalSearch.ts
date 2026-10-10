@@ -53,7 +53,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
-  GOAL_PERCENTILE_BY_RANK,
   rankOf,
   rollsForTrial,
   TRIALS_PER_RANK,
@@ -75,8 +74,12 @@ import { rerollCost } from "../systems/Shop";
 
 const SEEDS = Number(process.env.SEEDS ?? 120);
 const SEED = Number(process.env.SEED ?? 1);
-// The default is the schedule the shipped table was made with, so a rerun on
-// unchanged rules reproduces config.ts's MEASURED_GOALS (to seed noise).
+// The default is the schedule the previous shipped table was made with: the
+// median for rank 1, the 80th percentile after. The shipped table is now fitted
+// to a survival curve instead (goalTune.ts).
+const GOAL_PERCENTILE_BY_RANK = [
+  0.5, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
+] as const;
 const PERCENTILE = parseSchedule(
   process.env.PERCENTILE ?? GOAL_PERCENTILE_BY_RANK.join(","),
 );

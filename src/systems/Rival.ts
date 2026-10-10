@@ -3,9 +3,11 @@
 // The rival is the player, exactly. It opens the duel holding a copy of the
 // player's grid, die for die, and every roll it takes is scored by the same
 // scorer, with the same build, the same scoring numbers, the same afflictions
-// and the same growth passives. It is handed no advantage and given no
-// handicap, so the duel is a fair coin: the last thing the Order faces is
-// itself, and the only question the trial asks is which way the dice fall.
+// and the same growth passives, against the run exactly as the player's own
+// roll met it. It is handed no advantage and given no handicap, so the duel is
+// a fair coin: the last thing the Order faces is itself, and the only question
+// the trial asks is which way the dice fall. (A tie goes to the Order; The
+// Edge is the player's answer to a build that can only match itself.)
 //
 // That fairness is a property of construction rather than of tuning. Nothing in
 // this file decides how well the rival does; it only routes the player's own
@@ -24,6 +26,12 @@ export interface RivalState {
   dice: DicePool;
   score: bigint;
   roll: number;
+  /** The rival's own scoring streaks. Scoring a roll advances the run's
+   *  streaks (Rhythm pays on them), so the rival keeps a pair of its own:
+   *  shared ones would advance twice a roll and hand each side's misses to
+   *  the other. */
+  scoreStreak: number;
+  momentumStreak: number;
 }
 
 /** Open the duel: the rival takes the grid the player walks in with — and the
@@ -44,6 +52,8 @@ export function createRival(state: RunState): RivalState {
     ),
     score: 0n,
     roll: 0,
+    scoreStreak: state.scoreStreak,
+    momentumStreak: state.momentumStreak,
   };
 }
 

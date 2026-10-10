@@ -272,6 +272,39 @@ export function resolveRoll(
       : denied === "gamblersCurse"
         ? deniedRoll(state, "gamblersCurse", "Gambler's Curse")
         : scoreRollHistogram(state, rolled, { finalRoll, afflictions });
+
+  // The rival rolls and scores here, against the run exactly as the player's
+  // roll just met it: the same roll counter (Hair Trigger, Downbeat, the
+  // Hourglass), the same purse (the Gilded Altar, before this roll's gold
+  // lands), the same burned faces and growth (before the player's grid burns
+  // or breaks), and the same toll or gamble — a roll the player loses, the
+  // rival loses too. Only its streaks are its own, since scoring a roll moves
+  // them.
+  const duel = isMirrorTrial(state.trial);
+  let rivalResult: RollResult | null = null;
+  let rivalRolled = 0;
+  if (duel && state.rival) {
+    const rival = state.rival;
+    rollRival(state, rival, rng);
+    rivalRolled = rival.dice.agg().total;
+    const own = {
+      scoreStreak: state.scoreStreak,
+      momentumStreak: state.momentumStreak,
+    };
+    state.scoreStreak = rival.scoreStreak;
+    state.momentumStreak = rival.momentumStreak;
+    rivalResult =
+      denied === null
+        ? scoreRollHistogram(state, rival.dice.agg(), {
+            finalRoll,
+            afflictions,
+          })
+        : deniedRoll(state, denied, "Denied");
+    rival.scoreStreak = state.scoreStreak;
+    rival.momentumStreak = state.momentumStreak;
+    state.scoreStreak = own.scoreStreak;
+    state.momentumStreak = own.momentumStreak;
+  }
   accumulatePoints(state, result, finalRoll);
   state.roll += 1;
   state.score += result.points;
@@ -291,7 +324,6 @@ export function resolveRoll(
 
   // Last Call unlock: this roll crossed the trial's goal as its final roll.
   const goal = goalFor(state);
-  const duel = isMirrorTrial(state.trial);
   if (!duel && finalRoll && scoreBefore < goal && state.score >= goal) {
     state.clutchClear = true;
   }
@@ -323,7 +355,7 @@ export function resolveRoll(
   // What the growth engines earned is read off the player's own roll — after its
   // passives, so The Pyre sees the dice this roll shattered — and neither the
   // duel's mirror nor a roll an affliction took can earn it. The counts move
-  // only after the rival has rolled, below: both sides of the duel must score
+  // only after the rival has scored, above: both sides of the duel must score
   // this roll at the same growth.
   const earned =
     denied === null
@@ -334,20 +366,20 @@ export function resolveRoll(
         })
       : [];
 
-  // The rival takes its matching roll last, so the grid it grows from is the one
-  // the player's own rules just produced for its mirror. Everything the player's
-  // roll suffered, this roll suffers too.
+  // The rival's grid takes the roll's passives after the player's, under the
+  // same rules. Everything the player's roll suffered, this roll suffers too.
   let rivalPoints = 0n;
-  if (duel && state.rival) {
-    rollRival(state, state.rival, rng);
-    const rivalResult = scoreRollHistogram(state, state.rival.dice.agg(), {
-      finalRoll,
-      afflictions,
-    });
+  if (duel && state.rival && rivalResult) {
     rivalPoints = rivalResult.points;
     state.rival.score += rivalPoints;
     state.rival.roll += 1;
-    applyGridPassives(state, state.rival.dice, afflictions, false, rng);
+    applyGridPassives(
+      state,
+      state.rival.dice,
+      afflictions,
+      denied !== null,
+      rng,
+    );
   }
 
   countGrowth(state, earned);
@@ -355,7 +387,7 @@ export function resolveRoll(
   // carry tallies of their own — and only while each grid is small enough.
   if (denied === null && vigilActive(state, rolled.total))
     state.dice.countScores(vigilPercent(state));
-  if (duel && state.rival && vigilActive(state, state.rival.dice.agg().total))
+  if (denied === null && duel && state.rival && vigilActive(state, rivalRolled))
     state.rival.dice.countScores(vigilPercent(state));
 
   // Roland's size storm, last of everything the roll does to the grid.

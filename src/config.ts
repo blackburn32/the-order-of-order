@@ -121,32 +121,44 @@ export function rollsForTrial(trial: number): number {
 
 // ---- Goal curve ------------------------------------------------------------
 //
-// The goals are MEASURED, not derived from a formula. `npm run goals:search`
-// (src/sim/goalSearch.ts) plays a grid of 43 bot strategies — every shopping
-// bot, at three curse appetites — over hundreds of seeds with the goals taken
-// away: every trial plays its whole roll budget, nothing is culled, and each
-// trial pays out as a clear plus an assumed 1-3 gold of early-completion pay.
-// For each seed and trial it takes a percentile of the grid's scores, and the
-// goal is the median of that across seeds, rounded to three significant figures.
+// The goals are MEASURED, not derived from a formula, and fitted to a survival
+// curve: the share of runs still alive at the end of each rank. The curve is
+// pinned at four checkpoints — about 70% of runs get through rank 1, 40%
+// through rank 3, 20% through rank 6 (just before the defectors), and 5% win
+// at rank 10 — so a casual player sees a good part of the ladder and the
+// finish stays a hard ceiling. Between checkpoints survival falls by the same
+// factor every rank, and a rank's losses lean on its Boss Trial.
 //
-// The percentile is set per rank (GOAL_PERCENTILE_BY_RANK). Trial 1 keeps its
-// goal of a single point: the opening's difficulty is the lone starting d6, and
-// that wall was already the right height.
+// `npm run goals:tune` (src/sim/goalTune.ts) fits the table against a grid of
+// 43 bot strategies — every shopping bot, at three curse appetites — over
+// hundreds of seeds with real culling. Trial by trial, it plays every run that
+// reaches the trial against an unreachable goal to see what each could score
+// there, and sets the goal at the score the wanted share of them reach,
+// rounded to three significant figures. The last goal is fitted to the win
+// rate itself, since the duel decides who reaching it wins.
+//
+// Rank 1 is authored, not fitted: 1, 2 and 3 points. The opening's difficulty
+// is the lone starting d6, which by itself ends nearly 30% of runs in trial 1,
+// so rank 1 lands a little under its 70% checkpoint (about 63%) and the later
+// ranks are fitted from whoever it leaves alive.
 //
 // A goal is never lower than the trial before it in its own rank, nor than the
 // same slot a rank down. A rank opens on a seven-roll Lesser Trial, so it can
 // still ask less than the ten-roll Boss Trial that closed the rank before it.
 //
-// To retune: rerun the search (and `goals:sweep` to compare percentiles), paste
-// the printed table here, and grade it with `goals:validate` and
-// `goals:report`. See src/sim/README.md, "The goal search".
+// To retune: move the checkpoints (`CHECKPOINTS="1=0.7,3=0.4,6=0.2,10=0.05"`),
+// rerun the fit, paste the printed table here, and grade it on held-out seeds
+// with `goals:validate`. See src/sim/README.md, "Fitting a survival curve".
 
-/** The percentile of the strategy grid's full-budget scores each rank's goals
- *  were taken at — the record of how MEASURED_GOALS was made, not an input to
+/** The share of runs meant to be alive after each checkpoint rank (rank 10's is
+ *  the win rate) — the record of how MEASURED_GOALS was fitted, not an input to
  *  anything at runtime. */
-export const GOAL_PERCENTILE_BY_RANK = [
-  0.5, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8, 0.8,
-] as const;
+export const SURVIVAL_CHECKPOINTS = {
+  1: 0.7,
+  3: 0.4,
+  6: 0.2,
+  10: 0.05,
+} as const;
 
 /**
  * The goal for every trial of the ladder (index = trial - 1), as decimal
@@ -157,16 +169,16 @@ export const GOAL_PERCENTILE_BY_RANK = [
  */
 // prettier-ignore
 const MEASURED_GOALS: readonly string[] = [
-  "1", "15", "32",                            // rank 1
-  "90", "192", "316",                         // rank 2
-  "484", "1020", "1370",                      // rank 3
-  "1810", "3730", "5230",                     // rank 4
-  "7480", "18400", "26200",                   // rank 5
-  "52700", "151000", "281000",                // rank 6
-  "689000", "1220000", "2180000",             // rank 7
-  "5550000", "18600000", "31700000",          // rank 8
-  "122000000", "453000000", "1070000000",     // rank 9
-  "4080000000", "18100000000", "55400000000", // rank 10
+  "1", "2", "3",                              // rank 1
+  "5", "25", "47",                            // rank 2
+  "42", "96", "181",                          // rank 3
+  "125", "329", "616",                        // rank 4
+  "588", "1370", "2540",                      // rank 5
+  "2650", "6960", "15300",                    // rank 6
+  "15600", "30300", "61400",                  // rank 7
+  "79800", "204000", "634000",                // rank 8
+  "684000", "2720000", "5850000",             // rank 9
+  "9540000", "84900000", "679200000",         // rank 10
 ];
 
 export const TRIAL_GOALS: bigint[] = MEASURED_GOALS.map((g) => BigInt(g));

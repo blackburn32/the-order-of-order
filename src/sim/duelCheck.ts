@@ -83,6 +83,17 @@ const BUILDS: Build[] = [
       state.hasBloodPrice = true;
     },
   },
+  {
+    name: "gamble and rhythm",
+    apply: (state) => {
+      state.dice.addDice(6, 200);
+      // A roll the gamble takes must be taken from both sides, and Rhythm's
+      // streak must be each side's own: shared, it advanced twice a roll.
+      state.afflictions = ["gamblersCurse"] as AfflictionId[];
+      state.momentum = 3;
+      state.downbeat = 1;
+    },
+  },
 ];
 
 /** Play the duel out and report how it ended. A tie is called out separately
