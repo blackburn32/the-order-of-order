@@ -1,673 +1,179 @@
-<style>
-  html,
-  body {
-    min-height: 100%;
-    margin: 0;
-    background: #0b0910;
-  }
-
-  body {
-    background: radial-gradient(
-      circle at 50% 0%,
-      #211a33 0%,
-      #100d19 48%,
-      #09070d 100%
-    );
-    background-attachment: fixed;
-  }
-</style>
-
-<div
-  style="
-    min-height: 100vh;
-    box-sizing: border-box;
-    padding: 32px 18px;
-    background: radial-gradient(
-      circle at 50% 0%,
-      rgba(42, 32, 64, 0.8) 0%,
-      rgba(13, 10, 18, 0.96) 52%,
-      #09070d 100%
-    );
-  "
->
-  <div
-    style="
-      max-width: 920px;
-      margin: 0 auto;
-      color: #f3ead2;
-      font-family:
-        Georgia, &quot;Palatino Linotype&quot;, &quot;Times New Roman&quot;,
-        serif;
-      line-height: 1.55;
-    "
-  >
-    <!-- HERO -->
-    <div
-      style="
-        position: relative;
-        overflow: hidden;
-        margin: 0 0 28px;
-        padding: 38px 24px 30px;
-        text-align: center;
-        background: radial-gradient(
-          circle at 50% 20%,
-          #2b2343 0%,
-          #161226 55%,
-          #0d0a12 100%
-        );
-        border: 2px solid #c9a227;
-        border-radius: 12px;
-        box-shadow:
-          0 0 28px rgba(201, 162, 39, 0.32),
-          inset 0 0 42px rgba(0, 0, 0, 0.55);
-      "
-    >
-      <div
-        style="
-          margin-bottom: 7px;
-          color: #e6c65a;
-          font-size: 13px;
-          font-weight: bold;
-          letter-spacing: 0.26em;
-          text-transform: uppercase;
-        "
-      >
-        An incremental rite of dice
-      </div>
-      <h1
-        style="
-          margin: 0;
-          color: #e6c65a;
-          font-size: clamp(38px, 8vw, 70px);
-          line-height: 1.05;
-          text-shadow:
-            0 3px 0 #5a4a2e,
-            0 0 24px rgba(255, 217, 119, 0.38);
-        "
-      >
-        The Order of Order
-      </h1>
-      <p
-        style="
-          max-width: 680px;
-          margin: 18px auto 0;
-          color: #cdb27a;
-          font-size: 20px;
-          font-style: italic;
-        "
-      >
-        Roll ones. Survive the thresholds. Save the world.
-      </p>
-    </div>
-
-    <!-- PRIMARY GIF -->
-    <div
-      style="
-        margin: 0 0 30px;
-        padding: 7px;
-        background: #0d0a12;
-        border: 1px solid #5a4a2e;
-        border-radius: 9px;
-        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-      "
-    >
-      <img
-        src="https://img.itch.zone/aW1nLzI4NzAyNTExLmdpZg==/original/0Ln5XW.gif"
-        alt="A huge mixed grid of dice rolling in The Order of Order"
-        style="display: block; width: 100%; height: auto; border-radius: 5px"
-      />
-    </div>
-
-    <!-- PITCH -->
-    <div
-      style="
-        margin: 0 0 28px;
-        padding: 24px;
-        background: linear-gradient(135deg, #221a38, #161226);
-        border-left: 6px solid #8a1f2b;
-        border-radius: 6px;
-      "
-    >
-      <p style="margin: 0; color: #f3ead2; font-size: 19px">
-        <strong style="color: #e6c65a">The Order of Order</strong> is a
-        dice-building incremental roguelike about turning one humble d6 into a
-        screen-filling engine of chance. Every point keeps you alive—but those
-        same points are the only currency accepted by the shop. Spend too much
-        and miss the round's target. Spend too little and your build may never
-        grow strong enough for what comes next.
-      </p>
-    </div>
-
-    <!-- FEATURE CARDS -->
-    <h2
-      style="
-        margin: 34px 0 15px;
-        color: #e6c65a;
-        font-size: 30px;
-        text-align: center;
-        text-shadow: 0 0 14px rgba(230, 198, 90, 0.25);
-      "
-    >
-      What Awaits Within
-    </h2>
-
-    <div style="display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 30px">
-      <div
-        style="
-          flex: 1 1 250px;
-          padding: 19px;
-          background: #161226;
-          border: 1px solid #d4b83c;
-          border-top: 5px solid #d4b83c;
-          border-radius: 8px;
-        "
-      >
-        <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px">
-          Build a Dice Empire
-        </h3>
-        <p style="margin: 0; color: #e9d8a6">
-          Grow from a single die to dozens, hundreds, or far beyond. d1, d2, d4,
-          d6, d8, d10, d20, and d100 dice each have their own readable shape.
-        </p>
-      </div>
-
-      <div
-        style="
-          flex: 1 1 250px;
-          padding: 19px;
-          background: #161226;
-          border: 1px solid #4a7fc9;
-          border-top: 5px solid #4a7fc9;
-          border-radius: 8px;
-        "
-      >
-        <h3 style="margin: 0 0 8px; color: #cfd6df; font-size: 21px">
-          Break the Scoring Rules
-        </h3>
-        <p style="margin: 0; color: #e9d8a6">
-          Score matching faces, load or shrink whole die sizes, add wild faces,
-          multiply every point, and discover combos that turn a quiet roll into
-          an avalanche.
-        </p>
-      </div>
-
-      <div
-        style="
-          flex: 1 1 250px;
-          padding: 19px;
-          background: #161226;
-          border: 1px solid #9a4fc9;
-          border-top: 5px solid #9a4fc9;
-          border-radius: 8px;
-        "
-      >
-        <h3 style="margin: 0 0 8px; color: #d9a8f2; font-size: 21px">
-          45 Shop Items
-        </h3>
-        <p style="margin: 0; color: #e9d8a6">
-          Common, uncommon, and rare relics create wildly different runs—from
-          disciplined small-die builds to explosive grids that reproduce
-          whenever they score.
-        </p>
-      </div>
-
-      <div
-        style="
-          flex: 1 1 250px;
-          padding: 19px;
-          background: #161226;
-          border: 1px solid #8a1f2b;
-          border-top: 5px solid #8a1f2b;
-          border-radius: 8px;
-        "
-      >
-        <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px">
-          Chasing the Score
-        </h3>
-        <p style="margin: 0; color: #e9d8a6">
-          Every round raises the score you must reach to survive. Grow your
-          engine, chase the next threshold, and carry your run through all 10
-          escalating rounds.
-        </p>
-      </div>
-
-      <div
-        style="
-          flex: 1 1 250px;
-          padding: 19px;
-          background: #161226;
-          border: 1px solid #c9a227;
-          border-top: 5px solid #c9a227;
-          border-radius: 8px;
-        "
-      >
-        <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px">
-          Permanent Discoveries
-        </h3>
-        <p style="margin: 0; color: #e9d8a6">
-          Complete feats during a run to unlock new items. Track every
-          discovery, unlock condition, and purchase count inside the Codex.
-        </p>
-      </div>
-
-      <div
-        style="
-          flex: 1 1 250px;
-          padding: 19px;
-          background: #161226;
-          border: 1px solid #5a4a2e;
-          border-top: 5px solid #5a4a2e;
-          border-radius: 8px;
-        "
-      >
-        <h3 style="margin: 0 0 8px; color: #e6c65a; font-size: 21px">
-          Built for Replays
-        </h3>
-        <p style="margin: 0; color: #e9d8a6">
-          Ten escalating rounds, randomized shops, dynamic prices, a Hall of
-          High Scores, persistent progression, and a harder mode waiting beyond
-          your first victory.
-        </p>
-      </div>
-    </div>
-
-    <!-- SHOP SCREENSHOT -->
-    <div style="margin: 34px 0">
-      <div
-        style="
-          padding: 7px;
-          background: #0d0a12;
-          border: 1px solid #c9a227;
-          border-radius: 9px;
-          box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
-        "
-      >
-        <img
-          src="https://img.itch.zone/aW1nLzI4NzAyNTcwLnBuZw==/original/H%2F5iEB.png"
-          alt="The shop offering common, uncommon, and rare items"
-          style="display: block; width: 100%; height: auto; border-radius: 5px"
-        />
-      </div>
-      <p
-        style="
-          margin: 9px 12px 0;
-          color: #8c7a55;
-          font-size: 14px;
-          font-style: italic;
-          text-align: center;
-        "
-      >
-        Every price is a wager against the score you still need to survive.
-      </p>
-    </div>
-
-    <!-- HOW TO PLAY -->
-    <div
-      style="
-        margin: 36px 0;
-        padding: 26px;
-        background: #e9d8a6;
-        color: #2a1f14;
-        border: 3px double #8c7a55;
-        border-radius: 8px;
-        box-shadow: inset 0 0 30px rgba(90, 74, 46, 0.2);
-      "
-    >
-      <h2
-        style="
-          margin: 0 0 18px;
-          color: #561019;
-          font-size: 30px;
-          text-align: center;
-        "
-      >
-        How to Perform the Rite
+<div class="custom-page">
+  <div class="custom-hero">
+    <div class="custom-hero-copy">
+      <p class="custom-eyebrow">A dice-building roguelike</p>
+      <h2 class="custom-title">
+        <span class="custom-title-small">The</span>
+        <span class="custom-title-line">Order <span class="custom-title-of">of</span></span>
+        <span class="custom-title-line custom-title-gold">Order</span>
       </h2>
-
-      <div
-        style="
-          display: flex;
-          gap: 14px;
-          align-items: flex-start;
-          margin: 0 0 14px;
-        "
-      >
-        <div
-          style="
-            flex: 0 0 34px;
-            height: 34px;
-            color: #f3ead2;
-            background: #8a1f2b;
-            border-radius: 50%;
-            font-weight: bold;
-            line-height: 34px;
-            text-align: center;
-          "
-        >
-          1
-        </div>
-        <div>
-          <strong>Roll the dice.</strong> A die showing a sacred scoring number
-          earns points. At first, that number is <strong>1</strong>.
-        </div>
-      </div>
-
-      <div
-        style="
-          display: flex;
-          gap: 14px;
-          align-items: flex-start;
-          margin: 0 0 14px;
-        "
-      >
-        <div
-          style="
-            flex: 0 0 34px;
-            height: 34px;
-            color: #f3ead2;
-            background: #8a1f2b;
-            border-radius: 50%;
-            font-weight: bold;
-            line-height: 34px;
-            text-align: center;
-          "
-        >
-          2
-        </div>
-        <div>
-          <strong>Watch the target.</strong> Each round gives you 20 rolls to
-          reach the displayed score threshold.
-        </div>
-      </div>
-
-      <div
-        style="
-          display: flex;
-          gap: 14px;
-          align-items: flex-start;
-          margin: 0 0 14px;
-        "
-      >
-        <div
-          style="
-            flex: 0 0 34px;
-            height: 34px;
-            color: #f3ead2;
-            background: #8a1f2b;
-            border-radius: 50%;
-            font-weight: bold;
-            line-height: 34px;
-            text-align: center;
-          "
-        >
-          3
-        </div>
-        <div>
-          <strong>Visit the shop.</strong> After rolls 5 and 15, trade some of
-          your score for new dice, extra scoring faces, multipliers,
-          rule-changing relics, and stranger powers.
-        </div>
-      </div>
-
-      <div
-        style="
-          display: flex;
-          gap: 14px;
-          align-items: flex-start;
-          margin: 0 0 14px;
-        "
-      >
-        <div
-          style="
-            flex: 0 0 34px;
-            height: 34px;
-            color: #f3ead2;
-            background: #8a1f2b;
-            border-radius: 50%;
-            font-weight: bold;
-            line-height: 34px;
-            text-align: center;
-          "
-        >
-          4
-        </div>
-        <div>
-          <strong>Survive the reckoning.</strong> Reach the target by the final
-          roll or the run ends. Clear the round and your score resets—unless
-          your build has found a way around that.
-        </div>
-      </div>
-
-      <div style="display: flex; gap: 14px; align-items: flex-start">
-        <div
-          style="
-            flex: 0 0 34px;
-            height: 34px;
-            color: #f3ead2;
-            background: #8a1f2b;
-            border-radius: 50%;
-            font-weight: bold;
-            line-height: 34px;
-            text-align: center;
-          "
-        >
-          5
-        </div>
-        <div>
-          <strong>Clear all 10 rounds.</strong> The final threshold is waiting.
-          Defeat it to restore order—and unlock an even harsher challenge.
-        </div>
-      </div>
-
-      <p
-        style="
-          margin: 22px 0 0;
-          padding-top: 16px;
-          color: #5a4a2e;
-          border-top: 1px solid #8c7a55;
-          font-size: 15px;
-          text-align: center;
-        "
-      >
-        <strong>Controls:</strong> mouse or touch. Press the Roll button, tap
-        cards to buy them, and select dice when an item asks for a target. Zoom
-        in and out, then pan around the board to explore even the most enormous
-        dice grids.
-      </p>
+      <p class="custom-hero-tagline">A sacred discipline. An unreasonable number of dice.</p>
+      <p class="custom-hero-summary">Start with one d6. Buy rule-changing cards, build impossible scoring combinations, and climb ten ranks of increasingly unreasonable trials.</p>
+      <p class="custom-hero-actions"><a class="custom-button custom-button-idle" href="https://blackout32.itch.io/the-order-of-order#game_drop">Play Free in Browser ↑</a></p>
+      <p class="custom-hero-note">Free demo · Mouse or touchscreen · No account required</p>
     </div>
+  </div>
 
-    <!-- BUILD CALLOUT -->
-    <div style="margin: 32px 0; text-align: center">
-      <div
-        style="
-          display: inline-block;
-          padding: 6px 13px;
-          color: #2a1f14;
-          background: #d4b83c;
-          border-radius: 999px;
-          font-weight: bold;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        "
-      >
-        Common
-      </div>
-      <div
-        style="
-          display: inline-block;
-          margin-left: 6px;
-          padding: 6px 13px;
-          color: #f3ead2;
-          background: #4a7fc9;
-          border-radius: 999px;
-          font-weight: bold;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        "
-      >
-        Uncommon
-      </div>
-      <div
-        style="
-          display: inline-block;
-          margin-left: 6px;
-          padding: 6px 13px;
-          color: #f3ead2;
-          background: #9a4fc9;
-          border-radius: 999px;
-          font-weight: bold;
-          letter-spacing: 0.08em;
-          text-transform: uppercase;
-        "
-      >
-        Rare
-      </div>
-      <p
-        style="
-          max-width: 720px;
-          margin: 15px auto 0;
-          color: #e9d8a6;
-          font-size: 18px;
-        "
-      >
-        Duplicate every die. Turn an entire die size wild. Score repeated faces.
-        Add a d100 that can quadruple the roll. Carry points between rounds.
-        Create dice whenever dice score. Then multiply the whole catastrophe.
-      </p>
-    </div>
-
-    <!-- HIGH SCORES + CODEX -->
-    <div style="display: flex; flex-wrap: wrap; gap: 18px; margin: 38px 0 32px">
-      <div
-        style="
-          flex: 1 1 360px;
-          padding: 7px;
-          background: #0d0a12;
-          border: 1px solid #8a1f2b;
-          border-radius: 9px;
-        "
-      >
-        <img
-          src="https://img.itch.zone/aW1nLzI4NzAyNzI4LnBuZw==/original/BY6weM.png"
-          alt="The Hall of High Scores"
-          style="display: block; width: 100%; height: auto; border-radius: 5px"
-        />
-        <h3 style="margin: 13px 12px 3px; color: #e6c65a; font-size: 21px">
-          Hall of High Scores
-        </h3>
-        <p style="margin: 0 12px 13px; color: #cdb27a">
-          Climb the global leaderboard and compare your greatest runs with
-          players around the world—complete with final grids, total scores, and
-          deepest rounds.
-        </p>
-      </div>
-
-      <div
-        style="
-          flex: 1 1 360px;
-          padding: 7px;
-          background: #0d0a12;
-          border: 1px solid #9a4fc9;
-          border-radius: 9px;
-        "
-      >
-        <img
-          src="https://img.itch.zone/aW1nLzI4NzAyNTY3LmdpZg==/original/PTnG7O.gif"
-          alt="The Codex of unlockable items"
-          style="display: block; width: 100%; height: auto; border-radius: 5px"
-        />
-        <h3 style="margin: 13px 12px 3px; color: #e6c65a; font-size: 21px">
-          The Codex
-        </h3>
-        <p style="margin: 0 12px 13px; color: #cdb27a">
-          Catalog every item, reveal hidden relics through achievements, and
-          track what you choose across runs.
-        </p>
+  <div class="custom-gameplay">
+    <div class="custom-gameplay-copy custom-reveal">
+      <p class="custom-kicker">Make chance obey</p>
+      <h2>One humble d6 becomes a screen-filling engine.</h2>
+      <p class="custom-body">Start with one die, score on 1. Between Trials, buy cards that add dice, unlock new scoring faces, reshape the grid, and compound the whole roll. By the final ranks, one click can send an entire congregation into motion.</p>
+      <div class="custom-facts">
+        <div class="custom-fact"><span class="custom-fact-value">10</span><span class="custom-fact-label">ranks to victory</span></div>
+        <div class="custom-fact"><span class="custom-fact-value">3</span><span class="custom-fact-label">trials per rank</span></div>
+        <div class="custom-fact"><span class="custom-fact-value">15–20</span><span class="custom-fact-label">minutes for a full run</span></div>
       </div>
     </div>
-
-    <!-- SOURCE -->
-    <div
-      style="
-        margin: 34px 0 18px;
-        padding: 23px;
-        text-align: center;
-        background: linear-gradient(135deg, #221a38, #161226);
-        border: 1px solid #5a4a2e;
-        border-radius: 8px;
-      "
-    >
-      <h2 style="margin: 0 0 9px; color: #e6c65a; font-size: 27px">
-        Open Source
-      </h2>
-      <p style="max-width: 690px; margin: 0 auto 17px; color: #e9d8a6">
-        Want to study the machinery behind the dice? The complete TypeScript and
-        Phaser source code is available on GitHub under the MIT License.
-      </p>
-      <a
-        href="https://github.com/blackburn32/the-order-of-order"
-        target="_blank"
-        rel="noopener"
-        style="
-          display: inline-block;
-          padding: 11px 18px;
-          color: #2a1f14;
-          background: #e6c65a;
-          border: 2px solid #c9a227;
-          border-radius: 6px;
-          font-weight: bold;
-          text-decoration: none;
-        "
-      >
-        View the source on GitHub
-      </a>
+    <div class="custom-window custom-window-tilted custom-reveal">
+      <div class="custom-media custom-media-growth"><img src="https://the-order-of-order.com/assets/gameplay-grid-growth-anim.webp" width="880" height="496" alt="Four rolls in a row, the grid growing after each one as Genesis creates new dice"></div>
+      <p class="custom-caption">The "Genesis" doctrine creates new dice every roll!</p>
     </div>
+  </div>
 
-    <!-- CREDITS -->
-    <div
-      style="
-        margin: 24px 0 18px;
-        padding: 21px;
-        text-align: center;
-        background: #161226;
-        border: 1px solid #c9a227;
-        border-radius: 8px;
-      "
-    >
-      <h2 style="margin: 0 0 12px; color: #e6c65a; font-size: 27px">Credits</h2>
-      <p style="margin: 0 0 7px; color: #e9d8a6">
-        <strong>Alex Blackburn</strong> — Coding, game design, music, and sound
-        effects
-      </p>
-      <p style="margin: 0; color: #e9d8a6">
-        <strong>Mandee Mae</strong> — Pixel art
-      </p>
+  <div class="custom-proclamation">
+    <div class="custom-reveal">
+      <p class="custom-kicker">A founding miracle</p>
+      <h2>For as long as anyone remembers, dice of the realm never stopped turning.</h2>
+      <p class="custom-lede">Then one came to rest. It held one face, one thought, one mind, for nearly three miraculous seconds. That day, The Order of Order was founded to spread the miracle.</p>
     </div>
+    <div class="custom-study custom-reveal">
+      <p class="custom-study-label">Where once was chaos,</p>
+      <span class="custom-unsettled-die">2</span>
+      <span class="custom-study-arrow">→</span>
+      <span class="custom-settled-die">1</span>
+      <p class="custom-study-note">only order remains.</p>
+    </div>
+  </div>
 
-    <!-- FINAL TAGLINE -->
-    <p
-      style="
-        margin: 26px 0 8px;
-        color: #cdb27a;
-        font-size: 20px;
-        font-style: italic;
-        text-align: center;
-      "
-    >
-      Chance creates chaos. Your build gives it order.
-    </p>
-    <p
-      style="
-        margin: 0;
-        color: #8c7a55;
-        font-size: 13px;
-        text-align: center;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-      "
-    >
-      Responsive browser play · Mouse &amp; touch · Persistent unlocks · No
-      account required
-    </p>
+  <div class="custom-doctrine">
+    <div class="custom-heading custom-reveal">
+      <p class="custom-kicker">Enlightened doctrine</p>
+      <h2>Every card rewrites what a roll can mean.</h2>
+      <p class="custom-body">Make new faces score. Shrink dice toward certainty. Duplicate your dice. Build feedback loops that turn one fortunate result into a congregation.</p>
+    </div>
+    <div class="custom-reel custom-reel-shop custom-reveal">
+      <div class="custom-media custom-media-shop"><img src="https://the-order-of-order.com/assets/shop-loop-anim.webp" width="1200" height="676" alt="One visit to the in-game shop: two cards bought, the shelf rerolled, a booster pack opened and a card claimed from it, another card bought, and the shelf rerolled again"></div>
+      <p class="custom-caption">Purchase doctrines from the shop, or try a booster pack to test your luck!</p>
+    </div>
+    <div class="custom-cards">
+      <div class="custom-card custom-reveal"><img src="https://the-order-of-order.com/assets/card-two-newcomers.png" width="650" height="850" alt="The in-game Two Newcomers card: Add two d6 to your grid."></div>
+      <div class="custom-card custom-reveal"><img src="https://the-order-of-order.com/assets/card-like-minds.png" width="650" height="850" alt="The in-game Like Minds card: Choose a die size; every die of that size is duplicated."></div>
+      <div class="custom-card custom-reveal"><img src="https://the-order-of-order.com/assets/card-resonance.png" width="650" height="850" alt="The in-game Resonance card: Double every point you earn."></div>
+    </div>
+  </div>
+
+  <div class="custom-tenets">
+    <div class="custom-heading custom-reveal">
+      <p class="custom-kicker">The approved curriculum</p>
+      <h2>Roll. Settle. Improve. Grow.</h2>
+    </div>
+    <div class="custom-reel custom-reveal">
+      <div class="custom-media custom-media-late"><img src="https://the-order-of-order.com/assets/gameplay-late-grid-anim.webp" width="960" height="540" alt="Three rolls of a late-game congregation of dice: each one tumbles, settles and scores, with a pause between them"></div>
+      <p class="custom-caption">One click. One hundred and sixty-eight opinions.</p>
+    </div>
+    <div class="custom-tenet-grid">
+      <div class="custom-tenet custom-reveal">
+        <p class="custom-tenet-number">I</p>
+        <h3>Learn to settle</h3>
+        <p>At first, only a mind focused down to a single point can score. Roll 1s on any die to score points and increase the realm's order.</p>
+      </div>
+      <div class="custom-tenet custom-reveal">
+        <p class="custom-tenet-number">II</p>
+        <h3>Build the Order</h3>
+        <p>Add dice, rewrite scoring rules, and assemble combinations that turn a quiet roll into an avalanche.</p>
+      </div>
+      <div class="custom-tenet custom-reveal">
+        <p class="custom-tenet-number">III</p>
+        <h3>Endure examination</h3>
+        <p>Clear Lesser, Greater, and Boss Trials to succeed. The realm's order is at stake, and the Crown is watching.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="custom-characters">
+    <div class="custom-heading custom-heading-center custom-reveal">
+      <p class="custom-kicker">Distinguished members</p>
+      <h2>The Order is accepting students.</h2>
+      <p class="custom-body">Clear your mind. Sit still for a while.</p>
+    </div>
+    <div class="custom-roster">
+      <div class="custom-member custom-reveal">
+        <img src="https://the-order-of-order.com/assets/character-novice-800.webp" width="800" height="800" alt="A cheerful golden die novice in a brown cap and monocle">
+        <p class="custom-member-name">Diebert</p>
+        <p class="custom-member-blurb">The die who started it all! He's a pretty lucky guy.</p>
+      </div>
+      <div class="custom-member custom-reveal">
+        <img src="https://the-order-of-order.com/assets/character-scholar-800.webp" width="800" height="800" alt="A triangular d4 scholar with freckles, sitting and reading a brown book">
+        <p class="custom-member-name">Melodie</p>
+        <p class="custom-member-blurb">The order's most promising scholar. She's always learning something new!</p>
+      </div>
+      <div class="custom-member custom-reveal">
+        <img src="https://the-order-of-order.com/assets/character-messenger-800.webp" width="800" height="800" alt="A stern purple-edged d20 swordsman with green eyes, a sword resting on his shoulder">
+        <p class="custom-member-name">Roland</p>
+        <p class="custom-member-blurb">A swarthy, inconspicuous figure with a keen eye for points.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="custom-bosses">
+    <div class="custom-boss-intro custom-reveal">
+      <p class="custom-kicker">Advanced instruction</p>
+      <h2>Every Boss Trial changes the rules.</h2>
+      <p class="custom-body">Your practice of order is not acceptable to everyone in the realm. Watch out for meddling forces and unexpected consequences.</p>
+    </div>
+    <div class="custom-boss-list">
+      <div class="custom-boss custom-reveal">
+        <span class="custom-seal">½</span>
+        <div>
+          <h3>The Eclipse</h3>
+          <p>Your multiplier is halved. Enlightenment continues at a reduced rate.</p>
+        </div>
+      </div>
+      <div class="custom-boss custom-reveal">
+        <span class="custom-seal">0</span>
+        <div>
+          <h3>The Drought</h3>
+          <p>No dice are added this Trial. Please work with the current congregation.</p>
+        </div>
+      </div>
+      <div class="custom-boss custom-reveal">
+        <span class="custom-seal custom-seal-small">9⁄10</span>
+        <div>
+          <h3>The Toll</h3>
+          <p>A tenth of your dice score nothing. Their absence has been ordered.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="custom-realm">
+    <div class="custom-realm-copy custom-reveal">
+      <p class="custom-kicker">Outside interests</p>
+      <h2>The realm is taking notice.</h2>
+      <p class="custom-body">Settled dice hold meetings. Roads run straight. Fields are planted on schedule. Consensus, once discovered, has proved alarmingly practical.</p>
+    </div>
+    <div class="custom-decree custom-reveal">
+      <p>“The Crown congratulates The Order of Order on its recent growth. We look forward to discussing a modest, recurring contribution to the king's coffers.”</p>
+      <p class="custom-cite">Office of His Majesty’s Accounts</p>
+    </div>
+    <div class="custom-realm-reel custom-window custom-reveal">
+      <div class="custom-media custom-media-zoom"><img src="https://the-order-of-order.com/assets/gameplay-multitude-zoom-anim.webp" width="960" height="540" alt="The real in-game camera pulls back from individual dice across a grid of 100,489, which merge into summary cards until the complete congregation is represented by one card, then zooms back in"></div>
+      <p class="custom-caption">One hundred thousand, four hundred and eighty-nine dice. One roll. Perfectly reasonable.</p>
+    </div>
+  </div>
+
+  <div class="custom-final">
+    <p class="custom-seal-large"><span class="custom-seal-face">1</span></p>
+    <p class="custom-kicker">Enrollment is open</p>
+    <h2>The dice are still rolling.</h2>
+    <p class="custom-final-line">Teach them better.</p>
+    <p><a class="custom-button custom-button-idle" href="https://blackout32.itch.io/the-order-of-order#game_drop">Play Free in Browser ↑</a></p>
+    <p class="custom-final-note">Free demo · About 15–20 minutes for a full run</p>
+  </div>
+
+  <div class="custom-credits">
+    <p><strong>Alex Blackburn</strong> — Code, game design, music, and sound effects <span class="custom-dot">·</span> <strong>Mandee Mae</strong> — Pixel art</p>
+    <p>© 2026 Adventure to Infinity LLC <span class="custom-dot">·</span> <a href="https://the-order-of-order.com/">the-order-of-order.com</a> <span class="custom-dot">·</span> <a href="https://github.com/blackburn32/the-order-of-order">View the source on GitHub</a></p>
   </div>
 </div>

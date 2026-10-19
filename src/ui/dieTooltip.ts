@@ -25,6 +25,16 @@ export interface DieTooltipContent {
   vigil?: readonly VigilGroup[];
 }
 
+/** What a tooltip says about anything other than a die: a heading, a few
+ *  lines of plain rules, and an optional dim aside under them. */
+export interface NoteTooltipContent {
+  title: string;
+  lines: readonly string[];
+  aside?: string;
+}
+
+type TooltipContent = DieTooltipContent | NoteTooltipContent;
+
 const WIDTH = 290;
 const PAD = 12;
 const SWATCH = 22;
@@ -51,7 +61,8 @@ const ITEM_NAMES = new Map<string, string>(
  * A panel that spells out what a die's shading means — each effect's swatch,
  * its rule, and the card it came from — shown beside the pointer while it is
  * over a die. The shading tells dice apart at a glance; this is where the
- * player learns what each shade does.
+ * player learns what each shade does. The same panel carries a plain note for
+ * anything else that wants explaining on hover (the game's status table).
  *
  * A finger cannot hover, so on a touch screen the panel opens on a long press
  * instead, sits above the finger, and closes when it lifts. A press that opened
@@ -98,7 +109,7 @@ export class DieTooltip {
    */
   attach(
     target: Phaser.GameObjects.GameObject,
-    content: () => DieTooltipContent,
+    content: () => TooltipContent,
     onTap?: () => void,
   ): void {
     if (!target.input) target.setInteractive();
@@ -163,10 +174,81 @@ export class DieTooltip {
     this.camera = undefined;
   }
 
-  private show(content: DieTooltipContent, pointer: Phaser.Input.Pointer) {
+  private show(content: TooltipContent, pointer: Phaser.Input.Pointer) {
     this.hide();
     const scene = this.scene;
     const panel = scene.add.container(0, 0).setDepth(DEPTH);
+    const { parts, y } =
+      "title" in content ? this.noteParts(content) : this.dieParts(content);
+
+    const height = y + PAD;
+    // As wide as its longest line, up to the width the copy wraps at.
+    const width = Math.min(
+      WIDTH,
+      PAD +
+        Math.max(
+          ...parts.map((part) => {
+            return part.x + part.displayWidth * (1 - part.originX);
+          }),
+        ),
+    );
+    const bg = scene.add.graphics();
+    bg.fillStyle(COLORS.feltDark, 0.96);
+    bg.fillRoundedRect(0, 0, width, height, 10);
+    bg.lineStyle(1.5, COLORS.gold, 0.8);
+    bg.strokeRoundedRect(0, 0, width, height, 10);
+    panel.add([bg, ...parts]);
+    panel.setSize(width, height);
+
+    for (const camera of scene.cameras.cameras) camera.ignore(panel);
+    this.camera = addCamera(scene, 0, 0, scene.scale.width, scene.scale.height);
+    this.camera.ignore(scene.children.list.filter((obj) => obj !== panel));
+
+    this.panel = panel;
+    this.place(pointer);
+  }
+
+  /** A note's heading, its lines, and its aside, top to bottom. */
+  private noteParts(content: NoteTooltipContent): TooltipParts {
+    const scene = this.scene;
+    const parts: Phaser.GameObjects.Text[] = [];
+    let y = PAD;
+    const title = scene.add.text(PAD, y, content.title, {
+      fontFamily: SERIF,
+      fontSize: "17px",
+      color: CSS.goldLight,
+      fontStyle: "bold",
+    });
+    parts.push(title);
+    y += title.height + 4;
+    content.lines.forEach((line, i) => {
+      if (i > 0) y += 5;
+      const text = scene.add.text(PAD, y, line, {
+        fontFamily: SERIF,
+        fontSize: "14px",
+        color: CSS.parchment,
+        wordWrap: { width: WIDTH - PAD * 2 },
+      });
+      parts.push(text);
+      y += text.height;
+    });
+    if (content.aside) {
+      const aside = scene.add.text(PAD, y + 6, content.aside, {
+        fontFamily: SERIF,
+        fontSize: "12px",
+        color: CSS.dim,
+        fontStyle: "italic",
+        wordWrap: { width: WIDTH - PAD * 2 },
+      });
+      parts.push(aside);
+      y = aside.y + aside.height;
+    }
+    return { parts, y };
+  }
+
+  /** A die's heading, its effects, and The Vigil's tallies among it. */
+  private dieParts(content: DieTooltipContent): TooltipParts {
+    const scene = this.scene;
     const parts: (Phaser.GameObjects.Text | Phaser.GameObjects.Image)[] = [];
     let y = PAD;
 
@@ -266,32 +348,7 @@ export class DieTooltip {
         y += text.height + 1;
       }
     }
-
-    const height = y + PAD;
-    // As wide as its longest line, up to the width the copy wraps at.
-    const width = Math.min(
-      WIDTH,
-      PAD +
-        Math.max(
-          ...parts.map((part) => {
-            return part.x + part.displayWidth * (1 - part.originX);
-          }),
-        ),
-    );
-    const bg = scene.add.graphics();
-    bg.fillStyle(COLORS.feltDark, 0.96);
-    bg.fillRoundedRect(0, 0, width, height, 10);
-    bg.lineStyle(1.5, COLORS.gold, 0.8);
-    bg.strokeRoundedRect(0, 0, width, height, 10);
-    panel.add([bg, ...parts]);
-    panel.setSize(width, height);
-
-    for (const camera of scene.cameras.cameras) camera.ignore(panel);
-    this.camera = addCamera(scene, 0, 0, scene.scale.width, scene.scale.height);
-    this.camera.ignore(scene.children.list.filter((obj) => obj !== panel));
-
-    this.panel = panel;
-    this.place(pointer);
+    return { parts, y };
   }
 
   /** Beside the pointer, flipped to whichever side has the room, and kept on
@@ -321,6 +378,12 @@ export class DieTooltip {
       Phaser.Math.Clamp(y, 8, Math.max(8, H - h - 8)),
     );
   }
+}
+
+/** A panel's contents, and how far down them the last one reaches. */
+interface TooltipParts {
+  parts: (Phaser.GameObjects.Text | Phaser.GameObjects.Image)[];
+  y: number;
 }
 
 function times(n: number): string {

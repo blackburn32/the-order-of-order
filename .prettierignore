@@ -6,3 +6,5 @@ sim-fixtures/
 the-order-of-order.zip
 android/
 .wrangler/
+# Pasted into itch.io, whose sanitizer drops attributes from wrapped tags.
+itch-page.html

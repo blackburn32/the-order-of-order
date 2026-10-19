@@ -261,12 +261,17 @@ export function growthEarned(
           tuning.plainsongFreeFaces;
         break;
       case "pyre":
-        percent = Math.floor(state.pyreFaces / tuning.pyreFacesPerPercent);
+        percent = pyrePercent(state.pyreFaces);
         break;
     }
     earned.push({ id: def.id, percent: Math.max(0, Math.min(cap, percent)) });
   }
   return earned;
+}
+
+/** The Pyre's growth from `faces` in its fire, before its cap. */
+export function pyrePercent(faces: number): number {
+  return Math.floor(faces / tuning.pyreFacesPerPercent);
 }
 
 /** Count a roll for every engine that earned on it. The Pyre's faces are spent

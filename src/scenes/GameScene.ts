@@ -19,7 +19,7 @@ import {
   goalFor,
   type BossModifier,
 } from "../systems/Boss";
-import { inertDiceCount, scoringNumbersFor } from "../systems/Afflictions";
+import { inertDiceCount } from "../systems/Afflictions";
 import {
   openTrial,
   resolveRoll,
@@ -103,6 +103,13 @@ import { GridArea } from "../ui/gridLayout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { streamFor } from "../systems/Rng";
+import { DieTooltip } from "../ui/dieTooltip";
+import { statusRows, type StatusRow } from "../ui/statusRows";
+import {
+  StatusTable,
+  statusRowsThatFit,
+  statusTableHeight,
+} from "../ui/statusTable";
 import {
   clampZoom,
   computeVisibleDiceCards,
@@ -136,7 +143,7 @@ interface HudReading {
   score: bigint;
   target: string;
   gold: string;
-  numbers: string;
+  status: StatusRow[];
   duel: boolean;
   /** The goal, or in the duel the Order of Disorder's running score. */
   goal: bigint;
@@ -428,7 +435,12 @@ interface Layout {
   hud: Record<HudStatKey, HudCell>;
   bossRibbon?: { x: number; y: number; w: number; h: number; compact: boolean };
   disabledCards?: DisabledCardOverlayLayout;
-  footer: { numbersY: number; settingsY: number; split: boolean };
+  footer: {
+    settingsY: number;
+    split: boolean;
+    /** Where the status table stands: its bottom-left corner and its caps. */
+    status: { x: number; bottom: number; maxWidth: number; maxHeight: number };
+  };
   /** The band between the top chrome (HUD, or boss ribbon) and the seal, which
    *  the roll callout centres itself in. Absent in compact landscape, where the
    *  seal sits beside the grid rather than under it and the callout hangs from
@@ -564,7 +576,8 @@ export class GameScene extends Phaser.Scene {
   private hudRoll!: Phaser.GameObjects.Text;
   private hudScore!: Phaser.GameObjects.Text;
   private hudTarget!: Phaser.GameObjects.Text;
-  private hudNumbers!: Phaser.GameObjects.Text;
+  private statusTable!: StatusTable;
+  private statusTooltip!: DieTooltip;
   /** The HUD as the last roll left it, held from the moment a trial resolves
    *  until the scene leaves. Resolution advances the ladder, resets the roll
    *  count and pays out gold, so reading the live state in that window would
@@ -674,6 +687,7 @@ export class GameScene extends Phaser.Scene {
     // Recreated each build: routes new banners through the overlay camera so
     // they composite above the windowed grid, just like other popups.
     this.banners = new BannerStack(this, (objs) => this.overlay(objs));
+    this.statusTooltip = new DieTooltip(this);
 
     this.growthTiming = ROLL_GROWTH;
     this.openingTimer = undefined;
@@ -875,7 +889,22 @@ export class GameScene extends Phaser.Scene {
     // they take over the bottom-left corner, so the sacred numbers move up
     // onto a line of their own and the footer band grows to hold both.
     const split = isSplitFooter(this);
-    const footerH = split ? (portrait ? 76 : 60) : 40;
+    // The status table, pinned bottom-left and grown upward to a cap; rows
+    // past the cap scroll. Split, it stands on the links' row inside the
+    // footer band, which grows with it so the seal and grid make way — and
+    // so is held to a fifth of the screen, two rows to eight. Stacked, it
+    // sits beside the seal in a corner the grid rarely reaches: the room
+    // below the grid's frame, or more of the height on a screen wide enough
+    // that a fitted grid leaves its left edge bare.
+    const statusMaxH = split
+      ? Phaser.Math.Clamp(H * 0.2, statusTableHeight(2), statusTableHeight(8))
+      : Math.max(216, H * (W / H >= 1.7 ? 0.45 : 0.3));
+    const statusShown = statusTableHeight(
+      Math.min(statusRows(this.state).length, statusRowsThatFit(statusMaxH)),
+    );
+    const footerH = split
+      ? Math.max(portrait ? 76 : 60, RUN_FOOTER_ROW_H + statusShown + 8)
+      : 40;
 
     // One compact strip at every width. The score gets the broadest plaque,
     // then the goal; the ladder position needs the least room. Capping
@@ -915,9 +944,14 @@ export class GameScene extends Phaser.Scene {
     // band rather than down onto the links. Stacked, the numbers share the
     // footer baseline with them, half a screen to the left.
     const footer = {
-      numbersY: split ? H - RUN_FOOTER_ROW_H : H - footerH + 10,
       settingsY: split ? H - 16 : H - footerH + 10,
       split,
+      status: {
+        x: 16,
+        bottom: split ? H - RUN_FOOTER_ROW_H : H - 16,
+        maxWidth: Math.min(360, split ? W - 32 : W / 2 - SEAL_RADIUS - 32),
+        maxHeight: statusMaxH,
+      },
     };
 
     if (compact) {
@@ -1089,7 +1123,6 @@ export class GameScene extends Phaser.Scene {
   }
 
   private buildHud(layout: Layout): Phaser.GameObjects.GameObject[] {
-    const W = this.scale.width;
     const items: Phaser.GameObjects.GameObject[] = [];
 
     // The duel has no goal — the number in that cell is the Order of Disorder's
@@ -1120,22 +1153,17 @@ export class GameScene extends Phaser.Scene {
     if (bossRibbon) items.push(bossRibbon);
     items.push(...this.buildDisabledBossCards(layout));
 
-    const { numbersY, split } = layout.footer;
-    // Sacred numbers pinned bottom-left. Sharing the baseline with the stacked
-    // links, the text wraps within the half-width gap so it never runs under
-    // them; on the line above a split row it has the whole width, which is
-    // what usually keeps it to one line there.
-    this.hudNumbers = this.add
-      .text(24, numbersY, "", {
-        fontFamily: SERIF,
-        fontSize: "15px",
-        color: CSS.dim,
-        fontStyle: "italic",
-        wordWrap: { width: split ? W - 48 : W * 0.5 },
-      })
-      .setOrigin(0, split ? 1 : 0.5);
+    const { status } = layout.footer;
+    this.statusTable = new StatusTable(
+      this,
+      this.statusTooltip,
+      status.x,
+      status.bottom,
+      status.maxWidth,
+      status.maxHeight,
+    );
     this.runFooterLinks = buildRunFooterLinks(this, "Game");
-    items.push(this.hudNumbers, ...this.runFooterLinks);
+    items.push(this.statusTable.container, ...this.runFooterLinks);
 
     this.updateHud();
     return items;
@@ -1420,19 +1448,13 @@ export class GameScene extends Phaser.Scene {
     const s = this.state;
     const duel = isMirrorTrial(s.trial);
     const goal = duel ? rivalScore(s) : goalFor(s);
-    // The Silence cuts the scoring numbers back to 1s, so the footer has to read
-    // them through the same accessor the scorer does or it would lie about what
-    // scores this trial.
-    const numbers = scoringNumbersFor(s);
-    const extras =
-      s.extraPoints > 0 ? `  ·  +${s.extraPoints} bonus per scoring die` : "";
     return {
       rank: `${rankOf(s.trial)}-${trialInRank(s.trial)}`,
       roll: `${s.roll}/${trialRollTarget(s)}`,
       score: s.score,
       target: formatScore(goal),
       gold: String(s.gold),
-      numbers: `Sacred numbers: ${numbers.join(", ")}${extras}`,
+      status: statusRows(s),
       duel,
       goal,
       lastRoll: trialRollTarget(s) - s.roll <= 1,
@@ -1446,7 +1468,7 @@ export class GameScene extends Phaser.Scene {
     this.setScoreDisplay(hud.score);
     this.setHudValue(this.hudTarget, hud.target);
     this.setHudValue(this.hudGold, hud.gold);
-    this.hudNumbers.setText(hud.numbers);
+    this.statusTable.setRows(hud.status);
 
     this.updateTension(hud);
   }
@@ -2699,6 +2721,8 @@ export class GameScene extends Phaser.Scene {
       ) {
         return false;
       }
+      // Nor is the status table: the wheel and a drag there scroll it.
+      if (this.statusTable?.contains(p.x, p.y)) return false;
       return (
         p.x >= a.x &&
         p.x <= a.x + a.width &&

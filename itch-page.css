@@ -1,0 +1,1687 @@
+/* ===========================================================================
+   The Order of Order — itch.io custom CSS
+   ---------------------------------------------------------------------------
+   Paste this whole file into Edit theme → CSS on the itch.io project page.
+   Paste itch-page.html into the description editor in HTML mode (the <>
+   button); the rich-text view rewrites markup.
+
+   itch's sanitizer is stricter than a browser, which is why itch-page.html
+   is in .prettierignore and written the way it is:
+   - Every tag stays on one line. A tag whose attributes wrap onto the next
+     line loses them all, and its URLs are turned into visible links.
+   - No <video>: it is not on the allow-list. The loops are animated WebP.
+   - No fragment-only hrefs; the play buttons link the page URL + #game_drop.
+   - No bare <span>s, and no <p>s inside <blockquote>: both are flattened.
+
+   A port of marketing-site/styles.css. itch keeps only `custom-` classes in
+   descriptions and wants every rule under #wrapper, so the selectors differ,
+   but the tokens, type scale and section treatments are the site's own.
+
+   What the site does with JS, this does in CSS or not at all:
+   - Sigils are masks baked from marketing-site/js/sigil.js (variants 0–2);
+     re-bake them if a variant changes there.
+   - Arrival on scroll uses a scroll-driven view() timeline where the browser
+     has one, and is simply absent where it does not.
+   - The pointer light, parallax, tilt and count-up are not ported.
+
+   Media is served from the-order-of-order.com/assets. Each animated loop
+   (*-anim.webp, encoded from the site's WebM reels) sits on the site's still
+   poster painted as a CSS background, which shows while the loop loads and
+   stands in for it under reduced motion.
+   =========================================================================== */
+
+#wrapper {
+  --custom-felt-deep: #0d0a12;
+  --custom-felt: #161226;
+  --custom-felt-light: #221a38;
+  --custom-parchment: #e9d8a6;
+  --custom-parchment-dark: #cdb27a;
+  --custom-ivory: #f3ead2;
+  --custom-ink: #2a1f14;
+  --custom-ink-soft: #5a4a2e;
+  --custom-gold: #c9a227;
+  --custom-gold-light: #e6c65a;
+  --custom-wax: #8a1f2b;
+  --custom-teal: #4f7f78;
+  --custom-violet: #9a4fc9;
+  --custom-rule: rgba(201, 162, 39, 0.3);
+  --custom-serif: Georgia, "Palatino Linotype", "Times New Roman", serif;
+
+  /* itch's own buttons and links, so the download row and comments match. */
+  --itchio_link_color: #e6c65a;
+  --itchio_button_color: #c9a227;
+  --itchio_button_fg_color: #2a1f14;
+  --itchio_button_hover_color: #e6c65a;
+  --itchio_button_active_color: #b18a0f;
+  --itchio_button_shadow_color: rgba(0, 0, 0, 0);
+  --itchio_button_border_color: #e6c65a;
+  --itchio_border_color: rgba(201, 162, 39, 0.3);
+  --itchio_border_radius: 4px;
+
+  background:
+    repeating-radial-gradient(
+      circle at 23% 17%,
+      rgba(255, 255, 255, 0.014) 0 1px,
+      transparent 1px 5px
+    ),
+    radial-gradient(
+      circle at 50% 0%,
+      rgba(74, 58, 112, 0.18),
+      transparent 40rem
+    ),
+    #0b0910;
+}
+
+/* ------------------------------------------------------------ itch's shell */
+
+/* Wider than itch's 960px so the 1000px game frame fits and the sections get
+   the site's proportions; below 1000px itch would otherwise pin it to 600px. */
+#wrapper #inner_column {
+  width: auto;
+  max-width: 1120px;
+  background: var(--custom-felt-deep);
+  box-shadow:
+    0 0 0 1px rgba(201, 162, 39, 0.14),
+    0 30px 90px rgba(0, 0, 0, 0.5);
+}
+
+@media (max-width: 1000px) {
+  #wrapper #inner_column {
+    max-width: none;
+  }
+}
+
+/* The site's header bar, with its little die. No `display` on the h1: itch
+   hides it when a banner is uploaded, and an ID selector would undo that. */
+#wrapper .header {
+  padding: 14px clamp(18px, 4vw, 40px);
+  border-bottom: 1px solid rgba(201, 162, 39, 0.14);
+  background: linear-gradient(
+    180deg,
+    rgba(9, 7, 13, 0.93),
+    rgba(9, 7, 13, 0.75)
+  );
+}
+
+#wrapper .header h1 {
+  margin: 0;
+  color: var(--custom-parchment);
+  font-family: var(--custom-serif);
+  font-size: 0.92rem;
+  font-weight: 700;
+  line-height: 34px;
+  letter-spacing: 0.05em;
+}
+
+#wrapper .header h1::before {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  margin-right: 12px;
+  border: 2px solid var(--custom-gold);
+  border-radius: 6px;
+  color: var(--custom-ink);
+  background: var(--custom-ivory);
+  content: "1";
+  font-size: 1rem;
+  line-height: 30px;
+  text-align: center;
+  vertical-align: middle;
+  transform: rotate(-2deg);
+}
+
+#wrapper .embed_wrapper {
+  padding: 28px 0 40px;
+  border-bottom: 1px solid var(--custom-rule);
+  background: radial-gradient(
+    ellipse at 50% 40%,
+    rgba(74, 58, 112, 0.28),
+    transparent 70%
+  );
+}
+
+#wrapper .game_frame {
+  background: var(--custom-felt-deep);
+  box-shadow:
+    0 0 0 1px var(--custom-gold),
+    0 28px 80px rgba(0, 0, 0, 0.52);
+}
+
+#wrapper .columns {
+  margin-top: 0;
+}
+
+#wrapper .formatted_description {
+  margin: 0 0 40px;
+}
+
+/* ----------------------------------------------------------- page defaults */
+
+#wrapper .custom-page {
+  /* Sections size to the column, not the viewport: itch's column is 1120px,
+     600px, or the full phone width depending on where you stand. */
+  container-type: inline-size;
+  --custom-gutter: clamp(20px, 6cqi, 72px);
+  --custom-band: clamp(68px, 11cqi, 132px);
+  position: relative;
+  overflow: clip;
+  color: var(--custom-ivory);
+  font-family: var(--custom-serif);
+  font-size: 16px;
+  font-style: normal;
+  line-height: 1.55;
+}
+
+#wrapper .custom-page :is(h2, h3, p, blockquote) {
+  margin: 0;
+}
+
+#wrapper .custom-page img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+#wrapper .custom-page a {
+  color: inherit;
+}
+
+#wrapper .custom-page h2 {
+  color: var(--custom-ivory);
+  font-family: var(--custom-serif);
+  font-size: clamp(2.1rem, 5.6cqi, 4.2rem);
+  font-weight: 700;
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+}
+
+#wrapper .custom-page h3 {
+  color: var(--custom-ivory);
+  font-family: var(--custom-serif);
+  font-size: 1.55rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+#wrapper .custom-page .custom-kicker,
+#wrapper .custom-page .custom-eyebrow {
+  margin: 0 0 15px;
+  color: var(--custom-gold-light);
+  font-size: clamp(0.78rem, 1.1cqi, 0.9rem);
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+#wrapper .custom-page .custom-body {
+  margin-top: 24px;
+  color: var(--custom-parchment);
+  font-size: 1.1rem;
+}
+
+#wrapper .custom-caption {
+  padding: 11px 10px 5px;
+  color: var(--custom-parchment-dark);
+  font-size: 0.82rem;
+  font-style: italic;
+  letter-spacing: 0.04em;
+  text-align: center;
+}
+
+/* --------------------------------------------------------------- the button */
+
+#wrapper .custom-page .custom-button {
+  position: relative;
+  display: inline-flex;
+  overflow: hidden;
+  isolation: isolate;
+  min-height: 50px;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 22px;
+  border: 1px solid var(--custom-gold-light);
+  border-radius: 4px;
+  color: var(--custom-ink);
+  background: linear-gradient(
+    180deg,
+    var(--custom-gold-light),
+    var(--custom-gold)
+  );
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.3),
+    inset 0 1px rgba(255, 255, 255, 0.42);
+  font-weight: 700;
+  text-decoration: none;
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease;
+}
+
+#wrapper .custom-page .custom-button:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 12px 34px rgba(0, 0, 0, 0.4),
+    0 0 24px rgba(230, 198, 90, 0.18);
+}
+
+#wrapper .custom-page .custom-button:focus-visible,
+#wrapper .custom-page a:focus-visible {
+  outline: 3px solid var(--custom-ivory);
+  outline-offset: 4px;
+}
+
+#wrapper .custom-button::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  background: linear-gradient(
+    104deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.5) 50%,
+    transparent 60%
+  );
+  content: "";
+  pointer-events: none;
+  translate: -150% 0;
+  /* itch tags every rel=nofollow link with an "External link" label on this
+     same pseudo-element; these clear what it sets that the sheen does not.
+     The button only links back to this page's own game frame. */
+  margin: 0;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0;
+}
+
+/* ------------------------------------------------------------------- hero */
+
+#wrapper .custom-hero {
+  --custom-sigil-span: min(70cqi, 800px);
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  min-height: clamp(560px, 62cqi, 720px);
+  align-items: center;
+  border-bottom: 1px solid var(--custom-rule);
+  background:
+    linear-gradient(
+      90deg,
+      rgba(8, 6, 12, 0.92) 0%,
+      rgba(8, 6, 12, 0.66) 31%,
+      rgba(8, 6, 12, 0.1) 68%
+    ),
+    linear-gradient(
+      180deg,
+      rgba(8, 6, 12, 0.53) 0%,
+      transparent 42%,
+      rgba(8, 6, 12, 0.04) 72%,
+      var(--custom-felt-deep) 100%
+    ),
+    url("https://the-order-of-order.com/assets/hero-congregation.jpg") center /
+      cover no-repeat,
+    var(--custom-felt-deep);
+}
+
+/* Static, so its mote layer spans the whole hero; its children are lifted
+   above that layer and the sigils instead. */
+#wrapper .custom-hero-copy {
+  width: min(600px, calc(100% - 40px));
+  margin: 0 0 0 var(--custom-gutter);
+  padding: 76px 0;
+  text-align: left;
+}
+
+#wrapper .custom-hero-copy > * {
+  position: relative;
+  z-index: 3;
+}
+
+#wrapper .custom-page .custom-title {
+  color: var(--custom-ivory);
+  font-size: clamp(4.2rem, 11cqi, 7.6rem);
+  line-height: 0.76;
+  letter-spacing: -0.055em;
+  text-shadow: 0 4px 35px rgba(0, 0, 0, 0.92);
+}
+
+#wrapper .custom-title > span {
+  display: block;
+}
+
+#wrapper .custom-title .custom-title-small {
+  margin: 0 0 0.72em 0.16em;
+  color: var(--custom-parchment-dark);
+  font-size: 0.19em;
+  line-height: 1;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+}
+
+#wrapper .custom-title .custom-title-line {
+  white-space: nowrap;
+}
+
+#wrapper .custom-title .custom-title-of {
+  display: inline-grid;
+  width: 1.95em;
+  height: 1.95em;
+  place-items: center;
+  margin-left: 0.18em;
+  border: 2px solid var(--custom-gold-light);
+  border-radius: 50%;
+  color: var(--custom-ivory);
+  background: var(--custom-wax);
+  font-size: 0.18em;
+  font-style: italic;
+  font-weight: 400;
+  letter-spacing: 0;
+  line-height: 1;
+  text-shadow: none;
+  vertical-align: 0.38em;
+}
+
+#wrapper .custom-title .custom-title-gold {
+  color: var(--custom-gold-light);
+}
+
+#wrapper .custom-page .custom-hero-tagline {
+  max-width: 510px;
+  margin-top: 30px;
+  color: var(--custom-parchment);
+  font-size: clamp(1.25rem, 2.3cqi, 1.65rem);
+  font-style: italic;
+  line-height: 1.35;
+  text-shadow: 0 2px 16px #000;
+}
+
+#wrapper .custom-page .custom-hero-summary {
+  max-width: 560px;
+  margin-top: 18px;
+  color: rgba(243, 234, 210, 0.82);
+  font-size: 1.02rem;
+}
+
+#wrapper .custom-page .custom-hero-actions {
+  margin-top: 26px;
+}
+
+#wrapper .custom-page .custom-hero-note {
+  margin-top: 18px;
+  color: rgba(243, 234, 210, 0.65);
+  font-size: 0.8rem;
+  letter-spacing: 0.055em;
+}
+
+/* ----------------------------------------------------------------- gameplay */
+
+#wrapper .custom-gameplay {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(300px, 0.8fr);
+  gap: clamp(40px, 7cqi, 96px);
+  align-items: center;
+  padding: var(--custom-band) var(--custom-gutter);
+  border-bottom: 1px solid var(--custom-rule);
+  background:
+    radial-gradient(
+      circle at 78% 50%,
+      rgba(138, 31, 43, 0.18),
+      transparent 30rem
+    ),
+    var(--custom-felt-light);
+}
+
+#wrapper .custom-facts {
+  display: flex;
+  gap: clamp(24px, 4cqi, 48px);
+  margin-top: 40px;
+}
+
+#wrapper .custom-fact {
+  display: flex;
+  max-width: 120px;
+  flex-direction: column;
+}
+
+#wrapper .custom-fact-value {
+  color: var(--custom-gold-light);
+  font-size: clamp(1.8rem, 3.6cqi, 2.7rem);
+  line-height: 1;
+}
+
+#wrapper .custom-fact-label {
+  margin-top: 8px;
+  color: var(--custom-parchment-dark);
+  font-size: 0.78rem;
+  line-height: 1.25;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* A game window: gold frame, three status dots, and offset rules behind. */
+#wrapper .custom-window {
+  position: relative;
+  width: min(100%, 440px);
+  margin: 0 auto;
+  padding: 24px 8px 8px;
+  border: 1px solid var(--custom-gold);
+  border-radius: 12px;
+  background: var(--custom-felt-deep);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.52);
+  transition:
+    transform 420ms cubic-bezier(0.2, 0.7, 0.25, 1),
+    box-shadow 420ms ease;
+}
+
+#wrapper .custom-window::before {
+  position: absolute;
+  top: 9px;
+  left: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--custom-gold);
+  box-shadow:
+    11px 0 var(--custom-gold),
+    22px 0 var(--custom-gold);
+  content: "";
+  opacity: 0.6;
+}
+
+#wrapper .custom-window-tilted {
+  transform: rotate(1.2deg);
+}
+
+#wrapper .custom-window-tilted::after {
+  position: absolute;
+  z-index: -1;
+  inset: -18px 23px;
+  border: 1px solid rgba(201, 162, 39, 0.18);
+  content: "";
+  pointer-events: none;
+}
+
+#wrapper .custom-window-tilted:hover {
+  transform: rotate(0deg);
+  box-shadow:
+    0 28px 80px rgba(0, 0, 0, 0.52),
+    0 0 42px rgba(201, 162, 39, 0.22);
+}
+
+#wrapper .custom-media {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border-radius: 5px;
+  background: var(--custom-felt-deep) center / cover no-repeat;
+}
+
+#wrapper .custom-media img {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+#wrapper .custom-media-growth,
+#wrapper .custom-media-late {
+  background-image: url("https://the-order-of-order.com/assets/gameplay-late-grid.png");
+}
+
+#wrapper .custom-media-shop {
+  background-image: url("https://the-order-of-order.com/assets/shop-loop-wide.png");
+}
+
+#wrapper .custom-media-zoom {
+  background-image: url("https://the-order-of-order.com/assets/gameplay-multitude-zoom.png");
+}
+
+/* ------------------------------------------------------------- proclamation */
+
+#wrapper .custom-proclamation {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: clamp(44px, 8cqi, 110px);
+  align-items: center;
+  padding: var(--custom-band) var(--custom-gutter);
+}
+
+#wrapper .custom-page .custom-lede {
+  max-width: 700px;
+  margin-top: 28px;
+  color: var(--custom-parchment);
+  font-size: clamp(1.1rem, 2.2cqi, 1.4rem);
+}
+
+#wrapper .custom-study {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  grid-template-columns: 1fr auto 1fr;
+  grid-template-rows: auto 1fr auto;
+  gap: 18px;
+  place-items: center;
+  min-height: 380px;
+  padding: 38px;
+  border: 1px solid var(--custom-rule);
+  background:
+    radial-gradient(circle, rgba(201, 162, 39, 0.11) 0 1px, transparent 2px) 0
+      0 / 22px 22px,
+    linear-gradient(145deg, rgba(34, 26, 56, 0.84), rgba(13, 10, 18, 0.95));
+}
+
+#wrapper .custom-study > * {
+  position: relative;
+  z-index: 2;
+}
+
+#wrapper .custom-page .custom-study-label,
+#wrapper .custom-page .custom-study-note {
+  grid-column: 1 / -1;
+  color: var(--custom-parchment-dark);
+  font-size: 0.78rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+#wrapper .custom-unsettled-die,
+#wrapper .custom-settled-die {
+  display: grid;
+  width: 96px;
+  height: 96px;
+  place-items: center;
+  border: 5px double var(--custom-gold);
+  border-radius: 14px;
+  color: var(--custom-ink);
+  background: var(--custom-ivory);
+  font-size: 2.2rem;
+  line-height: 1;
+}
+
+#wrapper .custom-unsettled-die {
+  /* The face is drawn by ::before so it can cycle; the text in the markup is
+     just its first face. Flex, not grid: as a grid the hidden text claims a
+     second row and the visible face centres in the top half. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+  rotate: -6deg;
+}
+
+#wrapper .custom-unsettled-die::before {
+  content: "2";
+  font-size: 2.2rem;
+}
+
+#wrapper .custom-settled-die {
+  box-shadow: 0 0 35px rgba(230, 198, 90, 0.25);
+}
+
+#wrapper .custom-study-arrow {
+  color: var(--custom-gold-light);
+  font-size: 2rem;
+}
+
+/* ------------------------------------------------------------------ doctrine */
+
+#wrapper .custom-doctrine {
+  position: relative;
+  overflow: hidden;
+  padding: var(--custom-band) var(--custom-gutter);
+  color: var(--custom-ink);
+  background:
+    linear-gradient(rgba(233, 216, 166, 0.95), rgba(233, 216, 166, 0.95)),
+    repeating-linear-gradient(
+      3deg,
+      transparent 0 5px,
+      rgba(42, 31, 20, 0.04) 5px 6px
+    );
+}
+
+#wrapper .custom-doctrine > * {
+  position: relative;
+  z-index: 1;
+}
+
+#wrapper .custom-doctrine .custom-kicker,
+#wrapper .custom-realm .custom-kicker {
+  color: var(--custom-wax);
+}
+
+#wrapper .custom-page .custom-doctrine h2,
+#wrapper .custom-page .custom-realm h2 {
+  color: var(--custom-ink);
+}
+
+#wrapper .custom-page .custom-doctrine .custom-body,
+#wrapper .custom-page .custom-realm .custom-body {
+  max-width: 760px;
+  color: var(--custom-ink-soft);
+}
+
+#wrapper .custom-heading {
+  max-width: 850px;
+  margin-bottom: 56px;
+}
+
+#wrapper .custom-heading-center {
+  margin-inline: auto;
+  text-align: center;
+}
+
+#wrapper .custom-reel {
+  overflow: hidden;
+  max-width: 860px;
+  margin: -10px auto 72px;
+  border: 1px solid rgba(201, 162, 39, 0.72);
+  border-radius: 10px;
+  background: var(--custom-felt-deep);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38);
+}
+
+#wrapper .custom-reel .custom-media {
+  border-radius: 0;
+}
+
+#wrapper .custom-reel .custom-caption {
+  padding: 12px 18px 14px;
+}
+
+#wrapper .custom-reel-shop {
+  max-width: 920px;
+  box-shadow: 0 24px 58px rgba(42, 31, 20, 0.28);
+}
+
+#wrapper .custom-reel-shop .custom-caption {
+  color: var(--custom-parchment);
+}
+
+#wrapper .custom-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(4px, 2cqi, 22px);
+  align-items: start;
+  max-width: 1000px;
+  margin-inline: auto;
+}
+
+#wrapper .custom-card {
+  --custom-card-rot: -1deg;
+  position: relative;
+  filter: drop-shadow(8px 13px 4px rgba(42, 31, 20, 0.18));
+  transform: rotate(var(--custom-card-rot));
+  transition:
+    transform 260ms ease,
+    filter 260ms ease;
+}
+
+#wrapper .custom-card:nth-child(2) {
+  --custom-card-rot: 0.7deg;
+  margin-top: 34px;
+}
+
+#wrapper .custom-card:nth-child(3) {
+  --custom-card-rot: -0.35deg;
+  margin-top: 7px;
+}
+
+#wrapper .custom-card img {
+  width: 100%;
+}
+
+#wrapper .custom-card:hover {
+  z-index: 3;
+  filter: drop-shadow(8px 16px 10px rgba(42, 31, 20, 0.26))
+    drop-shadow(0 0 22px rgba(201, 162, 39, 0.4));
+  transform: rotate(0deg) translateY(-6px) scale(1.04);
+}
+
+/* -------------------------------------------------------------------- tenets */
+
+#wrapper .custom-tenets,
+#wrapper .custom-characters,
+#wrapper .custom-bosses {
+  padding: var(--custom-band) var(--custom-gutter);
+}
+
+#wrapper .custom-tenets .custom-reel {
+  margin-top: -18px;
+}
+
+#wrapper .custom-tenet-grid {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+#wrapper .custom-tenet-grid::before {
+  position: absolute;
+  top: 34px;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    var(--custom-teal),
+    var(--custom-gold),
+    var(--custom-violet),
+    var(--custom-teal)
+  );
+  background-size: 200% 100%;
+  content: "";
+}
+
+#wrapper .custom-tenet {
+  position: relative;
+  min-height: 280px;
+  padding: 74px 26px 30px;
+  border-left: 1px solid var(--custom-rule);
+}
+
+#wrapper .custom-page .custom-tenet-number {
+  position: absolute;
+  top: 14px;
+  left: 26px;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid var(--custom-gold);
+  border-radius: 50%;
+  color: var(--custom-gold-light);
+  background: var(--custom-felt-deep);
+  transition: box-shadow 260ms ease;
+}
+
+#wrapper .custom-tenet:hover .custom-tenet-number {
+  box-shadow: 0 0 22px rgba(230, 198, 90, 0.35);
+}
+
+#wrapper .custom-page .custom-tenet p:last-child,
+#wrapper .custom-page .custom-boss p {
+  margin-top: 14px;
+  color: var(--custom-parchment-dark);
+}
+
+/* ---------------------------------------------------------------- characters */
+
+#wrapper .custom-characters {
+  border-top: 1px solid var(--custom-rule);
+}
+
+#wrapper .custom-roster {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(10px, 3cqi, 34px);
+}
+
+#wrapper .custom-member:nth-child(2) {
+  margin-top: 54px;
+}
+
+#wrapper .custom-member img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--custom-gold);
+  /* The card's gold frame runs to the edge with a 5% corner. */
+  border-radius: 5%;
+  object-fit: cover;
+  box-shadow: 0 17px 45px rgba(0, 0, 0, 0.32);
+  transition:
+    transform 280ms ease,
+    box-shadow 280ms ease,
+    border-color 280ms ease;
+}
+
+#wrapper .custom-member:hover img {
+  border-color: var(--custom-gold-light);
+  box-shadow:
+    0 17px 45px rgba(0, 0, 0, 0.32),
+    0 0 30px rgba(230, 198, 90, 0.28);
+  transform: translateY(-4px);
+}
+
+#wrapper .custom-page .custom-member-name {
+  padding: 16px 3px 0;
+  color: var(--custom-ivory);
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+#wrapper .custom-page .custom-member-blurb {
+  padding: 4px 3px 0;
+  color: var(--custom-parchment-dark);
+}
+
+/* -------------------------------------------------------------------- bosses */
+
+#wrapper .custom-bosses {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  grid-template-columns: 0.9fr 1.1fr;
+  gap: clamp(48px, 8cqi, 110px);
+  align-items: start;
+  border-top: 1px solid var(--custom-rule);
+}
+
+#wrapper .custom-bosses > * {
+  position: relative;
+  z-index: 1;
+}
+
+#wrapper .custom-page .custom-boss-intro h2 {
+  font-size: clamp(2.3rem, 5.2cqi, 4rem);
+}
+
+#wrapper .custom-boss-list {
+  border-top: 1px solid var(--custom-rule);
+}
+
+#wrapper .custom-boss {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 24px;
+  padding: 32px 0;
+  border-bottom: 1px solid var(--custom-rule);
+}
+
+#wrapper .custom-page .custom-boss p {
+  margin-top: 8px;
+}
+
+#wrapper .custom-seal {
+  display: grid;
+  width: 70px;
+  height: 70px;
+  place-items: center;
+  border: 1px solid var(--custom-gold);
+  border-radius: 50%;
+  color: var(--custom-gold-light);
+  font-size: 1.8rem;
+  box-shadow:
+    inset 0 0 0 7px var(--custom-felt-deep),
+    inset 0 0 0 8px rgba(201, 162, 39, 0.35);
+  transition: box-shadow 260ms ease;
+}
+
+#wrapper .custom-seal-small {
+  font-size: 1.15rem;
+}
+
+#wrapper .custom-boss:hover .custom-seal {
+  box-shadow:
+    inset 0 0 0 7px var(--custom-felt-deep),
+    inset 0 0 0 8px rgba(201, 162, 39, 0.35),
+    0 0 26px rgba(230, 198, 90, 0.35);
+}
+
+/* --------------------------------------------------------------------- realm */
+
+#wrapper .custom-realm {
+  display: grid;
+  grid-template-columns: 1fr 0.85fr;
+  column-gap: clamp(44px, 8cqi, 110px);
+  row-gap: clamp(50px, 7cqi, 84px);
+  align-items: center;
+  padding: var(--custom-band) var(--custom-gutter);
+  color: var(--custom-ink);
+  background: var(--custom-parchment);
+}
+
+#wrapper .custom-page .custom-decree {
+  padding: 38px;
+  border: 2px solid var(--custom-wax);
+  border-radius: 0;
+  outline: 1px solid rgba(86, 16, 25, 0.35);
+  outline-offset: -9px;
+  color: var(--custom-ink);
+  background: rgba(243, 234, 210, 0.66);
+  box-shadow: 7px 9px 0 rgba(42, 31, 20, 0.1);
+  font-size: clamp(1.2rem, 2.6cqi, 1.75rem);
+  font-style: italic;
+  transform: rotate(0.6deg);
+}
+
+#wrapper .custom-page .custom-cite {
+  margin-top: 28px;
+  color: var(--custom-wax);
+  font-size: 0.75rem;
+  font-style: normal;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+#wrapper .custom-realm-reel {
+  grid-column: 1 / -1;
+  width: min(100%, 1000px);
+  box-shadow:
+    0 30px 75px rgba(42, 31, 20, 0.26),
+    8px 10px 0 rgba(42, 31, 20, 0.1);
+}
+
+#wrapper .custom-realm-reel .custom-media {
+  border: 1px solid rgba(201, 162, 39, 0.3);
+}
+
+/* ---------------------------------------------------------------- final call */
+
+#wrapper .custom-final {
+  --custom-final-pad: clamp(96px, 14cqi, 170px);
+  --custom-seal-size: 104px;
+  --custom-sigil-span: min(78cqi, 700px);
+  position: relative;
+  overflow: hidden;
+  padding: var(--custom-final-pad) var(--custom-gutter);
+  text-align: center;
+}
+
+#wrapper .custom-final > * {
+  position: relative;
+  z-index: 1;
+}
+
+#wrapper .custom-page .custom-seal-large {
+  display: grid;
+  width: var(--custom-seal-size);
+  height: var(--custom-seal-size);
+  place-items: center;
+  margin: 0 auto 36px;
+  border: 2px solid var(--custom-gold);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 10px var(--custom-felt-deep),
+    0 0 0 11px rgba(201, 162, 39, 0.4);
+}
+
+#wrapper .custom-seal-large span {
+  display: grid;
+  width: 50px;
+  height: 50px;
+  place-items: center;
+  border: 4px double var(--custom-gold);
+  color: var(--custom-ink);
+  background: var(--custom-ivory);
+  font-size: 1.7rem;
+  transform: rotate(-3deg);
+}
+
+#wrapper .custom-page .custom-final-line {
+  margin: 17px 0 31px;
+  color: var(--custom-parchment);
+  font-size: 1.3rem;
+}
+
+#wrapper .custom-page .custom-final-note {
+  margin-top: 18px;
+  color: rgba(233, 216, 166, 0.68);
+  font-size: 0.84rem;
+}
+
+/* ------------------------------------------------------------------- credits */
+
+#wrapper .custom-credits {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px 24px;
+  padding: 26px var(--custom-gutter);
+  border-top: 1px solid var(--custom-rule);
+  color: rgba(233, 216, 166, 0.68);
+  font-size: 0.84rem;
+}
+
+#wrapper .custom-credits strong {
+  color: var(--custom-parchment);
+}
+
+#wrapper .custom-credits a {
+  text-underline-offset: 4px;
+}
+
+#wrapper .custom-dot {
+  margin: 0 6px;
+  color: var(--custom-gold);
+}
+
+/* ===========================================================================
+   Sigils
+   ---------------------------------------------------------------------------
+   The game's turning marks, as alpha masks over a flat tint, so colour stays a
+   CSS decision exactly as currentColor does on the site. Each host's ::before
+   carries the inner mark and ::after the counter-turning ring, sized by the
+   site's --ring-scale of 1.53.
+   =========================================================================== */
+
+#wrapper .custom-hero::before,
+#wrapper .custom-hero::after,
+#wrapper .custom-doctrine::before,
+#wrapper .custom-doctrine::after,
+#wrapper .custom-bosses::before,
+#wrapper .custom-bosses::after,
+#wrapper .custom-final::before,
+#wrapper .custom-final::after,
+#wrapper .custom-study::before {
+  position: absolute;
+  z-index: 0;
+  top: var(--custom-sigil-y, 50%);
+  left: var(--custom-sigil-x, 50%);
+  width: var(--custom-sigil-span);
+  aspect-ratio: 1;
+  background: var(--custom-gold-light);
+  content: "";
+  opacity: var(--custom-sigil-alpha, 0.11);
+  pointer-events: none;
+  translate: -50% -50%;
+  -webkit-mask: var(--custom-mark) center / contain no-repeat;
+  mask: var(--custom-mark) center / contain no-repeat;
+}
+
+#wrapper .custom-hero::after,
+#wrapper .custom-doctrine::after,
+#wrapper .custom-bosses::after,
+#wrapper .custom-final::after {
+  width: calc(var(--custom-sigil-span) * 1.53);
+  opacity: calc(var(--custom-sigil-alpha, 0.11) * 0.8);
+  -webkit-mask-image: var(--custom-ring);
+  mask-image: var(--custom-ring);
+}
+
+#wrapper .custom-hero,
+#wrapper .custom-final {
+  --custom-mark: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48ZyBmaWxsPSJub25lIiBzdHJva2U9IiMwMDAiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSIyNDgiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSIyMzIiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjYiLz48cGF0aCBkPSJNNDcwIDI1Nkw0ODggMjU2IiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik00NzYuNiAyOTQuOUw0ODQuNSAyOTYuM000NjYuNSAzMzIuNkw0NzQgMzM1LjNNNDUwIDM2OEw0NTYuOSAzNzJNNDI3LjYgNDAwTDQzMy43IDQwNS4xTTQwMCA0MjcuNkw0MDUuMSA0MzMuN00zNjggNDUwTDM3MiA0NTYuOU0zMzIuNiA0NjYuNUwzMzUuMyA0NzRNMjk0LjkgNDc2LjZMMjk2LjMgNDg0LjUiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNMjU2IDQ3MEwyNTYgNDg4IiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik0yMTcuMSA0NzYuNkwyMTUuNyA0ODQuNU0xNzkuNCA0NjYuNUwxNzYuNyA0NzRNMTQ0IDQ1MEwxNDAgNDU2LjlNMTEyIDQyNy42TDEwNi45IDQzMy43TTg0LjQgNDAwTDc4LjMgNDA1LjFNNjIgMzY4TDU1LjEgMzcyTTQ1LjUgMzMyLjZMMzggMzM1LjNNMzUuNCAyOTQuOUwyNy41IDI5Ni4zIiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTQyIDI1NkwyNCAyNTYiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTM1LjQgMjE3LjFMMjcuNSAyMTUuN000NS41IDE3OS40TDM4IDE3Ni43TTYyIDE0NEw1NS4xIDE0ME04NC40IDExMkw3OC4zIDEwNi45TTExMiA4NC40TDEwNi45IDc4LjNNMTQ0IDYyTDE0MCA1NS4xTTE3OS40IDQ1LjVMMTc2LjcgMzhNMjE3LjEgMzUuNEwyMTUuNyAyNy41IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTI1NiA0MkwyNTYgMjQiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTI5NC45IDM1LjRMMjk2LjMgMjcuNU0zMzIuNiA0NS41TDMzNS4zIDM4TTM2OCA2MkwzNzIgNTUuMU00MDAgODQuNEw0MDUuMSA3OC4zTTQyNy42IDExMkw0MzMuNyAxMDYuOU00NTAgMTQ0TDQ1Ni45IDE0ME00NjYuNSAxNzkuNEw0NzQgMTc2LjdNNDc2LjYgMjE3LjFMNDg0LjUgMjE1LjciIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNIDM1NC40IDM5Mi4yIEEgMTY4IDE2OCAwIDAgMSAxNTcuNiAzOTIuMiIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cGF0aCBkPSJNIDExOS44IDM1NC40IEEgMTY4IDE2OCAwIDAgMSAxMTkuOCAxNTcuNiIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cGF0aCBkPSJNIDE1Ny42IDExOS44IEEgMTY4IDE2OCAwIDAgMSAzNTQuNCAxMTkuOCIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cGF0aCBkPSJNIDM5Mi4yIDE1Ny42IEEgMTY4IDE2OCAwIDAgMSAzOTIuMiAzNTQuNCIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cG9seWdvbiBwb2ludHM9IjI1NiwxMDYgMzg1LjksMzMxIDEyNi4xLDMzMSIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjYiLz48Y2lyY2xlIGN4PSIyNTYiIGN5PSIyNTYiIHI9Ijc2IiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNSIvPjxjaXJjbGUgY3g9IjI1NiIgY3k9IjI1NiIgcj0iNjIiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjMiLz48L2c+PC9zdmc+");
+  --custom-ring: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDI0IDEwMjQiPjxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48Y2lyY2xlIGN4PSI1MTIiIGN5PSI1MTIiIHI9IjUwMCIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48Y2lyY2xlIGN4PSI1MTIiIGN5PSI1MTIiIHI9IjQ4NCIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNiIvPjxwYXRoIGQ9Ik05NjYgNTEyTDk5NiA1MTIiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTk4MSA1NDIuN0w5OTUgNTQzLjdNOTc4IDU3My4zTDk5MS45IDU3NS4yTTk3MyA2MDMuN0w5ODYuNyA2MDYuNE05NjYgNjMzLjZMOTc5LjUgNjM3LjNNOTU3LjEgNjYzLjFMOTcwLjMgNjY3LjZNOTQ2LjIgNjkxLjlMOTU5LjIgNjk3LjJNOTMzLjUgNzE5LjlMOTQ2LjEgNzI2LjEiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNOTA1LjIgNzM5TDkzMS4yIDc1NCIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNOTAyLjggNzczLjFMOTE0LjQgNzgwLjlNODg0LjkgNzk4LjFMODk2IDgwNi42TTg2NS40IDgyMS45TDg3NS45IDgzMS4xTTg0NC4zIDg0NC4zTDg1NC4yIDg1NC4yTTgyMS45IDg2NS40TDgzMS4xIDg3NS45TTc5OC4xIDg4NC45TDgwNi42IDg5Nk03NzMuMSA5MDIuOEw3ODAuOSA5MTQuNCIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik03MzkgOTA1LjJMNzU0IDkzMS4yIiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik03MTkuOSA5MzMuNUw3MjYuMSA5NDYuMU02OTEuOSA5NDYuMkw2OTcuMiA5NTkuMk02NjMuMSA5NTcuMUw2NjcuNiA5NzAuM002MzMuNiA5NjZMNjM3LjMgOTc5LjVNNjAzLjcgOTczTDYwNi40IDk4Ni43TTU3My4zIDk3OEw1NzUuMiA5OTEuOU01NDIuNyA5ODFMNTQzLjcgOTk1IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTUxMiA5NjZMNTEyIDk5NiIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNNDgxLjMgOTgxTDQ4MC4zIDk5NU00NTAuNyA5NzhMNDQ4LjggOTkxLjlNNDIwLjMgOTczTDQxNy42IDk4Ni43TTM5MC40IDk2NkwzODYuNyA5NzkuNU0zNjAuOSA5NTcuMUwzNTYuNCA5NzAuM00zMzIuMSA5NDYuMkwzMjYuOCA5NTkuMk0zMDQuMSA5MzMuNUwyOTcuOSA5NDYuMSIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik0yODUgOTA1LjJMMjcwIDkzMS4yIiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik0yNTAuOSA5MDIuOEwyNDMuMSA5MTQuNE0yMjUuOSA4ODQuOUwyMTcuNCA4OTZNMjAyLjEgODY1LjRMMTkyLjkgODc1LjlNMTc5LjcgODQ0LjNMMTY5LjggODU0LjJNMTU4LjYgODIxLjlMMTQ4LjEgODMxLjFNMTM5LjEgNzk4LjFMMTI4IDgwNi42TTEyMS4yIDc3My4xTDEwOS42IDc4MC45IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTExOC44IDczOUw5Mi44IDc1NCIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNOTAuNSA3MTkuOUw3Ny45IDcyNi4xTTc3LjggNjkxLjlMNjQuOCA2OTcuMk02Ni45IDY2My4xTDUzLjcgNjY3LjZNNTggNjMzLjZMNDQuNSA2MzcuM001MSA2MDMuN0wzNy4zIDYwNi40TTQ2IDU3My4zTDMyLjEgNTc1LjJNNDMgNTQyLjdMMjkgNTQzLjciIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNNTggNTEyTDI4IDUxMiIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNNDMgNDgxLjNMMjkgNDgwLjNNNDYgNDUwLjdMMzIuMSA0NDguOE01MSA0MjAuM0wzNy4zIDQxNy42TTU4IDM5MC40TDQ0LjUgMzg2LjdNNjYuOSAzNjAuOUw1My43IDM1Ni40TTc3LjggMzMyLjFMNjQuOCAzMjYuOE05MC41IDMwNC4xTDc3LjkgMjk3LjkiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNMTE4LjggMjg1TDkyLjggMjcwIiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik0xMjEuMiAyNTAuOUwxMDkuNiAyNDMuMU0xMzkuMSAyMjUuOUwxMjggMjE3LjRNMTU4LjYgMjAyLjFMMTQ4LjEgMTkyLjlNMTc5LjcgMTc5LjdMMTY5LjggMTY5LjhNMjAyLjEgMTU4LjZMMTkyLjkgMTQ4LjFNMjI1LjkgMTM5LjFMMjE3LjQgMTI4TTI1MC45IDEyMS4yTDI0My4xIDEwOS42IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTI4NSAxMTguOEwyNzAgOTIuOCIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNMzA0LjEgOTAuNUwyOTcuOSA3Ny45TTMzMi4xIDc3LjhMMzI2LjggNjQuOE0zNjAuOSA2Ni45TDM1Ni40IDUzLjdNMzkwLjQgNThMMzg2LjcgNDQuNU00MjAuMyA1MUw0MTcuNiAzNy4zTTQ1MC43IDQ2TDQ0OC44IDMyLjFNNDgxLjMgNDNMNDgwLjMgMjkiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNNTEyIDU4TDUxMiAyOCIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNNTQyLjcgNDNMNTQzLjcgMjlNNTczLjMgNDZMNTc1LjIgMzIuMU02MDMuNyA1MUw2MDYuNCAzNy4zTTYzMy42IDU4TDYzNy4zIDQ0LjVNNjYzLjEgNjYuOUw2NjcuNiA1My43TTY5MS45IDc3LjhMNjk3LjIgNjQuOE03MTkuOSA5MC41TDcyNi4xIDc3LjkiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNNzM5IDExOC44TDc1NCA5Mi44IiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik03NzMuMSAxMjEuMkw3ODAuOSAxMDkuNk03OTguMSAxMzkuMUw4MDYuNiAxMjhNODIxLjkgMTU4LjZMODMxLjEgMTQ4LjFNODQ0LjMgMTc5LjdMODU0LjIgMTY5LjhNODY1LjQgMjAyLjFMODc1LjkgMTkyLjlNODg0LjkgMjI1LjlMODk2IDIxNy40TTkwMi44IDI1MC45TDkxNC40IDI0My4xIiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTkwNS4yIDI4NUw5MzEuMiAyNzAiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTkzMy41IDMwNC4xTDk0Ni4xIDI5Ny45TTk0Ni4yIDMzMi4xTDk1OS4yIDMyNi44TTk1Ny4xIDM2MC45TDk3MC4zIDM1Ni40TTk2NiAzOTAuNEw5NzkuNSAzODYuN005NzMgNDIwLjNMOTg2LjcgNDE3LjZNOTc4IDQ1MC43TDk5MS45IDQ0OC44TTk4MSA0ODEuM0w5OTUgNDgwLjMiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNIDkyOC45IDU1My44IEEgNDE5IDQxOSAwIDAgMSA3NTYuNyA4NTIuMSIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cGF0aCBkPSJNIDY4NC4yIDg5NCBBIDQxOSA0MTkgMCAwIDEgMzM5LjggODk0IiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNyIvPjxwYXRoIGQ9Ik0gMjY3LjMgODUyLjEgQSA0MTkgNDE5IDAgMCAxIDk1LjEgNTUzLjgiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PHBhdGggZD0iTSA5NS4xIDQ3MC4yIEEgNDE5IDQxOSAwIDAgMSAyNjcuMyAxNzEuOSIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cGF0aCBkPSJNIDMzOS44IDEzMCBBIDQxOSA0MTkgMCAwIDEgNjg0LjIgMTMwIiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNyIvPjxwYXRoIGQ9Ik0gNzU2LjcgMTcxLjkgQSA0MTkgNDE5IDAgMCAxIDkyOC45IDQ3MC4yIiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNyIvPjxwb2x5Z29uIHBvaW50cz0iOTMxLDUwMyA5NDAsNTEyIDkzMSw1MjEgOTIyLDUxMiIgc3Ryb2tlLXdpZHRoPSIwIiBvcGFjaXR5PSIwLjYiIGZpbGw9IiMwMDAiLz48cG9seWdvbiBwb2ludHM9IjcyOS4zLDg3MC40IDcyNiw4ODIuNyA3MTMuNyw4NzkuNCA3MTcsODY3LjEiIHN0cm9rZS13aWR0aD0iMCIgb3BhY2l0eT0iMC42IiBmaWxsPSIjMDAwIi8+PHBvbHlnb24gcG9pbnRzPSIzMTAuMyw4NzkuNCAyOTgsODgyLjcgMjk0LjcsODcwLjQgMzA3LDg2Ny4xIiBzdHJva2Utd2lkdGg9IjAiIG9wYWNpdHk9IjAuNiIgZmlsbD0iIzAwMCIvPjxwb2x5Z29uIHBvaW50cz0iOTMsNTIxIDg0LDUxMiA5Myw1MDMgMTAyLDUxMiIgc3Ryb2tlLXdpZHRoPSIwIiBvcGFjaXR5PSIwLjYiIGZpbGw9IiMwMDAiLz48cG9seWdvbiBwb2ludHM9IjI5NC43LDE1My42IDI5OCwxNDEuMyAzMTAuMywxNDQuNiAzMDcsMTU2LjkiIHN0cm9rZS13aWR0aD0iMCIgb3BhY2l0eT0iMC42IiBmaWxsPSIjMDAwIi8+PHBvbHlnb24gcG9pbnRzPSI3MTMuNywxNDQuNiA3MjYsMTQxLjMgNzI5LjMsMTUzLjYgNzE3LDE1Ni45IiBzdHJva2Utd2lkdGg9IjAiIG9wYWNpdHk9IjAuNiIgZmlsbD0iIzAwMCIvPjxjaXJjbGUgY3g9IjUxMiIgY3k9IjUxMiIgcj0iMzk4IiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNSIvPjxjaXJjbGUgY3g9IjUxMiIgY3k9IjUxMiIgcj0iMzg0IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC4zIi8+PC9nPjwvc3ZnPg==");
+}
+
+#wrapper .custom-doctrine,
+#wrapper .custom-bosses {
+  --custom-mark: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48ZyBmaWxsPSJub25lIiBzdHJva2U9IiMwMDAiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSIyNDgiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSIyMzIiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjYiLz48cGF0aCBkPSJNNDcwIDI1Nkw0ODggMjU2IiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik00NzUuMSAzMDIuNkw0ODIuOSAzMDQuMk00NjAuNiAzNDcuMUw0NjcuOSAzNTAuNE00MzcuMiAzODcuN0w0NDMuNyAzOTIuNE00MDUuOSA0MjIuNUw0MTEuMiA0MjguNCIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik0zNjMgNDQxLjNMMzcyIDQ1Ni45IiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik0zMjUuMiA0NjlMMzI3LjcgNDc2LjZNMjc5LjQgNDc4LjhMMjgwLjMgNDg2LjdNMjMyLjYgNDc4LjhMMjMxLjcgNDg2LjdNMTg2LjggNDY5TDE4NC4zIDQ3Ni42IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTE0OSA0NDEuM0wxNDAgNDU2LjkiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTEwNi4xIDQyMi41TDEwMC44IDQyOC40TTc0LjggMzg3LjdMNjguMyAzOTIuNE01MS40IDM0Ny4xTDQ0LjEgMzUwLjRNMzYuOSAzMDIuNkwyOS4xIDMwNC4yIiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTQyIDI1NkwyNCAyNTYiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTM2LjkgMjA5LjRMMjkuMSAyMDcuOE01MS40IDE2NC45TDQ0LjEgMTYxLjZNNzQuOCAxMjQuM0w2OC4zIDExOS42TTEwNi4xIDg5LjVMMTAwLjggODMuNiIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik0xNDkgNzAuN0wxNDAgNTUuMSIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNMTg2LjggNDNMMTg0LjMgMzUuNE0yMzIuNiAzMy4yTDIzMS43IDI1LjNNMjc5LjQgMzMuMkwyODAuMyAyNS4zTTMyNS4yIDQzTDMyNy43IDM1LjQiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNMzYzIDcwLjdMMzcyIDU1LjEiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTQwNS45IDg5LjVMNDExLjIgODMuNk00MzcuMiAxMjQuM0w0NDMuNyAxMTkuNk00NjAuNiAxNjQuOUw0NjcuOSAxNjEuNk00NzUuMSAyMDkuNEw0ODIuOSAyMDcuOCIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik0gNDEzIDE5MC44IEEgMTcwIDE3MCAwIDAgMSA0MTMgMzIxLjIiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PHBhdGggZD0iTSAzOTEgMzU5LjQgQSAxNzAgMTcwIDAgMCAxIDI3OCA0MjQuNiIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cGF0aCBkPSJNIDIzNCA0MjQuNiBBIDE3MCAxNzAgMCAwIDEgMTIxIDM1OS40IiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNyIvPjxwYXRoIGQ9Ik0gOTkgMzIxLjIgQSAxNzAgMTcwIDAgMCAxIDk5IDE5MC44IiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNyIvPjxwYXRoIGQ9Ik0gMTIxIDE1Mi42IEEgMTcwIDE3MCAwIDAgMSAyMzQgODcuNCIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cGF0aCBkPSJNIDI3OCA4Ny40IEEgMTcwIDE3MCAwIDAgMSAzOTEgMTUyLjYiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PHBvbHlnb24gcG9pbnRzPSIyNTYsMTA4IDM4NC4yLDMzMCAxMjcuOCwzMzAiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC41Ii8+PHBvbHlnb24gcG9pbnRzPSIyNTYsNDA0IDEyNy44LDE4MiAzODQuMiwxODIiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC41Ii8+PHBvbHlnb24gcG9pbnRzPSIyNTYsMTg0IDMxOC40LDIyMCAzMTguNCwyOTIgMjU2LDMyOCAxOTMuNiwyOTIgMTkzLjYsMjIwIiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC40Ii8+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSI0MiIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjQiLz48L2c+PC9zdmc+");
+  --custom-ring: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDI0IDEwMjQiPjxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iIzAwMCIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIj48Y2lyY2xlIGN4PSI1MTIiIGN5PSI1MTIiIHI9IjUwMCIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48Y2lyY2xlIGN4PSI1MTIiIGN5PSI1MTIiIHI9IjQ4NCIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNiIvPjxwYXRoIGQ9Ik05NjYgNTEyTDk5NiA1MTIiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTk4MC45IDU0NC44TDk5NC44IDU0NS44TTk3Ny40IDU3Ny40TDk5MS4zIDU3OS40TTk3MS43IDYwOS43TDk4NS40IDYxMi42TTk2My44IDY0MS41TDk3Ny4zIDY0NS40TTk1My43IDY3Mi43TDk2Ni44IDY3Ny41TTk0MS40IDcwMy4yTDk1NC4yIDcwOC45TTkyNyA3MzIuN0w5MzkuMyA3MzkuMk05MTAuNiA3NjEuMUw5MjIuNSA3NjguNSIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik04NzkuMyA3NzguOUw5MDMuNiA3OTYuNSIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNODcyIDgxNC4xTDg4Mi44IDgyMy4xTTg1MC4xIDgzOC41TDg2MC4yIDg0OC4yTTgyNi41IDg2MS4zTDgzNS45IDg3MS43TTgwMS40IDg4Mi40TDgxMCA4OTMuNE03NzQuOCA5MDEuNkw3ODIuNiA5MTMuM003NDcgOTE5TDc1NCA5MzEuMk03MTggOTM0LjRMNzI0LjIgOTQ3TTY4OC4xIDk0Ny44TDY5My4zIDk2MC44IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTY1Mi4zIDk0My44TDY2MS42IDk3Mi4zIiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik02MjUuNyA5NjhMNjI5LjEgOTgxLjZNNTkzLjYgOTc0LjlMNTk2IDk4OC42TTU2MS4xIDk3OS40TDU2Mi42IDk5My4zTTUyOC40IDk4MS43TDUyOC45IDk5NS43TTQ5NS42IDk4MS43TDQ5NS4xIDk5NS43TTQ2Mi45IDk3OS40TDQ2MS40IDk5My4zTTQzMC40IDk3NC45TDQyOCA5ODguNk0zOTguMyA5NjhMMzk0LjkgOTgxLjYiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNMzcxLjcgOTQzLjhMMzYyLjQgOTcyLjMiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTMzNS45IDk0Ny44TDMzMC43IDk2MC44TTMwNiA5MzQuNEwyOTkuOCA5NDdNMjc3IDkxOUwyNzAgOTMxLjJNMjQ5LjIgOTAxLjZMMjQxLjQgOTEzLjNNMjIyLjYgODgyLjRMMjE0IDg5My40TTE5Ny41IDg2MS4zTDE4OC4xIDg3MS43TTE3My45IDgzOC41TDE2My44IDg0OC4yTTE1MiA4MTQuMUwxNDEuMiA4MjMuMSIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik0xNDQuNyA3NzguOUwxMjAuNCA3OTYuNSIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNMTEzLjQgNzYxLjFMMTAxLjUgNzY4LjVNOTcgNzMyLjdMODQuNyA3MzkuMk04Mi42IDcwMy4yTDY5LjggNzA4LjlNNzAuMyA2NzIuN0w1Ny4yIDY3Ny41TTYwLjIgNjQxLjVMNDYuNyA2NDUuNE01Mi4zIDYwOS43TDM4LjYgNjEyLjZNNDYuNiA1NzcuNEwzMi43IDU3OS40TTQzLjEgNTQ0LjhMMjkuMiA1NDUuOCIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik01OCA1MTJMMjggNTEyIiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik00My4xIDQ3OS4yTDI5LjIgNDc4LjJNNDYuNiA0NDYuNkwzMi43IDQ0NC42TTUyLjMgNDE0LjNMMzguNiA0MTEuNE02MC4yIDM4Mi41TDQ2LjcgMzc4LjZNNzAuMyAzNTEuM0w1Ny4yIDM0Ni41TTgyLjYgMzIwLjhMNjkuOCAzMTUuMU05NyAyOTEuM0w4NC43IDI4NC44TTExMy40IDI2Mi45TDEwMS41IDI1NS41IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTE0NC43IDI0NS4xTDEyMC40IDIyNy41IiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik0xNTIgMjA5LjlMMTQxLjIgMjAwLjlNMTczLjkgMTg1LjVMMTYzLjggMTc1LjhNMTk3LjUgMTYyLjdMMTg4LjEgMTUyLjNNMjIyLjYgMTQxLjZMMjE0IDEzMC42TTI0OS4yIDEyMi40TDI0MS40IDExMC43TTI3NyAxMDVMMjcwIDkyLjhNMzA2IDg5LjZMMjk5LjggNzdNMzM1LjkgNzYuMkwzMzAuNyA2My4yIiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTM3MS43IDgwLjJMMzYyLjQgNTEuNyIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNMzk4LjMgNTZMMzk0LjkgNDIuNE00MzAuNCA0OS4xTDQyOCAzNS40TTQ2Mi45IDQ0LjZMNDYxLjQgMzAuN000OTUuNiA0Mi4zTDQ5NS4xIDI4LjNNNTI4LjQgNDIuM0w1MjguOSAyOC4zTTU2MS4xIDQ0LjZMNTYyLjYgMzAuN001OTMuNiA0OS4xTDU5NiAzNS40TTYyNS43IDU2TDYyOS4xIDQyLjQiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNNjUyLjMgODAuMkw2NjEuNiA1MS43IiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik02ODguMSA3Ni4yTDY5My4zIDYzLjJNNzE4IDg5LjZMNzI0LjIgNzdNNzQ3IDEwNUw3NTQgOTIuOE03NzQuOCAxMjIuNEw3ODIuNiAxMTAuN004MDEuNCAxNDEuNkw4MTAgMTMwLjZNODI2LjUgMTYyLjdMODM1LjkgMTUyLjNNODUwLjEgMTg1LjVMODYwLjIgMTc1LjhNODcyIDIwOS45TDg4Mi44IDIwMC45IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTg3OS4zIDI0NS4xTDkwMy42IDIyNy41IiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik05MTAuNiAyNjIuOUw5MjIuNSAyNTUuNU05MjcgMjkxLjNMOTM5LjMgMjg0LjhNOTQxLjQgMzIwLjhMOTU0LjIgMzE1LjFNOTUzLjcgMzUxLjNMOTY2LjggMzQ2LjVNOTYzLjggMzgyLjVMOTc3LjMgMzc4LjZNOTcxLjcgNDE0LjNMOTg1LjQgNDExLjRNOTc3LjQgNDQ2LjZMOTkxLjMgNDQ0LjZNOTgwLjkgNDc5LjJMOTk0LjggNDc4LjIiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNIDkyOCA1NjIuMiBBIDQxOSA0MTkgMCAwIDEgNjg4LjMgODkyLjEiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PHBhdGggZD0iTSA1OTIuOCA5MjMuMSBBIDQxOSA0MTkgMCAwIDEgMjA0LjkgNzk3LjEiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PHBhdGggZD0iTSAxNDYgNzE1LjkgQSA0MTkgNDE5IDAgMCAxIDE0NiAzMDguMSIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cGF0aCBkPSJNIDIwNC45IDIyNi45IEEgNDE5IDQxOSAwIDAgMSA1OTIuOCAxMDAuOSIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cGF0aCBkPSJNIDY4OC4zIDEzMS45IEEgNDE5IDQxOSAwIDAgMSA5MjggNDYxLjgiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PHBvbHlnb24gcG9pbnRzPSI5MzEsNTA0IDkzOC42LDUwOS41IDkzNS43LDUxOC41IDkyNi4zLDUxOC41IDkyMy40LDUwOS41IiBzdHJva2Utd2lkdGg9IjAiIG9wYWNpdHk9IjAuNiIgZmlsbD0iIzAwMCIvPjxwb2x5Z29uIHBvaW50cz0iNjQ5LjEsOTA4IDY0Ni4yLDkxNyA2MzYuOCw5MTcgNjMzLjksOTA4IDY0MS41LDkwMi41IiBzdHJva2Utd2lkdGg9IjAiIG9wYWNpdHk9IjAuNiIgZmlsbD0iIzAwMCIvPjxwb2x5Z29uIHBvaW50cz0iMTc3LjcsNzY0LjggMTY4LjMsNzY0LjggMTY1LjQsNzU1LjggMTczLDc1MC4zIDE4MC42LDc1NS44IiBzdHJva2Utd2lkdGg9IjAiIG9wYWNpdHk9IjAuNiIgZmlsbD0iIzAwMCIvPjxwb2x5Z29uIHBvaW50cz0iMTY4LjMsMjcyLjIgMTY1LjQsMjYzLjIgMTczLDI1Ny43IDE4MC42LDI2My4yIDE3Ny43LDI3Mi4yIiBzdHJva2Utd2lkdGg9IjAiIG9wYWNpdHk9IjAuNiIgZmlsbD0iIzAwMCIvPjxwb2x5Z29uIHBvaW50cz0iNjMzLjksMTExIDY0MS41LDEwNS41IDY0OS4xLDExMSA2NDYuMiwxMjAgNjM2LjgsMTIwIiBzdHJva2Utd2lkdGg9IjAiIG9wYWNpdHk9IjAuNiIgZmlsbD0iIzAwMCIvPjxjaXJjbGUgY3g9IjUxMiIgY3k9IjUxMiIgcj0iMzk4IiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNSIvPjxjaXJjbGUgY3g9IjUxMiIgY3k9IjUxMiIgcj0iMzg0IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC4zIi8+PC9nPjwvc3ZnPg==");
+}
+
+#wrapper .custom-study {
+  --custom-mark: url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48ZyBmaWxsPSJub25lIiBzdHJva2U9IiMwMDAiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSIyNDgiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSIyMzIiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjYiLz48cGF0aCBkPSJNNDcwIDI1Nkw0ODggMjU2IiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik00NzguMSAyODUuMkw0ODYgMjg2LjNNNDcyLjQgMzE0TDQ4MC4xIDMxNk00NjIuOSAzNDEuN0w0NzAuMyAzNDQuOE00NTAgMzY4TDQ1Ni45IDM3Mk00MzMuNyAzOTIuNEw0NDAuMSAzOTcuMiIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik00MDcuMyA0MDcuM0w0MjAgNDIwIiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik0zOTIuNCA0MzMuN0wzOTcuMiA0NDAuMU0zNjggNDUwTDM3MiA0NTYuOU0zNDEuNyA0NjIuOUwzNDQuOCA0NzAuM00zMTQgNDcyLjRMMzE2IDQ4MC4xTTI4NS4yIDQ3OC4xTDI4Ni4zIDQ4NiIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik0yNTYgNDcwTDI1NiA0ODgiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTIyNi44IDQ3OC4xTDIyNS43IDQ4Nk0xOTggNDcyLjRMMTk2IDQ4MC4xTTE3MC4zIDQ2Mi45TDE2Ny4yIDQ3MC4zTTE0NCA0NTBMMTQwIDQ1Ni45TTExOS42IDQzMy43TDExNC44IDQ0MC4xIiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTEwNC43IDQwNy4zTDkyIDQyMCIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjkiLz48cGF0aCBkPSJNNzguMyAzOTIuNEw3MS45IDM5Ny4yTTYyIDM2OEw1NS4xIDM3Mk00OS4xIDM0MS43TDQxLjcgMzQ0LjhNMzkuNiAzMTRMMzEuOSAzMTZNMzMuOSAyODUuMkwyNiAyODYuMyIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik00MiAyNTZMMjQgMjU2IiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik0zMy45IDIyNi44TDI2IDIyNS43TTM5LjYgMTk4TDMxLjkgMTk2TTQ5LjEgMTcwLjNMNDEuNyAxNjcuMk02MiAxNDRMNTUuMSAxNDBNNzguMyAxMTkuNkw3MS45IDExNC44IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTEwNC43IDEwNC43TDkyIDkyIiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik0xMTkuNiA3OC4zTDExNC44IDcxLjlNMTQ0IDYyTDE0MCA1NS4xTTE3MC4zIDQ5LjFMMTY3LjIgNDEuN00xOTggMzkuNkwxOTYgMzEuOU0yMjYuOCAzMy45TDIyNS43IDI2IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC41Ii8+PHBhdGggZD0iTTI1NiA0MkwyNTYgMjQiIHN0cm9rZS13aWR0aD0iMyIgb3BhY2l0eT0iMC45Ii8+PHBhdGggZD0iTTI4NS4yIDMzLjlMMjg2LjMgMjZNMzE0IDM5LjZMMzE2IDMxLjlNMzQxLjcgNDkuMUwzNDQuOCA0MS43TTM2OCA2MkwzNzIgNTUuMU0zOTIuNCA3OC4zTDM5Ny4yIDcxLjkiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjUiLz48cGF0aCBkPSJNNDA3LjMgMTA0LjdMNDIwIDkyIiBzdHJva2Utd2lkdGg9IjMiIG9wYWNpdHk9IjAuOSIvPjxwYXRoIGQ9Ik00MzMuNyAxMTkuNkw0NDAuMSAxMTQuOE00NTAgMTQ0TDQ1Ni45IDE0ME00NjIuOSAxNzAuM0w0NzAuMyAxNjcuMk00NzIuNCAxOThMNDgwLjEgMTk2TTQ3OC4xIDIyNi44TDQ4NiAyMjUuNyIgc3Ryb2tlLXdpZHRoPSIxLjUiIG9wYWNpdHk9IjAuNSIvPjxwYXRoIGQ9Ik0gNDI5LjEgMjczLjQgQSAxNzQgMTc0IDAgMCAxIDM5MC43IDM2Ni4xIiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNyIvPjxwYXRoIGQ9Ik0gMzY2LjEgMzkwLjcgQSAxNzQgMTc0IDAgMCAxIDI3My40IDQyOS4xIiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNyIvPjxwYXRoIGQ9Ik0gMjM4LjYgNDI5LjEgQSAxNzQgMTc0IDAgMCAxIDE0NS45IDM5MC43IiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNyIvPjxwYXRoIGQ9Ik0gMTIxLjMgMzY2LjEgQSAxNzQgMTc0IDAgMCAxIDgyLjkgMjczLjQiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PHBhdGggZD0iTSA4Mi45IDIzOC42IEEgMTc0IDE3NCAwIDAgMSAxMjEuMyAxNDUuOSIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48cGF0aCBkPSJNIDE0NS45IDEyMS4zIEEgMTc0IDE3NCAwIDAgMSAyMzguNiA4Mi45IiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNyIvPjxwYXRoIGQ9Ik0gMjczLjQgODIuOSBBIDE3NCAxNzQgMCAwIDEgMzY2LjEgMTIxLjMiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PHBhdGggZD0iTSAzOTAuNyAxNDUuOSBBIDE3NCAxNzQgMCAwIDEgNDI5LjEgMjM4LjYiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PHBvbHlnb24gcG9pbnRzPSIzNjAuNywzNjAuNyAxNTEuMywzNjAuNyAxNTEuMywxNTEuMyAzNjAuNywxNTEuMyIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjYiLz48cG9seWdvbiBwb2ludHM9IjM2MCwyNTYgMjU2LDM2MCAxNTIsMjU2IDI1NiwxNTIiIHN0cm9rZS13aWR0aD0iMS41IiBvcGFjaXR5PSIwLjQiLz48cGF0aCBkPSJNMzYwIDI1Nkw0MDQgMjU2TTI1NiAzNjBMMjU2IDQwNE0xNTIgMjU2TDEwOCAyNTZNMjU2IDE1MkwyNTYgMTA4IiBzdHJva2Utd2lkdGg9IjEuNSIgb3BhY2l0eT0iMC40Ii8+PGNpcmNsZSBjeD0iMjU2IiBjeT0iMjU2IiByPSI0OCIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjQiLz48Y2lyY2xlIGN4PSIyNTYiIGN5PSIyNTYiIHI9IjciIGZpbGw9IiMwMDAiIG9wYWNpdHk9IjAuNSIvPjwvZz48L3N2Zz4=");
+  --custom-sigil-span: 320px;
+  --custom-sigil-alpha: 0.26;
+}
+
+/* Concentric with the diagram painted into the hero art. */
+#wrapper .custom-hero {
+  --custom-sigil-x: 49%;
+  --custom-sigil-y: 63%;
+  --custom-sigil-alpha: 0.13;
+}
+
+#wrapper .custom-hero::before,
+#wrapper .custom-hero::after {
+  z-index: 1;
+  mix-blend-mode: screen;
+}
+
+/* Wax, not gold: gold on parchment is invisible. */
+#wrapper .custom-doctrine {
+  --custom-sigil-span: min(64cqi, 720px);
+  --custom-sigil-x: 84%;
+  --custom-sigil-y: 30%;
+  --custom-sigil-alpha: 0.14;
+}
+
+#wrapper .custom-doctrine::before,
+#wrapper .custom-doctrine::after {
+  background: var(--custom-wax);
+}
+
+#wrapper .custom-bosses {
+  --custom-sigil-span: min(58cqi, 640px);
+  --custom-sigil-x: 82%;
+  --custom-sigil-alpha: 0.07;
+}
+
+/* Concentric with the seal: the die sits in the middle of the mark. */
+#wrapper .custom-final {
+  --custom-sigil-y: calc(var(--custom-final-pad) + var(--custom-seal-size) / 2);
+  --custom-sigil-alpha: 0.16;
+}
+
+/* ---------------------------------------------------------------- the motes */
+
+/* One tile of warm specks drifting upward behind the hero copy: the CSS
+   cousin of the site's canvas mote field. */
+#wrapper .custom-hero-copy::before {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  background-image:
+    radial-gradient(
+      circle at 8% 14%,
+      rgba(255, 217, 119, 0.85) 0 1px,
+      rgba(255, 217, 119, 0.2) 2px,
+      transparent 4px
+    ),
+    radial-gradient(
+      circle at 31% 62%,
+      rgba(255, 217, 119, 0.7) 0 1px,
+      rgba(255, 217, 119, 0.16) 2px,
+      transparent 4px
+    ),
+    radial-gradient(
+      circle at 47% 27%,
+      rgba(255, 230, 160, 0.9) 0 1.4px,
+      rgba(255, 217, 119, 0.22) 2.5px,
+      transparent 5px
+    ),
+    radial-gradient(
+      circle at 66% 81%,
+      rgba(255, 217, 119, 0.75) 0 1px,
+      rgba(255, 217, 119, 0.18) 2px,
+      transparent 4px
+    ),
+    radial-gradient(
+      circle at 79% 44%,
+      rgba(255, 230, 160, 0.8) 0 1.2px,
+      rgba(255, 217, 119, 0.2) 2.4px,
+      transparent 4.5px
+    ),
+    radial-gradient(
+      circle at 92% 9%,
+      rgba(255, 217, 119, 0.65) 0 1px,
+      rgba(255, 217, 119, 0.15) 2px,
+      transparent 4px
+    ),
+    radial-gradient(
+      circle at 18% 90%,
+      rgba(255, 217, 119, 0.6) 0 1px,
+      rgba(255, 217, 119, 0.14) 2px,
+      transparent 4px
+    );
+  background-size: 360px 480px;
+  content: "";
+  mix-blend-mode: screen;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* ===========================================================================
+   Narrow columns
+   ---------------------------------------------------------------------------
+   Container queries on .custom-page, because itch's column, not the window,
+   decides how much room the sections get.
+   =========================================================================== */
+
+@container (max-width: 760px) {
+  #wrapper .custom-hero {
+    --custom-sigil-span: min(130cqi, 620px);
+    --custom-sigil-x: 50%;
+    --custom-sigil-y: 30%;
+    --custom-sigil-alpha: 0.1;
+    min-height: 0;
+    align-items: flex-start;
+    /* The art moves below the copy, as on the site: copy on clear felt, then
+       the congregation rising out of it. */
+    padding-bottom: 78cqi;
+    background:
+      linear-gradient(
+        180deg,
+        var(--custom-felt-deep) calc(100% - 84cqi),
+        rgba(13, 10, 18, 0) calc(100% - 58cqi)
+      ),
+      url("https://the-order-of-order.com/assets/hero-congregation.jpg") 50%
+        100% / auto 84cqi no-repeat,
+      var(--custom-felt-deep);
+  }
+
+  #wrapper .custom-hero-copy {
+    width: auto;
+    margin: 0 auto;
+    padding: 56px var(--custom-gutter) 24px;
+    text-align: center;
+  }
+
+  #wrapper .custom-page .custom-title {
+    font-size: clamp(3.6rem, 18cqi, 6.4rem);
+  }
+
+  #wrapper .custom-title .custom-title-small {
+    margin-left: 0;
+  }
+
+  #wrapper .custom-page .custom-hero-tagline,
+  #wrapper .custom-page .custom-hero-summary {
+    margin-inline: auto;
+  }
+
+  #wrapper .custom-gameplay,
+  #wrapper .custom-proclamation,
+  #wrapper .custom-bosses,
+  #wrapper .custom-realm {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #wrapper .custom-realm-reel {
+    grid-column: 1;
+  }
+
+  #wrapper .custom-window-tilted {
+    transform: none;
+  }
+
+  #wrapper .custom-proclamation {
+    text-align: center;
+  }
+
+  #wrapper .custom-page .custom-lede {
+    margin-inline: auto;
+  }
+
+  #wrapper .custom-study {
+    width: min(500px, 100%);
+    margin-inline: auto;
+  }
+
+  #wrapper .custom-reel {
+    margin-bottom: 50px;
+  }
+
+  /* The shop's compact hand: three cards overlap into a shallow arc. */
+  #wrapper .custom-cards {
+    gap: 0;
+    padding-bottom: 20px;
+  }
+
+  #wrapper .custom-card,
+  #wrapper .custom-card:nth-child(2),
+  #wrapper .custom-card:nth-child(3) {
+    width: 128%;
+    margin-top: 0;
+  }
+
+  #wrapper .custom-card:nth-child(1) {
+    --custom-card-rot: -5deg;
+    z-index: 1;
+    justify-self: start;
+    margin-top: clamp(9px, 2cqi, 15px);
+  }
+
+  #wrapper .custom-card:nth-child(2) {
+    --custom-card-rot: 0deg;
+    z-index: 2;
+    justify-self: center;
+  }
+
+  #wrapper .custom-card:nth-child(3) {
+    --custom-card-rot: 5deg;
+    z-index: 1;
+    justify-self: end;
+    margin-top: clamp(9px, 2cqi, 15px);
+  }
+
+  #wrapper .custom-tenet-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+
+  #wrapper .custom-tenet-grid::before {
+    top: 18px;
+    bottom: 18px;
+    left: 21px;
+    width: 1px;
+    height: auto;
+    background: linear-gradient(
+      var(--custom-teal),
+      var(--custom-gold),
+      var(--custom-violet)
+    );
+  }
+
+  #wrapper .custom-tenet {
+    min-height: 0;
+    padding: 24px 0 30px 76px;
+    border: 0;
+  }
+
+  #wrapper .custom-page .custom-tenet-number {
+    top: 18px;
+    left: 0;
+  }
+
+  #wrapper .custom-member:nth-child(2) {
+    margin-top: 28px;
+  }
+
+  #wrapper .custom-page .custom-member-blurb {
+    display: none;
+  }
+
+  #wrapper .custom-bosses {
+    --custom-sigil-x: 60%;
+  }
+
+  #wrapper .custom-doctrine {
+    --custom-sigil-x: 72%;
+    --custom-sigil-alpha: 0.1;
+  }
+
+  #wrapper .custom-study {
+    --custom-sigil-span: 260px;
+  }
+}
+
+@container (max-width: 520px) {
+  #wrapper .custom-facts {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  #wrapper .custom-fact {
+    max-width: none;
+  }
+
+  #wrapper .custom-study {
+    min-height: 320px;
+    padding-inline: 20px;
+  }
+
+  #wrapper .custom-unsettled-die,
+  #wrapper .custom-settled-die {
+    width: 76px;
+    height: 76px;
+  }
+
+  #wrapper .custom-page .custom-member-name {
+    font-size: 0.9rem;
+    text-align: center;
+  }
+
+  #wrapper .custom-boss {
+    grid-template-columns: 68px 1fr;
+    gap: 17px;
+  }
+
+  #wrapper .custom-seal {
+    width: 58px;
+    height: 58px;
+  }
+
+  #wrapper .custom-page .custom-decree {
+    padding: 28px;
+  }
+
+  #wrapper .custom-credits {
+    flex-direction: column;
+  }
+}
+
+/* ===========================================================================
+   Motion
+   ---------------------------------------------------------------------------
+   All of it behind prefers-reduced-motion: no-preference, so a visitor who
+   asked for less gets the finished page with nothing waiting to animate in.
+   Keyframes are global on itch, hence the custom- prefix on every name.
+   =========================================================================== */
+
+@keyframes custom-turn {
+  to {
+    rotate: 360deg;
+  }
+}
+
+@keyframes custom-counter-turn {
+  to {
+    rotate: -360deg;
+  }
+}
+
+@keyframes custom-sheen-idle {
+  0%,
+  76% {
+    translate: -150% 0;
+  }
+  100% {
+    translate: 150% 0;
+  }
+}
+
+@keyframes custom-sheen {
+  from {
+    translate: -150% 0;
+  }
+  to {
+    translate: 150% 0;
+  }
+}
+
+@keyframes custom-title-sheen {
+  0%,
+  64% {
+    background-position: 135% 0;
+  }
+  100% {
+    background-position: -35% 0;
+  }
+}
+
+@keyframes custom-motes {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 0 -480px;
+  }
+}
+
+@keyframes custom-motes-breathe {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+@keyframes custom-blink {
+  0%,
+  70%,
+  100% {
+    opacity: 0.45;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+
+/* One face per 70ms, the game's tumble tick (see DieSprite.beginTumble). */
+@keyframes custom-faces {
+  0% {
+    content: "2";
+  }
+  12.5% {
+    content: "5";
+  }
+  25% {
+    content: "3";
+  }
+  37.5% {
+    content: "6";
+  }
+  50% {
+    content: "1";
+  }
+  62.5% {
+    content: "4";
+  }
+  75% {
+    content: "6";
+  }
+  87.5% {
+    content: "2";
+  }
+}
+
+/* Two superposed sines at different rates read as a rattle, not a metronome. */
+@keyframes custom-unrest {
+  from {
+    rotate: -5.5deg;
+  }
+  to {
+    rotate: 5.5deg;
+  }
+}
+
+@keyframes custom-unrest-drift {
+  from {
+    transform: rotate(-3deg);
+  }
+  to {
+    transform: rotate(3deg);
+  }
+}
+
+@keyframes custom-settled-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 32px rgba(230, 198, 90, 0.24);
+  }
+  50% {
+    box-shadow: 0 0 58px rgba(230, 198, 90, 0.52);
+  }
+}
+
+@keyframes custom-rule-flow {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes custom-seal-glow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 10px var(--custom-felt-deep),
+      0 0 0 11px rgba(201, 162, 39, 0.4),
+      0 0 30px rgba(230, 198, 90, 0.12);
+  }
+  50% {
+    box-shadow:
+      0 0 0 10px var(--custom-felt-deep),
+      0 0 0 11px rgba(201, 162, 39, 0.75),
+      0 0 60px rgba(230, 198, 90, 0.34);
+  }
+}
+
+@keyframes custom-arrive {
+  from {
+    opacity: 0;
+    translate: 0 26px;
+  }
+  to {
+    opacity: 1;
+    translate: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  #wrapper .custom-hero::before,
+  #wrapper .custom-doctrine::before,
+  #wrapper .custom-bosses::before,
+  #wrapper .custom-final::before,
+  #wrapper .custom-study::before {
+    animation: custom-turn 120s linear infinite;
+  }
+
+  #wrapper .custom-hero::after,
+  #wrapper .custom-doctrine::after,
+  #wrapper .custom-bosses::after,
+  #wrapper .custom-final::after {
+    animation: custom-counter-turn 165s linear infinite;
+  }
+
+  #wrapper .custom-hero-copy::before {
+    animation:
+      custom-motes 38s linear infinite,
+      custom-motes-breathe 6s ease-in-out infinite;
+  }
+
+  #wrapper .custom-title .custom-title-gold {
+    background: linear-gradient(
+      100deg,
+      var(--custom-gold-light) 0%,
+      var(--custom-gold-light) 40%,
+      #fff4cf 50%,
+      var(--custom-gold-light) 60%,
+      var(--custom-gold-light) 100%
+    );
+    background-clip: text;
+    -webkit-background-clip: text;
+    background-size: 240% 100%;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    /* A text-shadow would show through the transparent fill and muddy the
+       gold; a filter shadows the painted glyphs instead. */
+    text-shadow: none;
+    filter: drop-shadow(0 4px 22px rgba(0, 0, 0, 0.85));
+    animation: custom-title-sheen 7s ease-in-out 1.6s infinite;
+  }
+
+  #wrapper .custom-button:hover::after {
+    animation: custom-sheen 720ms ease-out;
+  }
+
+  #wrapper .custom-button-idle::after {
+    animation: custom-sheen-idle 6.5s ease-in-out 2.4s infinite;
+  }
+
+  #wrapper .custom-window::before {
+    animation: custom-blink 3.6s ease-in-out infinite;
+  }
+
+  #wrapper .custom-unsettled-die {
+    animation:
+      custom-unrest 130ms cubic-bezier(0.37, 0, 0.63, 1) infinite alternate,
+      custom-unrest-drift 370ms cubic-bezier(0.37, 0, 0.63, 1) infinite
+        alternate;
+  }
+
+  #wrapper .custom-unsettled-die::before {
+    animation: custom-faces 560ms steps(1, end) infinite;
+  }
+
+  #wrapper .custom-settled-die {
+    animation: custom-settled-glow 3.4s ease-in-out infinite;
+  }
+
+  #wrapper .custom-tenet-grid::before {
+    animation: custom-rule-flow 14s linear infinite;
+  }
+
+  #wrapper .custom-seal-large {
+    animation: custom-seal-glow 5s ease-in-out infinite;
+  }
+
+  /* Arrival on scroll, driven by the scroll position itself. A browser
+     without view timelines skips the block and shows everything at rest. */
+  @supports (animation-timeline: view()) {
+    #wrapper .custom-reveal {
+      animation: custom-arrive linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 55%;
+    }
+  }
+}
+
+/* The still frame stands in for every loop. */
+@media (prefers-reduced-motion: reduce) {
+  #wrapper .custom-media img {
+    display: none;
+  }
+
+  #wrapper .custom-page *,
+  #wrapper .custom-page *::before,
+  #wrapper .custom-page *::after {
+    transition: none !important;
+  }
+}

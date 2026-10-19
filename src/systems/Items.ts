@@ -2114,7 +2114,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "build",
     rarity: "uncommon",
     unique: true,
-    desc: `Each roll permanently multiplies your multiplier by up to ${ENGINE_FACTOR}: 0.01 for every ${GROWTH_TUNING.pyreFacesPerPercent} faces burned or shattered since the last roll.`,
+    desc: `Faces that burn or shatter feed a fire. Each roll it permanently multiplies your multiplier by up to ${ENGINE_FACTOR}: 0.01 for every ${GROWTH_TUNING.pyreFacesPerPercent} faces in it. Then it goes out.`,
     effects: [setFlag("hasPyre")],
   },
   boost("everflame", "Everflame", "pyre", "The Pyre", "cap", (s) => ({
@@ -2141,7 +2141,7 @@ export const ITEMS: ItemDef[] = [
     priceBand: "standard",
     rarity: "uncommon",
     unique: true,
-    desc: "Half the faces The Pyre spends on a roll stay in the fire for the next.",
+    desc: "When The Pyre's fire goes out, half its faces stay in it for the next roll.",
     available: (s) => s.hasPyre,
     effects: [setFlag("hasEmbers")],
   },
@@ -2173,7 +2173,7 @@ export const ITEMS: ItemDef[] = [
         (state) => state.solitude,
         (copies) => SOLITUDE_POINTS_PER_SEAT * copies,
         (points, plural) =>
-          `Gain ${points} point${plural ? "s" : ""} on every roll for each empty seat below ${CELL_SEATS} dice.`,
+          `Gain ${points} point${plural ? "s" : ""} every roll for each empty seat below ${CELL_SEATS} dice.`,
       )(s);
       return seats > 0
         ? `${pays} ${seats} seat${seats === 1 ? " is" : "s are"} empty now.`
@@ -2189,9 +2189,9 @@ export const ITEMS: ItemDef[] = [
     stackPricing: "linear",
     rarity: "common",
     needsTarget: true,
-    desc: "Remove a die of your choice from your grid, emptying a seat for Solitude. Gain 1 gold.",
+    desc: "Remove a die of your choice from your grid, emptying a seat for Solitude. Gain 3 gold.",
     available: (s) => s.solitude > 0 && s.dice.length > 1,
-    effects: [removeTarget(), addGold(1)],
+    effects: [removeTarget(), addGold(3)],
   },
   {
     id: "the_cell",
