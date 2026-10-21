@@ -51,6 +51,7 @@ export enum TutorialStage {
   Zoom, // Game: scrolling / pinching it
   Roll, // Game: the seal
   RollOne, // Game: after the first roll
+  Tiers, // Game: every roll is played, and the tiers above bronze
   Cleared, // TrialResults: the verdict
   Gold, // TrialResults: what the clear paid
   EarlyGold, // TrialResults: and what it paid for reaching a tier past bronze
@@ -98,6 +99,8 @@ export const TUTORIAL_TEXT: Record<
   [TutorialStage.Zoom]: `And you can zoom in and out by ${PHONE_BUILD ? "pinching" : "scrolling"}.`,
   [TutorialStage.Roll]: `${PRESS} here to roll your dice.`,
   [TutorialStage.RollOne]: "To score you must roll a 1, good luck.",
+  [TutorialStage.Tiers]:
+    "Every roll is played. Meet bronze to survive, and climb to silver, gold or legendary for extra gold.",
 
   [TutorialStage.Cleared]: "Congratulations on completing your first trial!",
   [TutorialStage.Gold]:
@@ -395,8 +398,7 @@ export function beginRun(
   // Only a run that opens with the table's lessons still to teach is: one
   // resuming the script further on plays its first trial straight.
   const opening = getTutorial(scene.registry);
-  state.tutorialArmed =
-    opening.active && opening.stage <= TutorialStage.RollOne;
+  state.tutorialArmed = opening.active && opening.stage <= TutorialStage.Tiers;
   saveActiveRun(scene.registry, { scene: "TrialOverview" });
   scene.scene.start("TrialOverview");
 }

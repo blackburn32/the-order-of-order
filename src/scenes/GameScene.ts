@@ -582,6 +582,7 @@ export class GameScene extends Phaser.Scene {
   private hudScore!: Phaser.GameObjects.Text;
   private hudTarget!: Phaser.GameObjects.Text;
   private hudTargetLabel!: Phaser.GameObjects.Text;
+  private hudTargetPlaque!: Phaser.GameObjects.Container;
   private statusTable!: StatusTable;
   private statusTooltip!: DieTooltip;
   /** The HUD as the last roll left it, held from the moment a trial resolves
@@ -818,6 +819,11 @@ export class GameScene extends Phaser.Scene {
       case TutorialStage.Grid:
       case TutorialStage.RollOne:
         anchor = grid;
+        onContinue = advance;
+        break;
+      case TutorialStage.Tiers:
+        // The goal plaque, which names the tier being climbed.
+        anchor = this.hudTargetPlaque.getBounds();
         onContinue = advance;
         break;
       case TutorialStage.Pan:
@@ -1154,6 +1160,7 @@ export class GameScene extends Phaser.Scene {
     this.hudScore = plaqueByKey.score.value;
     this.hudTarget = plaqueByKey.target.value;
     this.hudTargetLabel = plaqueByKey.target.label;
+    this.hudTargetPlaque = plaqueByKey.target.container;
     this.hudScorePlaque = plaqueByKey.score.container;
 
     const bossRibbon = this.buildBossRibbon(layout);
