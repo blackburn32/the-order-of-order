@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { runRank, tierCss, tierName } from "../systems/GoalTiers";
 import { CSS, SERIF } from "../art/palette";
 import { rankOf, trialName } from "../config";
 import { getRun } from "../state/RunState";
@@ -75,7 +76,11 @@ export class GameOverScene extends Phaser.Scene {
 
     const rankLine = `You fell at rank ${rankOf(state.trial)}`;
     const trialLine = `The ${trialName(state.trial)}`;
-    const scoreLine = `Total score: ${formatScore(state.totalScore)}`;
+    // The run's rank, read off its total score (see systems/GoalTiers), is
+    // printed beside it and in its tier's colour.
+    const rank = runRank(state.totalScore);
+    const scoreLine = `Total score: ${formatScore(state.totalScore)} · ${rank < 0 ? "Unranked" : `${tierName(rank)} rank`}`;
+    const scoreColor = rank < 0 ? CSS.goldLight : tierCss(rank);
     const gridLine = `Your grid: ${state.dice.summary()}`;
     const unlockedNames = this.unlocked.map(
       (id) => ITEMS.find((item) => item.id === id)?.name ?? id,
@@ -122,7 +127,7 @@ export class GameOverScene extends Phaser.Scene {
         },
         { text: rankLine, size: 22, color: CSS.parchment, gapBefore: 12 },
         { text: trialLine, size: 22, color: CSS.parchment, gapBefore: 2 },
-        { text: scoreLine, size: 18, color: CSS.goldLight, gapBefore: 10 },
+        { text: scoreLine, size: 18, color: scoreColor, gapBefore: 10 },
         { text: gridLine, size: 14, color: CSS.dim, gapBefore: 8 },
       ];
       if (unlockLine) {
@@ -185,7 +190,7 @@ export class GameOverScene extends Phaser.Scene {
       .text(cx, top + step * 3.5, scoreLine, {
         fontFamily: SERIF,
         fontSize: "24px",
-        color: CSS.goldLight,
+        color: scoreColor,
       })
       .setOrigin(0.5);
 

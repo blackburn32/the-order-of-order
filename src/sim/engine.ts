@@ -96,20 +96,13 @@ export function rollPool(
   return { afflictions };
 }
 
-/** True when the trial is over — either its goal has been met (`trialCleared`,
- *  latched by resolveRoll) or its rolls have run out. The caller should then run
+/** True when the trial is over: its rolls have run out. Every trial is played
+ *  to its last roll — meeting bronze (`trialCleared`, latched by resolveRoll)
+ *  only means the run survives it, and the rolls after are spent climbing the
+ *  upper tiers (see systems/GoalTiers). The caller should then run
  *  `resolveTrialEnd`. */
 export function trialComplete(state: RunState): boolean {
-  const playsOut = fullBudgetAllTrials || state.trial === fullBudgetTrial;
-  return (
-    (state.trialCleared && !playsOut) || state.roll >= trialRollTarget(state)
-  );
-}
-
-/** True when the trial ended by meeting its goal with rolls still in hand.
- *  Those unused rolls are paid out as gold. */
-export function clearedEarly(state: RunState): boolean {
-  return state.trialCleared && state.roll < trialRollTarget(state);
+  return state.roll >= trialRollTarget(state);
 }
 
 // Sim-only escape hatch for the goal-curve designer (src/sim/designTargets.ts).
@@ -130,50 +123,21 @@ export function setCulling(enabled: boolean): void {
   cullingEnabled = enabled;
 }
 
-// Sim-only escape hatch for the roll-pacing tuner (src/sim/pacingCurve.ts).
-//
-// A trial normally ends the instant its goal is met, which censors the one
-// measurement pacing is designed from: how much a build WOULD have scored had it
-// kept rolling. Under a curve that is too easy every trial ends on roll one and
-// every capacity reading is "just above the goal" — the distribution the tuner
-// samples is the curve it is trying to replace.
-//
-// So the tuner names ONE trial to play its rolls out. That trial's clear is
-// still latched by `resolveRoll` the moment the goal is crossed, so culling,
-// the ladder and the boss tallies are unchanged; only the roll counter runs on.
-// It is one trial rather than all of them because the grid grows per roll and
-// never resets between trials — playing every trial to its budget would hand the
-// deep trials a grid no real run could have arrived with, and the tuner would
-// then design the whole back half of the ladder against a fiction.
-let fullBudgetTrial: number | null = null;
+// Sim-only hooks from when a trial ended the moment its goal was met. The
+// pacing tuners (pacingCurve, pacingSweep, pacingFeasibility,
+// smartSurvivalCurve) named one trial to play its whole budget so capacity
+// could be read past the goal, and the dev panel could do the same for every
+// trial. Every trial now plays out by rule, so both are no-ops, kept so those
+// older tools still build and run.
 
-/** Sim-only. Names the one trial that plays out its whole roll budget even after
- *  its goal is met, so capacity can be read past the goal. */
+/** Sim-only, and now a no-op: every trial plays out its whole roll budget. */
 export function setFullBudgetTrial(trial: number | null): void {
-  fullBudgetTrial = trial;
+  void trial;
 }
 
-// The same switch thrown for every trial at once, for a human rather than a
-// tuner: the dev panel's "play out every trial" toggle (see dev/DevPanel.ts).
-// It answers by hand the question the tuner answers in bulk — what does a trial
-// score when it is played to the end of its budget instead of stopping at the
-// goal — which is the only way to see, while playing, how much of the budget a
-// goal is actually asking for.
-//
-// It carries the distortion named above and one more: a trial played out has no
-// rolls left over, so it earns no unused-roll gold, no Reserve bonus and no Rain
-// Check carry. A run under this toggle is therefore POORER than a real one at
-// the same point on the ladder. It is a measuring instrument, not a way to play.
-let fullBudgetAllTrials = false;
-
-/** Dev/sim-only. Every trial plays its whole roll budget out, goal or no goal.
- *  Excluded from production builds by its only caller, the dev panel. */
+/** Dev/sim-only, and now a no-op: every trial plays out its whole roll budget. */
 export function setFullBudgetAllTrials(enabled: boolean): void {
-  fullBudgetAllTrials = enabled;
-}
-
-export function fullBudgetAllTrialsEnabled(): boolean {
-  return fullBudgetAllTrials;
+  void enabled;
 }
 
 export interface TrialEndOutcome {
@@ -700,6 +664,8 @@ export function resolveTrialEnd(
       ? trialPayout(state, payoutTuning)
       : EMPTY_BREAKDOWN;
   recordClearItemValue(state, goldBreakdown, payoutTuning);
+  if (cleared && !duel && goldBreakdown.tier >= 0)
+    state.tierCounts[goldBreakdown.tier] += 1;
   addItemValue(state, "rain_check", carriedRolls);
   if (insuranceUsed) addItemValue(state, "insurance_policy", 1);
   grantGold(state, goldBreakdown.total);

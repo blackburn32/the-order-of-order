@@ -459,7 +459,58 @@ move the whole curve as a side effect of a file being edited. `EXPERT_SERIES`
 and `PLAYER_SERIES` are there to point a tuner at one deliberately, as
 `FIELD=expert` and `FIELD=player`.
 
-## Fitting a survival curve (the shipped curve)
+## Goal tiers and run ranks (the shipped curve)
+
+Every trial is now played to its last roll, and asks four goals: **bronze** to
+survive it, then **silver**, **gold** and **legendary**, which pay 2, 4 and 6
+extra gold as the trial clears (`systems/GoalTiers`). When the run ends, won or
+lost, its total score is read against four run ranks of the same names. The
+tables (`MEASURED_GOALS`, `MEASURED_TIER_GOALS`, `MEASURED_RUN_RANKS` in
+`config.ts`) are fitted by `goals:tiers` (`goalTiers.ts`):
+
+```bash
+SEEDS=500 npm run goals:tiers                    # fit → sim-out/goal-tiers.json
+VALIDATE=1 SEED=2 SEEDS=500 npm run goals:tiers  # grade the live tables held out
+# paste the three printed tables into config.ts
+```
+
+It is `goals:tune`'s sequential fit with the upper tiers measured from the same
+entrants. Trial by trial, every run that reaches the trial plays it against
+unreachable tiers, and each tier is set at a share of those entrants:
+
+- **bronze** is fitted to a slightly gentler survival curve than the single
+  goal was (`CHECKPOINTS`, default `1=0.7,3=0.46,6=0.25,10=0.065` against the
+  old `1=0.7,3=0.4,6=0.2,10=0.05`). Rank 1 stays authored at 1 / 2 / 3.
+- **silver** lets through `SILVER` (0.85) times the share the single goal let
+  through on the old curve: a little harder than the goal it replaced.
+- **gold** lets through `GOLD` (30%) of the entrants, **legendary** `LEGENDARY`
+  (2%): the 98th percentile.
+- **run ranks** are the total scores the top `RUN_RANKS` (50 / 25 / 8 / 2%) of
+  every run reach, dead or alive.
+
+The current goals could not be carried over as numbers. With every roll played,
+grids grow through the whole trial and late scores climb far faster, while the
+economy loses its unused-roll gold (Reserve, The Almsbag and Held Breath are off
+the shelf for the same reason). So the targets are shares of entrants, not
+scores. In numbers, silver lands just above the old goals through rank 7 and
+well above them after, and bronze well below.
+
+Fitted on 500 seeds (base seed 1), graded on 500 held-out seeds (base seed 2):
+
+| after rank            | 1   | 2   | 3   | 4   | 5   | 6   | 7   | 8   | 9   | 10 (win) |
+| --------------------- | --- | --- | --- | --- | --- | --- | --- | --- | --- | -------- |
+| wanted (bronze)       | 70% | 57% | 46% | 38% | 31% | 25% | 21% | 18% | 15% | 6.5%     |
+| fitted                | 65% | 56% | 45% | 36% | 30% | 24% | 21% | 17% | 15% | 6.4%     |
+| held out              | 60% | 51% | 41% | 33% | 27% | 22% | 19% | 16% | 14% | 5.7%     |
+| held out, single goal | 63% | 49% | 38% | 30% | 24% | 19% | 16% | 13% | 11% | 4.7%     |
+
+Of the runs entering a trial after rank 1, held out, 90-99% meet bronze, 70-83%
+silver, 28-31% gold and 1.5-2.9% legendary. Run ranks held out: 46% of runs
+reach bronze, 23% silver, 7.5% gold, 1.9% legendary. Gold earned per cleared
+trial falls about 9% (15.1 against 16.5), since tier gold pays less on average
+than the unused rolls it replaces.
+
+## Fitting a survival curve (the previous curve)
 
 The shipped goals (`MEASURED_GOALS` in `config.ts`) are fitted to a survival
 curve: the share of runs still alive at the end of each rank. The intent is
@@ -916,7 +967,8 @@ crosses the bucket threshold.
 | File                     | Role                                                                                             |
 | ------------------------ | ------------------------------------------------------------------------------------------------ |
 | `goalGrid.ts`            | The strategy grid, its search/validate modes, and the worker pool the goal tools share.          |
-| `goalTune.ts`            | Shipped tuner: fits each goal, trial by trial with culling, to a per-rank survival curve.        |
+| `goalTiers.ts`           | Shipped tuner: fits bronze, silver, gold, legendary and the run ranks, trial by trial.           |
+| `goalTune.ts`            | Previous tuner: fits each goal, trial by trial with culling, to a per-rank survival curve.       |
 | `goalSearch.ts`          | Previous tuner: seeds × grid with goals removed → per-seed max and percentile → a goal table.    |
 | `goalSweep.ts`           | Every table a search derived, played with culling on held-out seeds, side by side.               |
 | `goalValidate.ts`        | One goal table played by the grid with culling: survival, roll-1 clears, strategies, bosses.     |

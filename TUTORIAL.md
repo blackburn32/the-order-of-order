@@ -25,7 +25,7 @@ build says _Press_ and _pinching_, every other build _Click_ and _scrolling_.
 
 - Spotlight: the three trial cards
 
-### 4. To complete a trial you must meet its goal by earning points.
+### 4. To complete a trial you must meet its bronze goal by earning points.
 
 - Spotlight: the goal on the first trial's card
 
@@ -75,11 +75,11 @@ build says _Press_ and _pinching_, every other build _Click_ and _scrolling_.
 
 - Spotlight: the gold earned and its full breakdown
 
-### 14. You'll gain extra gold for completing a trial with rolls to spare.
+### 14. Every roll is played. Reach the silver, gold or legendary goal for extra gold.
 
-- Spotlight: the receipt row paying gold for rolls left in hand
-- Note: skipped if the first clear paid no rolls-left gold; shown instead on
-  the first clear that does.
+- Spotlight: the receipt row paying gold for the tier the trial reached
+- Note: skipped if the first clear met only bronze; shown instead on the first
+  clear that reaches a higher tier.
 
 ### 15. Your gold earns interest! 1 gold per 5 gold held at a trial's end, up to 5.
 

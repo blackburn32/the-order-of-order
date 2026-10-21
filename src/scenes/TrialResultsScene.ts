@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { rankOf, trialName } from "../config";
+import { isMirrorTrial, rankOf, trialName } from "../config";
+import { tierName } from "../systems/GoalTiers";
 import type { TrialEndOutcome } from "../sim/engine";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
@@ -99,9 +100,13 @@ function receiptHeight(lines: number, lineGap: number): number {
 /** The label of the interest row, which the tutorial's Interest step points at. */
 const INTEREST_LABEL = "Interest";
 
-/** The opening of the rolls-left row, which the tutorial's EarlyGold step points
- *  at. The row itself carries the count, so it is matched by its opening. */
+/** The rolls-left row. Every trial plays out, so it pays only on a save made
+ *  before goal tiers, but the receipt keeps printing what it was paid. */
 const ROLLS_LABEL = "Rolls left in hand";
+
+/** The ending of the tier-gold row, which the tutorial's EarlyGold step points
+ *  at. The row opens with the tier's name, so it is matched by its ending. */
+const TIER_LABEL = "goal met";
 
 /** Air between a struck figure and the amount it sits left of, so the slash's
  *  overshoot never touches the gold. */
@@ -153,6 +158,10 @@ function receiptLines(o: TrialEndOutcome): ReceiptLine[] {
   const { rollsLeft, rollsPaid } = o.goldBreakdown;
   const all: ReceiptLine[] = [
     { label: "Trial reward", amount: o.goldBreakdown.base },
+    {
+      label: `${tierName(o.goldBreakdown.tier)} ${TIER_LABEL}`,
+      amount: o.goldBreakdown.tierGold,
+    },
     {
       label: ROLLS_LABEL,
       amount: o.goldBreakdown.rolls,
@@ -207,11 +216,11 @@ export class TrialResultsScene extends Phaser.Scene {
   // Screen rect of the gold receipt, which the first-run tutorial points at
   // once the reveal has finished.
   private receiptRect?: Phaser.Geom.Rectangle;
-  // The interest and rolls-left rows inside it, which the tutorial's Interest
+  // The interest and tier-gold rows inside it, which the tutorial's Interest
   // and EarlyGold steps point at. Either is absent whenever this clear paid
   // nothing from that source, which is what makes those steps wait.
   private interestRect?: Phaser.Geom.Rectangle;
-  private rollsRect?: Phaser.Geom.Rectangle;
+  private tierRect?: Phaser.Geom.Rectangle;
   private tutorialCallout?: CalloutHandle;
   // Which fanned card is currently pulled to the front, so the same card is
   // not re-focused on every pointer move across it.
@@ -558,7 +567,12 @@ export class TrialResultsScene extends Phaser.Scene {
 
   private trialLine(): string {
     const o = this.dataIn.outcome;
-    return `${trialName(o.completedTrial).replace(" Trial", " trial")}, Rank ${rankOf(o.completedTrial)}`;
+    const line = `${trialName(o.completedTrial).replace(" Trial", " trial")}, Rank ${rankOf(o.completedTrial)}`;
+    // The tier the trial was played out to, for every trial that has tiers.
+    const tier = o.goldBreakdown.tier;
+    return tier >= 0 && !isMirrorTrial(o.completedTrial)
+      ? `${line} · ${tierName(tier)}`
+      : line;
   }
 
   private buildTitleGlow(
@@ -654,7 +668,7 @@ export class TrialResultsScene extends Phaser.Scene {
     // wide enough to cap that width can't push the labels past its edge.
     const labelDx = Math.min(typeBasis * 0.3, width / 2 - 12);
     this.interestRect = undefined;
-    this.rollsRect = undefined;
+    this.tierRect = undefined;
     const rows = lines.flatMap(({ label, amount, struck }, i) => {
       const y = top + RECEIPT_LINES_INSET + i * lineGap;
       const rowRect = () =>
@@ -665,7 +679,7 @@ export class TrialResultsScene extends Phaser.Scene {
           lineGap,
         );
       if (label === INTEREST_LABEL) this.interestRect = rowRect();
-      else if (label.startsWith(ROLLS_LABEL)) this.rollsRect = rowRect();
+      else if (label.endsWith(TIER_LABEL)) this.tierRect = rowRect();
       const name = this.add
         .text(cx - labelDx, y, label, {
           fontFamily: SERIF,
@@ -722,7 +736,7 @@ export class TrialResultsScene extends Phaser.Scene {
       // explaining.
       case TutorialStage.EarlyGold:
         return this.dataIn.outcome.goldBreakdown.rolls > 0
-          ? this.rollsRect
+          ? this.tierRect
           : undefined;
       case TutorialStage.Interest:
         return this.dataIn.outcome.goldBreakdown.interest > 0

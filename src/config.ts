@@ -121,43 +121,44 @@ export function rollsForTrial(trial: number): number {
 
 // ---- Goal curve ------------------------------------------------------------
 //
-// The goals are MEASURED, not derived from a formula, and fitted to a survival
-// curve: the share of runs still alive at the end of each rank. The curve is
-// pinned at four checkpoints — about 70% of runs get through rank 1, 40%
-// through rank 3, 20% through rank 6 (just before the defectors), and 5% win
-// at rank 10 — so a casual player sees a good part of the ladder and the
-// finish stays a hard ceiling. Between checkpoints survival falls by the same
-// factor every rank, and a rank's losses lean on its Boss Trial.
+// The goals are MEASURED, not derived from a formula. Every trial is played to
+// its last roll and asks four goals (see "Goal tiers" below); MEASURED_GOALS is
+// the first of them, bronze, the goal a run must meet to survive the trial. It
+// is fitted to a survival curve: the share of runs still alive at the end of
+// each rank, pinned at four checkpoints — about 70% through rank 1, 46%
+// through rank 3, 25% through rank 6 (just before the defectors), and a 6.5%
+// win rate — a little gentler than the 70 / 40 / 20 / 5 the single goal before
+// it was fitted to. Between checkpoints survival falls by the same factor
+// every rank, and a rank's losses lean on its Boss Trial.
 //
-// `npm run goals:tune` (src/sim/goalTune.ts) fits the table against a grid of
-// 43 bot strategies — every shopping bot, at three curse appetites — over
+// `npm run goals:tiers` (src/sim/goalTiers.ts) fits every tier against a grid
+// of 43 bot strategies — every shopping bot, at three curse appetites — over
 // hundreds of seeds with real culling. Trial by trial, it plays every run that
-// reaches the trial against an unreachable goal to see what each could score
-// there, and sets the goal at the score the wanted share of them reach,
-// rounded to three significant figures. The last goal is fitted to the win
-// rate itself, since the duel decides who reaching it wins.
+// reaches the trial against unreachable goals to see what each could score
+// there, and sets each tier at the score a chosen share of them reach, rounded
+// to three significant figures. Bronze's last goal is fitted to the win rate
+// itself, since the duel decides who reaching it wins.
 //
 // Rank 1 is authored, not fitted: 1, 2 and 3 points. The opening's difficulty
-// is the lone starting d6, which by itself ends nearly 30% of runs in trial 1,
-// so rank 1 lands a little under its 70% checkpoint (about 63%) and the later
-// ranks are fitted from whoever it leaves alive.
+// is the lone starting d6, which by itself ends nearly 30% of runs in trial 1.
 //
 // A goal is never lower than the trial before it in its own rank, nor than the
 // same slot a rank down. A rank opens on a seven-roll Lesser Trial, so it can
 // still ask less than the ten-roll Boss Trial that closed the rank before it.
 //
-// To retune: move the checkpoints (`CHECKPOINTS="1=0.7,3=0.4,6=0.2,10=0.05"`),
-// rerun the fit, paste the printed table here, and grade it on held-out seeds
-// with `goals:validate`. See src/sim/README.md, "Fitting a survival curve".
+// To retune: move the checkpoints or shares (see goalTiers.ts), rerun the fit,
+// paste the three printed tables here, and grade them on held-out seeds with
+// `VALIDATE=1 SEED=2 npm run goals:tiers`. See src/sim/README.md, "Goal tiers
+// and run ranks".
 
 /** The share of runs meant to be alive after each checkpoint rank (rank 10's is
  *  the win rate) — the record of how MEASURED_GOALS was fitted, not an input to
  *  anything at runtime. */
 export const SURVIVAL_CHECKPOINTS = {
   1: 0.7,
-  3: 0.4,
-  6: 0.2,
-  10: 0.05,
+  3: 0.46,
+  6: 0.25,
+  10: 0.065,
 } as const;
 
 /**
@@ -170,18 +171,79 @@ export const SURVIVAL_CHECKPOINTS = {
 // prettier-ignore
 const MEASURED_GOALS: readonly string[] = [
   "1", "2", "3",                              // rank 1
-  "5", "25", "47",                            // rank 2
-  "42", "96", "181",                          // rank 3
-  "125", "329", "616",                        // rank 4
-  "588", "1370", "2540",                      // rank 5
-  "2650", "6960", "15300",                    // rank 6
-  "15600", "30300", "61400",                  // rank 7
-  "79800", "204000", "634000",                // rank 8
-  "684000", "2720000", "5850000",             // rank 9
-  "9540000", "84900000", "679200000",         // rank 10
+  "3", "11", "26",                            // rank 2
+  "22", "52", "82",                           // rank 3
+  "60", "129", "233",                         // rank 4
+  "227", "510", "928",                        // rank 5
+  "868", "2360", "4870",                      // rank 6
+  "3810", "6990", "10400",                    // rank 7
+  "10900", "27300", "95800",                  // rank 8
+  "127000", "475000", "1880000",              // rank 9
+  "4810000", "4810000", "9620000",            // rank 10
 ];
 
 export const TRIAL_GOALS: bigint[] = MEASURED_GOALS.map((g) => BigInt(g));
+
+// ---- Goal tiers --------------------------------------------------------------
+//
+// Every trial is played to its last roll, and what it asks is a ladder of four
+// goals rather than one. Bronze is the goal above: reach it or the run ends.
+// Silver, gold and legendary are optional, and each one met pays more gold as
+// the trial clears (see systems/GoalTiers). A trial that clears on its opening
+// roll still has three more goals to climb for, which is the point: a goal met
+// early no longer ends the trial, it only starts the next tier.
+//
+// The upper tiers are fitted with bronze by `npm run goals:tiers`
+// (src/sim/goalTiers.ts) as a share of the runs that reach each trial: silver a
+// little harder than the single goal it replaced, gold well above silver, and
+// legendary at about the 98th percentile.
+
+export const GOAL_TIERS = ["bronze", "silver", "gold", "legendary"] as const;
+export type GoalTier = (typeof GOAL_TIERS)[number];
+/** A trial's four goals, bronze first. Each is at least the one before it. */
+export type TierGoals = readonly [bigint, bigint, bigint, bigint];
+
+/**
+ * Silver, gold and legendary for every trial of the ladder (index = trial - 1),
+ * as decimal strings beside MEASURED_GOALS' bronze. The duel's row is never
+ * played (it is won or lost, not climbed); the endless ladder carries the last
+ * fitted trial's ratios forward from it.
+ */
+// prettier-ignore
+const MEASURED_TIER_GOALS: readonly (readonly [string, string, string])[] = [
+  ["2", "3", "4"], ["5", "27", "112"], ["21", "52", "340"], // rank 1
+  ["17", "80", "952"], ["38", "190", "2940"], ["60", "276", "4410"], // rank 2
+  ["55", "480", "9950"], ["112", "1080", "26800"], ["202", "1520", "48200"], // rank 3
+  ["183", "2360", "134000"], ["384", "4930", "500000"], ["621", "6950", "1320000"], // rank 4
+  ["786", "16600", "7410000"], ["1750", "43800", "33200000"], ["3200", "84400", "145000000"], // rank 5
+  ["3770", "233000", "1840000000"], ["8680", "806000", "18600000000"], ["20400", "2220000", "160000000000"], // rank 6
+  ["24700", "10000000", "9070000000000"], ["52000", "31900000", "102000000000000"], ["95300", "67800000", "140000000000000"], // rank 7
+  ["130000", "401000000", "2460000000000000"], ["438000", "1920000000", "66600000000000000"], ["1290000", "6000000000", "821000000000000000"], // rank 8
+  ["3470000", "51000000000", "20100000000000000000"], ["15400000", "368000000000", "861000000000000000000"], ["75000000", "2420000000000", "38600000000000000000000"], // rank 9
+  ["183000000", "39700000000000", "1460000000000000000000000"], ["1160000000", "475000000000000", "89400000000000000000000000"], ["2320000000", "950000000000000", "178800000000000000000000000"], // rank 10
+];
+
+const TRIAL_TIER_GOALS: (readonly [bigint, bigint, bigint])[] =
+  MEASURED_TIER_GOALS.map((row) => [
+    BigInt(row[0]),
+    BigInt(row[1]),
+    BigInt(row[2]),
+  ]);
+
+/**
+ * The final rank of a run, read off its total score (`RunState.totalScore`)
+ * when it ends, won or lost: the least total each of bronze, silver, gold and
+ * legendary asks. A run below bronze is unranked. Fitted by `goals:tiers` at a
+ * share of every run the grid plays, dead or alive.
+ */
+// prettier-ignore
+const MEASURED_RUN_RANKS: readonly [string, string, string, string] = [
+  "387", "56300", "1740000000000", "19100000000000000000",
+];
+
+export const RUN_RANK_THRESHOLDS: TierGoals = MEASURED_RUN_RANKS.map((g) =>
+  BigInt(g),
+) as unknown as TierGoals;
 
 // ---- The previous curve, kept for the engine experiment ----------------------
 //
@@ -264,6 +326,28 @@ export function setTrialGoals(
 ): void {
   TRIAL_GOAL_OVERRIDES = goals;
   ENDLESS_CACHE.length = 0;
+}
+
+// The same hook for the upper tiers (index = trial - 1, silver / gold /
+// legendary). A trial left null keeps its authored tiers, unless its bronze is
+// overridden, in which case they are carried at the authored ratios to it — so
+// a sim that moves only bronze still plays a coherent ladder.
+let TIER_GOAL_OVERRIDES:
+  (readonly [bigint, bigint, bigint] | null | undefined)[] | null = null;
+export function setTrialTierGoals(
+  tiers: (readonly [bigint, bigint, bigint] | null | undefined)[] | null,
+): void {
+  TIER_GOAL_OVERRIDES = tiers;
+}
+
+/** Simulation-only replacement for RUN_RANK_THRESHOLDS. */
+let RUN_RANK_OVERRIDE: TierGoals | null = null;
+export function setRunRankThresholds(thresholds: TierGoals | null): void {
+  RUN_RANK_OVERRIDE = thresholds;
+}
+
+export function runRankThresholds(): TierGoals {
+  return RUN_RANK_OVERRIDE ?? RUN_RANK_THRESHOLDS;
 }
 
 // Endless goals are computed by walking out from the last authored trial, so
@@ -359,6 +443,43 @@ export function trialGoal(trial: number): bigint {
   const override = TRIAL_GOAL_OVERRIDES?.[trial - 1];
   if (override != null) return BigInt(override);
   return endlessGoal(trial);
+}
+
+/** Scale `bronze` by the ratios `row` holds over `rowBronze`, as exact
+ *  integer arithmetic, never below the tier beneath it. */
+function carryTiers(
+  bronze: bigint,
+  rowBronze: bigint,
+  row: readonly [bigint, bigint, bigint],
+): TierGoals {
+  const base = rowBronze > 0n ? rowBronze : 1n;
+  const silver = (bronze * row[0]) / base;
+  const gold = (bronze * row[1]) / base;
+  const legendary = (bronze * row[2]) / base;
+  return orderedTiers([bronze, silver, gold, legendary]);
+}
+
+function orderedTiers(goals: readonly bigint[]): TierGoals {
+  const out = [...goals];
+  for (let i = 1; i < out.length; i++)
+    if (out[i] <= out[i - 1]) out[i] = out[i - 1] + 1n;
+  return out as unknown as TierGoals;
+}
+
+/** A trial's four goals — bronze, silver, gold, legendary — before any boss or
+ *  affliction scales them (see `Boss.tierGoalsFor`). Bronze is `trialGoal`. */
+export function trialTierGoals(trial: number): TierGoals {
+  const bronze = trialGoal(trial);
+  const override = TIER_GOAL_OVERRIDES?.[trial - 1];
+  if (override != null) return orderedTiers([bronze, ...override]);
+  // Past the ladder (and on the duel, which is never climbed), every tier keeps
+  // the last fitted trial's ratio to bronze; so does a bronze a sim moved.
+  const authoredTrial = Math.min(trial, WIN_TRIAL - 1);
+  const row = TRIAL_TIER_GOALS[authoredTrial - 1];
+  const rowBronze = TRIAL_GOALS[authoredTrial - 1];
+  if (trial === authoredTrial && bronze === rowBronze)
+    return orderedTiers([bronze, ...row]);
+  return carryTiers(bronze, rowBronze, row);
 }
 
 // ---- Shop ------------------------------------------------------------------

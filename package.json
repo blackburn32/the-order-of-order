@@ -49,6 +49,7 @@
     "goals:report": "tsx src/sim/goalReport.ts",
     "goals:raise": "tsx src/sim/goalRaise.ts",
     "goals:tune": "tsx src/sim/goalTune.ts",
+    "goals:tiers": "tsx src/sim/goalTiers.ts",
     "persistence:check": "tsx src/sim/activeRunPersistenceCheck.ts",
     "history:check": "tsx src/sim/runHistoryCheck.ts",
     "stats:check": "tsx src/sim/playerStatsCheck.ts",

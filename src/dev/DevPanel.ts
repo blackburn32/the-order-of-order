@@ -28,12 +28,7 @@ import {
 } from "../systems/Characters";
 import { DicePool } from "../systems/DicePool";
 import { getRun, RunState } from "../state/RunState";
-import {
-  openTrial,
-  prepareDuel,
-  setFullBudgetAllTrials,
-  trialComplete,
-} from "../sim/engine";
+import { openTrial, prepareDuel } from "../sim/engine";
 import { serializeRunState } from "../systems/ActiveRunPersistence";
 import { rankOf as rankOfTrial } from "../config";
 import { rivalScore } from "../systems/Rival";
@@ -87,10 +82,6 @@ function button(
  */
 export function installDevPanel(game: Phaser.Game): void {
   if (!import.meta.env.DEV) return;
-
-  // Read back before anything renders, so a session that was left measuring is
-  // still measuring after a reload rather than silently reverting to real play.
-  setFullBudgetAllTrials(fullBudgetPreference());
 
   const toggle = document.createElement("button");
   toggle.textContent = "DEV ▾";
@@ -169,11 +160,6 @@ export function installDevPanel(game: Phaser.Game): void {
     ${button("dp-set-character", "Switch novice")}
     ${RULE}
     ${heading("Measurement")}
-    <label style="display:flex;align-items:flex-start;gap:5px;margin-top:4px;font-size:11px;opacity:.85;">
-      <input id="dp-full-budget" type="checkbox" style="margin:2px 0 0;" />
-      <span>Play every trial to full budget<br />
-        <span style="opacity:.6;">Trials never stop at the goal. No unused-roll gold.</span></span>
-    </label>
     ${button("dp-export-run", "Export run (JSON)", "other")}
   `;
   document.body.appendChild(panel);
@@ -192,9 +178,6 @@ export function installDevPanel(game: Phaser.Game): void {
     "#dp-character",
   ) as HTMLSelectElement;
   const bossSelect = panel.querySelector("#dp-boss") as HTMLSelectElement;
-  const fullBudgetCheckbox = panel.querySelector(
-    "#dp-full-budget",
-  ) as HTMLInputElement;
   const summary = panel.querySelector("#dp-summary") as HTMLDivElement;
   const status = panel.querySelector("#dp-status") as HTMLDivElement;
 
@@ -255,17 +238,6 @@ export function installDevPanel(game: Phaser.Game): void {
 
   on("dp-pick", () => report(openCardPicker(game, report)));
   on("dp-grant-all", () => report(grantAllItems(game)));
-
-  fullBudgetCheckbox.checked = fullBudgetPreference();
-  fullBudgetCheckbox.addEventListener("change", () => {
-    const enabled = fullBudgetCheckbox.checked;
-    setFullBudgetPreference(enabled);
-    report(
-      enabled
-        ? "Trials now play their whole roll budget out."
-        : "Trials end at the goal again.",
-    );
-  });
 
   on("dp-export-run", () => void exportRun(game, report));
 
@@ -535,8 +507,8 @@ function completeTrial(game: Phaser.Game): string {
     state.trialCleared = true;
   }
   if (state.score > state.trialScore) state.trialScore = state.score;
-  // The duel, and a full-budget measuring session, only end on the last roll.
-  if (!trialComplete(state)) state.roll = trialRollTarget(state);
+  // Every trial ends on its last roll.
+  state.roll = trialRollTarget(state);
   game.registry.set("run", state);
   // Read before the table resolves the trial and moves the ladder on.
   const done = `Completed trial ${state.trial} with ${formatScore(state.score)}.`;
@@ -693,28 +665,6 @@ function applyDiceSetup(
 }
 
 // ---- measurement helpers ---------------------------------------------------
-
-/** Where the full-budget toggle remembers itself. Not part of the game's own
- *  settings: it is a dev instrument, and a production build never reads it. */
-const FULL_BUDGET_KEY = "the-order-of-order.dev.full-budget";
-
-function fullBudgetPreference(): boolean {
-  try {
-    return localStorage.getItem(FULL_BUDGET_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function setFullBudgetPreference(enabled: boolean): void {
-  setFullBudgetAllTrials(enabled);
-  try {
-    if (enabled) localStorage.setItem(FULL_BUDGET_KEY, "1");
-    else localStorage.removeItem(FULL_BUDGET_KEY);
-  } catch {
-    // Private-mode storage. The toggle still applies to this session.
-  }
-}
 
 /** The exported envelope. `run` is exactly what the active-run save writes, so
  *  `hydrateRunState` reads a fixture and a save through the same door — see

@@ -17,13 +17,15 @@ import {
   TRIALS_PER_RANK,
   trialGoal,
   trialInRank,
+  trialTierGoals,
+  runRankThresholds,
   WIN_TRIAL,
 } from "../config";
+import { runRank, TIER_GOLD } from "../systems/GoalTiers";
 import { CHARACTERS, DEFAULT_CHARACTER } from "../systems/Characters";
 import { newRun, RunState } from "../state/RunState";
-import { activeBoss, goalFor } from "../systems/Boss";
+import { activeBoss, goalFor, tierGoalsFor } from "../systems/Boss";
 import {
-  clearedEarly,
   beginRun,
   continueEndless,
   resolveTrialEnd,
@@ -155,9 +157,12 @@ console.log("\nTrial completion");
 {
   const state = runAt(1);
   state.trialCleared = true;
+  state.score = goalFor(state);
   state.roll = 1;
-  check(trialComplete(state), "meeting the goal ends the trial immediately");
-  check(clearedEarly(state), "clearing with rolls in hand is an early clear");
+  check(
+    !trialComplete(state),
+    "meeting bronze does not end the trial: every roll is played",
+  );
 }
 
 {
@@ -166,9 +171,70 @@ console.log("\nTrial completion");
   const state = runAt(1);
   state.trialCleared = true;
   state.score = 0n;
+  state.roll = trialRollTarget(state);
   check(
-    trialComplete(state),
+    resolveTrialEnd(state).phase === "advanced",
     "the clear latch holds even if the score is emptied",
+  );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nGoal tiers");
+
+{
+  let ascending = true;
+  for (let t = 1; t <= WIN_TRIAL + 10; t++) {
+    const tiers = trialTierGoals(t);
+    if (tiers[0] !== trialGoal(t)) ascending = false;
+    for (let i = 1; i < tiers.length; i++)
+      if (tiers[i] <= tiers[i - 1]) ascending = false;
+  }
+  check(
+    ascending,
+    "every trial's bronze is its goal, and each tier asks more than the last",
+  );
+}
+
+{
+  const goldFor = (tier: number) => {
+    const state = runAt(4);
+    const tiers = tierGoalsFor(state);
+    state.score = tier < 0 ? 0n : tiers[tier];
+    state.trialCleared = tier >= 0;
+    state.roll = trialRollTarget(state);
+    state.gold = 0;
+    const out = resolveTrialEnd(state);
+    return { out, state };
+  };
+  const paid = [0, 1, 2, 3].map((tier) => goldFor(tier).out.goldEarned);
+  check(
+    paid.every((g, i) => i === 0 || g === paid[0] + TIER_GOLD[i]),
+    "each tier past bronze pays its tier gold on top of the clear",
+  );
+  check(
+    paid[1] > paid[0] && paid[2] > paid[1] && paid[3] > paid[2],
+    "and each tier pays more than the one below it",
+  );
+  const silver = goldFor(1);
+  check(
+    silver.out.goldBreakdown.tier === 1 &&
+      silver.state.tierCounts.join() === "0,1,0,0",
+    "the clear records the highest tier it met",
+  );
+  check(
+    goldFor(-1).out.phase === "gameOver",
+    "missing bronze still ends the run",
+  );
+}
+
+{
+  const [bronze, silver, , legendary] = runRankThresholds();
+  check(
+    runRank(bronze - 1n) === -1 &&
+      runRank(bronze) === 0 &&
+      runRank(silver) === 1 &&
+      runRank(legendary * 10n) === 3,
+    "a run's total score reads against the four run ranks",
   );
 }
 

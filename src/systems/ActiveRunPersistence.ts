@@ -208,6 +208,7 @@ export function serializeRunState(state: RunState): SerializedRunState {
     trialRollGold: { ...state.trialRollGold },
     bossModifiers: [...state.bossModifiers],
     scoringNumbers: [...state.scoringNumbers],
+    tierCounts: [...state.tierCounts],
     loadedSizes: [...state.loadedSizes],
     wildSizes: [...state.wildSizes],
     royalSealSizes: [...state.royalSealSizes],
@@ -390,6 +391,13 @@ export function hydrateRunState(value: unknown): RunState | null {
     return null;
   }
 
+  // A save from before goal tiers existed counts no trial at any tier.
+  hydrated.tierCounts =
+    Array.isArray(value.tierCounts) &&
+    value.tierCounts.length === 4 &&
+    value.tierCounts.every(isNonNegativeInteger)
+      ? [...(value.tierCounts as number[])]
+      : [0, 0, 0, 0];
   hydrated.score = score;
   hydrated.trialScore = trialScore;
   hydrated.totalScore = totalScore;
@@ -616,6 +624,9 @@ function hydrateOutcome(value: unknown): TrialEndOutcome | null {
     completedScore,
     completedGoal,
     goldBreakdown: {
+      // A receipt saved before goal tiers existed met bronze and nothing more.
+      tier: 0,
+      tierGold: 0,
       ...goldBreakdown,
       rollsLeft,
       rollsPaid,

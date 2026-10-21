@@ -176,6 +176,8 @@ export interface RunRecord {
   rankReached: number;
   rollsTaken: number;
   totalScore: number; // cumulative points across the run
+  /** log10 of `totalScore`, exact past Number's range (-1 for zero). */
+  totalScoreLog10: number;
   bossesCleared: number;
   goldEarned: number;
   goldSpent: number;
@@ -1104,6 +1106,7 @@ export function simulateRun(
     rankReached: 1,
     rollsTaken: 0,
     totalScore: 0,
+    totalScoreLog10: -1,
     bossesCleared: 0,
     goldEarned: 0,
     goldSpent: 0,
@@ -1215,6 +1218,7 @@ export function simulateRun(
   record.rankReached = rankOf(state.trial);
   record.rollsTaken = rolls;
   record.totalScore = Number(state.totalScore); // sim stats are Number (approx past ~9e15)
+  record.totalScoreLog10 = scoreLog10(state.totalScore);
   record.bossesCleared = state.bossesCleared;
   record.goldEarned = state.goldEarned;
   record.goldSpent = goldSpent;

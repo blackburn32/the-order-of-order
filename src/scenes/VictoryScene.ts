@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { runRank, tierCss, tierName } from "../systems/GoalTiers";
 import { CSS, SERIF } from "../art/palette";
 import { rankOf, WIN_RANK } from "../config";
 import { getRun } from "../state/RunState";
@@ -75,7 +76,11 @@ export class VictoryScene extends Phaser.Scene {
       state.kingsDemand || state.afflictions.includes("betrayal")
         ? "Press on and the Crown's tribute and the Betrayal are lifted."
         : null;
-    const scoreLine = `Total score: ${formatScore(state.totalScore)}`;
+    // The run's rank, read off its total score (see systems/GoalTiers), is
+    // printed beside it and in its tier's colour.
+    const rank = runRank(state.totalScore);
+    const scoreLine = `Total score: ${formatScore(state.totalScore)} · ${rank < 0 ? "Unranked" : `${tierName(rank)} rank`}`;
+    const scoreColor = rank < 0 ? CSS.goldLight : tierCss(rank);
     const gridLine = `Your grid: ${state.dice.summary()}`;
 
     const hasPoints =
@@ -124,7 +129,7 @@ export class VictoryScene extends Phaser.Scene {
             italic: true,
           },
           { text: rankLine, size: 24, color: CSS.parchment, gapBefore: 14 },
-          { text: scoreLine, size: 19, color: CSS.goldLight },
+          { text: scoreLine, size: 19, color: scoreColor },
           { text: gridLine, size: 15, color: CSS.dim, gapBefore: 10 },
           ...(liftLine
             ? [
@@ -177,7 +182,7 @@ export class VictoryScene extends Phaser.Scene {
       .text(cx, top + step * 3.2, scoreLine, {
         fontFamily: SERIF,
         fontSize: "24px",
-        color: CSS.goldLight,
+        color: scoreColor,
       })
       .setOrigin(0.5);
 
