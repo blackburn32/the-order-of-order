@@ -1456,7 +1456,8 @@ export class GameScene extends Phaser.Scene {
     const duel = isMirrorTrial(s.trial);
     const goal = duel ? rivalScore(s) : goalFor(s);
     // Every trial is played out, so the cell names the next tier still to
-    // climb, and holds on legendary once it is met. The table's tension still
+    // climb ("GOAL" after it, so a gold tier never reads as the purse), and
+    // holds on legendary once it is met. The table's tension still
     // reads bronze, the goal the run's survival hangs on.
     const next = nextTier(s);
     const topTier = GOAL_TIERS.length - 1;
@@ -1470,7 +1471,7 @@ export class GameScene extends Phaser.Scene {
       targetLabel:
         shownTier === null
           ? "DISORDER"
-          : `${tierName(shownTier).toUpperCase()}${next ? "" : " ✓"}`,
+          : `${tierName(shownTier).toUpperCase()} GOAL${next ? "" : " ✓"}`,
       targetColor: shownTier === null ? CSS.cursed : tierCss(shownTier),
       gold: String(s.gold),
       status: statusRows(s),
