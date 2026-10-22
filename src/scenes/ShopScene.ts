@@ -62,7 +62,15 @@ import {
 } from "../ui/layout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
-import { buildCursedSeal, rarityMark, UPGRADE_LABEL } from "../ui/itemCard";
+import {
+  buildAfflictionStamp,
+  buildCursedSeal,
+  rarityMark,
+  UPGRADE_LABEL,
+} from "../ui/itemCard";
+import { AFFLICTION_COPY, type AfflictionId } from "../systems/Afflictions";
+import { bossById, type BossModifierId } from "../systems/Boss";
+import { afflictionsHinderingItem, ITEMS } from "../systems/Items";
 import { addItemValue, recordRunItemPurchase } from "../systems/ItemValue";
 import { spendGold } from "../systems/Gold";
 import { buildRichCopy, isMarked } from "../ui/richCopy";
@@ -2176,6 +2184,14 @@ export class ShopScene extends Phaser.Scene {
     const seal = offer.affliction
       ? buildCursedSeal(this, offer.affliction, scale)
       : undefined;
+    // A card some affliction in force would hinder is still for sale, but wears
+    // that affliction's seal pasted over its face, and says which on hover or
+    // a long press.
+    const hindering = this.hinderingAfflictions(offer);
+    const stamp =
+      hindering.length > 0
+        ? buildAfflictionStamp(this, hindering, scale)
+        : undefined;
     const mark = rarityMark(offer.rarity, offer.cursed);
     const rarityLabel = this.add
       .text(0, -148 * scale, mark.text, {
@@ -2291,6 +2307,7 @@ export class ShopScene extends Phaser.Scene {
         name,
         desc,
         cost,
+        ...(stamp ? [stamp] : []),
       ])
       .setRotation(rotation);
     card.setSize(img.displayWidth, img.displayHeight);
@@ -2338,7 +2355,11 @@ export class ShopScene extends Phaser.Scene {
         }
       });
       card.on("pointerup", () => {
-        const activate = pressedHere && this.dragDistance < DRAG_THRESHOLD;
+        // A long press spent reading the affliction stamp is not a purchase.
+        const activate =
+          pressedHere &&
+          this.dragDistance < DRAG_THRESHOLD &&
+          !(stamp && this.dieTooltip.tookPress);
         pressedHere = false;
         if (activate && affordable) this.choose(offer);
       });
@@ -2355,6 +2376,8 @@ export class ShopScene extends Phaser.Scene {
       desc.setAlpha(0.68);
       cost.setAlpha(0.86);
     }
+    if (stamp)
+      this.dieTooltip.attach(card, () => this.afflictionNote(hindering));
 
     // A cursed card takes the red pulse in place of the rare card's gold one:
     // two glows on one card read as neither, and the warning is the more
@@ -2365,6 +2388,35 @@ export class ShopScene extends Phaser.Scene {
     }
     this.dealIn(card, index);
     return card;
+  }
+
+  /** The afflictions in force for the coming trial that would switch off part
+   *  of what this offer does. Read fresh on every build rather than carried on
+   *  the offer, so a drawback taken mid-visit seals the row it lands on. */
+  private hinderingAfflictions(offer: ShopOffer): AfflictionId[] {
+    const def = ITEMS.find((item) => item.id === offer.id);
+    return def ? afflictionsHinderingItem(this.state, def) : [];
+  }
+
+  /** What the affliction stamp on a card says when read: each drawback that
+   *  hinders it, by the name it goes by where the player met it. A standing
+   *  drawback is named as the card or writ that laid it; a boss's modifier only
+   *  as the Boss Trial ahead, since that is all it lasts. */
+  private afflictionNote(ids: readonly AfflictionId[]) {
+    const lines = ids.map((id) => {
+      if (this.state.afflictions.includes(id)) {
+        const copy = AFFLICTION_COPY[id];
+        return `${copy.name}: ${copy.desc}`;
+      }
+      const boss = bossById(id as BossModifierId);
+      return `${boss?.name ?? AFFLICTION_COPY[id].name} (this Boss Trial): ${boss?.desc ?? AFFLICTION_COPY[id].desc}`;
+    });
+    return {
+      title: ids.length > 1 ? "Afflicted" : "Afflicted by",
+      lines,
+      aside:
+        "Still yours to buy, but part of what this card does is switched off while the affliction stands.",
+    };
   }
 
   /** Deal the offers onto the table rather than having them appear on it:
