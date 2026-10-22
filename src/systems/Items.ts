@@ -1,4 +1,4 @@
-import { MAX_EXTRA_NUMBERS, WIN_RANK, rankOf } from "../config";
+import { MAX_EXTRA_NUMBERS, WIN_RANK, isBossTrial, rankOf } from "../config";
 import { RunState } from "../state/RunState";
 import {
   AFFLICTIONS,
@@ -2597,6 +2597,27 @@ export function itemDisabledDuringTrialByAffliction(
           );
       }
     }),
+  );
+}
+
+/**
+ * The afflictions in force for the trial ahead that would switch off part of
+ * what this card does — the run's standing drawbacks, plus the Boss Trial's
+ * modifiers when the ladder is standing on one. What the shop seals a card with,
+ * so a player can still buy it but never mistakes it for a card at full
+ * strength. Read through `itemDisabledDuringTrialByAffliction`, so the shop and
+ * the Boss Trial's own disabled-card strip agree on what an affliction stops.
+ */
+export function afflictionsHinderingItem(
+  state: RunState,
+  def: ItemDef,
+): AfflictionId[] {
+  const ids: AfflictionId[] = isBossTrial(state.trial)
+    ? [...state.afflictions, ...state.bossModifiers]
+    : [...state.afflictions];
+  return ids.filter(
+    (id, i) =>
+      ids.indexOf(id) === i && itemDisabledDuringTrialByAffliction(def, id),
   );
 }
 
