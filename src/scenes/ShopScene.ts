@@ -2185,7 +2185,7 @@ export class ShopScene extends Phaser.Scene {
       ? buildCursedSeal(this, offer.affliction, scale)
       : undefined;
     // A card some affliction in force would hinder is still for sale, but wears
-    // that affliction's seal pasted over its face, and says which on hover or
+    // that affliction's sigil inked in its corner, and says which on hover or
     // a long press.
     const hindering = this.hinderingAfflictions(offer);
     const stamp =

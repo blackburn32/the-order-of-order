@@ -151,30 +151,30 @@ export function buildCursedSeal(
   return seal;
 }
 
-/** Where the affliction stamp is pasted on a card that an active drawback
+/** Where the affliction stamp is inked on a card that an active drawback
  *  hinders, and how big. In the card's own 260×340 units: the lower-right
- *  corner, clear of the centred price and rising only into the tail of the
- *  description, with its rim just over the gold frame so it reads as stuck on
- *  rather than printed. */
-const STAMP_SIZE = 104;
-const STAMP_X = 90;
-const STAMP_Y = 110;
+ *  corner, inside the parchment's ink border, clear of the centred price and
+ *  rising only into the tail of the description. */
+const STAMP_SIZE = 84;
+const STAMP_X = 74;
+const STAMP_Y = 112;
 /** A second or third stamp is laid overlapping the first, further left. */
-const STAMP_STEP = 56;
+const STAMP_STEP = 46;
 const STAMP_TILT = -0.18;
-/** The sigil pressed into the wax, as a share of the wax disc. */
-const STAMP_SIGIL = 1;
+/** Faint enough to sit quietly in the corner, dark enough to be noticed once
+ *  the eye is on the card. */
+const STAMP_ALPHA = 0.7;
 
 /**
- * The wax seals pasted over a shop card that an affliction in force would
- * hinder — one per affliction, overlapping, the newest on top.
+ * The marks inked over a shop card that an affliction in force would hinder —
+ * one per affliction, overlapping, the newest on top.
  *
  * Unlike the cursed card's seal, which is soaked into the parchment behind the
- * copy, this one sits on top of everything: the card is not a different kind
- * of card, it is an ordinary card that something has since got at. The wax is
- * the roll button's own seal, and the mark pressed into it is the same sigil
- * that afflicted card or boss wears everywhere else, so the player can match
- * the stamp to its source at a glance.
+ * copy, this one sits over everything: the card is not a different kind of
+ * card, it is an ordinary card that something has since got at. It is the same
+ * sigil that afflicted card or boss wears everywhere else, in the cursed seal's
+ * ink, so the player can match the stamp to its source at a glance without the
+ * corner shouting over the card's own copy.
  */
 export function buildAfflictionStamp(
   scene: Phaser.Scene,
@@ -184,20 +184,14 @@ export function buildAfflictionStamp(
   const stamp = scene.add.container(0, 0);
   ids.forEach((id, i) => {
     const x = (STAMP_X - STAMP_STEP * (ids.length - 1 - i)) * scale;
-    const y = STAMP_Y * scale;
-    const wax = scene.add
-      .image(x, y, "seal")
-      .setDisplaySize(STAMP_SIZE * scale, STAMP_SIZE * scale)
-      .setRotation(STAMP_TILT + i * 0.22);
-    const sigil = scene.add
-      .image(x, y - 2 * scale, afflictionSigilTexture(id))
-      .setDisplaySize(
-        STAMP_SIZE * STAMP_SIGIL * scale,
-        STAMP_SIZE * STAMP_SIGIL * scale,
-      )
-      .setRotation(wax.rotation)
-      .setTint(COLORS.goldLight);
-    stamp.add([wax, sigil]);
+    stamp.add(
+      scene.add
+        .image(x, STAMP_Y * scale, afflictionSigilTexture(id))
+        .setDisplaySize(STAMP_SIZE * scale, STAMP_SIZE * scale)
+        .setRotation(STAMP_TILT + i * 0.22)
+        .setTint(COLORS.cursedSeal)
+        .setAlpha(STAMP_ALPHA),
+    );
   });
   return stamp;
 }
