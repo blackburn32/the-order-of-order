@@ -20,6 +20,7 @@ import { addCamera } from "../ui/camera";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildItemCard } from "../ui/itemCard";
 import { buildSceneHeader } from "../ui/sceneHeader";
+import { ROOM_TRAVEL } from "../ui/sceneSlide";
 import { formatScore } from "../ui/formatScore";
 import { DieTooltip } from "../ui/dieTooltip";
 import { vigilGroups } from "../ui/vigilTally";
@@ -460,7 +461,7 @@ export class InventoryScene extends Phaser.Scene {
     });
   }
 
-  /** The interface leaves to the right and the room fades out behind it,
+  /** The interface leaves to the left and the room fades out behind it,
    *  handing the screen back to the scene that was running underneath. */
   private close(): void {
     if (this.leaving) return;
@@ -470,7 +471,7 @@ export class InventoryScene extends Phaser.Scene {
       return;
     }
     this.input.enabled = false;
-    const distance = this.scale.width;
+    const distance = this.scale.width * ROOM_TRAVEL;
     const targets = this.interfaceTargets();
     if (targets.length > 0) {
       this.tweens.add({
@@ -490,7 +491,7 @@ export class InventoryScene extends Phaser.Scene {
     });
   }
 
-  /** The interface comes in from the left the way a scene change does, while
+  /** The interface comes in from the right the way a scene change does, while
    *  the felt and the sigil fade up beneath it — the room arriving around the
    *  contents rather than sliding in with them. */
   private enter(): void {
@@ -506,7 +507,7 @@ export class InventoryScene extends Phaser.Scene {
 
     const targets = this.interfaceTargets();
     if (targets.length === 0) return;
-    const distance = this.scale.width;
+    const distance = this.scale.width * ROOM_TRAVEL;
     for (const target of targets) target.x -= distance;
     this.input.enabled = false;
     this.tweens.add({

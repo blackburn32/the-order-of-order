@@ -1070,7 +1070,7 @@ export class HallScene extends Phaser.Scene {
     return { text, base };
   }
 
-  /** Send the scores off to the right, then hand over to the menu, which
+  /** Send the scores off to the left, then hand over to the menu, which
    *  brings its own interface in over the same still room. */
   private leave(complete: () => void): void {
     if (this.leaving) return;

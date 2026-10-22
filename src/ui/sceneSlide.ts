@@ -8,16 +8,19 @@ const OVERLAY_FADE_MS = 240;
 export type SlideObject = Phaser.GameObjects.GameObject &
   Phaser.GameObjects.Components.Transform;
 
-/** Which way objects travel across the screen. `1` is the room's own motion —
- * in from the left, out to the right — which every scene change uses. `-1`
- * mirrors it, so a story sequence turns its page the way a book does: the page
- * you have read leaves to the left and the next one arrives from the right. */
+/** Which way objects travel across the screen: `1` moves them rightward, `-1`
+ * leftward. */
 export type SlideTravel = 1 | -1;
 
-/** The mirrored travel the story sequences turn their pages with, named so the
- * intro and the endings ask for the same motion rather than each spelling out
- * a bare `-1`. */
-export const PAGE_TURN: SlideTravel = -1;
+/** The room's own motion, which every scene change uses: interfaces sweep
+ * right to left, arriving from the right edge and leaving off the left. */
+export const ROOM_TRAVEL: SlideTravel = -1;
+
+/** The travel the story sequences turn their pages with — the way a book does:
+ * the page you have read leaves to the left and the next one arrives from the
+ * right. It matches the room's motion, and is named so the intro and the
+ * endings ask for the same turn rather than each spelling out a bare `-1`. */
+export const PAGE_TURN: SlideTravel = ROOM_TRAVEL;
 
 function containsStationaryObject(
   object: Phaser.GameObjects.GameObject,
@@ -56,7 +59,7 @@ function slideTargets(
 
 /** Move an explicit set of objects in from off screen, restoring the scene's
  * input lock once they arrive — the whole-scene entrance, coming in from the
- * left by default. (A story page turn travels the mirrored way but keeps input
+ * right by default. (A story page turn travels the same way but keeps input
  * live throughout; see `turnPage`.)
  *
  * `arrived` runs once they have come to rest — and immediately when there is no
@@ -66,7 +69,7 @@ export function slideObjectsIn(
   scene: Phaser.Scene,
   targets: readonly SlideObject[],
   arrived?: () => void,
-  travel: SlideTravel = 1,
+  travel: SlideTravel = ROOM_TRAVEL,
 ): void {
   if (!fx.motion) {
     arrived?.();
@@ -101,14 +104,14 @@ export function slideObjectsIn(
   }
 }
 
-/** Send an explicit set of objects off screen — the right edge by default, the
- * left under mirrored `travel` — holding input closed behind them: whatever
+/** Send an explicit set of objects off screen — the left edge by default, the
+ * right under mirrored `travel` — holding input closed behind them: whatever
  * replaces them owns re-arming it. */
 export function slideObjectsOut(
   scene: Phaser.Scene,
   targets: readonly SlideObject[],
   complete: () => void,
-  travel: SlideTravel = 1,
+  travel: SlideTravel = ROOM_TRAVEL,
 ): void {
   if (!fx.motion) {
     complete();
@@ -135,7 +138,7 @@ export function slideObjectsOut(
   }
 }
 
-/** Bring only a scene's interface in from the left. Felt, sigils, motes, and
+/** Bring only a scene's interface in from the right. Felt, sigils, motes, and
  * lighting passed in `stationary` remain fixed, making successive scenes feel
  * like different arrangements in the same room. */
 export function slideSceneIn(
@@ -150,7 +153,7 @@ export function slideSceneIn(
   slideObjectsIn(scene, slideTargets(scene, stationary), arrived);
 }
 
-/** Send only the current interface to the right, leaving the room behind it
+/** Send only the current interface off to the left, leaving the room behind it
  * completely still until the next scene's interface arrives. */
 export function slideSceneOut(
   scene: Phaser.Scene,
@@ -194,7 +197,7 @@ export function slideOverlayIn(
 }
 
 /** Reverse `slideOverlayIn`: expose the still-running scene underneath as the
- *  overlay's sigil and interface leave to the right. */
+ *  overlay's sigil and interface leave to the left. */
 export function slideOverlayOut(
   scene: Phaser.Scene,
   felt: Phaser.GameObjects.Image,
@@ -227,7 +230,7 @@ export interface PageTurn {
 
 /**
  * Turn a story page: send `outgoing` off, then draw the next page with
- * `incoming` and bring it on — the mirrored travel by default, so the page
+ * `incoming` and bring it on — the room's own travel by default, so the page
  * leaves to the left and the next arrives from the right, as in a book.
  *
  * Unlike the scene slides, a page turn never closes the scene's input. The
