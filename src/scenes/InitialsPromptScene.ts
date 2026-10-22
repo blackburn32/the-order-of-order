@@ -143,7 +143,7 @@ export class InitialsPromptScene extends Phaser.Scene {
   }
 
   /** Crossfade the overlay over the completed run while its sigil and controls
-   *  take the same left-to-right entrance used by the game's full scenes. */
+   *  take the same right-to-left entrance used by the game's full scenes. */
   private playEntrance(): void {
     const camera = this.cameras.main;
     camera.setAlpha(1);

@@ -377,8 +377,8 @@ export class MenuScene extends Phaser.Scene {
     if (this.cursorGlow) this.slideBackdrop.push(this.cursorGlow);
   }
 
-  /** Send the menu off to the right, then hand over to the next scene, which
-   *  brings its own interface in from the left over the same still room. */
+  /** Send the menu off to the left, then hand over to the next scene, which
+   *  brings its own interface in from the right over the same still room. */
   private leave(complete: () => void): void {
     if (this.leaving) return;
     this.leaving = true;
