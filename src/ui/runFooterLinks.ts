@@ -3,7 +3,14 @@ import { CSS, SERIF } from "../art/palette";
 import { audio } from "../systems/Audio";
 import { isSplitFooter } from "./layout";
 
-export type RunScreen = "Game" | "TrialResults" | "Shop" | "TrialOverview";
+export type RunScreen =
+  "Game" | "TrialResults" | "Shop" | "TrialOverview" | "Tribute";
+
+export interface RunFooterOptions {
+  /** False drops the Settings link, and Inventory takes its slot at the
+   *  bottom of the corner rather than floating above an empty one. */
+  settings?: boolean;
+}
 
 /** Inventory and Settings are persistent run chrome: every run screen draws
  * them at the same coordinates and excludes them from scene-slide tweens.
@@ -15,7 +22,9 @@ export type RunScreen = "Game" | "TrialResults" | "Shop" | "TrialOverview";
 export function buildRunFooterLinks(
   scene: Phaser.Scene,
   returnTo: RunScreen,
+  options: RunFooterOptions = {},
 ): Phaser.GameObjects.Text[] {
+  const withSettings = options.settings ?? true;
   const W = scene.scale.width;
   const H = scene.scale.height;
   // Split to opposite ends of one row where the bottom-right corner is spoken
@@ -48,7 +57,7 @@ export function buildRunFooterLinks(
 
   const inventory = makeLink(
     split ? 24 : W - 24,
-    split ? settingsY : settingsY - 22,
+    split || !withSettings ? settingsY : settingsY - 22,
     split ? 0 : 1,
     "Inventory",
     () => {
@@ -57,6 +66,7 @@ export function buildRunFooterLinks(
       scene.scene.bringToTop("Inventory");
     },
   );
+  if (!withSettings) return [inventory];
   const settings = makeLink(W - 24, settingsY, 1, "Settings", () => {
     audio.click();
     scene.scene.launch("Settings", { returnTo, overlay: true });

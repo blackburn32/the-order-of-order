@@ -16,6 +16,7 @@ import {
   type ChoiceLayout,
 } from "../ui/choiceLayout";
 import { responsive } from "../ui/layout";
+import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { attachCardHover } from "../ui/cardHover";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { addFelt } from "../ui/widgets";
@@ -26,6 +27,10 @@ import { AmbientLayer } from "../ui/AmbientLayer";
 const TRIBUTE_AMBIENCE = 0.25;
 
 const CARD_GAP = 26;
+
+/** Room left under the cards for the Inventory link, wherever the footer
+ *  puts it, so the lowest row never sits on top of it. */
+const FOOT_MARGIN = 44;
 
 export interface TributeSceneData {
   gift: "kingsDemands" | "betrayal";
@@ -49,9 +54,12 @@ const SUBTITLES: Record<TributeSceneData["gift"], string> = {
  * several demands, and the Order of Disorder's single card, where there is
  * nothing to choose and only something to acknowledge.
  *
- * It has no way out. There is no footer, no back button, and no dismissal — the
- * scene resolves by taking a card and in no other way, because the run cannot
- * continue without one and an exit would be lying about that.
+ * It has no way out. There is no back button and no dismissal — the scene
+ * resolves by taking a card and in no other way, because the run cannot
+ * continue without one and an exit would be lying about that. The Inventory
+ * link is the one piece of run chrome it keeps, so the player can weigh each
+ * demand against what they are carrying; Settings stays off, since it is a
+ * door out of the run.
  *
  * The cards are drawn by the ordinary card builder, fed a synthetic definition:
  * `buildItemCard` reads a name, a rarity, a description and a cursed flag, and
@@ -95,7 +103,10 @@ export class TributeScene extends Phaser.Scene {
     ambient.setPosition(cx, H / 2);
     ambient.setArea(W, H);
     ambient.setProgress(TRIBUTE_AMBIENCE, false);
-    this.slideBackdrop = [felt, ambient];
+    const footerLinks = buildRunFooterLinks(this, "Tribute", {
+      settings: false,
+    });
+    this.slideBackdrop = [felt, ambient, ...footerLinks];
 
     const titleY = H * 0.08;
     this.add
@@ -123,9 +134,9 @@ export class TributeScene extends Phaser.Scene {
       .setOrigin(0.5);
 
     // The cards take everything under the masthead, less a margin at the foot
-    // so the lowest row never sits flush against the edge of the screen.
+    // so the lowest row clears the Inventory link and the edge of the screen.
     const top = subtitleY + 28;
-    const availH = Math.max(CARD_H * 0.4, H - top - 28);
+    const availH = Math.max(CARD_H * 0.4, H - top - FOOT_MARGIN);
     const availW = Math.max(CARD_W * 0.4, W - 48);
     const layout = planChoiceLayout(
       Math.max(1, this.dataIn.choices.length),
