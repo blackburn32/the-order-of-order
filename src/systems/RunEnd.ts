@@ -11,7 +11,8 @@ export function runWasWon(state: RunState): boolean {
 
 /**
  * Record a run at the point the player actually stops playing and, for a new
- * personal best, leave a submission for the destination scene to offer.
+ * personal best or any daily run, leave a submission for the destination scene
+ * to offer.
  */
 export function finalizeRun(
   state: RunState,
@@ -24,7 +25,11 @@ export function finalizeRun(
   // leaderboard side effect. A crash cannot replay a finalized run.
   clearActiveRun();
   const { personalBest } = recordRunEnd(state, won);
-  const submissionQueued = personalBest && globalScoresEnabled();
+  // A daily run is offered to its day's board however it went: it is the one
+  // attempt the player gets, so there is no better run of theirs to wait for.
+  const daily = state.dailyRite?.day;
+  const submissionQueued =
+    (personalBest || daily !== undefined) && globalScoresEnabled();
 
   if (submissionQueued) {
     // Only the run's Hall key and what the prompt displays. The analysis the
@@ -39,6 +44,7 @@ export function finalizeRun(
       won,
       endless: state.endless,
       character: state.character,
+      ...(daily ? { daily } : {}),
     });
   }
 

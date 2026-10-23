@@ -31,6 +31,14 @@ const KEY_SCORES = "ooo_high_scores_v2";
 const KEY_SETTINGS = "ooo_settings_v2";
 const KEY_PROGRESS = "ooo_progress_v2";
 const KEY_TUTORIAL_SEEN = "ooo_tutorial_seen_v1";
+// The Daily Rite's own records (see systems/Daily): the days whose run has been
+// begun, and the finished daily runs. Kept apart from the Hall, whose runs were
+// played under the game's ordinary rules and cannot be ranked against them.
+const KEY_DAILY_PLAYED = "ooo_daily_played_v1";
+const KEY_DAILY_HALL = "ooo_daily_hall_v1";
+
+/** How many finished daily runs the device keeps, newest first. */
+export const DAILY_HALL_SIZE = 30;
 
 /** Schema stamp on every Hall entry written by this version. Entries without
  *  it are dropped on load. */
@@ -84,6 +92,9 @@ export interface HallEntry {
   // rolls the tutorial rigged (see RunState.forcedRolls).
   tutorialArmed?: boolean;
   forcedRolls?: string[];
+  // The Daily Rite's day ("2026-10-23"), for a run played as one. Only ever set
+  // on entries in the daily hall, never on the ordinary one.
+  daily?: string;
 }
 
 export interface Settings {
@@ -115,8 +126,17 @@ function hallMedal(raw: unknown, entry: Record<string, unknown>): number {
 }
 
 export function loadHall(): HallEntry[] {
+  return readHall(KEY_SCORES);
+}
+
+/** The finished daily runs this device has kept, newest first. */
+export function loadDailyHall(): HallEntry[] {
+  return readHall(KEY_DAILY_HALL).sort((a, b) => b.startedAt - a.startedAt);
+}
+
+function readHall(key: string): HallEntry[] {
   try {
-    const raw = localStorage.getItem(KEY_SCORES);
+    const raw = localStorage.getItem(key);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Array<Record<string, unknown>>;
     return parsed
@@ -163,6 +183,7 @@ export function loadHall(): HallEntry[] {
         unlocks: knownItemIds(entry.unlocks),
         tutorialArmed: Boolean(entry.tutorialArmed),
         forcedRolls: rollKeys(entry.forcedRolls),
+        ...(typeof entry.daily === "string" ? { daily: entry.daily } : {}),
       }));
   } catch {
     return [];
@@ -235,9 +256,22 @@ export function saveHallEntry(entry: HallEntry): void {
   hall.push(entry);
   hall.sort(compareHallEntries);
   hall.length = Math.min(hall.length, HALL_SIZE);
+  writeHall(KEY_SCORES, hall);
+}
+
+/** File a finished daily run. Kept by recency rather than rank: each day is its
+ *  own board, and what the device holds is the player's diary of them. */
+export function saveDailyEntry(entry: HallEntry): void {
+  const hall = loadDailyHall().filter((e) => e.startedAt !== entry.startedAt);
+  hall.unshift(entry);
+  hall.length = Math.min(hall.length, DAILY_HALL_SIZE);
+  writeHall(KEY_DAILY_HALL, hall);
+}
+
+function writeHall(key: string, hall: HallEntry[]): void {
   try {
     localStorage.setItem(
-      KEY_SCORES,
+      key,
       JSON.stringify(
         // Hundreds of roll samples per entry, times the whole Hall, is the one
         // part of this payload big enough to care about: they go out under the
@@ -413,6 +447,46 @@ export function hasBeatenGame(): boolean {
   return loadHall().some((entry) => entry.won);
 }
 
+/** Whether the Daily Rite is open to this player: once they have won a run.
+ *  Read off the characters they have won with as well as the Hall, since the
+ *  Hall can drop a win off its end and a door once opened must stay open. */
+export function dailyUnlocked(): boolean {
+  return charactersBeaten().length > 0 || hasBeatenGame();
+}
+
+function loadDailyPlayed(): string[] {
+  try {
+    const raw = localStorage.getItem(KEY_DAILY_PLAYED);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((day): day is string => typeof day === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Whether `day`'s rite has already been begun on this device. One attempt a
+ *  day: the seed fixes every roll, so a second would be played with answers. */
+export function dailyPlayed(day: string): boolean {
+  return loadDailyPlayed().includes(day);
+}
+
+/** Spend `day`'s attempt. Written as the run begins, not as it ends, so that
+ *  abandoning a bad start, or closing the tab on one, does not buy another. */
+export function markDailyPlayed(day: string): void {
+  const days = loadDailyPlayed().filter((d) => d !== day);
+  days.unshift(day);
+  try {
+    localStorage.setItem(
+      KEY_DAILY_PLAYED,
+      JSON.stringify(days.slice(0, DAILY_HALL_SIZE * 2)),
+    );
+  } catch {
+    // non-fatal — the attempt just isn't remembered
+  }
+}
+
 /** The characters the player has won a run with. */
 export function charactersBeaten(): CharacterId[] {
   return loadProgress().charactersBeaten;
@@ -478,6 +552,19 @@ export function recordRunEnd(
     tutorialArmed: state.tutorialArmed,
     forcedRolls: [...state.forcedRolls],
   };
+  if (state.dailyRite) {
+    // A daily run goes to its own hall and its own board. It still counts as a
+    // game played, and a win still counts for the novice who won it, but it
+    // stays out of the per-card analytics: its shop drew from every card in the
+    // game and its boons handed some over for free, which is not the evidence
+    // those numbers are built from.
+    entry.daily = state.dailyRite.day;
+    recordPlayerStatsRun(state, won);
+    saveDailyEntry(entry);
+    recordGameCompleted();
+    if (won) recordCharacterWin(state.character);
+    return { personalBest: false };
+  }
   // "Personal best" now means beating the top of the Hall on its own terms —
   // rank first, score second — not merely out-scoring it.
   const best = loadHall()[0];
@@ -520,6 +607,9 @@ export function resetAllProgress(): void {
   try {
     localStorage.removeItem(KEY_PROGRESS);
     localStorage.removeItem(KEY_SCORES);
+    // The daily hall goes with the rest, but not the record of which days were
+    // played: a reset must not hand back today's attempt.
+    localStorage.removeItem(KEY_DAILY_HALL);
   } catch {
     // non-fatal
   }

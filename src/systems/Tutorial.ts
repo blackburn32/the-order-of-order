@@ -3,6 +3,7 @@ import { newRun, setRun, type RunState } from "../state/RunState";
 import {
   loadProgress,
   loadSettings,
+  markDailyPlayed,
   loadTutorialSeen,
   saveSettings,
   saveTutorialSeen,
@@ -16,6 +17,7 @@ import { WIN_RANK } from "../config";
 import { GOLD_PER_INTEREST, INTEREST_CAP } from "./Gold";
 import { refreshActiveRun, saveActiveRun } from "./ActiveRunPersistence";
 import { DEFAULT_CHARACTER, type CharacterId } from "./Characters";
+import { applyDailyRite, dailyShopUnlocks, type DailyRite } from "./Daily";
 
 // The tutorial steps, in the order they are shown — the script in TUTORIAL.md,
 // one member per numbered step. They follow the run's own loop rather than one
@@ -383,10 +385,21 @@ export function tutorialBlocksScore(
 export function beginRun(
   scene: Phaser.Scene,
   character: CharacterId = DEFAULT_CHARACTER,
+  daily: DailyRite | null = null,
 ): void {
   // Freeze shop eligibility at run start. Unlocks earned during this run are
   // still saved and announced, but only the next run's snapshot can offer them.
-  const state = newRun(loadProgress().unlocked, randomSeed(), character);
+  // A daily run takes the whole card pool instead, and the day's novice, so
+  // its run is the same run for everyone who plays that day (systems/Daily).
+  const state = daily
+    ? newRun(dailyShopUnlocks(), daily.seed, daily.character)
+    : newRun(loadProgress().unlocked, randomSeed(), character);
+  // Laid on before anything is rolled, so rank 1's boss already answers to it
+  // (The Sleepless Watch rolls two).
+  if (daily) {
+    applyDailyRite(state, daily);
+    markDailyPlayed(daily.day);
+  }
   // The run's first random decision, and so the first to be drawn from the seed
   // rather than from Math.random: rank 1's boss assignment.
   initializeRun(state, streamFor(state.seed, "boss", 1));
@@ -396,9 +409,11 @@ export function beginRun(
   // the tutorial spends as the player works through it, while this is the fact
   // that the run's dice may be rigged by it, and it has to outlive the run.
   // Only a run that opens with the table's lessons still to teach is: one
-  // resuming the script further on plays its first trial straight.
+  // resuming the script further on plays its first trial straight. A daily run
+  // never is — its dice are the day's, and the same for everyone.
   const opening = getTutorial(scene.registry);
-  state.tutorialArmed = opening.active && opening.stage <= TutorialStage.Tiers;
+  state.tutorialArmed =
+    !daily && opening.active && opening.stage <= TutorialStage.Tiers;
   saveActiveRun(scene.registry, { scene: "TrialOverview" });
   scene.scene.start("TrialOverview");
 }

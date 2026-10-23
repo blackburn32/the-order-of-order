@@ -12,6 +12,7 @@ import { SettingsScene } from "./scenes/SettingsScene";
 import { ItemsScene } from "./scenes/ItemsScene";
 import { InventoryScene } from "./scenes/InventoryScene";
 import { InitialsPromptScene } from "./scenes/InitialsPromptScene";
+import { DailyScene } from "./scenes/DailyScene";
 import { AnalysisScene } from "./scenes/AnalysisScene";
 import { ItemAnalysisScene } from "./scenes/ItemAnalysisScene";
 import { TrialOverviewScene } from "./scenes/TrialOverviewScene";
@@ -65,6 +66,7 @@ function createGame(): Phaser.Game {
       MenuScene,
       IntroScene,
       CharacterScene,
+      DailyScene,
       TrialOverviewScene,
       GameScene,
       TrialResultsScene,

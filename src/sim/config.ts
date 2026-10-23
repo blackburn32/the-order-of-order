@@ -44,6 +44,11 @@ export interface SimConfig {
   /** Runs per strategy. */
   runs: number;
 
+  /** Called on each run once it exists and before its first boss is rolled —
+   *  where a check lays extra rules on the run (the Daily Rite's boons and
+   *  banes, in `dailyCheck.ts`). */
+  prepareRun?: (state: RunState) => void;
+
   /**
    * The novice every run in the batch is played as (see systems/Characters).
    *

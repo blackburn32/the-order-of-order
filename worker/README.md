@@ -83,6 +83,21 @@ npm run deploy
 Existing rows read as unranked. A database created from the current
 `schema.sql` already has the column; skip the migration there.
 
+## Adding the Daily Rite's boards
+
+The `daily_runs` table was added after the board shipped. Like the medal
+column, it has to exist **before** the Worker that reads it is deployed:
+
+```bash
+npm run db:migrate:medal   # if that one has not been run yet
+npm run db:migrate:daily
+npm run deploy
+```
+
+`0002_daily.sql` only creates what is missing, so it is safe on a database of
+any age and safe to run twice. A database created from the current `schema.sql`
+already has the table. Locally, `npm run db:migrate:daily:local`.
+
 ## Local development
 
 ```bash
@@ -110,12 +125,15 @@ needed. Players' local Halls are untouched; they live in each device's storage.
 
 ## API
 
-| Route                  | Purpose                                                            |
-| ---------------------- | ------------------------------------------------------------------ |
-| `GET /v1/top?limit=n`  | The board, best first. `limit` clamps to `MAX_BOARD_SIZE`.         |
-| `POST /v1/runs?…`      | Submit a run. Index fields in the query, gzipped analysis as body. |
-| `GET /v1/runs/:member` | That player's analysis blob, as stored (gzip bytes).               |
-| `GET /v1/health`       | Liveness.                                                          |
+| Route                             | Purpose                                                            |
+| --------------------------------- | ------------------------------------------------------------------ |
+| `GET /v1/top?limit=n`             | The board, best first. `limit` clamps to `MAX_BOARD_SIZE`.         |
+| `POST /v1/runs?…`                 | Submit a run. Index fields in the query, gzipped analysis as body. |
+| `GET /v1/runs/:member`            | That player's analysis blob, as stored (gzip bytes).               |
+| `GET /v1/health`                  | Liveness.                                                          |
+| `GET /v1/daily/:day/top?limit=n`  | One day's Daily Rite board, best first.                            |
+| `POST /v1/daily/:day/runs?…`      | Submit a daily run. Same fields and body as `/v1/runs`.            |
+| `GET /v1/daily/:day/runs/:member` | That player's analysis blob for the day.                           |
 
 `POST /v1/runs` takes `member`, `initials`, `rank`, `trial`, `endless`, `score`
 (exact decimal) and `rolls` as query parameters, plus optional `character` and
@@ -126,6 +144,17 @@ which is what keeps a submission inside the free plan's 10 ms CPU limit.
 
 A submission that does not beat the player's existing row returns
 `{ accepted: true, improved: false }` and changes nothing.
+
+The daily routes take `:day` as a UTC date (`2026-10-23`). A daily board keeps
+each player's **first** run of the day rather than their best: the day's seed
+fixes every roll, so a second run would be played with the answers, and the
+game offers only one attempt. A later submission for the same day returns
+`improved: false` and changes nothing. Submissions are accepted for today, the
+two days before it (a run begun before midnight, or resumed later, still
+counts), and tomorrow (clock skew). The daily cron sweeps boards older than 30
+days, rows and R2 blobs (`daily/<day>/<member>`) together. The day's seed and
+modifiers are derived from the date in the client; the Worker never needs to
+know them.
 
 ## Design notes
 

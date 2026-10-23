@@ -20,7 +20,7 @@
 import { RunState } from "../state/RunState";
 import { ENDING_PAGES } from "../story";
 import type { StoryPage } from "../ui/storyPage";
-import { AFFLICTIONS, type AfflictionId } from "./Afflictions";
+import { AFFLICTIONS, DAILY_BANE_IDS, type AfflictionId } from "./Afflictions";
 
 export type EndingId =
   "tribute" | "betrayal" | "summons" | "disorder" | "peace";
@@ -129,9 +129,10 @@ export function markEndingSeen(state: RunState, id: EndingId): void {
  * Afflictions the Crown will never demand.
  *
  * Betrayal is the Order of Disorder's to give, not the King's, and it arrives on
- * its own card two acts later.
+ * its own card two acts later. The Daily Rite's banes belong to the day rather
+ * than to the Crown, and keep normal runs' writs exactly as they were.
  */
-const NEVER_DEMANDED: readonly AfflictionId[] = ["betrayal"];
+const NEVER_DEMANDED: readonly AfflictionId[] = ["betrayal", ...DAILY_BANE_IDS];
 
 /**
  * The drawbacks the King's writ offers, of which the player must accept one.
