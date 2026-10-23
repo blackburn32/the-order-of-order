@@ -31,7 +31,13 @@
 // removing an entry, would rewrite every day already played and put players on
 // two builds into two different rites on the same date.
 
-import type { RunState } from "../state/RunState";
+import {
+  beginRun as initializeRun,
+  resolveRoll,
+  rollPool,
+  trialComplete,
+} from "../sim/engine";
+import { newRun, type RunState } from "../state/RunState";
 import {
   afflict,
   AFFLICTION_COPY,
@@ -42,6 +48,7 @@ import { isRetired } from "./CardReworks";
 import { CHARACTER_ORDER, type CharacterId } from "./Characters";
 import { grantGold } from "./Gold";
 import { ITEMS, type ItemDef, type ShopItemId } from "./Items";
+import { SCREENED_DRAWS, SCREENED_FROM } from "./DailyDraws";
 import { streamFor } from "./Rng";
 import { applyOffer, offerFor } from "./Shop";
 
@@ -68,6 +75,20 @@ export const DAILY_BOON_IDS: readonly DailyBoonId[] = [
   "steadyHand",
   "reliquary",
 ];
+
+/** Banes still in DAILY_BANE_IDS, so the tables stay append-only and an old
+ *  save that carries one still resumes, but that no day draws any more.
+ *
+ *  The Lean Purse compounds: every trial's clear pays less, so every shop after
+ *  it buys less, and the shortfall grows trial on trial. Played on each day's
+ *  own seed it sank the whole field on most days it turned up on, which made
+ *  those days its days rather than the day's. */
+const UNDRAWN_BANES: ReadonlySet<AfflictionId> = new Set(["dailyLeanPurse"]);
+
+/** The banes a day draws from, in table order. */
+export const DRAWN_BANE_IDS: readonly AfflictionId[] = DAILY_BANE_IDS.filter(
+  (id) => !UNDRAWN_BANES.has(id),
+);
 
 /** How many of each a day lays on its run. */
 export const DAILY_BOON_COUNT = 2;
@@ -152,10 +173,22 @@ export function msUntilNextDay(now = Date.now()): number {
   return next.getTime() - now;
 }
 
+/** How many seeds a day may draw before it settles for the last. Far more
+ *  than an unscreened day needs: about one draw in four is turned away (see
+ *  dailyRite), so running out would take odds of around one in 10^38. */
+export const MAX_SEED_DRAWS = 64;
+
 /** The seed every player's run on `day` shares. */
 export function dailySeed(day: string): number {
+  return dailyRite(day).seed;
+}
+
+/** The `draw`th seed `day` may try. The first is keyed by the day alone, so a
+ *  day that opens cleanly on it keeps the seed it always had. */
+export function seedDraw(day: string, draw: number): number {
+  const key = draw === 0 ? day : `${day}#${draw}`;
   return (
-    Math.floor(streamFor(DAILY_SALT, "daily", day)() * 0x1_0000_0000) >>> 0
+    Math.floor(streamFor(DAILY_SALT, "daily", key)() * 0x1_0000_0000) >>> 0
   );
 }
 
@@ -168,9 +201,63 @@ function pick<T>(pool: readonly T[], count: number, rng: () => number): T[] {
 }
 
 /** Everything `day` lays on its run. Pure: the same day always answers the
- *  same, on every device. */
+ *  same, on every device running the same build.
+ *
+ *  A seed fixes everything a day deals — every roll, every shelf, every boss —
+ *  so a bad seed is a bad day for everyone, and nothing a player does can mend
+ *  it. A day therefore draws seeds in turn (seedDraw) and keeps the first that
+ *  passes, at one of two bars:
+ *
+ *  - SCREENED. Days in DailyDraws.ts have been played out ahead of time by the
+ *    balance bots on their own dice and shelves (`npm run daily:screen`), and
+ *    the table names, for each, the first draw a bot carried to victory. Those
+ *    days are known to be winnable.
+ *  - OPENING. Past the table's end, a day settles at runtime for the first
+ *    draw whose opening trial clears. That trial comes before the first shop,
+ *    so nothing the player does can change a die of it, and on roughly one seed
+ *    in four the starting grid misses every roll — a day that would end at the
+ *    first trial with no score for anyone. Every later trial follows a shop,
+ *    where the player's choices change the grid it rolls. */
 export function dailyRite(day = dailyDay()): DailyRite {
-  const seed = dailySeed(day);
+  let rite = riteCache.get(day);
+  if (!rite) {
+    const screened = screenedDraw(day);
+    if (screened !== null) {
+      rite = riteForDraw(day, screened);
+    } else {
+      rite = riteForDraw(day, 0);
+      for (let draw = 1; draw < MAX_SEED_DRAWS && !opensCleanly(rite); draw++)
+        rite = riteForDraw(day, draw);
+    }
+    riteCache.set(day, rite);
+  }
+  return { ...rite, boons: [...rite.boons], banes: [...rite.banes] };
+}
+
+/** The draw DailyDraws.ts names for `day`, or null past either end of it. */
+export function screenedDraw(day: string): number | null {
+  const index = Math.round(
+    (Date.parse(`${day}T00:00:00Z`) -
+      Date.parse(`${SCREENED_FROM}T00:00:00Z`)) /
+      86_400_000,
+  );
+  const draw = SCREENED_DRAWS[index];
+  return Number.isInteger(draw) && draw >= 0 && draw < MAX_SEED_DRAWS
+    ? draw
+    : null;
+}
+
+/** The rite the `draw`th seed would lay on `day`. */
+export function riteForDraw(day: string, draw: number): DailyRite {
+  return riteFor(day, seedDraw(day, draw));
+}
+
+/** Settling a day plays out its opening trial, possibly several times over, so
+ *  each day is settled once per session. */
+const riteCache = new Map<string, DailyRite>();
+
+/** The rite `seed` would lay on `day`. */
+function riteFor(day: string, seed: number): DailyRite {
   // Separate streams for the two draws, so a boon added to the end of its table
   // can never shift which banes a day rolls.
   return {
@@ -183,11 +270,33 @@ export function dailyRite(day = dailyDay()): DailyRite {
       streamFor(seed, "daily", "boons"),
     ),
     banes: pick(
-      DAILY_BANE_IDS,
+      DRAWN_BANE_IDS,
       DAILY_BANE_COUNT,
       streamFor(seed, "daily", "banes"),
     ),
   };
+}
+
+/** Whether `rite`'s opening trial clears. Plays it exactly as the table would:
+ *  the same run a daily begins (Tutorial.beginRun), the same named streams the
+ *  table rolls from (GameScene), and no shop, because there is none before it. */
+export function opensCleanly(rite: DailyRite): boolean {
+  const state = newRun(dailyShopUnlocks(), rite.seed, rite.character);
+  applyDailyRite(state, rite);
+  initializeRun(state, streamFor(state.seed, "boss", 1));
+  while (!trialComplete(state)) {
+    const key = `${state.trial}:${state.roll}`;
+    const context = rollPool(
+      state,
+      state.dice,
+      streamFor(state.seed, "roll", key),
+    );
+    resolveRoll(state, streamFor(state.seed, "roll", `${key}:resolve`), {
+      context,
+      recordHistory: false,
+    });
+  }
+  return state.trialCleared;
 }
 
 /** Every card the game can offer: the daily shop's pool, and the unlock
