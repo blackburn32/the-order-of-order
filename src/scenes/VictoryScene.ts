@@ -78,9 +78,9 @@ export class VictoryScene extends Phaser.Scene {
         ? "Press on and the Crown's tribute and the Betrayal are lifted."
         : null;
     // The run's rank, read off its total score (see systems/GoalTiers), is
-    // printed beside it and in its tier's colour.
-    const rank = runRank(state.totalScore);
-    const scoreLine = `Total score: ${formatScore(state.totalScore)} · ${rank < 0 ? "Unranked" : `${tierName(rank)} rank`}`;
+    // printed beside it and in its tier's colour. Every win is at least bronze.
+    const rank = runRank(state.totalScore, true);
+    const scoreLine = `Total score: ${formatScore(state.totalScore)}${rank < 0 ? "" : ` · ${tierName(rank)} rank`}`;
     const scoreColor = rank < 0 ? CSS.goldLight : tierCss(rank);
     const gridLine = `Your grid: ${state.dice.summary()}`;
 

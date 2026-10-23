@@ -24,10 +24,12 @@
 // trial t's tiers in place, so every trial is fitted against the economy the
 // tiers before it really pay.
 //
-// The run ranks are fitted last, from a final pass of the whole table: the
-// total score (RunState.totalScore) the top RUN_RANKS shares of every run reach,
-// dead or alive — by default the top 50% bronze, 25% silver, 8% gold and 2%
-// legendary.
+// The run ranks are fitted last, from a final pass of the whole table, and only
+// from the runs that won: a run that fails is not ranked at all, and every win
+// is at least bronze. Silver, gold and legendary are the total score
+// (RunState.totalScore) the top RUN_RANKS shares of the winners reach — by
+// default the top 50%, 20% and 2%. A validate pass prints the ranks its own
+// runs would fit, so they can be refitted without refitting every trial.
 //
 //   npm run goals:tiers                                  # fit → sim-out/goal-tiers.json
 //   VALIDATE=1 SEED=2 npm run goals:tiers                # grade the live tables held out
@@ -40,7 +42,8 @@
 // | SILVER          | 0.85                       | silver's share, × the old goal's share   |
 // | GOLD            | 0.3                        | share of entrants gold lets through      |
 // | LEGENDARY       | 0.02                       | share of entrants legendary lets through |
-// | RUN_RANKS       | 0.5,0.25,0.08,0.02         | share of runs at or above each run rank  |
+// | RUN_RANKS       | 0.5,0.2,0.02               | share of winners at or above silver,     |
+// |                 |                            | gold and legendary (bronze is every win) |
 // | DUEL_RATE       | 0.5                        | share of duel entrants who win it        |
 // | PIN             | 1=1,2=2,3=3                | `trial=goal` bronze pairs kept authored  |
 // | SEEDS           | 300                        | seeds; every grid point plays every one  |
@@ -88,7 +91,7 @@ const OLD_CHECKPOINTS = parseCheckpoints(
 const SILVER = Number(process.env.SILVER ?? 0.85);
 const GOLD = Number(process.env.GOLD ?? 0.3);
 const LEGENDARY = Number(process.env.LEGENDARY ?? 0.02);
-const RUN_RANKS = (process.env.RUN_RANKS ?? "0.5,0.25,0.08,0.02")
+const RUN_RANKS = (process.env.RUN_RANKS ?? "0.5,0.2,0.02")
   .split(",")
   .map(Number);
 const DUEL_RATE = Number(process.env.DUEL_RATE ?? 0.5);
@@ -207,12 +210,16 @@ async function play(
   return runGrid(jobs, progressPrinter(label));
 }
 
-/** The least total score each share of `results` reaches. */
+/** The run ranks `results` fit: bronze is any win (a total of 1), and the
+ *  ranks above it the least total score each share of the winners reaches. */
 function runRanksFrom(results: GridResult[]): TierGoals {
-  const sorted = sortedCopy(results.map((r) => r.totalLog10));
-  return RUN_RANKS.map((share) =>
-    scoreAtShare(sorted, share),
-  ) as unknown as TierGoals;
+  const sorted = sortedCopy(
+    results.filter((r) => r.won).map((r) => r.totalLog10),
+  );
+  return [
+    1n,
+    ...RUN_RANKS.map((share) => scoreAtShare(sorted, share)),
+  ] as unknown as TierGoals;
 }
 
 interface TrialReport {
@@ -251,9 +258,13 @@ function report(
   const survival = Array.from({ length: WIN_RANK }, (_, i) =>
     i === WIN_RANK - 1 ? wins : alive((i + 1) * TRIALS_PER_RANK + 1),
   );
+  // Shares of the winners, since only a win is ranked.
+  const winners = results.filter((r) => r.won);
   const rankLog = rankThresholds.map((g) => Math.log10(Number(g)));
   const runRanks = rankLog.map(
-    (g) => results.filter((r) => r.totalLog10 >= g - 1e-9).length / total,
+    (g) =>
+      winners.filter((r) => r.totalLog10 >= g - 1e-9).length /
+      (winners.length || 1),
   );
   return { survival, trials, runRanks };
 }
@@ -279,7 +290,7 @@ function printReport(
         t.tierShare.map(pct).join(" | "),
     );
   console.log(
-    "\nRun ranks (share of every run at or above): " +
+    "\nRun ranks (share of winners at or above): " +
       GOAL_TIERS.map((tier, i) => `${tier} ${pct(r.runRanks[i])}`).join("  "),
   );
 }
@@ -327,6 +338,10 @@ async function validate(): Promise<void> {
   );
   const r = report(results, tiersByTrial, runRankThresholds());
   printReport(r, null);
+  const fitted = runRanksFrom(results);
+  console.log(
+    "Run ranks these runs would fit: " + fitted.map((g) => `"${g}",`).join(" "),
+  );
   // How much of each trial's budget a run that survived it used, which is now
   // always all of it; recorded so the report states it rather than assumes it.
   const used = results.flatMap((res) =>

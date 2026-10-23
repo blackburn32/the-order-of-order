@@ -231,14 +231,15 @@ const TRIAL_TIER_GOALS: (readonly [bigint, bigint, bigint])[] =
   ]);
 
 /**
- * The final rank of a run, read off its total score (`RunState.totalScore`)
- * when it ends, won or lost: the least total each of bronze, silver, gold and
- * legendary asks. A run below bronze is unranked. Fitted by `goals:tiers` at a
- * share of every run the grid plays, dead or alive.
+ * The final rank of a victory, read off its total score (`RunState.totalScore`)
+ * when it ends: the least total each of bronze, silver, gold and legendary
+ * asks. Every win is at least bronze (hence 1), and a run that fails is not
+ * ranked at all (see systems/GoalTiers.runRank). Fitted by `goals:tiers` as the
+ * top 50%, 20% and 2% of the grid's winning runs.
  */
 // prettier-ignore
 const MEASURED_RUN_RANKS: readonly [string, string, string, string] = [
-  "387", "56300", "1740000000000", "19100000000000000000",
+  "1", "12200000000000", "496000000000000000", "13700000000000000000000000000",
 ];
 
 export const RUN_RANK_THRESHOLDS: TierGoals = MEASURED_RUN_RANKS.map((g) =>

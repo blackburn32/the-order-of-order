@@ -77,10 +77,11 @@ export class GameOverScene extends Phaser.Scene {
 
     const rankLine = `You fell at rank ${rankOf(state.trial)}`;
     const trialLine = `The ${trialName(state.trial)}`;
-    // The run's rank, read off its total score (see systems/GoalTiers), is
-    // printed beside it and in its tier's colour.
-    const rank = runRank(state.totalScore);
-    const scoreLine = `Total score: ${formatScore(state.totalScore)} · ${rank < 0 ? "Unranked" : `${tierName(rank)} rank`}`;
+    // Only a win is ranked. A run that fell before the duel has none; one that
+    // won, pressed on into endless and fell there keeps the rank it earned,
+    // read off its total score (see systems/GoalTiers) in its tier's colour.
+    const rank = runRank(state.totalScore, state.endless);
+    const scoreLine = `Total score: ${formatScore(state.totalScore)}${rank < 0 ? "" : ` · ${tierName(rank)} rank`}`;
     const scoreColor = rank < 0 ? CSS.goldLight : tierCss(rank);
     const gridLine = `Your grid: ${state.dice.summary()}`;
     const unlockedNames = this.unlocked.map(

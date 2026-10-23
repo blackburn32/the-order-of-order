@@ -463,8 +463,9 @@ and `PLAYER_SERIES` are there to point a tuner at one deliberately, as
 
 Every trial is now played to its last roll, and asks four goals: **bronze** to
 survive it, then **silver**, **gold** and **legendary**, which pay 2, 4 and 6
-extra gold as the trial clears (`systems/GoalTiers`). When the run ends, won or
-lost, its total score is read against four run ranks of the same names. The
+extra gold as the trial clears (`systems/GoalTiers`). When a run ends in
+victory, its total score is read against four run ranks of the same names; a
+run that fails is not ranked. The
 tables (`MEASURED_GOALS`, `MEASURED_TIER_GOALS`, `MEASURED_RUN_RANKS` in
 `config.ts`) are fitted by `goals:tiers` (`goalTiers.ts`):
 
@@ -485,8 +486,9 @@ unreachable tiers, and each tier is set at a share of those entrants:
   through on the old curve: a little harder than the goal it replaced.
 - **gold** lets through `GOLD` (30%) of the entrants, **legendary** `LEGENDARY`
   (2%): the 98th percentile.
-- **run ranks** are the total scores the top `RUN_RANKS` (50 / 25 / 8 / 2%) of
-  every run reach, dead or alive.
+- **run ranks** are for victories only: every win is at least bronze, and
+  silver, gold and legendary are the total scores the top `RUN_RANKS`
+  (50 / 20 / 2%) of winning runs reach.
 
 The current goals could not be carried over as numbers. With every roll played,
 grids grow through the whole trial and late scores climb far faster, while the
@@ -505,8 +507,8 @@ Fitted on 500 seeds (base seed 1), graded on 500 held-out seeds (base seed 2):
 | held out, single goal | 63% | 49% | 38% | 30% | 24% | 19% | 16% | 13% | 11% | 4.7%     |
 
 Of the runs entering a trial after rank 1, held out, 90-99% meet bronze, 70-83%
-silver, 28-31% gold and 1.5-2.9% legendary. Run ranks held out: 46% of runs
-reach bronze, 23% silver, 7.5% gold, 1.9% legendary. Gold earned per cleared
+silver, 28-31% gold and 1.5-2.9% legendary. Run ranks held out, as
+shares of winning runs: 100% bronze, 48% silver, 21% gold, 2.9% legendary. Gold earned per cleared
 trial falls about 9% (15.1 against 16.5), since tier gold pays less on average
 than the unused rolls it replaces.
 

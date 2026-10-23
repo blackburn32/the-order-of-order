@@ -228,13 +228,16 @@ console.log("\nGoal tiers");
 }
 
 {
-  const [bronze, silver, , legendary] = runRankThresholds();
+  const [, silver, , legendary] = runRankThresholds();
   check(
-    runRank(bronze - 1n) === -1 &&
-      runRank(bronze) === 0 &&
-      runRank(silver) === 1 &&
-      runRank(legendary * 10n) === 3,
-    "a run's total score reads against the four run ranks",
+    runRank(legendary * 10n, false) === -1,
+    "a run that fails is not ranked, whatever it scored",
+  );
+  check(
+    runRank(0n, true) === 0 &&
+      runRank(silver, true) === 1 &&
+      runRank(legendary * 10n, true) === 3,
+    "every win is at least bronze, and climbs by its total score",
   );
 }
 

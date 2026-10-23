@@ -2,9 +2,9 @@
 //
 // A trial is played to its last roll. Bronze is the goal that has to be met to
 // survive it; silver, gold and legendary are climbed for gold, each one paying
-// more than the last as the trial clears. When the run ends, won or lost, its
-// total score is read against a fifth ladder of the same four names to give
-// the run its rank. The goals themselves live in config (`trialTierGoals`,
+// more than the last as the trial clears. When a run ends in victory, its total
+// score is read against a fifth ladder of the same four names to give the run
+// its rank; a run that fails is not ranked. The goals themselves live in config (`trialTierGoals`,
 // `runRankThresholds`); this is what the game does with them.
 
 import {
@@ -71,8 +71,11 @@ export function tierName(index: number): string {
   return index < 0 ? "Unranked" : TIER_NAMES[GOAL_TIERS[index]];
 }
 
-/** The rank a run ends on, by its total score: 0 bronze … 3 legendary, -1
- *  unranked. */
-export function runRank(totalScore: bigint): number {
-  return tierOf(totalScore, runRankThresholds());
+/** The rank a run ends on: -1 for a run that failed, which is not ranked,
+ *  and for a win (`won`) its total score read against the run ranks, 0 bronze
+ *  (every win) … 3 legendary. A win carried into endless and lost there is
+ *  still a win, ranked by everything it scored. */
+export function runRank(totalScore: bigint, won: boolean): number {
+  if (!won) return -1;
+  return Math.max(0, tierOf(totalScore, runRankThresholds()));
 }

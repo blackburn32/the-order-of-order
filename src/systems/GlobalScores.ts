@@ -64,6 +64,9 @@ export interface GlobalScoreRow {
   runRank: number; // the rank the run reached
   trial: number; // trial within that rank (1..3)
   endless: boolean;
+  /** The run's goal-tier rank (systems/GoalTiers.runRank): 0 bronze … 3
+   *  legendary for a win, -1 for a loss or a row submitted before ranks. */
+  medal: number;
   score: bigint; // total points, the tiebreak
   name: string; // initials, uppercased; may be ''
   /** The novice the run was played as. All three share one board — the ladder
@@ -92,6 +95,7 @@ export interface RunSubmission {
   rank: number;
   trial: number;
   endless: boolean;
+  medal: number;
   character: CharacterId;
   rolls: number;
   dicePoints: Record<string, bigint>;
@@ -383,6 +387,7 @@ export function submissionFromHallEntry(entry: HallEntry): RunSubmission {
     rank: entry.rank,
     trial: entry.trial,
     endless: !!entry.endless,
+    medal: entry.medal ?? -1,
     character: entry.character ?? DEFAULT_CHARACTER,
     rolls: entry.rolls ?? Math.max(0, (entry.history?.length ?? 1) - 1),
     dicePoints: entry.dicePoints ?? {},
@@ -418,6 +423,7 @@ export async function submitRun(
     rank: String(Math.max(1, Math.floor(run.rank))),
     trial: String(Math.min(3, Math.max(1, Math.floor(run.trial)))),
     endless: run.endless ? "1" : "0",
+    medal: String(Math.min(3, Math.max(-1, Math.floor(run.medal)))),
     character: run.character,
     score: (run.score < 0n ? 0n : run.score).toString(),
     rolls: String(Math.max(0, Math.floor(run.rolls))),
@@ -489,6 +495,7 @@ interface WireRow {
   rank?: unknown;
   trial?: unknown;
   endless?: unknown;
+  medal?: unknown;
   score?: unknown;
   rolls?: unknown;
   hasAnalysis?: unknown;
@@ -509,6 +516,11 @@ function toRow(raw: unknown, me: string): GlobalScoreRow | null {
     runRank,
     trial: Number.isFinite(Number(row.trial)) ? Number(row.trial) : 1,
     endless: row.endless === true,
+    // A board that predates ranks sends none; those rows show no medal.
+    medal:
+      Number.isInteger(row.medal) && Number(row.medal) >= 0
+        ? Math.min(3, Number(row.medal))
+        : -1,
     score: BigInt(row.score),
     name: typeof row.initials === "string" ? row.initials.toUpperCase() : "",
     character: isCharacterId(row.character) ? row.character : DEFAULT_CHARACTER,

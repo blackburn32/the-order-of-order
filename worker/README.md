@@ -70,6 +70,19 @@ not a secret: it ships in the client bundle and anyone who opens devtools can re
 it. It turns away scanners that have not looked, and nothing more. Leave both
 sides unset to run without it.
 
+## Upgrading a board that predates run ranks
+
+The `medal` column was added after the board shipped. A database created before
+it needs the column added once, **before** the Worker that writes it is deployed:
+
+```bash
+npm run db:migrate:medal
+npm run deploy
+```
+
+Existing rows read as unranked. A database created from the current
+`schema.sql` already has the column; skip the migration there.
+
 ## Local development
 
 ```bash
@@ -105,7 +118,8 @@ needed. Players' local Halls are untouched; they live in each device's storage.
 | `GET /v1/health`       | Liveness.                                                          |
 
 `POST /v1/runs` takes `member`, `initials`, `rank`, `trial`, `endless`, `score`
-(exact decimal) and `rolls` as query parameters, and the gzipped analysis as the
+(exact decimal) and `rolls` as query parameters, plus optional `character` and
+`medal` (the run's goal-tier rank, `0`–`3`, or `-1` for a loss), and the gzipped analysis as the
 raw request body. The Worker validates the query fields and passes the body
 through to R2 untouched — it never parses, decompresses or re-serializes it,
 which is what keeps a submission inside the free plan's 10 ms CPU limit.
