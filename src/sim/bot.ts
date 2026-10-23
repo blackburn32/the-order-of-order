@@ -69,6 +69,7 @@ import {
 } from "./engine";
 import { isMirrorTrial, rankOf, trialInRank } from "../config";
 import { mulberry32 } from "./localStorageShim";
+import { streamFor, type RngDomain } from "../systems/Rng";
 import { skepticAllows } from "./skeptic";
 import { log10Big } from "./appraise";
 import { SimConfig } from "./config";
@@ -854,6 +855,21 @@ function commitToTree(state: RunState, strategy: Strategy, seed: number): void {
 /** Shop between trials: draw the offers, reroll while the bot judges it worth
  *  the gold, then let the strategy spend. Returns the gold spent (purchases and
  *  rerolls together) so the record can track where a run's income went. */
+/** Whether the run in progress draws its content the way the live game does
+ *  (see SimConfig.addressedStreams). Set once per run by simulateRun. */
+let addressed = false;
+
+/** The generator for one of the run's content decisions: the live game's named
+ *  stream when the run is addressed, otherwise the bot's own running one. */
+function contentStream(
+  state: RunState,
+  domain: RngDomain,
+  key: string | number,
+  rng: () => number,
+): () => number {
+  return addressed ? streamFor(state.seed, domain, key) : rng;
+}
+
 function visitShop(
   state: RunState,
   strategy: Strategy,
@@ -866,9 +882,19 @@ function visitShop(
   const cardCount = state.ownedLedger ? 5 : 3;
   const boosted = state.boonNextShop;
   const visitWeights = { ...weightsFor(state) };
-  let offers = rollShopOffers(state, cardCount, rng, visitWeights);
+  let offers = rollShopOffers(
+    state,
+    cardCount,
+    contentStream(state, "shop", `${state.trial}:0`, rng),
+    visitWeights,
+  );
   recordCurseOffers(record, offers);
-  const packs = rollBoosterOffers(state, 2, boosted, rng);
+  const packs = rollBoosterOffers(
+    state,
+    2,
+    boosted,
+    contentStream(state, "packs", state.trial, rng),
+  );
   state.boonNextShop = false;
 
   // Reroll only while it is free (Dealer's Bell) or while nothing on the table
@@ -899,7 +925,12 @@ function visitShop(
       if (!free && !(stuck && state.gold > price)) break;
     }
     spendGold(state, price);
-    offers = rerollShopOffers(state, cardCount, rng, visitWeights);
+    offers = rerollShopOffers(
+      state,
+      cardCount,
+      contentStream(state, "shop", `${state.trial}:${attempt + 1}`, rng),
+      visitWeights,
+    );
     recordCurseOffers(record, offers);
   }
 
@@ -995,6 +1026,7 @@ function visitBoosters(
   record: RunRecord,
 ): number {
   let purchasesMade = 0;
+  let opened = 0;
   const ordered = [...packs].sort((a, b) => {
     if (strategy.theme) {
       const aMatch = a.theme === strategy.theme ? 1 : 0;
@@ -1014,11 +1046,17 @@ function visitBoosters(
       state,
       pack,
       state.ownedLedger ? 5 : 3,
-      rng,
+      contentStream(
+        state,
+        "booster",
+        `${state.trial}:${opened}:${pack.id}`,
+        rng,
+      ),
       visitWeights,
     );
     recordCurseOffers(record, choices);
     if (choices.length === 0) continue;
+    opened += 1;
     const acceptable = choices.filter((offer) =>
       accepts(strategy, state, offer, strategy.curseAppetite),
     );
@@ -1095,9 +1133,14 @@ export function simulateRun(
     bundleSize: cfg.expertBundleSize,
     objective: cfg.expertObjective,
   };
-  const state = newRun(cfg.unlockedAtStart, seed, cfg.character);
+  addressed = cfg.addressedStreams ?? false;
+  const state = newRun(
+    cfg.unlockedAtStart,
+    cfg.contentSeed ?? seed,
+    cfg.character,
+  );
   cfg.prepareRun?.(state);
-  beginRun(state, rng);
+  beginRun(state, contentStream(state, "boss", 1, rng));
   commitToTree(state, strategy, seed);
 
   const record: RunRecord = {
@@ -1136,8 +1179,16 @@ export function simulateRun(
     // It is what `benchmark.ts` measures a bot's capacity from, and the same
     // moment a run exported from the dev panel is usually captured at.
     if (state.roll === 0) cfg.onTrialStart?.(state);
-    const context = rollPool(state, state.dice, rng);
-    resolveRoll(state, rng, { context, recordHistory: false });
+    const context = rollPool(
+      state,
+      state.dice,
+      contentStream(state, "roll", `${state.trial}:${state.roll}`, rng),
+    );
+    resolveRoll(
+      state,
+      contentStream(state, "roll", `${state.trial}:${state.roll}:resolve`, rng),
+      { context, recordHistory: false },
+    );
     rolls += 1;
     rollScores?.push(Number(state.score));
     rollLog10?.push(scoreLog10(state.score));
@@ -1169,10 +1220,14 @@ export function simulateRun(
       });
       const point = record.trajectory[record.trajectory.length - 1];
 
-      const end = resolveTrialEnd(state, rng, {
-        unusedRollBaseMultiplier: cfg.unusedRollBaseMultiplier,
-        unusedRollCap: cfg.unusedRollCap,
-      });
+      const end = resolveTrialEnd(
+        state,
+        contentStream(state, "trialEnd", state.trial, rng),
+        {
+          unusedRollBaseMultiplier: cfg.unusedRollBaseMultiplier,
+          unusedRollCap: cfg.unusedRollCap,
+        },
+      );
       // Every trial but the last is cleared by crossing its goal, which is what
       // the latch records. The duel has no goal to cross — it is won by leading
       // when the rolls run out — so there the engine's own answer is the answer.
@@ -1246,7 +1301,10 @@ function applyStoryAfterTrial(
   if (!ending) return;
   markEndingSeen(state, ending.id);
   if (ending.gift === "kingsDemands") {
-    const demands = rollKingsDemands(state, rng);
+    const demands = rollKingsDemands(
+      state,
+      contentStream(state, "demands", state.trial, rng),
+    );
     const demand = strategy.chooseDemand
       ? strategy.chooseDemand(state, demands)
       : demands

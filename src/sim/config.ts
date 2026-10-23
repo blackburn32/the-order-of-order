@@ -60,6 +60,17 @@ export interface SimConfig {
    */
   character?: CharacterId;
 
+  /** Draw the run's content — its dice, bosses, shops and packs — from the
+   *  live game's named streams (systems/Rng) instead of the bot's own running
+   *  one, so a run on a given seed meets exactly the dice and shelves a player
+   *  on that seed would. The bot's own choices still draw from its rng, so many
+   *  bots can play the one seed differently. Used to replay a Daily Rite. */
+  addressedStreams?: boolean;
+
+  /** The seed the run's content is drawn from, when it is not the run's own
+   *  (every bot on a Daily Rite shares the day's). */
+  contentSeed?: number;
+
   /** Base RNG seed; run i of a strategy uses a seed derived from this. */
   seed: number;
 

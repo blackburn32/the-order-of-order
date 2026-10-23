@@ -20,10 +20,12 @@ import {
   DAILY_BANE_COUNT,
   DAILY_BOON_COUNT,
   DAILY_BOON_IDS,
+  DRAWN_BANE_IDS,
   dailyDay,
   dailyRite,
   dailySeed,
   dailyShopUnlocks,
+  screenedDraw,
   shelfOnlyBoons,
   type DailyRite,
 } from "../systems/Daily";
@@ -105,8 +107,41 @@ const seenBoons = new Set(nextDays.flatMap((d) => dailyRite(d).boons));
 const seenBanes = new Set(nextDays.flatMap((d) => dailyRite(d).banes));
 check(
   seenBoons.size === DAILY_BOON_IDS.length &&
-    seenBanes.size === DAILY_BANE_IDS.length,
-  "every boon and bane turns up within sixty days",
+    seenBanes.size === DRAWN_BANE_IDS.length,
+  "every boon and drawn bane turns up within sixty days",
+);
+check(
+  DAILY_BANE_IDS.every(
+    (id) => DRAWN_BANE_IDS.includes(id) || !seenBanes.has(id),
+  ),
+  "a bane no day draws never turns up",
+);
+// The opening trial comes before any shop, so it is the one trial a player
+// cannot change: played on the day's own streams, it has to clear for anyone.
+const walled = nextDays.filter((day) => {
+  const r = dailyRite(day);
+  const record = simulateRun("greedy", 1, {
+    ...DEFAULT_CONFIG,
+    unlockedAtStart: dailyShopUnlocks(),
+    character: r.character,
+    addressedStreams: true,
+    contentSeed: r.seed,
+    prepareRun: (s) => applyDailyRite(s, r),
+    stopAfterTrial: 1,
+  });
+  return !record.trajectory[0]?.cleared || record.totalScore <= 0;
+});
+check(
+  walled.length === 0,
+  `every day's opening trial clears on its own dice${walled.length ? ` (not ${walled.join(", ")})` : ""}`,
+);
+// The screened table runs out on a known day, after which days fall back to the
+// weaker opening-trial bar. Read against the real clock, so this fails while
+// there is still a month to re-screen in (npm run daily:screen).
+const monthOut = dailyDay(Date.now() + 30 * 86_400_000);
+check(
+  screenedDraw(monthOut) !== null,
+  `the screened days reach a month ahead (${monthOut})`,
 );
 check(
   new Set(nextDays.map((d) => dailyRite(d).character)).size ===
@@ -195,6 +230,7 @@ const field = [...SMART_SERIES, ...PLAYER_SERIES];
 function winRate(
   prepare?: (s: ReturnType<typeof newRun>) => void,
   character: CharacterId = DEFAULT_CHARACTER,
+  contentSeed?: number,
 ): number {
   let wins = 0;
   for (const series of field) {
@@ -208,6 +244,15 @@ function winRate(
           ...seriesConfig(DEFAULT_CONFIG, series),
           character,
           prepareRun: prepare,
+          // A day's own run: its dice, shelves and bosses are the day's, and
+          // only the bots' choices differ from one run to the next.
+          ...(contentSeed === undefined
+            ? {}
+            : {
+                addressedStreams: true,
+                contentSeed,
+                unlockedAtStart: dailyShopUnlocks(),
+              }),
         },
       );
       if (record.won) wins += 1;
@@ -247,13 +292,15 @@ for (const id of DAILY_BANE_IDS) {
   console.log(`  ${id.padEnd(20)} ${pct(w)}  ${(w / baseline).toFixed(2)}x`);
 }
 if (days > 0) {
-  console.log("\n  the coming days (ratio against that novice unmodified)");
+  console.log(
+    "\n  the coming days, on their own seeds (ratio against that novice unmodified)",
+  );
   for (const day of nextDays.slice(0, days)) {
     const r = dailyRite(day);
     // Read against the day's own novice unmodified, since that is the game the
     // rite is a variation of.
     const base = (baselines[r.character] ??= winRate(undefined, r.character));
-    const w = winRate((s) => applyDailyRite(s, r), r.character);
+    const w = winRate((s) => applyDailyRite(s, r), r.character, r.seed);
     console.log(
       `  ${day}  ${pct(w)}  ${(w / base).toFixed(2)}x  ${r.character.padEnd(7)}  ${[...r.boons, ...r.banes].join(", ")}`,
     );
