@@ -1,6 +1,6 @@
 import Phaser from "phaser";
 import { CSS, SERIF } from "../art/palette";
-import { afflictionCard } from "../systems/Items";
+import { afflictionCard, type ItemDef } from "../systems/Items";
 import { CHARACTERS } from "../systems/Characters";
 import { beginRun } from "../systems/Tutorial";
 import { audio } from "../systems/Audio";
@@ -13,6 +13,7 @@ import {
 import { dailyPlayed, loadDailyHall } from "../systems/SaveData";
 import { formatScore } from "../ui/formatScore";
 import { buildItemCard } from "../ui/itemCard";
+import { buildCharacterCard } from "../ui/characterCard";
 import {
   CARD_H,
   CARD_W,
@@ -28,6 +29,16 @@ import { AmbientLayer } from "../ui/AmbientLayer";
 
 const DAILY_AMBIENCE = 0.6;
 const CARD_GAP = 22;
+
+/** The share of the hand's band the novice takes when the day cannot be dealt
+ *  as one straight row. */
+const NOVICE_BAND = 0.36;
+/** The same, on a screen too narrow to stand the novice's card beside the rite:
+ *  they are drawn as a strip across the top instead (see `noviceStrip`). */
+const NOVICE_STRIP = 0.26;
+
+/** A boon or bane with the line it prints, or null for the day's novice. */
+type HandCard = { def: ItemDef; note: string } | null;
 
 /** Room each banner button takes in a stacked foot. */
 const BUTTON_ROW_H = 64;
@@ -175,7 +186,7 @@ export class DailyScene extends Phaser.Scene {
     const next = `The next rite opens in ${formatWait(msUntilNextDay())}.`;
     const who = CHARACTERS[this.rite.character];
     if (!this.played)
-      return `Today every player is ${who.name}: ${who.ability}\nThe same dice, shops and Boss Trials for all. One attempt: the first run you begin is the one that counts.`;
+      return `Today every player is ${who.name}, with the same dice, shops and Boss Trials.\nOne attempt: the first run you begin is the one that counts.`;
     const kept = loadDailyHall().find((e) => e.daily === this.rite.day);
     if (!kept) return `Today's rite is already under way.\n${next}`;
     const verdict = kept.won
@@ -205,11 +216,19 @@ export class DailyScene extends Phaser.Scene {
 
   /** Lay the day's cards in the band given: boons first, banes after, each
    *  drawn by the same builder as a card in the shop. */
+  /**
+   * Lay the day out in the band given: the novice, then the boons, then the
+   * banes. Where the five fit in one straight row they are dealt as one hand;
+   * where they would have to fan or stack, the novice takes a band of their own
+   * — beside the rite on a wide screen, as a strip above it on a narrow one —
+   * rather than be fanned under the cards: they are the one card the player
+   * has to see whole.
+   */
   private layoutHand(cx: number, top: number, width: number, height: number) {
-    // Each card says which side of the day it is on, where the shop prints a
-    // price: a granted boon is an ordinary card, and nothing else on its face
-    // says it is being given rather than sold.
-    const cards = [
+    // Each boon and bane says which side of the day it is on, where the shop
+    // prints a price: a granted boon is an ordinary card, and nothing else on
+    // its face says it is being given rather than sold.
+    const rite: HandCard[] = [
       ...this.rite.boons.map((id) => ({
         def: dailyBoonCard(id),
         note: "Today's boon",
@@ -219,28 +238,107 @@ export class DailyScene extends Phaser.Scene {
         note: "Today's bane",
       })),
     ];
-    const layout: ChoiceLayout = planChoiceLayout(
-      cards.length,
+    const all: HandCard[] = [null, ...rite];
+    const whole = this.plan(all.length, width, height);
+    if (whole.rows === 1 && !whole.fanned) {
+      this.dealHand(all, whole, cx, top + height / 2);
+      return;
+    }
+    if (width > height) {
+      const side = width * NOVICE_BAND;
+      this.dealHand(
+        [null],
+        this.plan(1, side, height),
+        cx - width / 2 + side / 2,
+        top + height / 2,
+      );
+      const restW = width - side;
+      this.dealHand(
+        rite,
+        this.plan(rite.length, restW, height),
+        cx - width / 2 + side + restW / 2,
+        top + height / 2,
+      );
+    } else {
+      // Too narrow for even one card beside the rite, so the novice is drawn as
+      // a strip instead: the portrait, and their name and rule beside it. A
+      // card here would be stood alone on top at a size its copy cannot be
+      // read at, and would squeeze the rite into a fan below it.
+      const band = Math.min(height * NOVICE_STRIP, 150);
+      this.noviceStrip(cx, top + band / 2, width, band);
+      const restH = height - band;
+      this.dealHand(
+        rite,
+        this.plan(rite.length, width, restH),
+        cx,
+        top + band + restH / 2,
+      );
+    }
+  }
+
+  private noviceStrip(cx: number, cy: number, width: number, height: number) {
+    const who = CHARACTERS[this.rite.character];
+    const artSize = Math.max(48, height - 12);
+    const textW = Math.min(width - artSize - 16, 320);
+    const left = cx - (artSize + 12 + textW) / 2;
+    const art = this.add.image(left + artSize / 2, cy, who.art);
+    art.setScale(artSize / Math.max(art.width, art.height));
+    const name = this.add
+      .text(left + artSize + 12, cy - 4, who.name, {
+        fontFamily: SERIF,
+        fontSize: `${Math.round(Phaser.Math.Clamp(height * 0.18, 16, 24))}px`,
+        color: CSS.gold,
+        fontStyle: "bold",
+      })
+      .setOrigin(0, 1);
+    this.add
+      .text(left + artSize + 12, name.y + 6, who.ability, {
+        fontFamily: SERIF,
+        fontSize: `${Math.round(Phaser.Math.Clamp(height * 0.11, 12, 15))}px`,
+        color: CSS.parchment,
+        wordWrap: { width: textW },
+      })
+      .setOrigin(0, 0);
+  }
+
+  private plan(n: number, width: number, height: number): ChoiceLayout {
+    return planChoiceLayout(
+      n,
       Math.max(CARD_W * 0.3, width),
       Math.max(CARD_H * 0.3, height),
       CARD_GAP,
     );
+  }
+
+  /** Deal `cards` centred on (cx, cy) as `layout` arranges them. A null entry
+   *  is the day's novice, drawn as the character selection draws them. */
+  private dealHand(
+    cards: HandCard[],
+    layout: ChoiceLayout,
+    cx: number,
+    cy: number,
+  ): void {
     const cardW = CARD_W * layout.scale;
     const cardH = CARD_H * layout.scale;
     const stride = cardW * layout.step + (layout.fanned ? 0 : CARD_GAP);
     const rowH = cardH + CARD_GAP;
-    const firstY = top + height / 2 - ((layout.rows - 1) * rowH) / 2;
-    cards.forEach(({ def, note }, i) => {
+    const firstY = cy - ((layout.rows - 1) * rowH) / 2;
+    cards.forEach((entry, i) => {
       const row = Math.floor(i / layout.cols);
       const col = i % layout.cols;
       const inRow = Math.min(layout.cols, cards.length - row * layout.cols);
-      const card = buildItemCard(this, def, {
-        locked: false,
-        showCaption: false,
-        displayScale: layout.scale,
-        compactType: true,
-        note,
-      });
+      const card = entry
+        ? buildItemCard(this, entry.def, {
+            locked: false,
+            showCaption: false,
+            displayScale: layout.scale,
+            compactType: true,
+            note: entry.note,
+          })
+        : buildCharacterCard(this, this.rite.character, {
+            locked: false,
+            displayScale: layout.scale,
+          });
       card.setPosition(
         cx + (col - (inRow - 1) / 2) * stride,
         firstY + row * rowH,
