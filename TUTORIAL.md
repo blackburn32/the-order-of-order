@@ -25,7 +25,7 @@ build says _Press_ and _pinching_, every other build _Click_ and _scrolling_.
 
 - Spotlight: the three trial cards
 
-### 4. To complete a trial you must meet its goal by earning points.
+### 4. To complete a trial you must meet its bronze goal by earning points.
 
 - Spotlight: the goal on the first trial's card
 
@@ -65,80 +65,85 @@ build says _Press_ and _pinching_, every other build _Click_ and _scrolling_.
 - Note: shown once the first roll settles. That roll never scores, so this
   step always lands before the trial can end.
 
+### 12. Every roll is played. Meet bronze to survive, and climb to silver, gold or legendary for extra gold.
+
+- Spotlight: the goal plaque in the HUD, which names the next tier to climb
+- Note: follows step 11 on the table, before the trial can end.
+
 ## Trial results
 
-### 12. Congratulations on completing your first trial!
+### 13. Congratulations on completing your first trial!
 
 - Spotlight: "Trial cleared" and the trial name / rank beneath it
 
-### 13. After each trial you will receive gold which can be spent in the store!
+### 14. After each trial you will receive gold which can be spent in the store!
 
 - Spotlight: the gold earned and its full breakdown
 
-### 14. You'll gain extra gold for completing a trial with rolls to spare.
+### 15. Every roll is played. Reach the silver, gold or legendary goal for extra gold.
 
-- Spotlight: the receipt row paying gold for rolls left in hand
-- Note: skipped if the first clear paid no rolls-left gold; shown instead on
-  the first clear that does.
+- Spotlight: the receipt row paying gold for the tier the trial reached
+- Note: skipped if the first clear met only bronze; shown instead on the first
+  clear that reaches a higher tier.
 
-### 15. Your gold earns interest! 1 gold per 5 gold held at a trial's end, up to 5.
+### 16. Your gold earns interest! 1 gold per 5 gold held at a trial's end, up to 5.
 
 - Spotlight: the receipt row paying interest
 - Note: skipped if the first clear paid no interest; shown instead on the first
   clear that does.
 
-### 16. Click/Press here to enter the store.
+### 17. Click/Press here to enter the store.
 
 - Spotlight: the Enter the Shop button
 - Continue: presses the button
 
 ## The shop
 
-### 17. Purchase new cards to upgrade your order.
+### 18. Purchase new cards to upgrade your order.
 
 - Spotlight: the loose cards
 - Also advances: buying a card
 
-### 18. You can reroll the selection if nothing is to your liking.
+### 19. You can reroll the selection if nothing is to your liking.
 
 - Spotlight: the reroll button
 - Also advances: rerolling
 
-### 19. Booster packs allow you to choose 1 out of the 3 cards in the pack.
+### 20. Booster packs allow you to choose 1 out of the 3 cards in the pack.
 
 - Spotlight: the booster packs
 - Also advances: opening a pack
 
-### 20. When you're ready, press here to get to the next trial.
+### 21. When you're ready, press here to get to the next trial.
 
 - Spotlight: the Continue to Trials button
 - Also advances: pressing the button
 
 ## Trial overview (second and third visits)
 
-### 21. The goal will grow each trial, you'll need to grow your order's power to keep up!
+### 22. The goal will grow each trial, you'll need to grow your order's power to keep up!
 
 - Spotlight: the goal for the next trial
 
-### 22. The next round is this rank's boss fight, take note of its special effects!
+### 23. The next round is this rank's boss fight, take note of its special effects!
 
 - Spotlight: the boss trial's card
 - Trigger: returning to the trial overview after completing the second trial
 
-### 23. When you complete the boss round you will advance a rank!
+### 24. When you complete the boss round you will advance a rank!
 
 - Spotlight: same
 
 ## Rank 2 Overview
 
-### 24. Congratulations! Your order has advanced to the second rank.
+### 25. Congratulations! Your order has advanced to the second rank.
 
 - Spotlight: The new rank
 
-### 25. The point requirements for each trial have grown!
+### 26. The point requirements for each trial have grown!
 
 - Spotlight: the point values on each of the trial cards
 
-### 26. You're ready. Complete rank 10 to win, good luck!
+### 27. You're ready. Complete rank 10 to win, good luck!
 
 - Spotlight: None, center the callout

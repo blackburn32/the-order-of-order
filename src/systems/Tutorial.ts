@@ -32,8 +32,8 @@ import { DEFAULT_CHARACTER, type CharacterId } from "./Characters";
 // place for the route to reach the rank after it.
 //
 // EarlyGold and Interest cannot wait in place, because the run may take several
-// trials to pay either and may never pay them at all: a trial cleared on its
-// last roll pays nothing for rolls left in hand, and a purse under five pays no
+// trials to pay either and may never pay them at all: a trial that meets only
+// bronze pays no tier gold, and a purse under five pays no
 // interest — the first clear is paid on the four gold a run starts with, so it
 // never does. A step like that is *deferred* rather than blocking (see
 // `deferTutorialStage`): the script carries on without it and it returns at the
@@ -51,9 +51,10 @@ export enum TutorialStage {
   Zoom, // Game: scrolling / pinching it
   Roll, // Game: the seal
   RollOne, // Game: after the first roll
+  Tiers, // Game: every roll is played, and the tiers above bronze
   Cleared, // TrialResults: the verdict
   Gold, // TrialResults: what the clear paid
-  EarlyGold, // TrialResults: and what it paid for finishing with rolls to spare
+  EarlyGold, // TrialResults: and what it paid for reaching a tier past bronze
   Interest, // TrialResults: and what the purse pays on itself
   EnterShop, // TrialResults: the way on
   LooseCards, // Shop: the offer cards
@@ -89,7 +90,7 @@ export const TUTORIAL_TEXT: Record<
   [TutorialStage.Trials]:
     "Each rank is composed of three trials of increasing difficulty.",
   [TutorialStage.TrialGoal]:
-    "To complete a trial you must meet its goal by earning points.",
+    "To complete a trial you must meet its bronze goal by earning points.",
   [TutorialStage.Points]: "Points are earned by rolling a 1 on any die.",
   [TutorialStage.Begin]: `${PRESS} here to begin the first trial.`,
 
@@ -98,12 +99,14 @@ export const TUTORIAL_TEXT: Record<
   [TutorialStage.Zoom]: `And you can zoom in and out by ${PHONE_BUILD ? "pinching" : "scrolling"}.`,
   [TutorialStage.Roll]: `${PRESS} here to roll your dice.`,
   [TutorialStage.RollOne]: "To score you must roll a 1, good luck.",
+  [TutorialStage.Tiers]:
+    "Every roll is played. Meet bronze to survive, and climb to silver, gold or legendary for extra gold.",
 
   [TutorialStage.Cleared]: "Congratulations on completing your first trial!",
   [TutorialStage.Gold]:
     "After each trial you will receive gold which can be spent in the store!",
   [TutorialStage.EarlyGold]:
-    "You'll gain extra gold for completing a trial with rolls to spare.",
+    "Every roll is played. Reach the silver, gold or legendary goal for extra gold.",
   [TutorialStage.Interest]: `Your gold earns interest! 1 gold per ${GOLD_PER_INTEREST} gold held at a trial's end, up to ${INTEREST_CAP}.`,
   [TutorialStage.EnterShop]: `${PRESS} here to enter the store.`,
 
@@ -395,8 +398,7 @@ export function beginRun(
   // Only a run that opens with the table's lessons still to teach is: one
   // resuming the script further on plays its first trial straight.
   const opening = getTutorial(scene.registry);
-  state.tutorialArmed =
-    opening.active && opening.stage <= TutorialStage.RollOne;
+  state.tutorialArmed = opening.active && opening.stage <= TutorialStage.Tiers;
   saveActiveRun(scene.registry, { scene: "TrialOverview" });
   scene.scene.start("TrialOverview");
 }

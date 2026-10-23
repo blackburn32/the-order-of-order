@@ -26,6 +26,8 @@ import { DieTooltip } from "../ui/dieTooltip";
 import { vigilGroups } from "../ui/vigilTally";
 import type { DiceStack } from "../systems/DicePool";
 import { dieBodyTexture } from "../art/textures";
+import { buildMedal } from "../ui/medal";
+import { tierName } from "../systems/GoalTiers";
 import {
   dieEffects,
   dieEffectsKey,
@@ -425,9 +427,10 @@ export class HallScene extends Phaser.Scene {
     const dateW = widest([dateHead, ...rows.map((r) => r.date)]);
     const rankW = widest([rankHead, ...rows.map((r) => r.rank)]);
     const scoreW = widest([scoreHead, ...rows.map((r) => r.score)]);
-    // The crown and the endless mark get columns of their own rather than being
+    // The medal and the endless mark get columns of their own rather than being
     // tucked into a margin, so neither can crowd the date or the score.
-    const crownW = entries.some((e) => e.won) ? cellSize + 4 : 0;
+    // Wide enough for legendary's rays, which reach past the disc.
+    const crownW = entries.some((e) => e.won) ? cellSize * 1.6 : 0;
     const markW = entries.some((e) => e.endless) ? cellSize : 0;
     const listW = Math.max(...rows.map((r) => r.dice.width));
 
@@ -517,9 +520,23 @@ export class HallScene extends Phaser.Scene {
       rank.setPosition(textLeft + rankX, textY);
       score.setPosition(textLeft + scoreX, textY);
 
-      // Victorious runs get a gold crown in the left gutter (old entries predate
-      // `won`, so `undefined` reads as a loss — no marker).
-      if (entry.won) {
+      // Victorious runs get the medal of the rank they finished on in the left
+      // gutter; a loss is unranked and gets nothing. (A win the Hall could not
+      // grade falls back to the crown that marked victories before ranks.)
+      const medal =
+        entry.won && (entry.medal ?? -1) >= 0
+          ? buildMedal(
+              this,
+              textLeft + crownX,
+              textY - cellSize * 0.12,
+              cellSize * 0.58,
+              entry.medal ?? 0,
+              1,
+            )
+          : null;
+      if (medal) {
+        track.add(medal);
+      } else if (entry.won) {
         track.add(
           this.add
             .text(textLeft + crownX, textY, "♛", {
@@ -689,7 +706,7 @@ export class HallScene extends Phaser.Scene {
       // The masthead wants a short title and the detail beneath it; the run's
       // score is the headline the analysis screen prints for itself.
       title: "Run Analysis",
-      subtitle: `${date} · rank ${entry.rank}-${entry.trial}${entry.won ? " · victory" : ""}`,
+      subtitle: `${date} · rank ${entry.rank}-${entry.trial}${entry.won ? ` · ${(entry.medal ?? -1) >= 0 ? `${tierName(entry.medal ?? 0)} ` : ""}victory` : ""}`,
       dicePoints: toNumberPointMap(entry.dicePoints ?? {}),
       itemPoints: toNumberPointMap(entry.itemPoints ?? {}),
       history: entry.history,
@@ -745,8 +762,8 @@ export class HallScene extends Phaser.Scene {
       // A global run now charts exactly what a local one does, so the subtitle
       // reads like the local one's rather than apologising for approximations.
       subtitle: `global #${row.rank} · ${CHARACTERS[row.character].name} · rank ${row.runRank}-${row.trial}${
-        row.endless ? " · endless" : ""
-      }`,
+        row.medal >= 0 ? ` · ${tierName(row.medal)} victory` : ""
+      }${row.endless ? " · endless" : ""}`,
       dicePoints: analysis.dicePoints,
       itemPoints: analysis.itemPoints,
       history: analysis.history,
@@ -884,18 +901,28 @@ export class HallScene extends Phaser.Scene {
         .setOrigin(1, 0.5);
       track.add(scoreText);
       // Endless runs get an infinity mark just left of the (right-aligned)
-      // score.
+      // score, and a victory the medal of its rank left of that.
+      let markLeft = lScore - scoreText.width - 6;
       if (row.endless) {
-        track.add(
-          this.add
-            .text(lScore - scoreText.width - 6, y, "∞", {
-              fontFamily: SERIF,
-              fontSize: `${cellSize}px`,
-              color: CSS.gold,
-            })
-            .setOrigin(1, 0.5),
-        );
+        const mark = this.add
+          .text(markLeft, y, "∞", {
+            fontFamily: SERIF,
+            fontSize: `${cellSize}px`,
+            color: CSS.gold,
+          })
+          .setOrigin(1, 0.5);
+        track.add(mark);
+        markLeft -= mark.width + 4;
       }
+      const medal = buildMedal(
+        this,
+        markLeft - cellSize * 0.85,
+        y - cellSize * 0.12,
+        cellSize * 0.58,
+        row.medal,
+        1,
+      );
+      if (medal) track.add(medal);
     });
 
     const hint = this.mountList({

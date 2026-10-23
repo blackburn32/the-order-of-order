@@ -53,10 +53,12 @@ export interface TrialCardStatus {
 // What each number actually is, in words. The short pair is for the side-by-side
 // composition, where a caption has half a card's width and wrapping one line of
 // explanation onto two lines of ragged type costs more than the words are worth.
-const GOAL_CAPTION = "points needed to clear";
-const GOAL_CAPTION_SHORT = "points to clear";
-const ROLLS_CAPTION = "rolls to reach it";
-const ROLLS_CAPTION_SHORT = "rolls to do it";
+// The goal shown is bronze, the one the run's survival hangs on; the three
+// above it are climbed in play (see systems/GoalTiers), and every roll is.
+const GOAL_CAPTION = "bronze points to survive";
+const GOAL_CAPTION_SHORT = "bronze to survive";
+const ROLLS_CAPTION = "rolls, every one played";
+const ROLLS_CAPTION_SHORT = "rolls, all played";
 const CURSE_HEADING = "THIS TRIAL'S CURSE";
 
 /** How far a trial's name may be shrunk to hold it on one line before wrapping

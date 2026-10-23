@@ -22,6 +22,8 @@ import {
   isMirrorTrial,
   trialGoal,
   trialInRank,
+  trialTierGoals,
+  type TierGoals,
 } from "../config";
 import type { RunState } from "../state/RunState";
 import {
@@ -231,6 +233,26 @@ export function goalForTrial(state: RunState, trial: number): bigint {
     scaleGoal(trialGoal(trial), fold(ids).goalMultMilli),
     state.goalScale,
   );
+}
+
+/** This trial's four goals (bronze is `goalFor`), each scaled by every
+ *  affliction that raises a goal, exactly as bronze is. */
+export function tierGoalsFor(state: RunState): TierGoals {
+  const milli = afflictionsFor(state).goalMultMilli;
+  return trialTierGoals(state.trial).map((g) =>
+    scaleByRun(scaleGoal(g, milli), state.goalScale),
+  ) as unknown as TierGoals;
+}
+
+/** Preview a trial's four goals without moving RunState (see goalForTrial). */
+export function tierGoalsForTrial(state: RunState, trial: number): TierGoals {
+  const ids = isBossTrial(trial)
+    ? [...state.afflictions, ...state.bossModifiers]
+    : state.afflictions;
+  const milli = fold(ids).goalMultMilli;
+  return trialTierGoals(trial).map((g) =>
+    scaleByRun(scaleGoal(g, milli), state.goalScale),
+  ) as unknown as TierGoals;
 }
 
 function scaleGoal(base: bigint, multMilli: number): bigint {

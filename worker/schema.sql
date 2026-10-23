@@ -28,6 +28,13 @@ CREATE TABLE IF NOT EXISTS runs (
   -- it discards predate characters and could only be back-filled with a guess.
   character   TEXT NOT NULL DEFAULT 'diebert',
 
+  -- The run's goal-tier rank (src/systems/GoalTiers.runRank): 0 bronze …
+  -- 3 legendary for a win, -1 for a loss. Shown beside the run, never sorted
+  -- on. Added after the board shipped: a deployment whose table predates it
+  -- runs migrations/0001_medal.sql once, which adds it without touching rows
+  -- (they read as -1, unranked, which is what they were).
+  medal       INTEGER NOT NULL DEFAULT -1,
+
   -- The run's total points as an exact decimal, plus its digit count.
   --
   -- Points are a bigint that leaves SQLite's 64-bit INTEGER behind almost

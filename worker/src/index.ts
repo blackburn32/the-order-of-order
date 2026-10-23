@@ -127,10 +127,21 @@ interface Submission {
   rank: number;
   trial: number;
   endless: number;
+  medal: number;
   character: string;
   scoreExact: string;
   scoreLen: number;
   rolls: number;
+}
+
+/** The run's goal-tier rank: 0 bronze … 3 legendary for a win, -1 for a loss.
+ *  Optional, because a client from before ranks sends none, and that reads as
+ *  unranked rather than as a bad submission. */
+function readMedal(params: URLSearchParams): number {
+  const raw = params.get("medal");
+  if (raw === null || !/^-?\d$/.test(raw)) return -1;
+  const value = Number(raw);
+  return value >= 0 && value <= 3 ? value : -1;
 }
 
 function readSubmission(params: URLSearchParams): Submission | string {
@@ -163,6 +174,7 @@ function readSubmission(params: URLSearchParams): Submission | string {
     rank,
     trial,
     endless: params.get("endless") === "1" ? 1 : 0,
+    medal: readMedal(params),
     character: readCharacter(params),
     scoreExact,
     scoreLen: scoreExact.length,
@@ -215,6 +227,7 @@ interface BoardRow {
   rank: number;
   trial: number;
   endless: number;
+  medal: number;
   character: string;
   score_exact: string;
   rolls: number;
@@ -231,7 +244,7 @@ async function getTop(request: Request, env: Env): Promise<Response> {
     : DEFAULT_BOARD_SIZE;
 
   const { results } = await env.DB.prepare(
-    `SELECT member_id, initials, rank, trial, endless, character, score_exact,
+    `SELECT member_id, initials, rank, trial, endless, medal, character, score_exact,
             rolls, has_analysis, created_at
        FROM runs
       ORDER BY rank DESC, score_len DESC, score_exact DESC
@@ -250,6 +263,7 @@ async function getTop(request: Request, env: Env): Promise<Response> {
     rank: row.rank,
     trial: row.trial,
     endless: row.endless === 1,
+    medal: row.medal,
     character: row.character,
     score: row.score_exact,
     rolls: row.rolls,
@@ -306,8 +320,9 @@ async function postRun(request: Request, env: Env): Promise<Response> {
 
   await env.DB.prepare(
     `INSERT INTO runs (member_id, initials, rank, trial, endless, character,
-                       score_exact, score_len, rolls, has_analysis, created_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                       score_exact, score_len, rolls, has_analysis, created_at,
+                       medal)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
      ON CONFLICT(member_id) DO UPDATE SET
        initials = excluded.initials,
        rank = excluded.rank,
@@ -318,7 +333,8 @@ async function postRun(request: Request, env: Env): Promise<Response> {
        score_len = excluded.score_len,
        rolls = excluded.rolls,
        has_analysis = excluded.has_analysis,
-       created_at = excluded.created_at`,
+       created_at = excluded.created_at,
+       medal = excluded.medal`,
   )
     .bind(
       parsed.memberId,
@@ -332,6 +348,7 @@ async function postRun(request: Request, env: Env): Promise<Response> {
       parsed.rolls,
       hasAnalysis ? 1 : 0,
       Date.now(),
+      parsed.medal,
     )
     .run();
 

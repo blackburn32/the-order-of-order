@@ -426,7 +426,7 @@ export const ITEM_TREES: ItemTree[] = [
 
 const TEMPO = "Adds rolls or a safety net, which serves every tree alike.";
 const EARLY_CLEAR =
-  "Pays for clearing a trial with rolls to spare, which works against spending most of a trial's rolls.";
+  "Pays for clearing a trial with rolls to spare, and every trial now plays to its last roll: off the shelf.";
 
 /** Live cards no tree claims. Every live item is either in a tree or here. */
 export const OUTSIDE_TREES: Partial<Record<ShopItemId, OutsidePlacement>> = {

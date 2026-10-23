@@ -68,8 +68,14 @@ import {
   progressPrinter,
   runGrid,
   sortedCopy,
+  goalFromLog10 as roundGoal,
+  rankSurvival,
   type GridJob,
 } from "./goalGrid";
+
+function goalFromLog10(x: number): bigint {
+  return roundGoal(x, SIG);
+}
 
 const CHECKPOINTS = parseCheckpoints(
   process.env.CHECKPOINTS ?? "1=0.7,3=0.4,6=0.2,10=0.05",
@@ -106,35 +112,6 @@ function parseCheckpoints(text: string): Map<number, number> {
   if (!out.has(WIN_RANK))
     throw new Error(`CHECKPOINTS: rank ${WIN_RANK} (the win rate) is required`);
   return out;
-}
-
-/** Share of runs alive after each rank (index = rank - 1): the checkpoints,
- *  joined by a constant factor per rank between them. */
-export function rankSurvival(checkpoints: Map<number, number>): number[] {
-  const known: [number, number][] = [
-    [0, 1] as [number, number],
-    ...checkpoints.entries(),
-  ].sort((a, b) => a[0] - b[0]);
-  const out: number[] = [];
-  for (let rank = 1; rank <= WIN_RANK; rank++) {
-    const hi = known.findIndex(([r]) => r >= rank);
-    const [r1, s1] = known[hi];
-    const [r0, s0] = known[hi - 1];
-    out.push(s0 * (s1 / s0) ** ((rank - r0) / (r1 - r0)));
-  }
-  return out;
-}
-
-export function goalFromLog10(x: number, sig = SIG): bigint {
-  if (x < 0) return 1n;
-  if (x < sig) return BigInt(Math.max(1, Math.round(10 ** x)));
-  let exponent = Math.floor(x) - (sig - 1);
-  let mantissa = Math.round(10 ** (x - exponent));
-  if (mantissa >= 10 ** sig) {
-    mantissa = Math.round(mantissa / 10);
-    exponent += 1;
-  }
-  return BigInt(mantissa) * 10n ** BigInt(exponent);
 }
 
 /**

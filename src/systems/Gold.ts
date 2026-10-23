@@ -8,14 +8,16 @@
 // ever needs bigint the economy has already gone wrong.
 //
 // Earned in two places:
-//   • On clearing a trial — `trialPayout`, from the trial's level, the rolls
-//     left in hand, interest on what is already banked, and gold items.
+//   • On clearing a trial — `trialPayout`, from the trial's level, the highest
+//     goal tier it met, the rolls left in hand, interest on what is already
+//     banked, and gold items.
 //   • During a trial — `rollGold`, from Tithe Bowl and Lucky Coin.
 
 import { isBossTrial, trialInRank } from "../config";
 import type { RunState } from "../state/RunState";
 import { afflictionsFor } from "./Afflictions";
 import { bossGoldMultMilli } from "./Boss";
+import { TIER_GOLD, tierReached } from "./GoalTiers";
 import { trialRollTarget } from "./Trial";
 
 /** Base payout for clearing each trial in a rank, by `trialInRank() - 1`. */
@@ -58,6 +60,10 @@ export const LUCKY_COIN_CHANCE = 0.1;
 export interface GoldBreakdown {
   /** The trial's level payout. */
   base: number;
+  /** The highest goal tier the trial met (0 bronze … 3 legendary). */
+  tier: number;
+  /** Gold paid for meeting a tier above bronze. */
+  tierGold: number;
   /** How many rolls were actually left when the goal was met. */
   rollsLeft: number;
   /** How many of those the ceiling actually paid for. Below the ceiling this
@@ -85,6 +91,8 @@ export interface TrialPayoutTuning {
 
 export const EMPTY_BREAKDOWN: GoldBreakdown = {
   base: 0,
+  tier: -1,
+  tierGold: 0,
   rollsLeft: 0,
   rollsPaid: 0,
   rolls: 0,
@@ -124,6 +132,10 @@ export function trialPayout(
   tuning: TrialPayoutTuning = {},
 ): GoldBreakdown {
   const base = TRIAL_GOLD_BASE[trialInRank(state.trial) - 1];
+  // Every trial plays out, so it is the tier the score climbed to by its last
+  // roll that pays, not how early bronze was met.
+  const tier = Math.max(0, tierReached(state));
+  const tierGold = TIER_GOLD[tier];
 
   // Reserve adds to the per-roll rate rather than the cap, so it stays useful
   // on a trial cleared with only a roll or two to spare.
@@ -163,6 +175,8 @@ export function trialPayout(
 
   const scaled = {
     base: scale(base),
+    tier,
+    tierGold: scale(tierGold),
     rollsLeft,
     rollsPaid: paidRolls,
     rolls: scale(rolls),
@@ -172,7 +186,12 @@ export function trialPayout(
 
   return {
     ...scaled,
-    total: scaled.base + scaled.rolls + scaled.items + scaled.interest,
+    total:
+      scaled.base +
+      scaled.tierGold +
+      scaled.rolls +
+      scaled.items +
+      scaled.interest,
   };
 }
 

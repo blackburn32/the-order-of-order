@@ -1,4 +1,6 @@
 import Phaser from "phaser";
+import { runRank, tierCss, tierName } from "../systems/GoalTiers";
+import { buildMedal } from "../ui/medal";
 import { CSS, SERIF } from "../art/palette";
 import { rankOf, WIN_RANK } from "../config";
 import { getRun } from "../state/RunState";
@@ -75,7 +77,11 @@ export class VictoryScene extends Phaser.Scene {
       state.kingsDemand || state.afflictions.includes("betrayal")
         ? "Press on and the Crown's tribute and the Betrayal are lifted."
         : null;
-    const scoreLine = `Total score: ${formatScore(state.totalScore)}`;
+    // The run's rank, read off its total score (see systems/GoalTiers), is
+    // printed beside it and in its tier's colour. Every win is at least bronze.
+    const rank = runRank(state.totalScore, true);
+    const scoreLine = `Total score: ${formatScore(state.totalScore)}${rank < 0 ? "" : ` · ${tierName(rank)} rank`}`;
+    const scoreColor = rank < 0 ? CSS.goldLight : tierCss(rank);
     const gridLine = `Your grid: ${state.dice.summary()}`;
 
     const hasPoints =
@@ -115,6 +121,7 @@ export class VictoryScene extends Phaser.Scene {
     if (isCompactLandscape(W, H)) {
       buildCompactEndScreen(this, {
         title: "The Order Is Complete",
+        medal: rank,
         titleColor: CSS.goldLight,
         lines: [
           {
@@ -124,7 +131,7 @@ export class VictoryScene extends Phaser.Scene {
             italic: true,
           },
           { text: rankLine, size: 24, color: CSS.parchment, gapBefore: 14 },
-          { text: scoreLine, size: 19, color: CSS.goldLight },
+          { text: scoreLine, size: 19, color: scoreColor },
           { text: gridLine, size: 15, color: CSS.dim, gapBefore: 10 },
           ...(liftLine
             ? [
@@ -145,6 +152,9 @@ export class VictoryScene extends Phaser.Scene {
 
     const top = H * 0.2;
     const step = Math.min(H * 0.09, 60);
+
+    // The run's rank, as a medal standing behind the title.
+    buildMedal(this, cx, top - 4, Math.min(step * 1.15, 68), rank);
 
     this.add
       .text(cx, top, "The Order Is Complete", {
@@ -177,7 +187,7 @@ export class VictoryScene extends Phaser.Scene {
       .text(cx, top + step * 3.2, scoreLine, {
         fontFamily: SERIF,
         fontSize: "24px",
-        color: CSS.goldLight,
+        color: scoreColor,
       })
       .setOrigin(0.5);
 

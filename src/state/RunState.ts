@@ -238,6 +238,9 @@ export interface RunState {
   // separately so rolls before that purchase never increase its payout.
   momentumStreak: number;
   clutchClear: boolean; // has ever crossed the goal on a trial's final roll
+  // Trials cleared at each goal tier this run, by the highest tier met: bronze,
+  // silver, gold, legendary (see systems/GoalTiers). The duel is not counted.
+  tierCounts: number[];
   peakGold: number; // highest gold ever held this run (unlock criteria)
   // Most rolls ever left in hand when a trial cleared this run. Latched here
   // rather than read off the live trial because a clear resets the roll counter
@@ -416,6 +419,7 @@ export function newRun(
     clutchClear: false,
     peakGold: who.startingGold,
     peakRollsLeftOnClear: 0,
+    tierCounts: [0, 0, 0, 0],
     shopUnlocks: [...shopUnlocks],
     ownedUnique: [],
     purchases: {},

@@ -41,6 +41,7 @@ export function cloneRunState(state: RunState): RunState {
     royalSealSizes: [...state.royalSealSizes],
     afflictions: [...state.afflictions],
     endingsSeen: [...state.endingsSeen],
+    tierCounts: [...state.tierCounts],
     rival: state.rival
       ? {
           dice: state.rival.dice.clone(),

@@ -1,4 +1,6 @@
 import Phaser from "phaser";
+import { runRank, tierCss, tierName } from "../systems/GoalTiers";
+import { buildMedal } from "../ui/medal";
 import { CSS, SERIF } from "../art/palette";
 import { rankOf, trialName } from "../config";
 import { getRun } from "../state/RunState";
@@ -75,7 +77,12 @@ export class GameOverScene extends Phaser.Scene {
 
     const rankLine = `You fell at rank ${rankOf(state.trial)}`;
     const trialLine = `The ${trialName(state.trial)}`;
-    const scoreLine = `Total score: ${formatScore(state.totalScore)}`;
+    // Only a win is ranked. A run that fell before the duel has none; one that
+    // won, pressed on into endless and fell there keeps the rank it earned,
+    // read off its total score (see systems/GoalTiers) in its tier's colour.
+    const rank = runRank(state.totalScore, state.endless);
+    const scoreLine = `Total score: ${formatScore(state.totalScore)}${rank < 0 ? "" : ` · ${tierName(rank)} rank`}`;
+    const scoreColor = rank < 0 ? CSS.goldLight : tierCss(rank);
     const gridLine = `Your grid: ${state.dice.summary()}`;
     const unlockedNames = this.unlocked.map(
       (id) => ITEMS.find((item) => item.id === id)?.name ?? id,
@@ -122,7 +129,7 @@ export class GameOverScene extends Phaser.Scene {
         },
         { text: rankLine, size: 22, color: CSS.parchment, gapBefore: 12 },
         { text: trialLine, size: 22, color: CSS.parchment, gapBefore: 2 },
-        { text: scoreLine, size: 18, color: CSS.goldLight, gapBefore: 10 },
+        { text: scoreLine, size: 18, color: scoreColor, gapBefore: 10 },
         { text: gridLine, size: 14, color: CSS.dim, gapBefore: 8 },
       ];
       if (unlockLine) {
@@ -136,6 +143,7 @@ export class GameOverScene extends Phaser.Scene {
       }
       buildCompactEndScreen(this, {
         title: "The Run Has Ended",
+        medal: rank,
         titleColor: CSS.red,
         lines,
         actions,
@@ -145,6 +153,9 @@ export class GameOverScene extends Phaser.Scene {
 
     const top = H * 0.2;
     const step = Math.min(H * 0.09, 60);
+
+    // The run's rank, as a medal standing behind the title.
+    buildMedal(this, cx, top - 4, Math.min(step * 1.15, 68), rank);
 
     this.add
       .text(cx, top, "The Run Has Ended", {
@@ -185,7 +196,7 @@ export class GameOverScene extends Phaser.Scene {
       .text(cx, top + step * 3.5, scoreLine, {
         fontFamily: SERIF,
         fontSize: "24px",
-        color: CSS.goldLight,
+        color: scoreColor,
       })
       .setOrigin(0.5);
 

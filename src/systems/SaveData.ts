@@ -12,6 +12,7 @@ import {
 } from "./Characters";
 import { ITEMS, meetsCriterion, ShopItemId } from "./Items";
 import { isSeed } from "./Rng";
+import { runRank } from "./GoalTiers";
 import { metaUnlockOwner } from "./Shop";
 import {
   hydrateRollHistory,
@@ -42,6 +43,11 @@ export interface HallEntry {
   trial: number; // trial reached within that rank (1..3)
   score: bigint; // total points accumulated across the whole run; the tiebreak
   won: boolean; // true if the run cleared the final rank
+  // The run's rank on the goal tiers (systems/GoalTiers.runRank): 0 bronze …
+  // 3 legendary for a win, -1 for a loss. Stored rather than re-read from the
+  // score, so a later rebalance of the run ranks never re-grades an old run.
+  // Optional: entries recorded before ranks existed are graded on load.
+  medal?: number;
   // The novice the run was played as. Optional because entries recorded before
   // characters existed carry none; those runs were played under the rules the
   // default character now carries, so that is what they are read back as.
@@ -93,6 +99,21 @@ export interface Settings {
 
 const itemIds: ReadonlySet<string> = new Set(ITEMS.map((item) => item.id));
 
+/** A stored run rank, or for an entry from before ranks existed, the one its
+ *  score earns under today's ladder. */
+function hallMedal(raw: unknown, entry: Record<string, unknown>): number {
+  const n = Number(raw);
+  if (raw !== undefined && Number.isInteger(n) && n >= -1 && n <= 3) return n;
+  try {
+    return runRank(
+      BigInt((entry.score as string | number | undefined) ?? 0),
+      Boolean(entry.won),
+    );
+  } catch {
+    return -1;
+  }
+}
+
 export function loadHall(): HallEntry[] {
   try {
     const raw = localStorage.getItem(KEY_SCORES);
@@ -107,6 +128,7 @@ export function loadHall(): HallEntry[] {
         trial: Number(entry.trial),
         score: BigInt((entry.score as string | number | undefined) ?? 0),
         won: Boolean(entry.won),
+        medal: hallMedal(entry.medal, entry),
         character: isCharacterId(entry.character)
           ? entry.character
           : DEFAULT_CHARACTER,
@@ -428,6 +450,7 @@ export function recordRunEnd(
     trial: trialInRank(state.trial),
     score: state.totalScore,
     won,
+    medal: runRank(state.totalScore, won),
     character: state.character,
     endless: state.endless,
     goldEarned: state.goldEarned,

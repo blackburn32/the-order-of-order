@@ -426,6 +426,7 @@ export class InitialsPromptScene extends Phaser.Scene {
           trial: this.run.trial,
           endless: this.run.endless,
           character: this.run.character,
+          medal: -1,
           rolls: 0,
           dicePoints: {},
           itemPoints: {},

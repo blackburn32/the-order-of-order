@@ -1,5 +1,6 @@
 import Phaser from "phaser";
-import { isMirrorTrial, rankOf, trialInRank } from "../config";
+import { GOAL_TIERS, isMirrorTrial, rankOf, trialInRank } from "../config";
+import { nextTier, TIER_GOLD, tierCss, tierName } from "../systems/GoalTiers";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { artImage, artScale, bossSigilTexture } from "../art/textures";
 import { DIE_SIZE } from "../art/dieArt";
@@ -17,6 +18,7 @@ import {
   activeBoss,
   activeBosses,
   goalFor,
+  tierGoalsFor,
   type BossModifier,
 } from "../systems/Boss";
 import { inertDiceCount } from "../systems/Afflictions";
@@ -142,6 +144,9 @@ interface HudReading {
   roll: string;
   score: bigint;
   target: string;
+  /** The target cell's label: the tier being climbed toward. */
+  targetLabel: string;
+  targetColor: string;
   gold: string;
   status: StatusRow[];
   duel: boolean;
@@ -576,6 +581,8 @@ export class GameScene extends Phaser.Scene {
   private hudRoll!: Phaser.GameObjects.Text;
   private hudScore!: Phaser.GameObjects.Text;
   private hudTarget!: Phaser.GameObjects.Text;
+  private hudTargetLabel!: Phaser.GameObjects.Text;
+  private hudTargetPlaque!: Phaser.GameObjects.Container;
   private statusTable!: StatusTable;
   private statusTooltip!: DieTooltip;
   /** The HUD as the last roll left it, held from the moment a trial resolves
@@ -812,6 +819,11 @@ export class GameScene extends Phaser.Scene {
       case TutorialStage.Grid:
       case TutorialStage.RollOne:
         anchor = grid;
+        onContinue = advance;
+        break;
+      case TutorialStage.Tiers:
+        // The goal plaque, which names the tier being climbed.
+        anchor = this.hudTargetPlaque.getBounds();
         onContinue = advance;
         break;
       case TutorialStage.Pan:
@@ -1147,6 +1159,8 @@ export class GameScene extends Phaser.Scene {
     this.hudRoll = plaqueByKey.roll.value;
     this.hudScore = plaqueByKey.score.value;
     this.hudTarget = plaqueByKey.target.value;
+    this.hudTargetLabel = plaqueByKey.target.label;
+    this.hudTargetPlaque = plaqueByKey.target.container;
     this.hudScorePlaque = plaqueByKey.score.container;
 
     const bossRibbon = this.buildBossRibbon(layout);
@@ -1448,11 +1462,24 @@ export class GameScene extends Phaser.Scene {
     const s = this.state;
     const duel = isMirrorTrial(s.trial);
     const goal = duel ? rivalScore(s) : goalFor(s);
+    // Every trial is played out, so the cell names the next tier still to
+    // climb ("GOAL" after it, so a gold tier never reads as the purse), and
+    // holds on legendary once it is met. The table's tension still
+    // reads bronze, the goal the run's survival hangs on.
+    const next = nextTier(s);
+    const topTier = GOAL_TIERS.length - 1;
+    const shownTier = duel ? null : (next?.index ?? topTier);
+    const target = duel ? goal : (next?.goal ?? tierGoalsFor(s)[topTier]);
     return {
       rank: `${rankOf(s.trial)}-${trialInRank(s.trial)}`,
       roll: `${s.roll}/${trialRollTarget(s)}`,
       score: s.score,
-      target: formatScore(goal),
+      target: formatScore(target),
+      targetLabel:
+        shownTier === null
+          ? "DISORDER"
+          : `${tierName(shownTier).toUpperCase()} GOAL${next ? "" : " ✓"}`,
+      targetColor: shownTier === null ? CSS.cursed : tierCss(shownTier),
       gold: String(s.gold),
       status: statusRows(s),
       duel,
@@ -1467,6 +1494,11 @@ export class GameScene extends Phaser.Scene {
     this.setHudValue(this.hudRoll, hud.roll);
     this.setScoreDisplay(hud.score);
     this.setHudValue(this.hudTarget, hud.target);
+    this.hudTarget.setColor(hud.targetColor);
+    this.hudTargetLabel.setScale(1).setText(hud.targetLabel);
+    const labelRoom = this.hudTarget.getData("hudMaxWidth") as number;
+    if (this.hudTargetLabel.width > labelRoom)
+      this.hudTargetLabel.setScale(labelRoom / this.hudTargetLabel.width);
     this.setHudValue(this.hudGold, hud.gold);
     this.statusTable.setRows(hud.status);
 
@@ -3587,12 +3619,24 @@ export class GameScene extends Phaser.Scene {
     // that merely scored inside an already-cleared trial says nothing. The duel
     // has no goal to cross — it is decided by who is ahead when the rolls run
     // out — so it never acclaims.
-    const goal = goalFor(s);
-    const crossedGoal =
-      !isMirrorTrial(s.trial) &&
-      goal > 0n &&
-      s.score >= goal &&
-      s.score - result.points < goal;
+    // Every tier acclaims as it is crossed, not only bronze: a trial no longer
+    // ends at its goal, so each tier met is the moment worth marking.
+    const tiers = tierGoalsFor(s);
+    const crossedTier = isMirrorTrial(s.trial)
+      ? -1
+      : tiers.reduce(
+          (top, goal, i) =>
+            goal > 0n && s.score >= goal && s.score - result.points < goal
+              ? i
+              : top,
+          -1,
+        );
+    const crossedGoal = crossedTier >= 0;
+    if (crossedGoal && crossedTier > 0)
+      this.banners.push(`${tierName(crossedTier)} goal met`, {
+        holdMs: 1100,
+        detail: `+${TIER_GOLD[crossedTier]} gold when the trial ends.`,
+      });
     const acclaim: RollAcclaim | undefined = !crossedGoal
       ? undefined
       : s.roll === 1

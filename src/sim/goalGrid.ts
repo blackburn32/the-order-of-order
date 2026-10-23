@@ -42,7 +42,9 @@ import {
 } from "node:worker_threads";
 import {
   setTrialGoals,
+  setTrialTierGoals,
   setTrialRollCadenceForSimulation,
+  WIN_RANK,
   WIN_TRIAL,
   type TrialRollCadence,
 } from "../config";
@@ -162,6 +164,9 @@ export interface GridJob {
   /** The goal table the validate pass plays against (index = trial - 1), or
    *  null for the live table in config.ts. Ignored by search. */
   goals: (bigint | null)[] | null;
+  /** Silver / gold / legendary per trial for the validate pass, or null (or
+   *  absent) for the live tiers. */
+  tiers?: (readonly [bigint, bigint, bigint] | null)[] | null;
   /** Roll cadence override (Lesser, Greater, Boss), or null for the live one. */
   cadence: TrialRollCadence | null;
   /** Search only: assumed early-completion gold per trial, [min, max]. */
@@ -192,6 +197,8 @@ export interface GridResult {
   won: boolean;
   trialReached: number;
   goldEarned: number;
+  /** log10 of the run's total score as it ended (see bot.scoreLog10). */
+  totalLog10: number;
   trials: GridTrial[];
   /** Every strategy tree's engine (its tier-3 card) the run came to own, with
    *  the first trial it was owned going into. Engines compound for the rest of
@@ -211,10 +218,12 @@ function applyMode(job: GridJob): void {
     // trial is latched as cleared (paying the Boss bonus and boon) while the
     // full-budget switch makes it play on to its last roll regardless.
     setTrialGoals(new Array<bigint>(WIN_TRIAL).fill(0n));
+    setTrialTierGoals(null);
     setFullBudgetAllTrials(true);
     setCulling(false);
   } else {
     setTrialGoals(job.goals);
+    setTrialTierGoals(job.tiers ?? null);
     setFullBudgetAllTrials(false);
     setCulling(true);
   }
@@ -249,6 +258,7 @@ export function runGridJob(job: GridJob): GridResult {
     won: record.won,
     trialReached: record.trialReached,
     goldEarned: record.goldEarned,
+    totalLog10: round(record.totalScoreLog10),
     engines,
     trials: record.trajectory.map((t) => ({
       trial: t.trial,
@@ -365,6 +375,36 @@ export function nearestRank(sorted: readonly number[], q: number): number {
 
 export function sortedCopy(xs: readonly number[]): number[] {
   return [...xs].sort((a, b) => a - b);
+}
+
+/** Share of runs alive after each rank (index = rank - 1): the checkpoints,
+ *  joined by a constant factor per rank between them. */
+export function rankSurvival(checkpoints: Map<number, number>): number[] {
+  const known: [number, number][] = [
+    [0, 1] as [number, number],
+    ...checkpoints.entries(),
+  ].sort((a, b) => a[0] - b[0]);
+  const out: number[] = [];
+  for (let rank = 1; rank <= WIN_RANK; rank++) {
+    const hi = known.findIndex(([r]) => r >= rank);
+    const [r1, s1] = known[hi];
+    const [r0, s0] = known[hi - 1];
+    out.push(s0 * (s1 / s0) ** ((rank - r0) / (r1 - r0)));
+  }
+  return out;
+}
+
+/** A goal from a log10 score, rounded to `sig` significant figures. */
+export function goalFromLog10(x: number, sig = 3): bigint {
+  if (x < 0) return 1n;
+  if (x < sig) return BigInt(Math.max(1, Math.round(10 ** x)));
+  let exponent = Math.floor(x) - (sig - 1);
+  let mantissa = Math.round(10 ** (x - exponent));
+  if (mantissa >= 10 ** sig) {
+    mantissa = Math.round(mantissa / 10);
+    exponent += 1;
+  }
+  return BigInt(mantissa) * 10n ** BigInt(exponent);
 }
 
 if (!isMainThread && workerData?.kind === WORKER_KIND) {

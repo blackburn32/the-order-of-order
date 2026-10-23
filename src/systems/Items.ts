@@ -899,6 +899,7 @@ export const ITEMS: ItemDef[] = [
       (rolls, plural) =>
         `When you clear a trial, carry up to ${rolls} unused roll${plural ? "s" : ""} into the next one.`,
     ),
+    available: paysForUnusedRolls,
     unlock: { kind: "rollsLeftOnClear", count: 8 },
     effects: [incCounter("rainCheck")],
   },
@@ -1595,6 +1596,7 @@ export const ITEMS: ItemDef[] = [
       (gold) =>
         `Each roll left in hand when a trial clears pays ${gold} extra gold.`,
     ),
+    available: paysForUnusedRolls,
     unlock: { kind: "scoreVsTarget", factor: 2 },
     effects: [incCounter("reserve")],
   },
@@ -1676,6 +1678,7 @@ export const ITEMS: ItemDef[] = [
       (gold) =>
         `Gold is paid for up to ${gold} rolls left in hand when a trial clears.`,
     ),
+    available: paysForUnusedRolls,
     effects: [incCounter("deepPockets")],
   },
   {
@@ -2324,6 +2327,16 @@ export function meetsCriterion(c: UnlockCriterion, state: RunState): boolean {
       // resets the roll counter before unlocks are next evaluated.
       return state.peakRollsLeftOnClear >= c.count;
   }
+}
+
+/**
+ * Off the shelf while every trial plays to its last roll: Reserve, The Almsbag
+ * and Held Breath all pay for rolls left in hand when a trial clears, and no
+ * trial ends with any. Kept rather than deleted so a run saved holding them
+ * still resumes, and so they can return if they are reworked.
+ */
+function paysForUnusedRolls(): boolean {
+  return false;
 }
 
 /** Fold the run's persistent size auras into the options for a die about to be
