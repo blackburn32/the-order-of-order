@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { SERIF } from "../art/palette";
 import { compactColumns } from "./layout";
+import { buildMedal } from "./medal";
 import { BannerAction, fitTextWidth, stackBannerButtons } from "./widgets";
 
 /** One line of the verdict block: the run's outcome, its rank, its score. */
@@ -33,6 +34,9 @@ export function buildCompactEndScreen(
     titleColor: string;
     lines: EndScreenLine[];
     actions: BannerAction[];
+    /** The run's rank (systems/GoalTiers.runRank), drawn as a medal behind
+     *  the title; -1 or absent draws none. */
+    medal?: number;
   },
 ): void {
   const columns = compactColumns(scene, { leftFraction: 0.55 });
@@ -77,6 +81,14 @@ export function buildCompactEndScreen(
 
   let y = columns.top + Math.max(0, (columns.height - blockH) / 2);
   title.setY(y);
+  const medal = buildMedal(
+    scene,
+    left.cx,
+    y + title.height / 2,
+    title.height * 1.1,
+    opts.medal ?? -1,
+  );
+  if (medal) scene.children.moveBelow(medal, title);
   y += title.height;
   body.forEach((text, i) => {
     y += gaps[i];

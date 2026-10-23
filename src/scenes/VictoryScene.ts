@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { runRank, tierCss, tierName } from "../systems/GoalTiers";
+import { buildMedal } from "../ui/medal";
 import { CSS, SERIF } from "../art/palette";
 import { rankOf, WIN_RANK } from "../config";
 import { getRun } from "../state/RunState";
@@ -120,6 +121,7 @@ export class VictoryScene extends Phaser.Scene {
     if (isCompactLandscape(W, H)) {
       buildCompactEndScreen(this, {
         title: "The Order Is Complete",
+        medal: rank,
         titleColor: CSS.goldLight,
         lines: [
           {
@@ -150,6 +152,9 @@ export class VictoryScene extends Phaser.Scene {
 
     const top = H * 0.2;
     const step = Math.min(H * 0.09, 60);
+
+    // The run's rank, as a medal standing behind the title.
+    buildMedal(this, cx, top - 4, Math.min(step * 1.15, 68), rank);
 
     this.add
       .text(cx, top, "The Order Is Complete", {

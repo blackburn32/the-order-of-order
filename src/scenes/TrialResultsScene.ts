@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { isMirrorTrial, rankOf, trialName } from "../config";
 import { tierName } from "../systems/GoalTiers";
+import { buildMedal } from "../ui/medal";
 import type { TrialEndOutcome } from "../sim/engine";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
@@ -383,6 +384,8 @@ export class TrialResultsScene extends Phaser.Scene {
 
     const glow = this.buildTitleGlow(cx, top, Math.min(700, W * 0.78), 250);
     const titleSize = Phaser.Math.Clamp(panelW * 0.058, 28, 52);
+    // The tier the trial reached, as a medal standing behind the verdict.
+    const medal = buildMedal(this, cx, top, titleSize * 1.15, this.tierMet());
     const title = this.add
       .text(cx, top, this.verdict(), {
         fontFamily: SERIF,
@@ -436,7 +439,7 @@ export class TrialResultsScene extends Phaser.Scene {
 
     return {
       glow,
-      headline: [title, subtitle],
+      headline: [...(medal ? [medal] : []), title, subtitle],
       receipt: receipt.objects,
       unlock,
       button,
@@ -479,6 +482,15 @@ export class TrialResultsScene extends Phaser.Scene {
     // Sized off the title, so it can only be built after it — then sent back
     // behind, where light falling on the table belongs.
     this.children.moveBelow(glow, title);
+    const medal = buildMedal(
+      this,
+      left + title.width / 2,
+      headerTop + title.height / 2,
+      // Small enough to stay on screen: the folded header sits at the top edge.
+      Math.min(title.height * 0.95, headerTop + title.height / 2 + 6),
+      this.tierMet(),
+    );
+    if (medal) this.children.moveBelow(medal, title);
     const subtitle = this.add
       .text(right, headerTop + title.height / 2, this.trialLine(), {
         fontFamily: SERIF,
@@ -542,7 +554,7 @@ export class TrialResultsScene extends Phaser.Scene {
 
     return {
       glow,
-      headline: [title, subtitle, rule],
+      headline: [...(medal ? [medal] : []), title, subtitle, rule],
       receipt: receipt.objects,
       unlock,
       button,
@@ -565,14 +577,19 @@ export class TrialResultsScene extends Phaser.Scene {
       : "TRIAL CLEARED";
   }
 
+  /** The highest goal tier the trial met, or -1 when it has none to show:
+   *  the duel, and a trial survived on Insurance rather than cleared. */
+  private tierMet(): number {
+    const o = this.dataIn.outcome;
+    return isMirrorTrial(o.completedTrial) ? -1 : o.goldBreakdown.tier;
+  }
+
   private trialLine(): string {
     const o = this.dataIn.outcome;
     const line = `${trialName(o.completedTrial).replace(" Trial", " trial")}, Rank ${rankOf(o.completedTrial)}`;
     // The tier the trial was played out to, for every trial that has tiers.
-    const tier = o.goldBreakdown.tier;
-    return tier >= 0 && !isMirrorTrial(o.completedTrial)
-      ? `${line} · ${tierName(tier)}`
-      : line;
+    const tier = this.tierMet();
+    return tier >= 0 ? `${line} · ${tierName(tier)}` : line;
   }
 
   private buildTitleGlow(

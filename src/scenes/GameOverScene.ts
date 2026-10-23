@@ -1,5 +1,6 @@
 import Phaser from "phaser";
 import { runRank, tierCss, tierName } from "../systems/GoalTiers";
+import { buildMedal } from "../ui/medal";
 import { CSS, SERIF } from "../art/palette";
 import { rankOf, trialName } from "../config";
 import { getRun } from "../state/RunState";
@@ -141,6 +142,7 @@ export class GameOverScene extends Phaser.Scene {
       }
       buildCompactEndScreen(this, {
         title: "The Run Has Ended",
+        medal: rank,
         titleColor: CSS.red,
         lines,
         actions,
@@ -150,6 +152,9 @@ export class GameOverScene extends Phaser.Scene {
 
     const top = H * 0.2;
     const step = Math.min(H * 0.09, 60);
+
+    // The run's rank, as a medal standing behind the title.
+    buildMedal(this, cx, top - 4, Math.min(step * 1.15, 68), rank);
 
     this.add
       .text(cx, top, "The Run Has Ended", {
