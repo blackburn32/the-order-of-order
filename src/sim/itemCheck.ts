@@ -1576,8 +1576,28 @@ function buy(
   );
 }
 
-// The reworked grid multipliers are cursed: free, and every goal from then on
-// grows by the share the grid just grew — at parity, or more gently when swept.
+// The grid multipliers are sold plainly: priced a fifth over their band, and
+// they leave the goals alone.
+{
+  const state = newRun(); // the starter d6
+  state.dice.addDice(6, 9, {}, "test"); // ten d6
+  const offer = offerFor("mult2", state);
+  check(
+    !offer.cursed && offer.cost === 12,
+    "a live Gathering should be uncursed, at 12 gold",
+  );
+  state.gold = 12;
+  const goal = goalFor(state);
+  check(
+    applyOffer(state, offer) &&
+      state.dice.length === 20 &&
+      goalFor(state) === goal,
+    "and double the grid without touching the goals",
+  );
+}
+
+// A sim can still curse them: free, and every goal from then on grows by the
+// share the grid just grew — at parity, or more gently when swept.
 {
   setGridCurseGoalPerDoublingForSimulation(2); // parity
   const state = newRun(); // the starter d6
@@ -1605,6 +1625,10 @@ function buy(
     "Like Minds should charge only the share of the grid it grew, at the swept rate",
   );
   setGridCurseGoalPerDoublingForSimulation(null);
+  check(
+    !offerFor("mult2", newRun()).cursed,
+    "and lifting the sweep should sell them uncursed again",
+  );
   setCardReworksForSimulation(false);
   check(
     !offerFor("mult2", newRun()).cursed,

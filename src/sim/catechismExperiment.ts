@@ -357,8 +357,8 @@ interface Scenario {
   prototypes?: boolean;
   /** The Curious' copy chance for a qualifying die; every time when absent. */
   curiousChance?: number;
-  /** The goal growth the grid curse charges per doubling; the default (×1.6)
-   *  when absent. */
+  /** The goal growth the grid curse charges per doubling; uncursed, as the
+   *  live game sells the multipliers, when absent. */
   gridCurse?: number;
   /** The Catechism's growth per qualifying roll, in percent; the card's own
    *  when absent. */
