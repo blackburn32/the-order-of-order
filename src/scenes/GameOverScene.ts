@@ -54,6 +54,7 @@ export class GameOverScene extends Phaser.Scene {
         trial: pending.trial,
         endless: pending.endless,
         character: pending.character,
+        daily: pending.daily,
         returnTo: "GameOver",
       });
   }

@@ -47,7 +47,8 @@ export type RngDomain =
   | "packs" // a shop visit's booster shelf
   | "booster" // the cards inside one opened pack
   | "demands" // the King's writ
-  | "trialEnd"; // whatever a trial's resolution has to roll
+  | "trialEnd" // whatever a trial's resolution has to roll
+  | "daily"; // the Daily Rite's boons and banes, keyed by its day
 
 /** FNV-1a over the domain and key, mixed into the run's seed. Any hash would do;
  *  what matters is that it is pure integer arithmetic (so every engine agrees)

@@ -15,6 +15,7 @@ import type { RollSample } from "../systems/RunHistory";
 import type { ItemPurchaseEvent } from "../systems/ItemValue";
 import type { GrowthEngineId } from "../systems/GrowthEngines";
 import { randomSeed } from "../systems/Rng";
+import type { DailyRite } from "../systems/Daily";
 
 export interface RunState {
   // The novice this run is being played as (see systems/Characters). Chosen
@@ -104,6 +105,11 @@ export interface RunState {
   // dismissed their way to different answers, and only the run that happened
   // knows which rolls were rigged.
   forcedRolls: string[];
+  // The Daily Rite this run is playing, or null for an ordinary run (see
+  // systems/Daily). Its banes are also on `afflictions` and its granted cards
+  // on `purchases`; this is what says the run is a daily one at all, which day
+  // it belongs to, and which boons have no card to show for themselves.
+  dailyRite: DailyRite | null;
   bonusRollsThisRound: number; // Overtime — consumed at trial end
   bonusRollsPerRound: number; // Metronome — permanent
   ownedLedger: boolean;
@@ -321,6 +327,7 @@ export function newRun(
     seed,
     tutorialArmed: false,
     forcedRolls: [],
+    dailyRite: null,
     bonusRollsThisRound: 0,
     bonusRollsPerRound: 0,
     ownedLedger: false,

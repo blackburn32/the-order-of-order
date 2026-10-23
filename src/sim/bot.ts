@@ -1096,6 +1096,7 @@ export function simulateRun(
     objective: cfg.expertObjective,
   };
   const state = newRun(cfg.unlockedAtStart, seed, cfg.character);
+  cfg.prepareRun?.(state);
   beginRun(state, rng);
   commitToTree(state, strategy, seed);
 

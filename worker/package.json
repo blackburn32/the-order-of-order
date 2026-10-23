@@ -10,6 +10,8 @@
     "db:init": "wrangler d1 execute order-of-order --remote --config wrangler.toml --file=./schema.sql",
     "db:init:local": "wrangler d1 execute order-of-order --local --config wrangler.toml --file=./schema.sql",
     "db:migrate:medal": "wrangler d1 execute order-of-order --remote --config wrangler.toml --file=./migrations/0001_medal.sql",
+    "db:migrate:daily": "wrangler d1 execute order-of-order --remote --config wrangler.toml --file=./migrations/0002_daily.sql",
+    "db:migrate:daily:local": "wrangler d1 execute order-of-order --local --config wrangler.toml --file=./migrations/0002_daily.sql",
     "board:reset": "node scripts/reset-board.mjs"
   },
   "devDependencies": {

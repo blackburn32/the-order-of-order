@@ -13,6 +13,7 @@ import { CHARACTERS, DEFAULT_CHARACTER, isCharacterId } from "./Characters";
 import { DIE_LADDER } from "./Dice";
 import { DicePool, type DiceStack } from "./DicePool";
 import { ITEMS, type ShopItemId } from "./Items";
+import { isDailyBoonId, isDailyDay, type DailyRite } from "./Daily";
 import type { RivalState } from "./Rival";
 import {
   hydrateRollHistory,
@@ -213,6 +214,13 @@ export function serializeRunState(state: RunState): SerializedRunState {
     wildSizes: [...state.wildSizes],
     royalSealSizes: [...state.royalSealSizes],
     afflictions: [...state.afflictions],
+    dailyRite: state.dailyRite
+      ? {
+          ...state.dailyRite,
+          boons: [...state.dailyRite.boons],
+          banes: [...state.dailyRite.banes],
+        }
+      : null,
     endingsSeen: [...state.endingsSeen],
     rival: state.rival
       ? {
@@ -441,6 +449,13 @@ export function hydrateRunState(value: unknown): RunState | null {
   // A null default means the generic pass above skipped these two entirely, so
   // both are read straight off the saved shape.
   hydrated.kingsDemand = (value.kingsDemand as AfflictionId | null) ?? null;
+  // An ordinary run, and every save from before the Daily Rite, carries none. A
+  // malformed one fails the hydration: it decides the run's rules and its board.
+  if (value.dailyRite !== undefined && value.dailyRite !== null) {
+    const rite = hydrateDailyRite(value.dailyRite);
+    if (!rite) return null;
+    hydrated.dailyRite = rite;
+  }
   if (value.rival !== undefined && value.rival !== null) {
     const rival = hydrateRival(
       value.rival,
@@ -450,6 +465,22 @@ export function hydrateRunState(value: unknown): RunState | null {
     hydrated.rival = rival;
   }
   return hydrated;
+}
+
+function hydrateDailyRite(value: unknown): DailyRite | null {
+  if (!isRecord(value)) return null;
+  if (!isDailyDay(value.day) || !isSeed(value.seed)) return null;
+  if (!isCharacterId(value.character)) return null;
+  if (!Array.isArray(value.boons) || !value.boons.every(isDailyBoonId))
+    return null;
+  if (!validIdArray(value.banes, afflictionIds)) return null;
+  return {
+    day: value.day,
+    seed: value.seed,
+    character: value.character,
+    boons: [...value.boons],
+    banes: [...(value.banes as AfflictionId[])],
+  };
 }
 
 /** A saved id that is allowed to be absent or null, but not to be unknown. */

@@ -3,7 +3,7 @@ import { COLORS, CSS, SERIF } from "../art/palette";
 import { BUTTON_HEIGHT } from "../art/textures";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
-import { loadProgress, loadSettings } from "../systems/SaveData";
+import { dailyUnlocked, loadProgress, loadSettings } from "../systems/SaveData";
 import {
   addFelt,
   bannerButton,
@@ -227,8 +227,10 @@ export class MenuScene extends Phaser.Scene {
     rule.lineBetween(mast.cx - ruleHalf, ruleY, mast.cx - ruleGap, ruleY);
     rule.lineBetween(mast.cx + ruleGap, ruleY, mast.cx + ruleHalf, ruleY);
 
-    // The Codex of items stays locked until the player has finished one run.
+    // The Codex of items stays locked until the player has finished one run,
+    // and the Daily Rite until they have won one.
     const itemsUnlocked = loadProgress().gamesCompleted > 0;
+    const dailyOpen = dailyUnlocked();
     const actions: BannerAction[] = [
       {
         label: "Start New Run",
@@ -243,8 +245,15 @@ export class MenuScene extends Phaser.Scene {
           }),
       },
       {
+        label: "The Daily Rite",
+        onClick: () => {
+          if (dailyOpen) this.leave(() => this.scene.start("Daily"));
+          else showBanner(this, "Win a run to open the Daily Rite", 1200);
+        },
+      },
+      {
         label: "Hall of High Scores",
-        onClick: () => this.leave(() => this.scene.start("Hall")),
+        onClick: () => this.leave(() => this.scene.start("Hall", {})),
       },
       {
         label: "Codex",
@@ -272,7 +281,9 @@ export class MenuScene extends Phaser.Scene {
     // it drops below one button's height — hence the cap, which keeps a sliver
     // of felt showing between them by shrinking the buttons (label included)
     // rather than letting each one lap the next.
-    const btnGap = Math.min(84, H * 0.12);
+    // The pitch is the share of the lower half each button gets — 0.12 of the
+    // height at four, which is what the stacked layout was composed around.
+    const btnGap = Math.min(84, (H * 0.48) / actions.length);
     const startY = H * 0.48;
     const buttonStyle = menuButtonStyle();
     const buttons = compact
@@ -293,18 +304,17 @@ export class MenuScene extends Phaser.Scene {
           ),
         );
 
-    if (!itemsUnlocked) {
-      const itemsBtn = buttons[2];
-      itemsBtn.setAlpha(0.55);
+    const padlock = (button: Phaser.GameObjects.Container) => {
+      button.setAlpha(0.55);
       // A padlock pinned just left of the bare label, or into the left edge of
       // an ornamented button, so it never shoves the centered label off-center.
       // The glyph rides the button's own scale — a fixed 24px lock would end up
       // taller than the control on a short viewport.
-      const img = itemsBtn.getAt(0) as Phaser.GameObjects.Image;
+      const img = button.getAt(0) as Phaser.GameObjects.Image;
       // Off the parchment's *displayed* height, not its object scale: the
       // texture is baked above layout resolution (see art/textures), so a
       // full-size button already carries a fractional `scaleY`.
-      const label = itemsBtn.getAt(1) as Phaser.GameObjects.Text;
+      const label = button.getAt(1) as Phaser.GameObjects.Text;
       const lockSize = Math.max(
         12,
         Math.round((24 * img.displayHeight) / BUTTON_HEIGHT),
@@ -323,8 +333,10 @@ export class MenuScene extends Phaser.Scene {
           },
         )
         .setOrigin(0, 0.5);
-      itemsBtn.add(lock);
-    }
+      button.add(lock);
+    };
+    if (!dailyOpen) padlock(buttons[1]);
+    if (!itemsUnlocked) padlock(buttons[3]);
 
     // The pointer's ambient light belongs behind the controls now that their
     // face is bare type. Keeping the button containers above it prevents the

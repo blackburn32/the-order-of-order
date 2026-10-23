@@ -118,7 +118,44 @@ export type AfflictionId =
   | "longNight"
   | "tollkeeper"
   // The story's own drawbacks, granted rather than bought (see systems/Endings).
-  | "betrayal";
+  | "betrayal"
+  // The Daily Rite's banes (see systems/Daily). Milder cousins of the curses,
+  // handed to everyone who plays a given day rather than bought or demanded.
+  | "dailyHaste"
+  | "dailyExacting"
+  | "dailyLeanPurse"
+  | "dailyNarrowDoor"
+  | "dailyBrittle"
+  | "dailyFickle"
+  | "dailyWavering"
+  | "dailyLongNight"
+  | "dailyLevy"
+  | "dailyGag";
+
+/** The Daily Rite's banes, in the order its draw indexes them. Append-only: a
+ *  day's banes are picked by position, so reordering this list would change
+ *  every day that has already been played (see systems/Daily). */
+export const DAILY_BANE_IDS = [
+  "dailyHaste",
+  "dailyExacting",
+  "dailyLeanPurse",
+  "dailyNarrowDoor",
+  "dailyBrittle",
+  "dailyFickle",
+  "dailyWavering",
+  "dailyLongNight",
+  "dailyLevy",
+  "dailyGag",
+] as const satisfies readonly AfflictionId[];
+
+/** The Daily Rite's numbers, named because the banes' copy quotes them. */
+export const DAILY_EXACTING_GOAL_PERCENT = 25;
+export const DAILY_LEAN_PURSE_PERCENT = 25;
+export const DAILY_NARROW_DOOR_PURCHASES = 2;
+export const DAILY_BRITTLE_CHANCE = 0.05;
+export const DAILY_FICKLE_CHANCE = 0.08;
+export const DAILY_WAVERING_CHANCE = 0.05;
+export const DAILY_LEVY_FRACTION = 0.1;
 
 /** Crunch Time's roll cost, named because its card quotes it. Flat rather than
  *  proportional so the card can state its price in one number — which means it
@@ -165,6 +202,20 @@ export const AFFLICTIONS: Record<AfflictionId, Affliction> = {
 
   // --- Granted by the story ------------------------------------------------
   betrayal: { defectChance: BETRAYAL_DEFECT_CHANCE },
+
+  // --- The Daily Rite's banes ----------------------------------------------
+  dailyHaste: { rollDelta: -1 },
+  dailyExacting: { goalMultMilli: 1_000 + DAILY_EXACTING_GOAL_PERCENT * 10 },
+  dailyLeanPurse: {
+    clearGoldMultMilli: 1_000 - DAILY_LEAN_PURSE_PERCENT * 10,
+  },
+  dailyNarrowDoor: { purchaseLimit: DAILY_NARROW_DOOR_PURCHASES },
+  dailyBrittle: { dieBreakChance: DAILY_BRITTLE_CHANCE },
+  dailyFickle: { dudRollChance: DAILY_FICKLE_CHANCE },
+  dailyWavering: { defectChance: DAILY_WAVERING_CHANCE },
+  dailyLongNight: { bossModifierCount: LONG_NIGHT_BOSS_MODIFIERS },
+  dailyLevy: { deadDiceFraction: DAILY_LEVY_FRACTION },
+  dailyGag: { suppress: ["patterns"] },
 };
 
 /** A name and one line of card copy for a drawback shown on a card of its own. */
@@ -292,6 +343,48 @@ export const AFFLICTION_COPY: Record<AfflictionId, AfflictionCopy> = {
   betrayal: {
     name: "Betrayal",
     desc: `Each die that fails to score has a ${Math.round(BETRAYAL_DEFECT_CHANCE * 100)}% chance to defect to the Order of Disorder, leaving your grid for good.`,
+  },
+
+  // --- The Daily Rite's banes ----------------------------------------------
+  dailyHaste: {
+    name: "The Hurried Rite",
+    desc: "Every trial is one roll shorter.",
+  },
+  dailyExacting: {
+    name: "The Exacting Eye",
+    desc: `Every goal is ${DAILY_EXACTING_GOAL_PERCENT}% higher.`,
+  },
+  dailyLeanPurse: {
+    name: "The Lean Purse",
+    desc: `Cleared trials pay ${DAILY_LEAN_PURSE_PERCENT}% less gold.`,
+  },
+  dailyNarrowDoor: {
+    name: "The Narrow Door",
+    desc: `No more than ${DAILY_NARROW_DOOR_PURCHASES} purchases in any shop.`,
+  },
+  dailyBrittle: {
+    name: "Brittle Bones",
+    desc: `Each die that scores has a ${Math.round(DAILY_BRITTLE_CHANCE * 100)}% chance to shatter and leave your grid.`,
+  },
+  dailyFickle: {
+    name: "The Fickle Sky",
+    desc: `Any roll has a ${Math.round(DAILY_FICKLE_CHANCE * 100)}% chance to score nothing at all.`,
+  },
+  dailyWavering: {
+    name: "Wavering Faith",
+    desc: `Each die that fails to score has a ${Math.round(DAILY_WAVERING_CHANCE * 100)}% chance to defect, leaving your grid for good.`,
+  },
+  dailyLongNight: {
+    name: "The Sleepless Watch",
+    desc: `Every Boss Trial brings ${LONG_NIGHT_BOSS_MODIFIERS} modifiers instead of one.`,
+  },
+  dailyLevy: {
+    name: "The Levy",
+    desc: `${Math.round(DAILY_LEVY_FRACTION * 100)}% of your grid scores nothing.`,
+  },
+  dailyGag: {
+    name: "The Unspoken",
+    desc: "Consensus, The Congregation and Lucky Seven grant nothing.",
   },
 };
 

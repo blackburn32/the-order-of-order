@@ -44,6 +44,11 @@ const MAX_ANALYSIS_BYTES = 2 * 1024 * 1024;
 
 const DEFAULT_BOARD_SIZE = 100;
 const HOUR_MS = 60 * 60 * 1000;
+const DAY_MS = 24 * HOUR_MS;
+
+/** How many days of Daily Rite boards are kept before the cron sweeps them,
+ *  rows and analysis blobs both. */
+const DAILY_KEEP_DAYS = 30;
 
 /** How long a browser may cache an analysis blob. A blob is immutable for as
  *  long as the row points at it, and is replaced only by that player beating
@@ -235,14 +240,16 @@ interface BoardRow {
   created_at: number;
 }
 
-async function getTop(request: Request, env: Env): Promise<Response> {
+function boardLimit(request: Request, env: Env): number {
   const params = new URL(request.url).searchParams;
   const max = Number(env.MAX_BOARD_SIZE ?? "250");
   const asked = Number(params.get("limit") ?? DEFAULT_BOARD_SIZE);
-  const limit = Number.isFinite(asked)
+  return Number.isFinite(asked)
     ? Math.max(1, Math.min(max, Math.floor(asked)))
     : DEFAULT_BOARD_SIZE;
+}
 
+async function getTop(request: Request, env: Env): Promise<Response> {
   const { results } = await env.DB.prepare(
     `SELECT member_id, initials, rank, trial, endless, medal, character, score_exact,
             rolls, has_analysis, created_at
@@ -250,9 +257,12 @@ async function getTop(request: Request, env: Env): Promise<Response> {
       ORDER BY rank DESC, score_len DESC, score_exact DESC
       LIMIT ?1`,
   )
-    .bind(limit)
+    .bind(boardLimit(request, env))
     .all<BoardRow>();
+  return boardResponse(results);
+}
 
+function boardResponse(results: BoardRow[] | undefined): Response {
   // Board position is assigned here rather than stored: it is a property of the
   // query, not of the run, so a row can never carry a position that someone
   // else's submission has since invalidated.
@@ -274,7 +284,12 @@ async function getTop(request: Request, env: Env): Promise<Response> {
   return json({ rows });
 }
 
-async function postRun(request: Request, env: Env): Promise<Response> {
+/** The checks every submission passes before either board looks at it: the
+ *  key, the index fields, the declared size, the throttle, and the body. */
+async function readPost(
+  request: Request,
+  env: Env,
+): Promise<{ parsed: Submission; analysis: ArrayBuffer } | Response> {
   if (env.SUBMIT_KEY && request.headers.get("X-Submit-Key") !== env.SUBMIT_KEY)
     return fail(403, "bad submit key");
 
@@ -295,6 +310,13 @@ async function postRun(request: Request, env: Env): Promise<Response> {
   const analysis = await request.arrayBuffer();
   if (analysis.byteLength > MAX_ANALYSIS_BYTES)
     return fail(413, "analysis too large");
+  return { parsed, analysis };
+}
+
+async function postRun(request: Request, env: Env): Promise<Response> {
+  const read = await readPost(request, env);
+  if (read instanceof Response) return read;
+  const { parsed, analysis } = read;
 
   const current = await env.DB.prepare(
     `SELECT rank, score_exact, score_len FROM runs WHERE member_id = ?1`,
@@ -355,10 +377,14 @@ async function postRun(request: Request, env: Env): Promise<Response> {
   return json({ accepted: true, improved: true });
 }
 
-async function getAnalysis(memberId: string, env: Env): Promise<Response> {
+async function getAnalysis(
+  memberId: string,
+  env: Env,
+  day?: string,
+): Promise<Response> {
   if (!MEMBER_RE.test(memberId)) return fail(400, "bad member");
 
-  const object = await env.RUNS.get(memberId);
+  const object = await env.RUNS.get(day ? dailyKey(day, memberId) : memberId);
   if (!object) return fail(404, "no analysis");
 
   // Served as opaque bytes rather than with `Content-Encoding: gzip`, so the
@@ -373,6 +399,144 @@ async function getAnalysis(memberId: string, env: Env): Promise<Response> {
       ...CORS,
     },
   });
+}
+
+// --- The Daily Rite ---------------------------------------------------------
+//
+// One board per UTC day, for the run every player shares that day (see the
+// game's src/systems/Daily.ts — the day's seed and rules are derived from the
+// date on the client, so this side only needs to know which day a run is for).
+//
+// The two boards differ in one rule. The global board keeps each player's BEST
+// run; a daily board keeps their FIRST. A day's seed fixes every roll, so a
+// second run of it is played with the answers, and the game offers only one
+// attempt a day — the board holds it to that rather than rewarding whoever
+// clears their storage and tries again.
+//
+// Daily blobs live in the same bucket as the global ones, under
+// `daily/<day>/<member>`, which cannot collide with a bare member id.
+
+const DAY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+function dailyKey(day: string, memberId: string): string {
+  return `daily/${day}/${memberId}`;
+}
+
+function utcDay(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+/** Whether `day` is a real calendar date. */
+function isDay(day: string): boolean {
+  const m = DAY_RE.exec(day);
+  if (!m) return false;
+  const date = new Date(`${day}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && utcDay(date.getTime()) === day;
+}
+
+/** Whether a run for `day` may still be submitted. A run begun just before
+ *  midnight is finished after it, and a resumed one can be finished later
+ *  still, so yesterday and the day before stay open; a date ahead of the
+ *  server's tomorrow is a clock that cannot be trusted. */
+function acceptsDay(day: string, now = Date.now()): boolean {
+  if (!isDay(day)) return false;
+  const start = Date.parse(`${day}T00:00:00Z`);
+  return (
+    start >= Date.parse(`${utcDay(now - 2 * DAY_MS)}T00:00:00Z`) &&
+    start <= Date.parse(`${utcDay(now + DAY_MS)}T00:00:00Z`)
+  );
+}
+
+async function getDailyTop(
+  request: Request,
+  env: Env,
+  day: string,
+): Promise<Response> {
+  if (!isDay(day)) return fail(400, "bad day");
+  const { results } = await env.DB.prepare(
+    `SELECT member_id, initials, rank, trial, endless, medal, character, score_exact,
+            rolls, has_analysis, created_at
+       FROM daily_runs
+      WHERE day = ?1
+      ORDER BY rank DESC, score_len DESC, score_exact DESC
+      LIMIT ?2`,
+  )
+    .bind(day, boardLimit(request, env))
+    .all<BoardRow>();
+  return boardResponse(results);
+}
+
+async function postDailyRun(
+  request: Request,
+  env: Env,
+  day: string,
+): Promise<Response> {
+  if (!acceptsDay(day)) return fail(400, "bad day");
+  const read = await readPost(request, env);
+  if (read instanceof Response) return read;
+  const { parsed, analysis } = read;
+
+  // The first run stands. Checked before the blob is written, so a second
+  // submission cannot overwrite the first run's analysis either.
+  const existing = await env.DB.prepare(
+    `SELECT 1 AS found FROM daily_runs WHERE day = ?1 AND member_id = ?2`,
+  )
+    .bind(day, parsed.memberId)
+    .first<{ found: number }>();
+  if (existing) return json({ accepted: true, improved: false });
+
+  const hasAnalysis = analysis.byteLength > 0;
+  if (hasAnalysis) {
+    await env.RUNS.put(dailyKey(day, parsed.memberId), analysis, {
+      httpMetadata: { contentType: "application/octet-stream" },
+    });
+  }
+
+  // DO NOTHING rather than an upsert: two submissions racing past the check
+  // above still leave the first row standing.
+  const result = await env.DB.prepare(
+    `INSERT INTO daily_runs (day, member_id, initials, rank, trial, endless,
+                             character, score_exact, score_len, rolls,
+                             has_analysis, created_at, medal)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+     ON CONFLICT(day, member_id) DO NOTHING`,
+  )
+    .bind(
+      day,
+      parsed.memberId,
+      parsed.initials,
+      parsed.rank,
+      parsed.trial,
+      parsed.endless,
+      parsed.character,
+      parsed.scoreExact,
+      parsed.scoreLen,
+      parsed.rolls,
+      hasAnalysis ? 1 : 0,
+      Date.now(),
+      parsed.medal,
+    )
+    .run();
+
+  return json({ accepted: true, improved: (result.meta.changes ?? 0) > 0 });
+}
+
+/** Drop the daily boards older than DAILY_KEEP_DAYS, blobs first so a row is
+ *  never left pointing at nothing. */
+async function sweepDaily(env: Env): Promise<void> {
+  const cutoff = utcDay(Date.now() - DAILY_KEEP_DAYS * DAY_MS);
+  const { results } = await env.DB.prepare(
+    `SELECT day, member_id FROM daily_runs
+      WHERE day < ?1 AND has_analysis = 1
+      LIMIT 1000`,
+  )
+    .bind(cutoff)
+    .all<{ day: string; member_id: string }>();
+  const keys = (results ?? []).map((row) => dailyKey(row.day, row.member_id));
+  if (keys.length > 0) await env.RUNS.delete(keys);
+  await env.DB.prepare(`DELETE FROM daily_runs WHERE day < ?1`)
+    .bind(cutoff)
+    .run();
 }
 
 export default {
@@ -396,14 +560,29 @@ export default {
     if (request.method === "GET" && analysis)
       return getAnalysis(decodeURIComponent(analysis[1]), env);
 
+    const daily = /^\/v1\/daily\/([^/]+)\/(top|runs)(?:\/([^/]+))?$/.exec(path);
+    if (daily) {
+      const [, day, route, member] = daily;
+      if (request.method === "GET" && route === "top" && !member)
+        return getDailyTop(request, env, day);
+      if (request.method === "POST" && route === "runs" && !member)
+        return postDailyRun(request, env, day);
+      if (request.method === "GET" && route === "runs" && member) {
+        if (!isDay(day)) return fail(400, "bad day");
+        return getAnalysis(decodeURIComponent(member), env, day);
+      }
+    }
+
     return fail(404, "not found");
   },
 
-  /** Sweep throttle rows whose window has passed. The board itself needs no
-   *  pruning — one row and one blob per player, both replaced in place. */
+  /** Sweep throttle rows whose window has passed, and daily boards past
+   *  keeping. The global board itself needs no pruning — one row and one blob
+   *  per player, both replaced in place. */
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
     await env.DB.prepare(`DELETE FROM throttle WHERE window_start < ?1`)
       .bind(Date.now() - 24 * HOUR_MS)
       .run();
+    await sweepDaily(env);
   },
 };

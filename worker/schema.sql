@@ -61,6 +61,32 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE INDEX IF NOT EXISTS runs_board
   ON runs (rank DESC, score_len DESC, score_exact DESC);
 
+-- The Daily Rite's boards: one per UTC day, the same columns as `runs` plus the
+-- day. Each player's FIRST run of a day stands rather than their best — the
+-- day's seed fixes every roll, so a second run is played with the answers. The
+-- cron sweeps days older than DAILY_KEEP_DAYS, blobs (R2 `daily/<day>/<member>`)
+-- with them. Added after the board shipped: an older deployment runs
+-- migrations/0002_daily.sql once, which creates exactly this.
+CREATE TABLE IF NOT EXISTS daily_runs (
+  day          TEXT NOT NULL,     -- the UTC date, "2026-10-23"
+  member_id    TEXT NOT NULL,
+  initials     TEXT NOT NULL,
+  rank         INTEGER NOT NULL,
+  trial        INTEGER NOT NULL,
+  endless      INTEGER NOT NULL,
+  character    TEXT NOT NULL DEFAULT 'diebert',
+  medal        INTEGER NOT NULL DEFAULT -1,
+  score_exact  TEXT NOT NULL,
+  score_len    INTEGER NOT NULL,
+  rolls        INTEGER NOT NULL,
+  has_analysis INTEGER NOT NULL DEFAULT 0,
+  created_at   INTEGER NOT NULL,
+  PRIMARY KEY (day, member_id)
+);
+
+CREATE INDEX IF NOT EXISTS daily_runs_board
+  ON daily_runs (day, rank DESC, score_len DESC, score_exact DESC);
+
 -- Per-device submission throttle. Rows are rewritten each hour and swept by the
 -- cron trigger; nothing reads them except the rate check.
 CREATE TABLE IF NOT EXISTS throttle (

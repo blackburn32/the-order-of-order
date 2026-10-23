@@ -31,6 +31,7 @@ import {
 } from "./Characters";
 import { ITEMS, type ShopItemId } from "./Items";
 import { isSeed } from "./Rng";
+import { isDailyDay } from "./Daily";
 import {
   hydrateRollHistory,
   serializeRollHistory,
@@ -193,6 +194,9 @@ export interface PendingSubmission {
   won: boolean;
   endless: boolean;
   character: CharacterId;
+  /** The Daily Rite's day, for a daily run: it goes to that day's board, and
+   *  its analysis is read from the daily hall rather than the Hall. */
+  daily?: string;
 }
 
 export function queuePendingSubmission(pending: PendingSubmission): void {
@@ -223,6 +227,7 @@ export function takePendingSubmission(): PendingSubmission | null {
       character: isCharacterId(parsed.character)
         ? parsed.character
         : DEFAULT_CHARACTER,
+      daily: isDailyDay(parsed.daily) ? parsed.daily : undefined,
     };
   } catch {
     return null;
@@ -414,6 +419,7 @@ export function submissionFromHallEntry(entry: HallEntry): RunSubmission {
 export async function submitRun(
   run: RunSubmission,
   initials: string,
+  daily?: string,
 ): Promise<boolean> {
   if (!globalScoresEnabled()) return false;
 
@@ -442,7 +448,10 @@ export async function submitRun(
     }
   }
 
-  const res = await call(`/v1/runs?${params.toString()}`, {
+  // A daily run posts to its day's board, which keeps the first run each player
+  // submits for that day rather than their best (see worker/).
+  const route = daily ? `/v1/daily/${daily}/runs` : "/v1/runs";
+  const res = await call(`${route}?${params.toString()}`, {
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
     body: body as BodyInit,
@@ -450,13 +459,16 @@ export async function submitRun(
   return res !== null;
 }
 
-/** Fetch the global top-N. Returns null when disabled or the request fails
- *  (caller distinguishes via `globalScoresEnabled()`). */
+/** Fetch the global top-N — or, given a day, that day's Daily Rite board.
+ *  Returns null when disabled or the request fails (caller distinguishes via
+ *  `globalScoresEnabled()`). */
 export async function fetchTopScores(
   limit = GLOBAL_TOP_N,
+  daily?: string,
 ): Promise<GlobalScoreRow[] | null> {
   if (!globalScoresEnabled()) return null;
-  const res = await call(`/v1/top?limit=${limit}`, { method: "GET" });
+  const route = daily ? `/v1/daily/${daily}/top` : "/v1/top";
+  const res = await call(`${route}?limit=${limit}`, { method: "GET" });
   if (!res) return null;
   try {
     const data = (await res.json()) as { rows?: unknown };
@@ -475,9 +487,11 @@ export async function fetchTopScores(
  *  either way. */
 export async function fetchRunAnalysis(
   memberId: string,
+  daily?: string,
 ): Promise<GlobalRunAnalysis | null> {
   if (!globalScoresEnabled()) return null;
-  const res = await call(`/v1/runs/${encodeURIComponent(memberId)}`, {
+  const route = daily ? `/v1/daily/${daily}/runs` : "/v1/runs";
+  const res = await call(`${route}/${encodeURIComponent(memberId)}`, {
     method: "GET",
   });
   if (!res) return null;

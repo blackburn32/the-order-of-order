@@ -35,6 +35,7 @@
     "engines:experiment": "node node_modules/tsx/dist/cli.mjs src/sim/catechismExperiment.ts",
     "trials:check": "tsx src/sim/trialEndCheck.ts",
     "characters:check": "tsx src/sim/characterCheck.ts",
+    "daily:check": "tsx src/sim/dailyCheck.ts",
     "gold:check": "tsx src/sim/goldCheck.ts",
     "scoring:check": "tsx src/sim/compareScoring.ts",
     "curse:check": "tsx src/sim/curseCheck.ts",

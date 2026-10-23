@@ -19,6 +19,7 @@ import { fx } from "../systems/Effects";
 import { addCamera } from "../ui/camera";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildItemCard } from "../ui/itemCard";
+import { dailyBoonCard, shelfOnlyBoons } from "../systems/Daily";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import { ROOM_TRAVEL } from "../ui/sceneSlide";
 import { formatScore } from "../ui/formatScore";
@@ -630,6 +631,14 @@ export class InventoryScene extends Phaser.Scene {
     const items = this.ownedItems(run);
     return [
       ...items.map((def) => ({ def, copies: owned[def.id] ?? 0 })),
+      // A Daily Rite boon that is not a card has nothing else to stand for it
+      // on the shelf (a granted card is already above, as itself). Its banes
+      // need nothing here: they are standing drawbacks no card accounts for,
+      // which is exactly what `grantedCurses` lists.
+      ...shelfOnlyBoons(run).map((id) => ({
+        def: dailyBoonCard(id),
+        copies: 1,
+      })),
       ...this.grantedCurses(run, items).map((def) => ({ def, copies: 1 })),
     ];
   }

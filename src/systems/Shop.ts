@@ -336,7 +336,9 @@ export function availableIds(state: RunState): ShopItemId[] {
 /** The rarity odds this shop draws on. Clearing a Boss Trial buys one visit at
  *  the boosted table — the real reward for beating the boss. */
 export function weightsFor(state: RunState): RarityWeights {
-  return state.boonNextShop ? BOON_RARITY_WEIGHTS : RARITY_WEIGHTS;
+  // The Daily Rite's Blessed Market (see systems/Daily) makes every visit one.
+  const blessed = state.dailyRite?.boons.includes("blessedMarket") ?? false;
+  return state.boonNextShop || blessed ? BOON_RARITY_WEIGHTS : RARITY_WEIGHTS;
 }
 
 // If the tier a card rolled has nothing left to offer, fall back toward

@@ -25,7 +25,7 @@ import {
   submissionFromHallEntry,
   submitRun,
 } from "../systems/GlobalScores";
-import { loadHall } from "../systems/SaveData";
+import { loadDailyHall, loadHall } from "../systems/SaveData";
 
 export interface InitialsPromptData {
   score: bigint;
@@ -38,6 +38,9 @@ export interface InitialsPromptData {
   endless?: boolean;
   /** The novice the run was played as, which the board records beside it. */
   character: CharacterId;
+  /** The Daily Rite's day, for a daily run: it is posted to that day's board,
+   *  and its analysis is read from the daily hall. */
+  daily?: string;
   /** Scene key to re-enable input on when the prompt closes. */
   returnTo: string;
 }
@@ -61,6 +64,7 @@ export class InitialsPromptScene extends Phaser.Scene {
     character: DEFAULT_CHARACTER as CharacterId,
   };
   private returnTo = "Menu";
+  private daily?: string;
   private slots: string[] = ["A", "A", "A"];
   private sel = 0;
   private slotTexts: Phaser.GameObjects.Text[] = [];
@@ -83,6 +87,7 @@ export class InitialsPromptScene extends Phaser.Scene {
       character: data.character,
     };
     this.returnTo = data.returnTo;
+    this.daily = data.daily;
     const seed = normalizeInitials(getInitials());
     this.slots = [seed[0] ?? "A", seed[1] ?? "A", seed[2] ?? "A"];
     this.sel = 0;
@@ -159,6 +164,12 @@ export class InitialsPromptScene extends Phaser.Scene {
     slideSceneIn(this, this.transitionFelt ? [this.transitionFelt] : []);
   }
 
+  /** A daily run is offered to its board however it went, so it is not
+   *  announced as a high score. */
+  private title(): string {
+    return this.daily ? "The Daily Rite" : "New High Score";
+  }
+
   /** The normal portrait/roomy layout: masthead, initials, then the actions. */
   private buildStacked(actions: BannerAction[]): void {
     const W = this.scale.width;
@@ -166,7 +177,7 @@ export class InitialsPromptScene extends Phaser.Scene {
     const cx = W / 2;
 
     const header = buildSceneHeader(this, {
-      title: "New High Score",
+      title: this.title(),
       subtitle: `Score ${formatScore(this.score)} — enter your initials`,
       y: Math.max(46, Math.min(H * 0.13, 88)),
       width: Math.min(W, 720),
@@ -206,7 +217,7 @@ export class InitialsPromptScene extends Phaser.Scene {
     const headerBottom = short
       ? this.buildShortCompactHeader(left.cx, left.width, columns.top)
       : buildSceneHeader(this, {
-          title: "New High Score",
+          title: this.title(),
           subtitle: `Score ${formatScore(this.score)} — enter your initials`,
           x: left.cx,
           y: columns.top + 30,
@@ -237,7 +248,7 @@ export class InitialsPromptScene extends Phaser.Scene {
   ): number {
     const titleSize = 22;
     const title = this.add
-      .text(cx, top, "New High Score", {
+      .text(cx, top, this.title(), {
         fontFamily: SERIF,
         fontSize: `${titleSize}px`,
         color: CSS.gold,
@@ -417,7 +428,8 @@ export class InitialsPromptScene extends Phaser.Scene {
     // The run was filed in the Hall before this prompt opened, so its full
     // analysis is read from there. A run that somehow isn't there still posts
     // its score — the board row just carries no analysis.
-    const entry = loadHall().find((e) => e.startedAt === this.startedAt);
+    const hall = this.daily ? loadDailyHall() : loadHall();
+    const entry = hall.find((e) => e.startedAt === this.startedAt);
     const run = entry
       ? submissionFromHallEntry(entry)
       : {
@@ -433,7 +445,7 @@ export class InitialsPromptScene extends Phaser.Scene {
           history: [],
         };
     // Fire-and-forget: don't block closing on the network round-trip.
-    void submitRun(run, initials);
+    void submitRun(run, initials, this.daily);
     this.close();
   }
 

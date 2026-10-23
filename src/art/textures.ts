@@ -271,6 +271,19 @@ export const AFFLICTION_SIGIL_TEXTURE_KEYS: Record<AfflictionId, string> = {
   longNight: "sigil-curse-long-night",
   tollkeeper: "sigil-curse-tollkeeper",
   betrayal: "sigil-curse-betrayal",
+  // The Daily Rite's banes wear the mark of the curse each one is a milder
+  // cousin of, rather than marks of their own. Their texture is already built
+  // under the elder id, so `buildAfflictionSigils` draws each key only once.
+  dailyHaste: "sigil-curse-crunch-time",
+  dailyExacting: "sigil-curse-devils-bargain",
+  dailyLeanPurse: "sigil-curse-iron-debt",
+  dailyNarrowDoor: "sigil-curse-sealed-doors",
+  dailyBrittle: "sigil-curse-blood-price",
+  dailyFickle: "sigil-curse-gamblers-curse",
+  dailyWavering: "sigil-curse-betrayal",
+  dailyLongNight: "sigil-curse-long-night",
+  dailyLevy: "sigil-curse-famished-idol",
+  dailyGag: "sigil-curse-reckoning",
 };
 
 export function bossSigilTexture(id: BossModifierId): string {
@@ -479,9 +492,16 @@ function buildSigil(scene: Phaser.Scene, key: string, variant: number): void {
  * reads as a smudge across the words — so every cursed mark is drawn in the two
  * thin weights below and nothing else, with no fills anywhere. */
 function buildAfflictionSigils(scene: Phaser.Scene): void {
+  const built = new Set<string>();
   (
     Object.entries(AFFLICTION_SIGIL_TEXTURE_KEYS) as [AfflictionId, string][]
-  ).forEach(([id, key], index) => buildAfflictionSigil(scene, key, id, index));
+  ).forEach(([id, key], index) => {
+    // A key shared by two ids is drawn for the first, which is the one whose
+    // emblem it is (see the daily banes above).
+    if (built.has(key)) return;
+    built.add(key);
+    buildAfflictionSigil(scene, key, id, index);
+  });
 }
 
 /** The only two line weights a cursed mark — frame included — is drawn in. */

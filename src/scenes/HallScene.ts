@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { HallEntry, loadHall } from "../systems/SaveData";
+import { dailyUnlocked, HallEntry, loadHall } from "../systems/SaveData";
+import { dailyDay } from "../systems/Daily";
 import { CHARACTERS } from "../systems/Characters";
 import { addFelt, bannerButton, fitTextWidth } from "../ui/widgets";
 import { addCamera, setCameraViewport } from "../ui/camera";
@@ -43,7 +44,12 @@ type WheelHandler = (
   dz: number,
 ) => void;
 
-type Tab = "local" | "global";
+type Tab = "local" | "global" | "daily";
+
+export interface HallSceneData {
+  /** The tab to open on. Ordinary ways in pass nothing and open on MY RUNS. */
+  tab?: Tab;
+}
 type GlobalStatus = "idle" | "loading" | "error" | "disabled" | "ready";
 
 /** Fixed sigil brightness for the backdrop — no trial to report here, so the
@@ -77,9 +83,10 @@ interface Area {
 }
 
 /**
- * The Hall of High Scores. Two tabs: the player's local runs (drawn from
- * localStorage) and the worldwide top-100 fetched from the leaderboard Worker
- * (see worker/ and systems/GlobalScores). The selected
+ * The Hall of High Scores. Three tabs: the player's local runs (drawn from
+ * localStorage), the worldwide top-100 fetched from the leaderboard Worker
+ * (see worker/ and systems/GlobalScores), and — once the player has won a run —
+ * today's Daily Rite board from the same Worker. The selected
  * tab and the fetched global rows live in instance fields so they survive the
  * wipe-and-rebuild that runs on every resize / tab switch. The global list can
  * overflow the screen, so — like the Codex — its rows live in a `track`
@@ -90,8 +97,16 @@ interface Area {
  */
 export class HallScene extends Phaser.Scene {
   private tab: Tab = "local";
+  private openOn: Tab = "local";
   private globalRows: GlobalScoreRow[] | null = null;
   private globalStatus: GlobalStatus = "idle";
+  // Today's Daily Rite board, fetched the same way as the global one. The day
+  // is fixed when the scene opens, so a board read across midnight stays the
+  // board of the day it was opened on.
+  private day = "";
+  private dailyRows: GlobalScoreRow[] | null = null;
+  private dailyStatus: GlobalStatus = "idle";
+  private showDaily = false;
   // Global analyses are fetched one row at a time, on tap, and kept for the
   // life of the scene: they are a few tens of KB each and a player comparing
   // the top of the board will open the same handful repeatedly.
@@ -123,11 +138,23 @@ export class HallScene extends Phaser.Scene {
     super("Hall");
   }
 
+  init(data?: HallSceneData): void {
+    this.openOn = data?.tab ?? "local";
+  }
+
   create(): void {
     this.dieTooltip = new DieTooltip(this);
-    this.tab = "local";
+    // The Daily tab opens with the Daily Rite itself: after a run has been won.
+    this.showDaily = dailyUnlocked();
+    this.tab =
+      this.openOn === "daily" && !this.showDaily ? "local" : this.openOn;
     this.globalRows = null;
     this.globalStatus = "idle";
+    this.day = dailyDay();
+    this.dailyRows = null;
+    this.dailyStatus = "idle";
+    if (this.tab === "global") this.loadGlobal();
+    if (this.tab === "daily") this.loadDaily();
     this.analysisCache.clear();
     this.analysisPending = null;
     this.globalNotice = "";
@@ -256,8 +283,10 @@ export class HallScene extends Phaser.Scene {
 
     if (this.tab === "local") {
       this.buildLocal(area);
+    } else if (this.tab === "daily") {
+      this.buildGlobal(area, true);
     } else {
-      this.buildGlobal(area);
+      this.buildGlobal(area, false);
     }
   }
 
@@ -290,20 +319,26 @@ export class HallScene extends Phaser.Scene {
       return text;
     };
 
-    const local = make("MY RUNS", "local");
-    const global = make("GLOBAL", "global");
-    // Share any shrinkage in proportion, so neither label crowds the other.
-    const room = Math.max(1, tableW - gap);
-    const naturalW = local.width + global.width;
-    if (naturalW > room) {
-      fitTextWidth(local, (room * local.width) / naturalW);
-      fitTextWidth(global, (room * global.width) / naturalW);
+    const tabs = [
+      make("MY RUNS", "local"),
+      make("GLOBAL", "global"),
+      ...(this.showDaily ? [make("DAILY", "daily")] : []),
+    ];
+    const order: Tab[] = ["local", "global", "daily"];
+    // Share any shrinkage in proportion, so no label crowds the others.
+    const gaps = gap * (tabs.length - 1);
+    const room = Math.max(1, tableW - gaps);
+    const naturalW = tabs.reduce((sum, t) => sum + t.width, 0);
+    if (naturalW > room)
+      for (const t of tabs) fitTextWidth(t, (room * t.width) / naturalW);
+    const totalW = tabs.reduce((sum, t) => sum + t.width, 0) + gaps;
+    let x = cx - totalW / 2;
+    for (const t of tabs) {
+      t.setX(x + t.width / 2);
+      x += t.width + gap;
     }
-    const totalW = local.width + gap + global.width;
-    local.setX(cx - totalW / 2 + local.width / 2);
-    global.setX(cx + totalW / 2 - global.width / 2);
 
-    const active = this.tab === "local" ? local : global;
+    const active = tabs[order.indexOf(this.tab)] ?? tabs[0];
     const underline = this.add.graphics();
     underline.lineStyle(2, COLORS.gold, 0.75);
     underline.lineBetween(
@@ -322,6 +357,12 @@ export class HallScene extends Phaser.Scene {
       (this.globalStatus === "idle" || this.globalStatus === "error")
     ) {
       this.loadGlobal();
+    }
+    if (
+      tab === "daily" &&
+      (this.dailyStatus === "idle" || this.dailyStatus === "error")
+    ) {
+      this.loadDaily();
     }
     // A stale "could not be read" from an earlier tap shouldn't greet the
     // player when they come back to the tab.
@@ -345,6 +386,24 @@ export class HallScene extends Phaser.Scene {
         this.globalStatus = "ready";
       }
       if (this.tab === "global") this.rebuild();
+    });
+  }
+
+  private loadDaily(): void {
+    if (!globalScoresEnabled()) {
+      this.dailyStatus = "disabled";
+      return;
+    }
+    this.dailyStatus = "loading";
+    fetchTopScores(undefined, this.day).then((rows) => {
+      if (!this.scene.isActive()) return; // scene left while in flight
+      if (rows === null) {
+        this.dailyStatus = "error";
+      } else {
+        this.dailyRows = rows;
+        this.dailyStatus = "ready";
+      }
+      if (this.tab === "daily") this.rebuild();
     });
   }
 
@@ -718,25 +777,27 @@ export class HallScene extends Phaser.Scene {
    *  first tap on it. The board list itself carries only the score line — the
    *  analysis is tens of KB per run, so it is pulled on demand rather than with
    *  the hundred rows of the board. */
-  private openAnalysisGlobal(row: GlobalScoreRow): void {
-    const cached = this.analysisCache.get(row.memberId);
+  private openAnalysisGlobal(row: GlobalScoreRow, daily?: string): void {
+    // A player's daily run and their global best are two different blobs.
+    const key = daily ? `${daily}/${row.memberId}` : row.memberId;
+    const cached = this.analysisCache.get(key);
     if (cached) {
-      this.launchGlobalAnalysis(row, cached);
+      this.launchGlobalAnalysis(row, cached, daily);
       return;
     }
     if (this.analysisPending !== null) return; // one fetch at a time
 
-    this.analysisPending = row.memberId;
+    this.analysisPending = key;
     this.setGlobalNotice("consulting the archive…");
 
-    void fetchRunAnalysis(row.memberId).then((analysis) => {
+    void fetchRunAnalysis(row.memberId, daily).then((analysis) => {
       if (!this.scene.isActive()) return; // scene left while in flight
       this.analysisPending = null;
       if (analysis && analysis.history.length > 0) {
         // Only a successful fetch is cached, so a failure retries on next tap.
-        this.analysisCache.set(row.memberId, analysis);
+        this.analysisCache.set(key, analysis);
         this.setGlobalNotice("");
-        this.launchGlobalAnalysis(row, analysis);
+        this.launchGlobalAnalysis(row, analysis, daily);
       } else {
         this.setGlobalNotice("that run's analysis could not be read");
       }
@@ -755,13 +816,14 @@ export class HallScene extends Phaser.Scene {
   private launchGlobalAnalysis(
     row: GlobalScoreRow,
     analysis: GlobalRunAnalysis,
+    daily?: string,
   ): void {
     this.scene.launch("Analysis", {
       returnTo: "Hall",
-      title: row.name || "Global Run",
+      title: row.name || (daily ? "Daily Run" : "Global Run"),
       // A global run now charts exactly what a local one does, so the subtitle
       // reads like the local one's rather than apologising for approximations.
-      subtitle: `global #${row.rank} · ${CHARACTERS[row.character].name} · rank ${row.runRank}-${row.trial}${
+      subtitle: `${daily ? `daily ${daily}` : "global"} #${row.rank} · ${CHARACTERS[row.character].name} · rank ${row.runRank}-${row.trial}${
         row.medal >= 0 ? ` · ${tierName(row.medal)} victory` : ""
       }${row.endless ? " · endless" : ""}`,
       dicePoints: analysis.dicePoints,
@@ -773,28 +835,32 @@ export class HallScene extends Phaser.Scene {
 
   // --- Global tab -----------------------------------------------------------
 
-  private buildGlobal(area: Area): void {
+  /** The global board, or — with `daily` — today's Daily Rite board. The two
+   *  are the same table; only where the rows come from differs. */
+  private buildGlobal(area: Area, daily: boolean): void {
     const cx = area.x + area.width / 2;
     const midY = area.y + area.height / 2;
-    if (this.globalStatus !== "ready") {
+    const status = daily ? this.dailyStatus : this.globalStatus;
+    const hall = daily ? "today's rite" : "the global hall";
+    if (status !== "ready") {
       const msg =
-        this.globalStatus === "loading"
-          ? "Consulting the global hall…"
-          : this.globalStatus === "disabled"
-            ? "The global hall is beyond reach."
-            : this.globalStatus === "error"
-              ? "The global hall could not be reached.\nTap Global to try again."
-              : "Consulting the global hall…";
+        status === "disabled"
+          ? `${daily ? "Today's board" : "The global hall"} is beyond reach.`
+          : status === "error"
+            ? `${daily ? "Today's board" : "The global hall"} could not be reached.\nTap ${daily ? "Daily" : "Global"} to try again.`
+            : `Consulting ${hall}…`;
       this.centerMessage(cx, midY, msg, area.width);
       return;
     }
 
-    const rows = this.globalRows ?? [];
+    const rows = (daily ? this.dailyRows : this.globalRows) ?? [];
     if (rows.length === 0) {
       this.centerMessage(
         cx,
         midY,
-        "No scores have been recorded yet.\nBe the first to earn a place.",
+        daily
+          ? "No one has kept today's rite yet.\nBe the first to earn a place."
+          : "No scores have been recorded yet.\nBe the first to earn a place.",
         area.width,
       );
       return;
@@ -931,10 +997,14 @@ export class HallScene extends Phaser.Scene {
       rowStep,
       count: rows.length,
       tappable: (i) => rows[i].hasAnalysis,
-      onTap: (i) => this.openAnalysisGlobal(rows[i]),
-      tapHint: rows.some((r) => r.hasAnalysis)
-        ? "tap a row for its analysis"
-        : "",
+      onTap: (i) =>
+        this.openAnalysisGlobal(rows[i], daily ? this.day : undefined),
+      tapHint: [
+        daily ? `the rite of ${this.day}` : "",
+        rows.some((r) => r.hasAnalysis) ? "tap a row for its analysis" : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
       hintW: area.width,
     });
     // Always kept, even when there is no standing hint: it is also where a
