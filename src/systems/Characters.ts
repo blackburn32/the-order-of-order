@@ -201,6 +201,22 @@ export function describeCharacterUnlock(id: CharacterId): string {
   return `Win a run as ${list}.`;
 }
 
+/** What a newly unlocked card says the player did to open it, in the past
+ *  tense of an item card's deed ("Won a run") — the other half of
+ *  `describeCharacterUnlock`, read once the condition has been met. */
+export function describeCharacterDeed(id: CharacterId): string {
+  const names = CHARACTERS[id].unlockedBy.map((who) => CHARACTERS[who].name);
+  if (names.length === 0) {
+    const runs = CHARACTERS[id].unlockedAfterRuns;
+    return runs === 1 ? "Finished a run" : `Finished ${runs} runs`;
+  }
+  const list =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `Won a run as ${list}`;
+}
+
 /**
  * The weight of each ladder size under a size storm, normalised to sum to 1 and
  * indexed like DIE_LADDER.

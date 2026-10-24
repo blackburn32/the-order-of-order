@@ -9,11 +9,17 @@ import { completeTutorial } from "../systems/Tutorial";
 import { formatScore } from "../ui/formatScore";
 import { addFelt, bannerButton, BannerAction } from "../ui/widgets";
 import { isCompactLandscape, responsive } from "../ui/layout";
-import { buildCompactEndScreen, type EndScreenLine } from "../ui/endScreen";
+import {
+  buildCompactEndScreen,
+  buildNoviceUnlocks,
+  endScreenFrame,
+  type EndScreenLine,
+} from "../ui/endScreen";
 import { takePendingSubmission } from "../systems/GlobalScores";
 import { ITEMS, type ShopItemId } from "../systems/Items";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { AmbientLayer } from "../ui/AmbientLayer";
+import type { CharacterId } from "../systems/Characters";
 
 /** Fixed sigil brightness for the backdrop. Read together with the `danger`
  *  flag below rather than on its own: this screen is the one place outside the
@@ -23,6 +29,7 @@ const GAME_OVER_AMBIENCE = 0.75;
 
 export class GameOverScene extends Phaser.Scene {
   private unlocked: ShopItemId[] = [];
+  private newCharacters: CharacterId[] = [];
   private leaving = false;
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
 
@@ -30,8 +37,12 @@ export class GameOverScene extends Phaser.Scene {
     super("GameOver");
   }
 
-  init(data?: { unlocked?: ShopItemId[] }): void {
+  init(data?: {
+    unlocked?: ShopItemId[];
+    newCharacters?: CharacterId[];
+  }): void {
     this.unlocked = data?.unlocked ?? [];
+    this.newCharacters = data?.newCharacters ?? [];
   }
 
   create(): void {
@@ -63,7 +74,10 @@ export class GameOverScene extends Phaser.Scene {
     const state = getRun(this.registry);
     const W = this.scale.width;
     const H = this.scale.height;
-    const cx = W / 2;
+    // A first finished run, won or lost, is what opens Melodie: a loss is as
+    // good a moment as any to show her, and the only one the player gets.
+    const frame = endScreenFrame(W, H, this.newCharacters);
+    const cx = frame.cx;
 
     const felt = addFelt(this);
     // The same room every other screen is set in, turned red. The layer already
@@ -71,7 +85,7 @@ export class GameOverScene extends Phaser.Scene {
     // and that is exactly the verdict being delivered here — so the backdrop
     // carries the ending rather than sitting neutral behind it.
     const ambient = new AmbientLayer(this, { ring: true });
-    ambient.setPosition(cx, H / 2);
+    ambient.setPosition(W / 2, H / 2);
     ambient.setArea(W, H);
     ambient.setProgress(GAME_OVER_AMBIENCE, true);
     this.slideBackdrop = [felt, ambient];
@@ -148,12 +162,12 @@ export class GameOverScene extends Phaser.Scene {
         titleColor: CSS.red,
         lines,
         actions,
+        novices: this.newCharacters,
       });
       return;
     }
 
-    const top = H * 0.2;
-    const step = Math.min(H * 0.09, 60);
+    const { top, step } = frame;
 
     // The run's rank, as a medal standing behind the title.
     buildMedal(this, cx, top - 4, Math.min(step * 1.15, 68), rank);
@@ -201,35 +215,51 @@ export class GameOverScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    this.add
+    let lastText = this.add
       .text(cx, top + step * 4.4, gridLine, {
         fontFamily: SERIF,
         fontSize: "18px",
         color: CSS.dim,
         align: "center",
-        wordWrap: { width: Math.min(900, W - 60) },
+        wordWrap: { width: frame.wrap },
       })
       .setOrigin(0.5);
 
     if (unlockLine) {
-      this.add
+      lastText = this.add
         .text(cx, top + step * 5.3, unlockLine, {
           fontFamily: SERIF,
           fontSize: "18px",
           color: CSS.goldLight,
           fontStyle: "bold",
           align: "center",
-          wordWrap: { width: Math.min(820, W - 60) },
+          wordWrap: { width: Math.min(820, frame.wrap) },
         })
         .setOrigin(0.5);
     }
 
     const gap = Math.min(82, H * 0.12);
-    let btnY =
-      Math.min(
-        H - gap * actions.length - 20,
-        top + step * (unlockLine ? 6.1 : 5.3),
-      ) + gap;
+    const lowest = H - gap * actions.length - 20;
+    let btnY = Math.min(lowest, top + step * (unlockLine ? 6.1 : 5.3)) + gap;
+    if (this.newCharacters.length > 0) {
+      if (frame.side) {
+        buildNoviceUnlocks(this, this.newCharacters, {
+          ...frame.side,
+          top: top - step * 0.6,
+          bottom: H - 30,
+        });
+      } else {
+        // No column to spare: the cards take the gap between the verdict and
+        // the ways on, which drop as low as the screen allows to widen it.
+        btnY = lowest + gap;
+        buildNoviceUnlocks(this, this.newCharacters, {
+          cx,
+          top: lastText.getBounds().bottom + 14,
+          bottom: btnY - gap * 0.5,
+          width: W - 40,
+        });
+      }
+    }
     for (const action of actions) {
       bannerButton(this, cx, btnY, action.label, action.onClick);
       btnY += gap;

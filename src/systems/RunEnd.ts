@@ -1,5 +1,6 @@
 import { WIN_TRIAL, rankOf, trialInRank } from "../config";
 import type { RunState } from "../state/RunState";
+import type { CharacterId } from "./Characters";
 import { globalScoresEnabled, queuePendingSubmission } from "./GlobalScores";
 import { recordRunEnd } from "./SaveData";
 import { clearActiveRun } from "./ActiveRunPersistence";
@@ -20,11 +21,13 @@ export function finalizeRun(
 ): {
   personalBest: boolean;
   submissionQueued: boolean;
+  /** Characters this run was the one to unlock, for the end screen to name. */
+  newCharacters: CharacterId[];
 } {
   // Remove the resumable checkpoint before any non-idempotent Hall or
   // leaderboard side effect. A crash cannot replay a finalized run.
   clearActiveRun();
-  const { personalBest } = recordRunEnd(state, won);
+  const { personalBest, newCharacters } = recordRunEnd(state, won);
   // A daily run is offered to its day's board however it went: it is the one
   // attempt the player gets, so there is no better run of theirs to wait for.
   const daily = state.dailyRite?.day;
@@ -48,5 +51,5 @@ export function finalizeRun(
     });
   }
 
-  return { personalBest, submissionQueued };
+  return { personalBest, submissionQueued, newCharacters };
 }

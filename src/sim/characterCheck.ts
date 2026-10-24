@@ -16,6 +16,7 @@ import {
   characterUnlocked,
   DEFAULT_CHARACTER,
   describeCharacterUnlock,
+  describeCharacterDeed,
   isCharacterId,
   MELODIE_DISCOUNT_PERCENT,
   MELODIE_GRID_CEILING,
@@ -30,6 +31,7 @@ import {
   hydrateRunState,
   serializeRunState,
 } from "../systems/ActiveRunPersistence";
+import { recordRunEnd } from "../systems/SaveData";
 import { resolveRoll, rollPool } from "./engine";
 import { installStorage, mulberry32 } from "./localStorageShim";
 
@@ -105,6 +107,42 @@ console.log("\nUnlocking");
     describeCharacterUnlock("roland").includes("Diebert") &&
       describeCharacterUnlock("roland").includes("Melodie"),
     "and his locked card names them both",
+  );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nAnnouncing an unlock");
+
+{
+  // The end screens name whoever the run just opened, read off the save as the
+  // run is recorded — so each run must report exactly the novices it was the
+  // one to open, and never one opened before it.
+  const first = recordRunEnd(newRun([], 1, "diebert"), false);
+  check(
+    first.newCharacters.length === 1 && first.newCharacters[0] === "melodie",
+    "a first finished run, even a loss, announces Melodie",
+  );
+  check(
+    recordRunEnd(newRun([], 1, "diebert"), false).newCharacters.length === 0,
+    "and a second loss announces nobody",
+  );
+  check(
+    recordRunEnd(newRun([], 1, "diebert"), true).newCharacters.length === 0,
+    "nor does one win, with Roland still waiting on the other",
+  );
+  const both = recordRunEnd(newRun([], 1, "melodie"), true);
+  check(
+    both.newCharacters.length === 1 && both.newCharacters[0] === "roland",
+    "but the second novice's win announces Roland",
+  );
+  check(
+    recordRunEnd(newRun([], 1, "melodie"), true).newCharacters.length === 0,
+    "and winning with her again announces nobody",
+  );
+  check(
+    describeCharacterDeed("melodie") === "Finished a run" &&
+      describeCharacterDeed("roland") === "Won a run as Diebert and Melodie",
+    "and each card names the deed that opened it",
   );
 }
 

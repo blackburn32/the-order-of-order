@@ -13,11 +13,16 @@ import {
   isCompactLandscape,
   responsive,
 } from "../ui/layout";
-import { buildCompactEndScreen } from "../ui/endScreen";
+import {
+  buildCompactEndScreen,
+  buildNoviceUnlocks,
+  endScreenFrame,
+} from "../ui/endScreen";
 import { takePendingSubmission } from "../systems/GlobalScores";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { finalizeRun } from "../systems/RunEnd";
 import { AmbientLayer } from "../ui/AmbientLayer";
+import type { CharacterId } from "../systems/Characters";
 import { streamFor } from "../systems/Rng";
 import {
   createFreshShopCheckpoint,
@@ -37,6 +42,8 @@ interface VictoryData {
 export class VictoryScene extends Phaser.Scene {
   private leaving = false;
   private runEnded = false;
+  /** Characters this win unlocked, known once the run has been ended here. */
+  private newCharacters: CharacterId[] = [];
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
@@ -45,6 +52,7 @@ export class VictoryScene extends Phaser.Scene {
 
   init(data?: VictoryData): void {
     this.runEnded = data?.runEnded === true;
+    this.newCharacters = [];
   }
 
   create(): void {
@@ -60,11 +68,14 @@ export class VictoryScene extends Phaser.Scene {
     const state = getRun(this.registry);
     const W = this.scale.width;
     const H = this.scale.height;
-    const cx = W / 2;
+    // Only an ended run has been counted, so only then is there anyone new to
+    // show: a win can be the one that opens Roland.
+    const frame = endScreenFrame(W, H, this.newCharacters);
+    const cx = frame.cx;
 
     const felt = addFelt(this);
     const ambient = new AmbientLayer(this, { ring: true });
-    ambient.setPosition(cx, H / 2);
+    ambient.setPosition(W / 2, H / 2);
     ambient.setArea(W, H);
     ambient.setProgress(VICTORY_AMBIENCE, false);
     this.slideBackdrop = [felt, ambient];
@@ -146,12 +157,12 @@ export class VictoryScene extends Phaser.Scene {
             : []),
         ],
         actions,
+        novices: this.newCharacters,
       });
       return;
     }
 
-    const top = H * 0.2;
-    const step = Math.min(H * 0.09, 60);
+    const { top, step } = frame;
 
     // The run's rank, as a medal standing behind the title.
     buildMedal(this, cx, top - 4, Math.min(step * 1.15, 68), rank);
@@ -191,31 +202,51 @@ export class VictoryScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    this.add
+    let lastText = this.add
       .text(cx, top + step * 4.1, gridLine, {
         fontFamily: SERIF,
         fontSize: "18px",
         color: CSS.dim,
         align: "center",
-        wordWrap: { width: Math.min(900, W - 60) },
+        wordWrap: { width: frame.wrap },
       })
       .setOrigin(0.5);
 
     if (liftLine) {
-      this.add
+      lastText = this.add
         .text(cx, top + step * 4.8, liftLine, {
           fontFamily: SERIF,
           fontSize: "16px",
           color: CSS.goldLight,
           fontStyle: "italic",
           align: "center",
-          wordWrap: { width: Math.min(900, W - 60) },
+          wordWrap: { width: frame.wrap },
         })
         .setOrigin(0.5);
     }
 
     const gap = Math.min(82, H * 0.12);
-    let btnY = Math.min(H - gap * actions.length - 20, top + step * 5.0) + gap;
+    const lowest = H - gap * actions.length - 20;
+    let btnY = Math.min(lowest, top + step * 5.0) + gap;
+    if (this.newCharacters.length > 0) {
+      if (frame.side) {
+        buildNoviceUnlocks(this, this.newCharacters, {
+          ...frame.side,
+          top: top - step * 0.6,
+          bottom: H - 30,
+        });
+      } else {
+        // No column to spare: the cards take the gap between the verdict and
+        // the ways on, which drop as low as the screen allows to widen it.
+        btnY = lowest + gap;
+        buildNoviceUnlocks(this, this.newCharacters, {
+          cx,
+          top: lastText.getBounds().bottom + 14,
+          bottom: btnY - gap * 0.5,
+          width: W - 40,
+        });
+      }
+    }
     for (const action of actions) {
       bannerButton(this, cx, btnY, action.label, action.onClick);
       btnY += gap;
@@ -227,7 +258,7 @@ export class VictoryScene extends Phaser.Scene {
   private endRun(): void {
     if (this.runEnded || this.leaving) return;
     this.runEnded = true;
-    finalizeRun(getRun(this.registry), true);
+    this.newCharacters = finalizeRun(getRun(this.registry), true).newCharacters;
     destroyAllChildren(this);
     this.build();
     this.offerPendingSubmission();
