@@ -4149,10 +4149,13 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     if (outcome.phase === "gameOver") {
-      finalizeRun(s);
+      const { newCharacters } = finalizeRun(s);
       const onward = () =>
         this.slideOutOfTrial(() =>
-          this.scene.start("GameOver", { unlocked: this.trialUnlocks }),
+          this.scene.start("GameOver", {
+            unlocked: this.trialUnlocks,
+            newCharacters,
+          }),
         );
       this.afterCallout(() => {
         if (duel) {

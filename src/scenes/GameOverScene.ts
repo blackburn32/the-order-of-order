@@ -14,6 +14,7 @@ import { takePendingSubmission } from "../systems/GlobalScores";
 import { ITEMS, type ShopItemId } from "../systems/Items";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { AmbientLayer } from "../ui/AmbientLayer";
+import { describeNewCharacters, type CharacterId } from "../systems/Characters";
 
 /** Fixed sigil brightness for the backdrop. Read together with the `danger`
  *  flag below rather than on its own: this screen is the one place outside the
@@ -23,6 +24,7 @@ const GAME_OVER_AMBIENCE = 0.75;
 
 export class GameOverScene extends Phaser.Scene {
   private unlocked: ShopItemId[] = [];
+  private newCharacters: CharacterId[] = [];
   private leaving = false;
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
 
@@ -30,8 +32,12 @@ export class GameOverScene extends Phaser.Scene {
     super("GameOver");
   }
 
-  init(data?: { unlocked?: ShopItemId[] }): void {
+  init(data?: {
+    unlocked?: ShopItemId[];
+    newCharacters?: CharacterId[];
+  }): void {
     this.unlocked = data?.unlocked ?? [];
+    this.newCharacters = data?.newCharacters ?? [];
   }
 
   create(): void {
@@ -88,9 +94,17 @@ export class GameOverScene extends Phaser.Scene {
     const unlockedNames = this.unlocked.map(
       (id) => ITEMS.find((item) => item.id === id)?.name ?? id,
     );
-    const unlockLine =
+    // A first finished run, won or lost, is what opens Melodie: a loss is as
+    // good a moment as any to say so, and the only one the player gets.
+    const unlockHeads = [
       unlockedNames.length > 0
-        ? `New cards unlocked: ${unlockedNames.join(", ")}\nAvailable next run.`
+        ? `New cards unlocked: ${unlockedNames.join(", ")}`
+        : undefined,
+      describeNewCharacters(this.newCharacters),
+    ].filter((line): line is string => line !== undefined);
+    const unlockLine =
+      unlockHeads.length > 0
+        ? `${unlockHeads.join("\n")}\nAvailable next run.`
         : undefined;
 
     const hasPoints =
@@ -228,7 +242,7 @@ export class GameOverScene extends Phaser.Scene {
     let btnY =
       Math.min(
         H - gap * actions.length - 20,
-        top + step * (unlockLine ? 6.1 : 5.3),
+        top + step * (unlockLine ? 5.7 + 0.4 * unlockHeads.length : 5.3),
       ) + gap;
     for (const action of actions) {
       bannerButton(this, cx, btnY, action.label, action.onClick);

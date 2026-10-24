@@ -18,6 +18,7 @@ import { takePendingSubmission } from "../systems/GlobalScores";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { finalizeRun } from "../systems/RunEnd";
 import { AmbientLayer } from "../ui/AmbientLayer";
+import { describeNewCharacters, type CharacterId } from "../systems/Characters";
 import { streamFor } from "../systems/Rng";
 import {
   createFreshShopCheckpoint,
@@ -37,6 +38,8 @@ interface VictoryData {
 export class VictoryScene extends Phaser.Scene {
   private leaving = false;
   private runEnded = false;
+  /** Characters this win unlocked, known once the run has been ended here. */
+  private newCharacters: CharacterId[] = [];
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
 
   constructor() {
@@ -45,6 +48,7 @@ export class VictoryScene extends Phaser.Scene {
 
   init(data?: VictoryData): void {
     this.runEnded = data?.runEnded === true;
+    this.newCharacters = [];
   }
 
   create(): void {
@@ -83,6 +87,10 @@ export class VictoryScene extends Phaser.Scene {
     const scoreLine = `Total score: ${formatScore(state.totalScore)}${rank < 0 ? "" : ` · ${tierName(rank)} rank`}`;
     const scoreColor = rank < 0 ? CSS.goldLight : tierCss(rank);
     const gridLine = `Your grid: ${state.dice.summary()}`;
+    // Only an ended run has been counted, so only then is there anyone new to
+    // announce: a win can be the one that opens Roland.
+    const novices = describeNewCharacters(this.newCharacters);
+    const unlockLine = novices ? `${novices}\nAvailable next run.` : null;
 
     const hasPoints =
       Object.keys(state.dicePoints).length > 0 ||
@@ -141,6 +149,17 @@ export class VictoryScene extends Phaser.Scene {
                   color: CSS.goldLight,
                   italic: true,
                   gapBefore: 8,
+                },
+              ]
+            : []),
+          ...(unlockLine
+            ? [
+                {
+                  text: unlockLine,
+                  size: 14,
+                  color: CSS.goldLight,
+                  bold: true,
+                  gapBefore: 10,
                 },
               ]
             : []),
@@ -214,8 +233,23 @@ export class VictoryScene extends Phaser.Scene {
         .setOrigin(0.5);
     }
 
+    const unlockY = top + step * (liftLine ? 5.5 : 4.9);
+    if (unlockLine) {
+      this.add
+        .text(cx, unlockY, unlockLine, {
+          fontFamily: SERIF,
+          fontSize: "18px",
+          color: CSS.goldLight,
+          fontStyle: "bold",
+          align: "center",
+          wordWrap: { width: Math.min(820, W - 60) },
+        })
+        .setOrigin(0.5);
+    }
+
     const gap = Math.min(82, H * 0.12);
-    let btnY = Math.min(H - gap * actions.length - 20, top + step * 5.0) + gap;
+    const textBottom = unlockLine ? unlockY + step * 0.8 : top + step * 5.0;
+    let btnY = Math.min(H - gap * actions.length - 20, textBottom) + gap;
     for (const action of actions) {
       bannerButton(this, cx, btnY, action.label, action.onClick);
       btnY += gap;
@@ -227,7 +261,7 @@ export class VictoryScene extends Phaser.Scene {
   private endRun(): void {
     if (this.runEnded || this.leaving) return;
     this.runEnded = true;
-    finalizeRun(getRun(this.registry), true);
+    this.newCharacters = finalizeRun(getRun(this.registry), true).newCharacters;
     destroyAllChildren(this);
     this.build();
     this.offerPendingSubmission();

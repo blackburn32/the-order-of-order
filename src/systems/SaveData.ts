@@ -6,6 +6,8 @@ import type { DieAuras } from "./DieEffects";
 import { windfallFactor } from "./Dice";
 import { isRetired } from "./CardReworks";
 import {
+  CHARACTER_ORDER,
+  characterUnlocked,
   DEFAULT_CHARACTER,
   isCharacterId,
   type CharacterId,
@@ -508,6 +510,14 @@ export function recordCharacterWin(character: CharacterId): void {
   saveProgress(progress);
 }
 
+/** The characters the player can pick right now, in roster order. */
+export function unlockedCharacters(): CharacterId[] {
+  const progress = loadProgress();
+  return CHARACTER_ORDER.filter((id) =>
+    characterUnlocked(id, progress.charactersBeaten, progress.gamesCompleted),
+  );
+}
+
 export function recordGameCompleted(): void {
   const progress = loadProgress();
   progress.gamesCompleted += 1;
@@ -523,7 +533,12 @@ export function recordGameCompleted(): void {
 export function recordRunEnd(
   state: RunState,
   won: boolean,
-): { personalBest: boolean } {
+): { personalBest: boolean; newCharacters: CharacterId[] } {
+  // Read before the run is counted, so the end screen can name whoever this
+  // run is the one to open — a finished run for Melodie, a win for Roland.
+  const before = unlockedCharacters();
+  const opened = () =>
+    unlockedCharacters().filter((id) => !before.includes(id));
   const entry: HallEntry = {
     schema: HALL_SCHEMA,
     startedAt: state.startedAt,
@@ -570,7 +585,7 @@ export function recordRunEnd(
     saveDailyEntry(entry);
     recordGameCompleted();
     if (won) recordCharacterWin(state.character);
-    return { personalBest: false };
+    return { personalBest: false, newCharacters: opened() };
   }
   // "Personal best" now means beating the top of the Hall on its own terms —
   // rank first, score second — not merely out-scoring it.
@@ -582,7 +597,7 @@ export function recordRunEnd(
   recordGameCompleted();
   // Persisted apart from the Hall entry above, which the Hall may later drop.
   if (won) recordCharacterWin(state.character);
-  return { personalBest };
+  return { personalBest, newCharacters: opened() };
 }
 
 /** Evaluate every criterion-gated item against the current run and unlock any

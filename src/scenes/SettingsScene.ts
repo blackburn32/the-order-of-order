@@ -301,9 +301,9 @@ export class SettingsScene extends Phaser.Scene {
         // crossfading back to the table first would flash the dice grid the
         // player just walked away from. Game Over arrives behind the same room.
         this.leave(() => {
-          finalizeRun(getRun(this.registry));
+          const { newCharacters } = finalizeRun(getRun(this.registry));
           if (this.overlay) this.scene.stop(this.returnTo);
-          this.scene.start("GameOver");
+          this.scene.start("GameOver", { newCharacters });
         }, true),
     };
 

@@ -201,6 +201,20 @@ export function describeCharacterUnlock(id: CharacterId): string {
   return `Win a run as ${list}.`;
 }
 
+/** What a run-end screen prints for the characters that run unlocked, or
+ *  undefined when it unlocked none. */
+export function describeNewCharacters(
+  ids: readonly CharacterId[],
+): string | undefined {
+  if (ids.length === 0) return undefined;
+  const names = ids.map((id) => CHARACTERS[id].name);
+  const list =
+    names.length === 1
+      ? names[0]
+      : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `New novice${ids.length === 1 ? "" : "s"} unlocked: ${list}`;
+}
+
 /**
  * The weight of each ladder size under a size storm, normalised to sum to 1 and
  * indexed like DIE_LADDER.
