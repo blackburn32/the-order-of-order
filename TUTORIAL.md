@@ -44,106 +44,105 @@ build says _Press_ and _pinching_, every other build _Click_ and _scrolling_.
 
 - Spotlight: the dice grid
 
-### 8. You can pan around by dragging.
-
-- Spotlight: the dice grid
-- Continue: pans around
-
-### 9. And you can zoom in and out by scrolling/pinching.
-
-- Spotlight: the dice grid
-- Continue: zooms
-
-### 10. Click/Press here to roll your dice.
+### 8. Click/Press here to roll your dice.
 
 - Spotlight: the roll button
 - Continue: rolls
 
-### 11. To score you must roll a 1, good luck.
+### 9. To score you must roll a 1, good luck.
 
 - Spotlight: the dice grid
 - Note: shown once the first roll settles. That roll never scores, so this
   step always lands before the trial can end.
 
-### 12. Every roll is played. Meet bronze to survive, and climb to silver, gold or legendary for extra gold.
+### 10. Every roll is played. Meet bronze to survive, and climb to silver, gold or legendary for extra gold.
 
 - Spotlight: the goal plaque in the HUD, which names the next tier to climb
-- Note: follows step 11 on the table, before the trial can end.
+- Note: follows step 9 on the table, before the trial can end.
+
+### Grid hints
+
+Panning and zooming are not steps. While the run's first trial is on the
+table, two faint lines sit on the felt behind the dice, in the grid's top
+right: "Drag to pan" and "Scroll to zoom" (or "Pinch to zoom" on touch screens).
+Each fades away once the player does it and is not shown again, and both are
+gone by the first store whether or not the player tried them. Neither holds
+anything up.
 
 ## Trial results
 
-### 13. Congratulations on completing your first trial!
+### 11. Congratulations on completing your first trial!
 
 - Spotlight: "Trial cleared" and the trial name / rank beneath it
 
-### 14. After each trial you will receive gold which can be spent in the store!
+### 12. After each trial you will receive gold which can be spent in the store!
 
 - Spotlight: the gold earned and its full breakdown
 
-### 15. Every roll is played. Reach the silver, gold or legendary goal for extra gold.
+### 13. Every roll is played. Reach the silver, gold or legendary goal for extra gold.
 
 - Spotlight: the receipt row paying gold for the tier the trial reached
 - Note: skipped if the first clear met only bronze; shown instead on the first
   clear that reaches a higher tier.
 
-### 16. Your gold earns interest! 1 gold per 5 gold held at a trial's end, up to 5.
+### 14. Your gold earns interest! 1 gold per 5 gold held at a trial's end, up to 5.
 
 - Spotlight: the receipt row paying interest
 - Note: skipped if the first clear paid no interest; shown instead on the first
   clear that does.
 
-### 17. Click/Press here to enter the store.
+### 15. Click/Press here to enter the store.
 
 - Spotlight: the Enter the Shop button
 - Continue: presses the button
 
 ## The shop
 
-### 18. Purchase new cards to upgrade your order.
+### 16. Purchase new cards to upgrade your order.
 
 - Spotlight: the loose cards
 - Also advances: buying a card
 
-### 19. You can reroll the selection if nothing is to your liking.
+### 17. You can reroll the selection if nothing is to your liking.
 
 - Spotlight: the reroll button
 - Also advances: rerolling
 
-### 20. Booster packs allow you to choose 1 out of the 3 cards in the pack.
+### 18. Booster packs allow you to choose 1 out of the 3 cards in the pack.
 
 - Spotlight: the booster packs
 - Also advances: opening a pack
 
-### 21. When you're ready, press here to get to the next trial.
+### 19. When you're ready, press here to get to the next trial.
 
 - Spotlight: the Continue to Trials button
 - Also advances: pressing the button
 
 ## Trial overview (second and third visits)
 
-### 22. The goal will grow each trial, you'll need to grow your order's power to keep up!
+### 20. The goal will grow each trial, you'll need to grow your order's power to keep up!
 
 - Spotlight: the goal for the next trial
 
-### 23. The next round is this rank's boss fight, take note of its special effects!
+### 21. The next round is this rank's boss fight, take note of its special effects!
 
 - Spotlight: the boss trial's card
 - Trigger: returning to the trial overview after completing the second trial
 
-### 24. When you complete the boss round you will advance a rank!
+### 22. When you complete the boss round you will advance a rank!
 
 - Spotlight: same
 
 ## Rank 2 Overview
 
-### 25. Congratulations! Your order has advanced to the second rank.
+### 23. Congratulations! Your order has advanced to the second rank.
 
 - Spotlight: The new rank
 
-### 26. The point requirements for each trial have grown!
+### 24. The point requirements for each trial have grown!
 
 - Spotlight: the point values on each of the trial cards
 
-### 27. You're ready. Complete rank 10 to win, good luck!
+### 25. You're ready. Complete rank 10 to win, good luck!
 
 - Spotlight: None, center the callout

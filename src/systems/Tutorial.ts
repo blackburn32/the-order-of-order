@@ -49,8 +49,6 @@ export enum TutorialStage {
   Points, // TrialOverview: what scores toward it
   Begin, // TrialOverview: the button that starts the first trial
   Grid, // Game: where the dice are
-  Pan, // Game: dragging the grid
-  Zoom, // Game: scrolling / pinching it
   Roll, // Game: the seal
   RollOne, // Game: after the first roll
   Tiers, // Game: every roll is played, and the tiers above bronze
@@ -97,8 +95,6 @@ export const TUTORIAL_TEXT: Record<
   [TutorialStage.Begin]: `${PRESS} here to begin the first trial.`,
 
   [TutorialStage.Grid]: "This is where your dice are shown.",
-  [TutorialStage.Pan]: "You can pan around by dragging.",
-  [TutorialStage.Zoom]: `And you can zoom in and out by ${PHONE_BUILD ? "pinching" : "scrolling"}.`,
   [TutorialStage.Roll]: `${PRESS} here to roll your dice.`,
   [TutorialStage.RollOne]: "To score you must roll a 1, good luck.",
   [TutorialStage.Tiers]:
@@ -132,6 +128,52 @@ export const TUTORIAL_TEXT: Record<
     "The point requirements for each trial have grown!",
   [TutorialStage.Finale]: `You're ready. Complete rank ${WIN_RANK} to win, good luck!`,
 };
+
+// ---- grid hints ---------------------------------------------------------------
+//
+// Panning and zooming the grid are taught without a step of their own: each is
+// a faint line printed on the felt behind the dice, in the grid's top right,
+// that goes away once the player does it. Neither ever holds the script up.
+// They are only for the run's first trial, so the first store is as far as
+// they go whether or not the player ever tried them.
+//
+// A hint done is remembered across runs in the same list as the steps seen (by
+// the names the old steps had, so a player who panned under them is not taught
+// again), and forgotten with it when the tutorial is turned back on.
+
+export type GridHint = "pan" | "zoom";
+
+/** The hint's line. Zooming is named for the hand on the screen: a pinch on
+ *  the phone build, or in a browser whose main pointer is a finger. */
+export function gridHintText(hint: GridHint): string {
+  if (hint === "pan") return "Drag to pan";
+  const touch =
+    PHONE_BUILD ||
+    (typeof matchMedia === "function" &&
+      matchMedia("(pointer: coarse)").matches);
+  return touch ? "Pinch to zoom" : "Scroll to zoom";
+}
+
+const GRID_HINT_NAME: Record<GridHint, string> = { pan: "Pan", zoom: "Zoom" };
+
+/** The grid hints still to show on this table: those the player has not yet
+ *  done, on the first trial of a run armed to teach it. */
+export function pendingGridHints(state: RunState): GridHint[] {
+  if (!state.tutorialArmed || state.trial !== 1) return [];
+  const seen = seenSteps();
+  return (["pan", "zoom"] as const).filter(
+    (hint) => !seen.has(GRID_HINT_NAME[hint]),
+  );
+}
+
+/** Record that the player has done what `hint` asks. */
+export function markGridHintDone(hint: GridHint): void {
+  const seen = seenSteps();
+  const name = GRID_HINT_NAME[hint];
+  if (seen.has(name)) return;
+  seen.add(name);
+  saveTutorialSeen([...seen]);
+}
 
 export interface TutorialState {
   /** Whether the script is still running. Once it has run off its end this is
