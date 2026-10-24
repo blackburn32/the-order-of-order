@@ -154,7 +154,7 @@ function listPriceFor(
   let stack = 1;
   for (let copy = 0; copy < copies; copy++) stack *= factor;
 
-  return PRICE_BANDS[def.priceBand] * stack * market;
+  return PRICE_BANDS[def.priceBand] * (def.priceMarkup ?? 1) * stack * market;
 }
 
 /** Take the run's discount cards — and its character's standing discount — off a
@@ -304,10 +304,12 @@ export function isTreeUpgrade(state: RunState, id: ShopItemId): boolean {
   return !!parent && (state.purchases[parent] ?? 0) > 0;
 }
 
-/** A card's draw weight within its tier: a curse below an ordinary card, and a
- *  tree card its parent has opened above one. */
+/** A card's draw weight within its tier: a curse below an ordinary card, a card
+ *  with its own `drawWeight` at that, and a tree card its parent has opened
+ *  above one. */
 export function offerDrawWeight(state: RunState, id: ShopItemId): number {
-  const weight = itemIsCursed(BY_ID.get(id)!) ? CURSE_DRAW_WEIGHT : 1;
+  const def = BY_ID.get(id)!;
+  const weight = itemIsCursed(def) ? CURSE_DRAW_WEIGHT : (def.drawWeight ?? 1);
   return isTreeUpgrade(state, id) ? weight * treeUpgradeWeight! : weight;
 }
 

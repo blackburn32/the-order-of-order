@@ -9,10 +9,12 @@
 //   The Curious       copies only a d6 or larger that rolls its highest face
 //   stacking ×N       two copies at most
 //   First Light       retired (Hair Trigger), as the trees already propose
-//   grid multipliers  The Gathering, The Great Gathering and Like Minds are
-//                     cursed: free, and every goal from then on grows by the
-//                     share the grid just grew — grids of any size, but no
-//                     longer a way past the goal curve
+//   grid multipliers  The Gathering, The Great Gathering and Like Minds were
+//                     cursed: free, and every goal from then on grew by the
+//                     share the grid just grew. The curse read as noise on the
+//                     card, so they are sold plainly again, rarer and a little
+//                     dearer instead (systems/Items); the curse survives only
+//                     as a sim switch, for comparison
 //
 // They are the game's rules. The switch below exists only so a simulation can
 // measure the cards as they were sold before, for a baseline.
@@ -46,7 +48,7 @@ export function curiousCopyChance(): number {
   return enabled ? curiousChance : 1;
 }
 
-/** The grid multipliers the reworks curse. */
+/** The grid multipliers a sim can curse (see the switch below). */
 export const REWORK_GRID_CURSES: ReadonlySet<ShopItemId> = new Set([
   "mult2",
   "mult3",
@@ -56,23 +58,22 @@ export const REWORK_GRID_CURSES: ReadonlySet<ShopItemId> = new Set([
 // How hard the grid curse bites, as the power the grid's growth is raised to
 // before it multiplies the goals: 1 grows goals exactly as much as the grid
 // (parity), log2(1.6) grows them ×1.6 for every doubling.
-/** The goal growth the grid curse charges per doubling of the grid: a little
- *  under parity, so the card stays tempting without carrying a run. */
+/** The goal growth the grid curse charged per doubling of the grid when it was
+ *  live: a little under parity. A sweep that turns the curse on without naming
+ *  a strength gets this. */
 export const GRID_CURSE_GOAL_PER_DOUBLING = 1.6;
 let gridCurseExponent = Math.log2(GRID_CURSE_GOAL_PER_DOUBLING);
-let gridCursed = true;
+let gridCursed = false;
 
-/** Sim-only. The goal growth a grid curse charges for doubling the grid — 2 is
- *  parity, and null restores the default; 0 leaves the grid multipliers
- *  uncursed, as the live game sells them, for a baseline. */
+/** Sim-only. Curses the grid multipliers again, charging this goal growth for
+ *  doubling the grid — 2 is parity. 0 or null leaves them uncursed, as the live
+ *  game sells them. */
 export function setGridCurseGoalPerDoublingForSimulation(
   goalPerDoubling: number | null,
 ): void {
-  gridCursed = goalPerDoubling !== 0;
+  gridCursed = goalPerDoubling !== null && goalPerDoubling !== 0;
   gridCurseExponent = Math.log2(
-    goalPerDoubling === null || goalPerDoubling === 0
-      ? GRID_CURSE_GOAL_PER_DOUBLING
-      : goalPerDoubling,
+    gridCursed ? goalPerDoubling! : GRID_CURSE_GOAL_PER_DOUBLING,
   );
 }
 

@@ -432,9 +432,15 @@ export interface ItemDef {
   /** Gold price tier. The concrete cost is resolved by the shop from the band,
    *  the copies already owned, and that visit's market adjustment. */
   priceBand: PriceBand;
+  /** A surcharge on the band, for a card that wants to sit a little above its
+   *  band without moving to the next one (the grid multipliers). 1 when absent. */
+  priceMarkup?: number;
   /** Repeat-purchase surcharge. Unique/free items use `none`. */
   stackPricing?: StackPricing;
   rarity: Rarity;
+  /** How heavily the card is drawn against the others in its rarity tier, for
+   *  a card rarer than its tier alone makes it. 1 when absent. */
+  drawWeight?: number;
   /** Card text — a function when it depends on run state (e.g. Extra Number). */
   desc: string | ((state: RunState) => string);
   needsTarget?: boolean; // player must pick a die (shrink, twin, loaded_die, wild_face)
@@ -605,8 +611,15 @@ function goalRise(multMilli = 1_000): string {
   return `${Math.round((multMilli - 1_000) / 10)}%`;
 }
 
-/** A grid multiplier's copy, with the goal it charges appended while the grid
- *  curse is on (systems/CardReworks; a simulation may lift it for a baseline). The rise is read
+/** The grid multipliers (Like Minds, The Gathering, The Great Gathering) are
+ *  sold uncursed, so their price and scarcity are what hold them back: a fifth
+ *  over their band, a tier rarer than they were, and The Great Gathering drawn
+ *  at half weight within the rare tier it already sat in. */
+const GRID_MULTIPLIER_MARKUP = 1.2;
+const GREAT_GATHERING_DRAW_WEIGHT = 0.5;
+
+/** A grid multiplier's copy, with the goal it charges appended when a
+ *  simulation turns the grid curse back on (systems/CardReworks). The rise is read
  *  back from the curse's own factor for the growth the card promises, so a
  *  tuning change moves the text with it; a partial growth (Like Minds doubles
  *  one size) prints the most it can charge. */
@@ -848,8 +861,9 @@ export const ITEMS: ItemDef[] = [
     id: "twin",
     name: "Like Minds",
     priceBand: "strong",
+    priceMarkup: GRID_MULTIPLIER_MARKUP,
     stackPricing: "explosive",
-    rarity: "common",
+    rarity: "uncommon",
     desc: gridCurseDesc(
       "twin",
       "Choose a die size — every die of that size is duplicated",
@@ -937,8 +951,9 @@ export const ITEMS: ItemDef[] = [
     id: "mult2",
     name: "The Gathering",
     priceBand: "strong",
+    priceMarkup: GRID_MULTIPLIER_MARKUP,
     stackPricing: "explosive",
-    rarity: "uncommon",
+    rarity: "rare",
     desc: gridCurseDesc("mult2", "Duplicate every die in your grid", 2),
     effects: [multiplyDice(2)],
   },
@@ -946,8 +961,10 @@ export const ITEMS: ItemDef[] = [
     id: "mult3",
     name: "The Great Gathering",
     priceBand: "build",
+    priceMarkup: GRID_MULTIPLIER_MARKUP,
     stackPricing: "explosive",
     rarity: "rare",
+    drawWeight: GREAT_GATHERING_DRAW_WEIGHT,
     desc: gridCurseDesc("mult3", "Triple every die in your grid", 3),
     effects: [multiplyDice(3)],
   },
@@ -2639,7 +2656,7 @@ export function afflictionsHinderingItem(
  *  for the ordinary cards, which inflict nothing. A cursed card's face is
  *  stamped with this affliction's seal (see ui/itemCard). */
 /** Whether a card carries a standing drawback: its own flag, or the grid curse
- *  the card reworks lay on the grid multipliers. */
+ *  a simulation can lay on the grid multipliers. */
 export function itemIsCursed(def: ItemDef): boolean {
   return def.cursed === true || isGridCurse(def.id);
 }
