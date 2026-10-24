@@ -49,15 +49,15 @@ build says _Press_ and _pinching_, every other build _Click_ and _scrolling_.
 - Spotlight: the roll button
 - Continue: rolls
 
-### 9. To score you must roll a 1, good luck.
+### 9. To survive you must meet the bronze goal, but push further to score some extra gold!
 
-- Spotlight: the dice grid
+- Spotlight: the goal plaque in the HUD, which names the next tier to climb
 - Note: shown once the first roll settles. That roll never scores, so this
   step always lands before the trial can end.
 
-### 10. Every roll is played. Meet bronze to survive, and climb to silver, gold or legendary for extra gold.
+### 10. To score you must roll a 1, good luck.
 
-- Spotlight: the goal plaque in the HUD, which names the next tier to climb
+- Spotlight: the dice grid
 - Note: follows step 9 on the table, before the trial can end.
 
 ### Grid hints

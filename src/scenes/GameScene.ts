@@ -3846,7 +3846,7 @@ export class GameScene extends Phaser.Scene {
         }
       }
       this.updateHud();
-      // Surface the next tutorial step (e.g. "RollOne" after the first roll).
+      // Surface the next tutorial step (e.g. "Tiers" after the first roll).
       this.renderTutorial();
       if (skipHold) {
         this.afterRoll(true);
