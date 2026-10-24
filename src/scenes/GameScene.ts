@@ -83,12 +83,15 @@ import { SigilBurst } from "../ui/sigilBurst";
 import {
   advanceFrom,
   advanceTutorial,
-  atStage,
   getTutorial,
+  gridHintText,
+  markGridHintDone,
+  pendingGridHints,
   tutorialBlocksScore,
   tutorialForcesRoll,
   TutorialStage,
   TUTORIAL_TEXT,
+  type GridHint,
 } from "../systems/Tutorial";
 import {
   isCompactLandscape,
@@ -618,9 +621,9 @@ export class GameScene extends Phaser.Scene {
   // The live tutorial callout, if any — re-anchored to fresh HUD objects on
   // every rebuild (see renderTutorial). Only present during the first game.
   private tutorialCallout?: CalloutHandle;
-  // A pan or zoom step that the player has just satisfied, advancing after a
-  // beat so they see the grid answer the gesture before the next step dims it.
-  private tutorialGestureTimer?: Phaser.Time.TimerEvent;
+  // The pan and zoom hints on the felt behind the grid, while still owed (see
+  // pendingGridHints). Part of the room, so rebuilt with it.
+  private gridHints = new Map<GridHint, Phaser.GameObjects.Text>();
   // Unlocks still persist at the moment their criterion is met, but their
   // presentation waits for TrialResults so the roll itself stays readable.
   private trialUnlocks: ShopItemId[] = [];
@@ -688,7 +691,7 @@ export class GameScene extends Phaser.Scene {
     this.scoreRevealAt = 0;
     this.sealBreathe = undefined;
     this.trialUnlocks = [...this.trialUnlocks];
-    this.tutorialGestureTimer = undefined;
+    this.gridHints = new Map();
     this.gridContainer = this.add.container(0, 0);
     this.diceContainer = this.add.container(0, 0);
     this.cardContainer = this.add.container(0, 0);
@@ -829,13 +832,6 @@ export class GameScene extends Phaser.Scene {
         anchor = this.hudTargetPlaque.getBounds();
         onContinue = advance;
         break;
-      case TutorialStage.Pan:
-      case TutorialStage.Zoom:
-        // Dismissed by doing it (see noteGridGesture), so the grid stays live.
-        // The seal sits inside it, but onRoll holds it off until its own step.
-        anchor = grid;
-        interactiveAnchor = true;
-        break;
       case TutorialStage.Roll: {
         const r = SEAL_RADIUS * this.layout.button.scale;
         anchor = new Phaser.Geom.Rectangle(
@@ -863,16 +859,52 @@ export class GameScene extends Phaser.Scene {
     this.overlay(this.tutorialCallout.objects);
   }
 
-  /** The player just panned or zoomed the grid. On the step that asked for
-   *  that gesture, move on — after a beat, so the grid is seen to answer it.
-   *  Counted by the gesture rather than by the viewport moving, since a single
-   *  die can leave the grid nowhere to go. */
-  private noteGridGesture(kind: "pan" | "zoom"): void {
-    const stage = kind === "pan" ? TutorialStage.Pan : TutorialStage.Zoom;
-    if (this.tutorialGestureTimer || !atStage(this.registry, stage)) return;
-    this.tutorialGestureTimer = this.time.delayedCall(450, () => {
-      this.tutorialGestureTimer = undefined;
-      if (advanceFrom(this.registry, stage)) this.renderTutorial();
+  /** The pan and zoom hints still owed, printed faintly on the felt in the
+   *  grid's top right — behind the dice, which draw over them — one line each.
+   *  They never take input, so nothing on the table waits on them. */
+  private buildGridHints(layout: Layout): Phaser.GameObjects.Text[] {
+    this.gridHints.clear();
+    const frame = layout.gridFrame;
+    const inset = isPortrait(this) ? 8 : 12;
+    const size = Phaser.Math.Clamp(
+      Math.min(frame.width, frame.height) * 0.04,
+      12,
+      16,
+    );
+    return pendingGridHints(this.state).map((hint, i) => {
+      const text = this.add
+        .text(
+          frame.x + frame.width - inset,
+          frame.y + inset + i * size * 1.5,
+          gridHintText(hint),
+          {
+            fontFamily: SERIF,
+            fontSize: `${size}px`,
+            color: CSS.parchment,
+            fontStyle: "italic",
+          },
+        )
+        .setOrigin(1, 0)
+        .setAlpha(0.55);
+      this.gridHints.set(hint, text);
+      return text;
+    });
+  }
+
+  /** The player just panned or zoomed the grid: the hint for that gesture has
+   *  done its job, so it fades off the felt for good. Counted by the gesture
+   *  rather than by the viewport moving, since a single die can leave the grid
+   *  nowhere to go. */
+  private noteGridGesture(kind: GridHint): void {
+    const text = this.gridHints.get(kind);
+    if (!text) return;
+    this.gridHints.delete(kind);
+    markGridHintDone(kind);
+    this.tweens.add({
+      targets: text,
+      alpha: 0,
+      duration: 400,
+      onComplete: () => text.setVisible(false),
     });
   }
 
@@ -1140,6 +1172,7 @@ export class GameScene extends Phaser.Scene {
       this.ambient.setArea(this.scale.width, this.scale.height);
       floor.push(this.ambient);
     }
+    floor.push(...this.buildGridHints(layout));
 
     const items: Phaser.GameObjects.GameObject[] = [];
     items.push(...this.buildHud(layout));
@@ -3106,15 +3139,10 @@ export class GameScene extends Phaser.Scene {
   // ---- roll flow -----------------------------------------------------------
 
   private onRoll(): void {
-    // The pan and zoom steps light the whole grid, seal included, so the seal
-    // has to hold itself off until the step that introduces it.
+    // The grid step lights the whole grid, seal included, so the seal has to
+    // hold itself off until the step that introduces it.
     const t = getTutorial(this.registry);
-    if (
-      t.active &&
-      (t.stage === TutorialStage.Grid ||
-        t.stage === TutorialStage.Pan ||
-        t.stage === TutorialStage.Zoom)
-    ) {
+    if (t.active && t.stage === TutorialStage.Grid) {
       return;
     }
     this.stopSealBreathe();
