@@ -89,6 +89,9 @@ export interface Character {
   /** Characters that must have won a run before this one can be picked. Empty
    *  for a character available from the start. */
   unlockedBy: CharacterId[];
+  /** Runs the player must have finished, won or lost, before this one can be
+   *  picked. 0 for a character available from the start. */
+  unlockedAfterRuns: number;
 }
 
 /** Melodie's ceiling, named because her card quotes it. */
@@ -123,6 +126,7 @@ export const CHARACTERS: Record<CharacterId, Character> = {
     gridCeiling: Infinity,
     sizeChaos: null,
     unlockedBy: [],
+    unlockedAfterRuns: 0,
   },
   melodie: {
     id: "melodie",
@@ -134,6 +138,9 @@ export const CHARACTERS: Record<CharacterId, Character> = {
     gridCeiling: MELODIE_GRID_CEILING,
     sizeChaos: null,
     unlockedBy: [],
+    // A first run is played as Diebert, who adds nothing to learn over the
+    // rules themselves; Melodie's trade is only a trade once the shop is known.
+    unlockedAfterRuns: 1,
   },
   roland: {
     id: "roland",
@@ -146,6 +153,7 @@ export const CHARACTERS: Record<CharacterId, Character> = {
     gridCeiling: Infinity,
     sizeChaos: ROLAND_SIZE_CHAOS,
     unlockedBy: ["diebert", "melodie"],
+    unlockedAfterRuns: 0,
   },
 };
 
@@ -162,13 +170,17 @@ export function characterOf(id: CharacterId): Character {
   return CHARACTERS[id];
 }
 
-/** Whether `id` can be picked, given the characters already beaten. */
+/** Whether `id` can be picked, given the characters already beaten and the
+ *  runs finished so far. */
 export function characterUnlocked(
   id: CharacterId,
   beaten: readonly CharacterId[],
+  runsFinished: number,
 ): boolean {
-  return CHARACTERS[id].unlockedBy.every((required) =>
-    beaten.includes(required),
+  const who = CHARACTERS[id];
+  return (
+    runsFinished >= who.unlockedAfterRuns &&
+    who.unlockedBy.every((required) => beaten.includes(required))
   );
 }
 
@@ -177,7 +189,11 @@ export function characterUnlocked(
  *  character's lock explains itself. */
 export function describeCharacterUnlock(id: CharacterId): string {
   const names = CHARACTERS[id].unlockedBy.map((who) => CHARACTERS[who].name);
-  if (names.length === 0) return "";
+  if (names.length === 0) {
+    const runs = CHARACTERS[id].unlockedAfterRuns;
+    if (runs === 0) return "";
+    return runs === 1 ? "Finish a run." : `Finish ${runs} runs.`;
+  }
   const list =
     names.length === 1
       ? names[0]

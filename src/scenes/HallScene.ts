@@ -28,6 +28,7 @@ import { vigilGroups } from "../ui/vigilTally";
 import type { DiceStack } from "../systems/DicePool";
 import { dieBodyTexture } from "../art/textures";
 import { buildMedal } from "../ui/medal";
+import { buildTombstone } from "../ui/tombstone";
 import { tierName } from "../systems/GoalTiers";
 import {
   dieEffects,
@@ -488,8 +489,10 @@ export class HallScene extends Phaser.Scene {
     const scoreW = widest([scoreHead, ...rows.map((r) => r.score)]);
     // The medal and the endless mark get columns of their own rather than being
     // tucked into a margin, so neither can crowd the date or the score.
-    // Wide enough for legendary's rays, which reach past the disc.
-    const crownW = entries.some((e) => e.won) ? cellSize * 1.6 : 0;
+    // Wide enough for legendary's rays, which reach past the disc. Every run
+    // has a mark there now — a medal for a win, a headstone for a loss — so the
+    // column is always kept.
+    const crownW = entries.length ? cellSize * 1.6 : 0;
     const markW = entries.some((e) => e.endless) ? cellSize : 0;
     const listW = Math.max(...rows.map((r) => r.dice.width));
 
@@ -580,8 +583,8 @@ export class HallScene extends Phaser.Scene {
       score.setPosition(textLeft + scoreX, textY);
 
       // Victorious runs get the medal of the rank they finished on in the left
-      // gutter; a loss is unranked and gets nothing. (A win the Hall could not
-      // grade falls back to the crown that marked victories before ranks.)
+      // gutter, and a loss a headstone. (A win the Hall could not grade falls
+      // back to the crown that marked victories before ranks.)
       const medal =
         entry.won && (entry.medal ?? -1) >= 0
           ? buildMedal(
@@ -604,6 +607,10 @@ export class HallScene extends Phaser.Scene {
               color: CSS.goldLight,
             })
             .setOrigin(0.5),
+        );
+      } else {
+        track.add(
+          buildTombstone(this, textLeft + crownX, textY, cellSize * 1.05, 0.9),
         );
       }
       // Runs that pressed on past the final rank get an infinity mark just left
