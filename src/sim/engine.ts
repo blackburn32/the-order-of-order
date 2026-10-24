@@ -41,7 +41,8 @@ import {
   riseFromTheAshes,
   type ShopItemId,
 } from "../systems/Items";
-import { accumulatePoints } from "../systems/ItemPoints";
+import { accumulatePoints, sourceLabel } from "../systems/ItemPoints";
+import type { DiceChange } from "../systems/RollBreakdown";
 import { recordRollSample, seedRollHistory } from "../systems/RunHistory";
 import { deniedRoll, RollResult } from "../systems/Scoring";
 import {
@@ -200,6 +201,9 @@ export function resolveRoll(
   culled: number;
   /** The affliction that took this roll, if one did. */
   denied: "tollkeeper" | "gamblersCurse" | null;
+  /** Every way the player's grid gained or lost dice this roll, gains first,
+   *  for the callout's dice row (see ui/rollBreakdown). */
+  diceChanges: DiceChange[];
   /** Points the mirror rival scored on its matching roll (0 outside the duel). */
   rivalPoints: bigint;
 } {
@@ -378,6 +382,7 @@ export function resolveRoll(
     defected: passives.defected,
     culled: passives.culled,
     denied,
+    diceChanges: passives.changes,
     rivalPoints,
   };
 }
@@ -430,6 +435,8 @@ export function applyGridPassives(
   broken: number;
   defected: number;
   culled: number;
+  /** The same counts by cause, gains first, every entry non-zero. */
+  changes: DiceChange[];
 } {
   // Read the roll's own tallies before anything destroys dice, so breakage and
   // defection bill the same roll rather than the grid the other one left behind.
@@ -545,6 +552,25 @@ export function applyGridPassives(
     addItemValue(state, "whetstone", whetstoneShrinks);
   }
 
+  // Gains first, then losses, each named the way the player knows it: a card
+  // by its own name, a loss by what happened to the dice.
+  const gained = (id: ShopItemId, delta: number): DiceChange => ({
+    id,
+    name: sourceLabel(id),
+    delta,
+  });
+  const changes: DiceChange[] = [
+    gained("double_the_fun", doubleTheFunCount - multitudePairs),
+    gained("the_multitude", multitudePairs),
+    gained("genesis", genesisCount),
+    ...molds.map((mold) => gained(mold.id, mold.count)),
+    gained("from_the_ashes", ashes),
+    { id: "shattered", name: "Shattered", delta: -broken },
+    { id: "burned", name: "Burned", delta: -(burned + offered) },
+    { id: "defected", name: "Defected", delta: -defected },
+    { id: "culled", name: "Culled", delta: -culled },
+  ].filter((change) => change.delta !== 0);
+
   return {
     spawnedCount: spawnedCount + ashes,
     spawnedBySource: { genesis: genesisCount, molds },
@@ -552,6 +578,7 @@ export function applyGridPassives(
     broken: broken + burned + offered,
     defected,
     culled,
+    changes,
   };
 }
 

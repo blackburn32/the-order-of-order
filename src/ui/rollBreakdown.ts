@@ -8,7 +8,13 @@
 //        │        [ ×148.8 ]        │  ← counts up a step at a time
 //        │  THE CATECHISM ×1.77     │  ← the step that just raised it
 //        │         +97,768          │  ← revealed last
+//        │ ──────────────────────── │
+//        │         +82 DICE         │  ← only when the grid changed size
+//        │     SHATTERED −14        │  ← each gain and loss, then the sum
 //        └──────────────────────────┘
+//
+// A roll that scored nothing but still changed the grid (dice defecting off a
+// dud, say) gets a panel holding the dice row alone.
 //
 // Numbers come from systems/RollBreakdown; this file only stages them. The panel
 // behind the rows is what keeps them legible over a grid of pale dice. Every
@@ -22,7 +28,9 @@ import { fx } from "../systems/Effects";
 import {
   formatHundredths,
   multiplierHundredths,
+  netDiceChange,
   ONE,
+  type DiceChange,
   type RollBreakdown,
 } from "../systems/RollBreakdown";
 import { formatScore } from "./formatScore";
@@ -48,6 +56,8 @@ export interface RollBreakdownOptions {
   onStep?(index: number): void;
   /** Celebrate the total: this roll carried the trial past its goal. */
   acclaim?: RollAcclaim;
+  /** The dice this roll added to and took from the grid, for the dice row. */
+  diceChanges?: readonly DiceChange[];
   /** The acclaim ribbon's words in place of its default ("GOAL MET"), e.g.
    *  naming the tier this roll crossed. */
   acclaimLabel?: string;
@@ -80,21 +90,32 @@ export interface RollBreakdownView {
 /** How many row steps the callout's panel spans: its dice row, the bonus and
  *  the line naming each bonus as it is added, the multiplier and the line
  *  naming each step when anything multiplied the roll, the total, the acclaim's
- *  line under it when there is one (`detail`), and the panel's margins. */
+ *  line under it when there is one (`detail`), the dice row when the grid
+ *  changed size, and the panel's margins. */
 export function breakdownRows(
-  breakdown: RollBreakdown,
+  breakdown: RollBreakdown | null,
+  diceChanges: readonly DiceChange[] = [],
   detail = false,
 ): number {
+  const dice = diceChanges.length > 0;
+  if (!breakdown) return dice ? DICE_ROWS + 0.5 : 0;
   const sum =
     (breakdown.dice > 0n ? 1 : 0) +
     (breakdown.subtotal > breakdown.dice ? BONUS_ROWS : 0);
   return (
-    sum + (breakdown.steps.length > 0 ? 4.8 : 2.1) + (detail ? DETAIL_ROWS : 0)
+    sum +
+    (breakdown.steps.length > 0 ? 4.8 : 2.1) +
+    (detail ? DETAIL_ROWS : 0) +
+    (dice ? DICE_ROWS : 0)
   );
 }
 
 /** The acclaim's line under the total. */
 const DETAIL_ROWS = 0.9;
+
+/** The dice row plus the line under it naming each gain or loss, and the rule
+ *  that sets them apart from the score above. */
+const DICE_ROWS = 2.2;
 
 /** The bonus row plus the line under it naming the bonus being added. */
 const BONUS_ROWS = 1.6;
@@ -128,6 +149,13 @@ function transitionMs(bonusGap: number, stepGap: number): number {
   return Math.min(320, Math.max(120, pace * 0.4));
 }
 const HOLD_AFTER_TOTAL_MS = 650;
+/** The dice row's count, run after the total has landed: brisker than the
+ *  score's, since it is the footnote rather than the headline. */
+const DICE_COUNT_MS = 600;
+const DICE_LEAD_MS = 160;
+/** How long the dice row rests on its sum: longer than the total's hold, since
+ *  its summary line only appears once the count has finished. */
+const DICE_HOLD_MS = 1000;
 const FADE_MS = 300;
 
 /** Extra rest an acclaimed callout takes before it clears away, on top of the
@@ -156,17 +184,69 @@ function bonusStepText(name: string, points: bigint): string {
   return `${name.toUpperCase()} +${formatScore(points)}`;
 }
 
+/** A dice count with its sign always shown: "+96", "−14", "±0". */
+function signedDice(count: bigint): string {
+  if (count === 0n) return "±0";
+  return `${count > 0n ? "+" : "\u2212"}${formatScore(count > 0n ? count : -count)}`;
+}
+
+/** The dice row's figure: "+82 DICE". */
+function diceText(count: bigint): string {
+  return `${signedDice(count)} ${count === 1n || count === -1n ? "DIE" : "DICE"}`;
+}
+
+/** The line under the dice row while a change is counted: "SHATTERED −14". */
+function diceStepText(change: DiceChange): string {
+  return `${change.name.toUpperCase()} ${signedDice(BigInt(change.delta))}`;
+}
+
+/** What the line under the dice row settles on: the one change when there was
+ *  only one, both sides of the ledger when dice came and went, and otherwise the
+ *  last (largest) change, as the bonus line keeps its last effect. */
+function diceSummaryText(changes: readonly DiceChange[]): string {
+  const gained = changes.reduce((n, c) => n + Math.max(0, c.delta), 0);
+  const lost = changes.reduce((n, c) => n + Math.max(0, -c.delta), 0);
+  if (gained > 0 && lost > 0)
+    return `${signedDice(BigInt(gained))} GAINED · ${signedDice(BigInt(-lost))} LOST`;
+  return diceStepText(changes[changes.length - 1]);
+}
+
+/** The dice row's colour: green for a grid that grew, red for one that shrank. */
+function diceColor(count: bigint): string {
+  return count > 0n ? CSS.gain : count < 0n ? CSS.red : CSS.parchment;
+}
+
 type Piece =
   | Phaser.GameObjects.Text
   | Phaser.GameObjects.Container
   | Phaser.GameObjects.Graphics
   | Phaser.GameObjects.Image;
 
+/** Stands in for a roll that scored nothing: no sum, no multiplier, no total. */
+const UNSCORED: RollBreakdown = {
+  dice: 0n,
+  bonuses: [],
+  subtotal: 0n,
+  steps: [],
+  multiplier: ONE,
+  points: 0n,
+};
+
 export function playRollBreakdown(
   scene: Phaser.Scene,
-  breakdown: RollBreakdown,
+  scoredBreakdown: RollBreakdown | null,
   opts: RollBreakdownOptions,
 ): RollBreakdownView {
+  const scored = scoredBreakdown !== null;
+  const breakdown = scoredBreakdown ?? UNSCORED;
+  // Gains first, then losses, each smallest first, so each side builds toward
+  // its biggest change.
+  const diceChanges = [...(opts.diceChanges ?? [])].sort((a, b) =>
+    a.delta > 0 !== b.delta > 0
+      ? b.delta - a.delta
+      : Math.abs(a.delta) - Math.abs(b.delta),
+  );
+  const netDice = BigInt(netDiceChange(diceChanges));
   const motion = fx.motion;
   const pace = Math.max(1, opts.pace ?? 1);
   // `scaled` is a written duration at the callout's speed; `ms` is the same
@@ -258,7 +338,7 @@ export function playRollBreakdown(
   const stepLabel = text(0, "", CSS.parchment, labelSize);
 
   const totalSize = Math.min(fontSize * 1.9, rowStep * 1.25);
-  let totalY: number;
+  let totalY = y;
   if (multiplied) {
     y += sumRows.length > 0 ? rowStep * 0.4 : pillH / 2 - rowStep / 2;
     multRow.y = y;
@@ -269,7 +349,7 @@ export function playRollBreakdown(
     multRow.destroy();
     pieces.splice(pieces.indexOf(stepLabel), 1);
     stepLabel.destroy();
-    totalY = y + (sumRows.length > 0 ? rowStep * 0.3 : 0);
+    if (scored) totalY = y + (sumRows.length > 0 ? rowStep * 0.3 : 0);
   }
   const total = text(
     totalY,
@@ -277,6 +357,7 @@ export function playRollBreakdown(
     CSS.goldLight,
     totalSize,
   );
+  if (!scored) total.setVisible(false);
   // What crossing the goal earned, under the total. Hidden until the acclaim
   // lands, so the callout reads as the sum it is until then.
   const detail =
@@ -288,16 +369,52 @@ export function playRollBreakdown(
           labelSize,
         ).setAlpha(0)
       : undefined;
+  // Where the panel's last row sits, and how far past it the felt runs.
+  let lastY = detail ? detail.y : totalY;
+  let lastPad = detail ? rowStep * 0.55 : rowStep * 0.75;
+
+  // The dice row: what this roll grew and cost the grid, under a rule so it
+  // reads as a footnote to the score rather than another line of the sum.
+  let divider: Phaser.GameObjects.Graphics | undefined;
+  let diceRow: Phaser.GameObjects.Text | undefined;
+  let diceLabel: Phaser.GameObjects.Text | undefined;
+  if (diceChanges.length > 0) {
+    const ruleY = detail ? detail.y + rowStep * 0.6 : totalY + rowStep * 0.72;
+    const diceY = scored ? ruleY + rowStep * 0.63 : opts.top;
+    if (scored) {
+      divider = opts.add(scene.add.graphics({ x, y: ruleY }).setDepth(51));
+      pieces.push(divider);
+    }
+    const diceSize = Math.min(fontSize, rowStep * 0.85);
+    diceRow = text(diceY, diceText(netDice), diceColor(netDice), diceSize);
+    diceLabel = text(
+      diceY + rowStep * 0.75,
+      diceSummaryText(diceChanges),
+      CSS.parchment,
+      labelSize,
+    );
+    lastY = diceLabel.y;
+    lastPad = rowStep * 0.6;
+  }
 
   // The panel is as wide as the widest thing it will ever hold: every row, the
   // final multiplier, and the longest step name.
   const finalHundredths = multiplierHundredths(breakdown.multiplier);
   const finalFractional = breakdown.multiplier.den !== 1n;
   let widest = Math.max(
-    total.width,
+    scored ? total.width : 0,
     detail?.width ?? 0,
+    diceRow?.width ?? 0,
+    diceLabel?.width ?? 0,
     ...sumRows.map((row) => row.width),
   );
+  if (diceLabel) {
+    for (const change of diceChanges) {
+      diceLabel.setText(diceStepText(change));
+      widest = Math.max(widest, diceLabel.width);
+    }
+    diceLabel.setText(diceSummaryText(diceChanges));
+  }
   if (bonusLabel) {
     for (const effect of breakdown.bonuses) {
       bonusLabel.setText(bonusStepText(effect.name, effect.points));
@@ -324,9 +441,10 @@ export function playRollBreakdown(
     Math.max(fontSize * 13, widest + padX * 2),
   );
   let panelTop = opts.top - rowStep / 2 - padY * 0.45;
-  let panelBottom = detail
-    ? detail.y + rowStep * 0.55
-    : totalY + rowStep * 0.75;
+  let panelBottom = lastY + lastPad;
+  divider
+    ?.lineStyle(1, COLORS.gold, 0.4)
+    .lineBetween(-(panelW / 2 - padX * 0.6), 0, panelW / 2 - padX * 0.6, 0);
   // Laid out from `top`; a centred callout slides everything down (or up) so
   // the panel's middle lands on `centerY`.
   if (opts.centerY !== undefined) {
@@ -370,8 +488,20 @@ export function playRollBreakdown(
 
   // Anything wider than the panel (a very long card name) shrinks to fit.
   const room = panelW - padX;
-  for (const piece of [...sumRows, total, ...(detail ? [detail] : [])])
+  for (const piece of [
+    ...sumRows,
+    total,
+    ...(detail ? [detail] : []),
+    ...(diceRow ? [diceRow] : []),
+  ])
     if (piece.width > room) piece.setScale(room / piece.width);
+  // The line under the dice row changes length as it counts, so it is fitted
+  // as each change is named rather than once here.
+  const fitDiceLabel = (message: string) => {
+    if (!diceLabel) return;
+    diceLabel.setScale(1).setText(message);
+    if (diceLabel.width > room) diceLabel.setScale(room / diceLabel.width);
+  };
 
   // Every scale animation returns to the piece's resting scale, recorded here.
   // Reading the live scale instead (as fx.punch does) compounds when a punch
@@ -713,9 +843,10 @@ export function playRollBreakdown(
   });
   delay += breakdown.steps.length * stepGap;
 
-  const totalAtMs = ms(delay + 80);
-  reveal(total, totalAtMs);
+  const totalAtMs = scored ? ms(delay + 80) : 0;
+  if (scored) reveal(total, totalAtMs);
   at(totalAtMs, () => {
+    if (!scored) return;
     // Land exactly on the roll's multiplier, whatever a count was mid-way on.
     countEvent?.remove();
     settleBonus();
@@ -726,6 +857,49 @@ export function playRollBreakdown(
     punch(total, grand ? 1.5 : acclaim ? 1.34 : 1.2, acclaim ? 190 : 120);
     celebrate();
   });
+
+  // The dice row follows the total, counting from nothing through each gain and
+  // loss to where the grid ended up. Alone in its panel it starts at once.
+  let diceEvent: Phaser.Time.TimerEvent | undefined;
+  // A roll that left the grid alone has no dice row, and nothing to settle:
+  // hurrying its callout must not try to summarise an empty ledger.
+  const settleDice = () => {
+    diceEvent?.remove();
+    if (diceChanges.length === 0) return;
+    diceRow?.setText(diceText(netDice)).setColor(diceColor(netDice));
+    fitDiceLabel(diceSummaryText(diceChanges));
+  };
+  const diceStart = scored ? delay + 80 + DICE_LEAD_MS : 0;
+  const diceGap =
+    countPace(diceChanges.length).gap * (DICE_COUNT_MS / COUNT_MS);
+  const diceEnd = diceStart + diceChanges.length * diceGap;
+  if (diceRow && diceLabel) {
+    const row = diceRow;
+    for (const piece of [divider, diceRow, diceLabel])
+      if (piece) reveal(piece, ms(diceStart), piece === diceRow);
+    if (motion) {
+      row.setText(diceText(0n)).setColor(CSS.parchment);
+      diceLabel.setText("");
+      let shown = 0n;
+      diceChanges.forEach((change, index) => {
+        at(ms(diceStart + index * diceGap), () => {
+          const from = shown;
+          shown += BigInt(change.delta);
+          fitDiceLabel(diceStepText(change));
+          diceEvent?.remove();
+          diceEvent = fx.countUp(
+            scene,
+            from,
+            shown,
+            Math.max(1, ms(diceGap * 0.7)),
+            (value) => row.setText(diceText(value)).setColor(diceColor(value)),
+          );
+          punch(row, 1.1, 80);
+        });
+      });
+      at(ms(diceEnd), settleDice);
+    } else settleDice();
+  }
 
   let fading = false;
   const fadeOut = (duration: number) => {
@@ -744,18 +918,24 @@ export function playRollBreakdown(
     }
   };
   const holdMs = HOLD_AFTER_TOTAL_MS + (acclaim ? ACCLAIM_HOLD_MS[acclaim] : 0);
-  at(totalAtMs + scaled(holdMs), () => fadeOut(scaled(FADE_MS)));
+  const closeAtMs = Math.max(
+    scored ? totalAtMs + scaled(holdMs) : 0,
+    diceRow ? ms(diceEnd) + scaled(DICE_HOLD_MS) : 0,
+  );
+  at(closeAtMs, () => fadeOut(scaled(FADE_MS)));
 
   return {
     bottomY: panelBottom + rowStep * 0.5,
     totalAtMs,
-    closedAt: scene.time.now + totalAtMs + scaled(holdMs) + scaled(FADE_MS),
+    closedAt: scene.time.now + closeAtMs + scaled(FADE_MS),
     hurry() {
       for (const timer of timers) timer.remove();
       countEvent?.remove();
+      diceEvent?.remove();
       // Nothing to hurry once the scene has torn the callout down.
       if (fading || !panel.scene) return;
       settleBonus();
+      settleDice();
       if (multiplied) {
         showMultiplier(finalHundredths, finalFractional);
         settleStep();
@@ -777,6 +957,7 @@ export function playRollBreakdown(
     destroy() {
       for (const timer of timers) timer.remove();
       countEvent?.remove();
+      diceEvent?.remove();
       if (!panel.scene) return;
       for (const piece of pieces) {
         stopOwn(piece);

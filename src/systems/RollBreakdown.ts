@@ -61,6 +61,20 @@ export interface RollBreakdown {
   points: bigint;
 }
 
+/** One cause of the grid gaining (positive) or losing (negative) dice on a
+ *  roll: a card that grew it, or the dice that shattered, burned, defected or
+ *  were culled. */
+export interface DiceChange {
+  id: string;
+  name: string;
+  delta: number;
+}
+
+/** What a roll's dice changes come to once summed. */
+export function netDiceChange(changes: readonly DiceChange[]): number {
+  return changes.reduce((sum, change) => sum + change.delta, 0);
+}
+
 export const ONE: Multiplier = { num: 1n, den: 1n };
 
 /** Regroup a scored roll. Null for a roll that scored nothing. */
