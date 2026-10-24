@@ -73,14 +73,10 @@ import {
   type RollBreakdownView,
 } from "../ui/rollBreakdown";
 import { buildItemCard } from "../ui/itemCard";
-import {
-  addFelt,
-  floatText,
-  struckFloatText,
-  BannerStack,
-} from "../ui/widgets";
+import { addFelt, floatText, struckFloatText } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
 import { DuelShowdown } from "../ui/duelShowdown";
+import { tugBalance, TugOfWarBar, type TugCell } from "../ui/tugOfWar";
 import { ChainLightning, type ChainGroup } from "../ui/chainLightning";
 import { Spotlight } from "../ui/spotlight";
 import { SigilBurst } from "../ui/sigilBurst";
@@ -105,7 +101,8 @@ import { GridArea } from "../ui/gridLayout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { streamFor } from "../systems/Rng";
-import { DieTooltip } from "../ui/dieTooltip";
+import { DieTooltip, type NoteTooltipContent } from "../ui/dieTooltip";
+import { showNoticePanel, type NoticePanelHandle } from "../ui/noticePanel";
 import { statusRows, type StatusRow } from "../ui/statusRows";
 import {
   StatusTable,
@@ -241,12 +238,11 @@ const FELT_OVERSCAN = 16;
  * climbing toward 1 as the player pulls ahead and falling toward 0 as the Order
  * of Disorder does. An ordinary trial can measure its progress against a fixed
  * goal; a duel has only the gap, so the scale is centred on the tie rather than
- * on zero.
+ * on zero. Read off the same amplified scale as the tug of war, since the
+ * share of the combined total barely leaves 0.5 in a duel between equals.
  */
 function duelProgress(score: bigint, rival: bigint): number {
-  const total = score + rival;
-  if (total <= 0n) return 0.5;
-  return Number((score * 1000n) / total) / 1000;
+  return 0.5 + tugBalance(score, rival) / 2;
 }
 
 /** A roll worth this fraction of the trial's goal is a "big" one: it earns a
@@ -311,8 +307,10 @@ const TRIAL_OPEN_GROWTH: GridGrowthTiming = {
  *  reads as happening to the grid the player just saw. */
 const TRIAL_OPEN_DELAY_MS = 220;
 
-/** Keep roll feedback bounded even when a modifier hits the whole grid. */
-const MAX_PULSED_DICE = 64;
+/** Past this many departing dice, they skip being re-stacked under the
+ *  survivors. Roll pulses have their own budget, set by the graphics level
+ *  (`fx.pulseBudget`). */
+const MAX_RESTACKED_DEPARTURES = 64;
 /** The Procession's first hop waits out the roll's own border pulse (a 260ms
  *  bounce), so the hop is not read as more of it — and so its scale tween
  *  starts from the die at rest. */
@@ -421,6 +419,8 @@ interface HudCell {
 interface Layout {
   hud: Record<HudStatKey, HudCell>;
   bossRibbon?: { x: number; y: number; w: number; h: number; compact: boolean };
+  /** The duel's tug of war, a thin row under the rest of the header. */
+  duelBar?: TugCell;
   disabledCards?: DisabledCardOverlayLayout;
   footer: {
     settingsY: number;
@@ -496,9 +496,9 @@ export class GameScene extends Phaser.Scene {
   // interface and popups (banners, float-ups) land on top of dice drawn by the
   // grid camera's later render pass. See overlay().
   private overlayCamera?: Phaser.Cameras.Scene2D.Camera;
-  // Vertically-stacked announcement banners (unlocks, boss, trial end) so that
-  // several firing at once never overlap — see BannerStack.
-  private banners!: BannerStack;
+  // The boss (or the mirror duel) announcing itself as the trial opens. Closed
+  // when the player rolls, since the roll's callout takes the same space.
+  private notice?: NoticePanelHandle;
   private viewport: Viewport = { scrollX: 0, scrollY: 0, zoom: 1 };
   private gridDetail: GridDetailLevel = "full";
   private gridCount = -1;
@@ -609,6 +609,8 @@ export class GameScene extends Phaser.Scene {
   // The duel's closing tally, alive only between the last roll of the final
   // Boss Trial and the player leaving it.
   private showdown?: DuelShowdown;
+  /** The duel's tug of war under the HUD; rebuilt with the chrome. */
+  private tug?: TugOfWarBar;
 
   constructor() {
     super("Game");
@@ -675,7 +677,7 @@ export class GameScene extends Phaser.Scene {
     this.gridContainer.add([this.diceContainer, this.cardContainer]);
     // Recreated each build: routes new banners through the overlay camera so
     // they composite above the windowed grid, just like other popups.
-    this.banners = new BannerStack(this, (objs) => this.overlay(objs));
+    this.notice = undefined;
     this.statusTooltip = new DieTooltip(this);
 
     this.growthTiming = ROLL_GROWTH;
@@ -760,6 +762,7 @@ export class GameScene extends Phaser.Scene {
     if (this.overlayCamera) {
       setCameraSize(this.overlayCamera, this.scale.width, this.scale.height);
     }
+    this.notice?.relayout();
     // The showdown owns its own layout — it re-lays in place rather than being
     // rebuilt, so a rotation mid-sequence doesn't restart the verdict.
     this.showdown?.layout();
@@ -929,6 +932,19 @@ export class GameScene extends Phaser.Scene {
       cellH,
     );
     const hudBottom = hudMargin + cellH;
+    // The duel's two totals are too close, and too large, to compare in
+    // print, so a rope under the header shows the lead instead.
+    const duel = isMirrorTrial(this.state.trial);
+    const duelBarH = duel ? Phaser.Math.Clamp(H * 0.045, 20, 26) : 0;
+    const duelBarAt = (top: number): TugCell | undefined =>
+      duel
+        ? {
+            x: W / 2,
+            y: top + duelBarH / 2,
+            w: Math.min(hudWidth, W - 32) - 24,
+            h: duelBarH,
+          }
+        : undefined;
     // The closing rule tracks the strip rather than the screen: on a wide
     // monitor a full-bleed line would float away from the 600px-capped stats
     // it belongs to. A small outset keeps it reading as their underline.
@@ -951,7 +967,8 @@ export class GameScene extends Phaser.Scene {
     if (compact) {
       // A few px more than the bare gap the strip used to need: the rule sits
       // in the middle of it and wants air on both sides.
-      const gridTop = hudBottom + 14;
+      const duelBar = duelBarAt(hudBottom + 2);
+      const gridTop = hudBottom + 14 + duelBarH;
       // Seal in a rail down the right edge, dice filling everything left of
       // it. Stacking them would leave the grid a band a couple of dice tall.
       const railW = Phaser.Math.Clamp(W * 0.2, 132, 200);
@@ -991,6 +1008,7 @@ export class GameScene extends Phaser.Scene {
       return {
         hud,
         bossRibbon,
+        duelBar,
         disabledCards:
           headerDisabledCards ??
           disabledCardOverlayLayout(disabledCount, gridFrame, true),
@@ -1029,10 +1047,15 @@ export class GameScene extends Phaser.Scene {
           compact: false,
         }
       : undefined;
-    const chromeBottom = bossRibbon
-      ? bossRibbon.y + bossRibbon.h / 2
-      : hudBottom;
-    const gridTop = chromeBottom + (bossRibbon ? 12 : 16);
+    const duelBar = duelBarAt(
+      (bossRibbon ? bossRibbon.y + bossRibbon.h / 2 : hudBottom) + 4,
+    );
+    const chromeBottom = duelBar
+      ? duelBar.y + duelBar.h / 2
+      : bossRibbon
+        ? bossRibbon.y + bossRibbon.h / 2
+        : hudBottom;
+    const gridTop = chromeBottom + (bossRibbon || duelBar ? 12 : 16);
     const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14, scale: 1 };
     const gridBottom = button.y - SEAL_RADIUS - 16;
     const calloutBand = { top: chromeBottom, bottom: button.y - SEAL_RADIUS };
@@ -1046,6 +1069,7 @@ export class GameScene extends Phaser.Scene {
     return {
       hud,
       bossRibbon,
+      duelBar,
       disabledCards:
         headerDisabledCards ??
         disabledCardOverlayLayout(disabledCount, gridFrame, false),
@@ -1078,6 +1102,8 @@ export class GameScene extends Phaser.Scene {
     this.scoreRevealTimer?.remove();
     this.scoreRevealTimer = undefined;
     this.shownScore = this.state.score;
+    this.tug?.destroy();
+    this.tug = undefined;
     this.stopSealBreathe();
 
     // Ambient belongs to the room for draw order, but survives HUD rebuilds so
@@ -1147,6 +1173,10 @@ export class GameScene extends Phaser.Scene {
 
     const bossRibbon = this.buildBossRibbon(layout);
     if (bossRibbon) items.push(bossRibbon);
+    this.tug = layout.duelBar
+      ? new TugOfWarBar(this, layout.duelBar, "right")
+      : undefined;
+    if (this.tug) items.push(this.tug.container);
     items.push(...this.buildDisabledBossCards(layout));
 
     const { status } = layout.footer;
@@ -1281,8 +1311,25 @@ export class GameScene extends Phaser.Scene {
       cross.lineBetween(left, upper, right, lower);
       cross.lineBetween(right, upper, left, lower);
       card.add(cross);
+      // The X says the card is off; reading it says why. A long press does
+      // the same on a phone, and the card does nothing when tapped.
+      this.statusTooltip.attach(card, () => this.disabledCardNote(def));
       return card;
     });
+  }
+
+  /** What a disabled card says when read: the boss modifiers switching it
+   *  off, and that it comes back once the trial is over. */
+  private disabledCardNote(def: ItemDef): NoteTooltipContent {
+    const bosses = activeBosses(this.state).filter((boss) =>
+      itemDisabledDuringTrialByAffliction(def, boss.id),
+    );
+    return {
+      title: `${def.name}: disabled`,
+      lines: bosses.map((boss) => `${boss.name}: ${boss.desc}`),
+      aside:
+        "This Boss Trial's effect has switched this card off. It works again once the trial is over.",
+    };
   }
 
   /** One modifier's pill. Built in two steps, because a row of them has to
@@ -1483,6 +1530,13 @@ export class GameScene extends Phaser.Scene {
       this.hudTargetLabel.setScale(labelRoom / this.hudTargetLabel.width);
     this.setHudValue(this.hudGold, hud.gold);
     this.statusTable.setRows(hud.status);
+    // Hauled as the score plaque starts to climb, not before it.
+    if (hud.duel)
+      this.tug?.setReading(
+        hud.score,
+        hud.goal,
+        this.scoreRevealAt - this.time.now,
+      );
 
     this.updateTension(hud);
   }
@@ -1670,7 +1724,11 @@ export class GameScene extends Phaser.Scene {
     const visible = view.visible;
     const scale = view.scale;
     const previousDetail = this.gridDetail;
-    this.gridDetail = gridDetailLevel(view.equivalentDice, previousDetail);
+    this.gridDetail = gridDetailLevel(
+      view.equivalentDice,
+      previousDetail,
+      fx.effectsLodDice,
+    );
     const enteringCards =
       !firstLayout && previousDetail !== "cards" && this.gridDetail === "cards";
     const leavingCards =
@@ -2144,7 +2202,7 @@ export class GameScene extends Phaser.Scene {
     // it rather than behind it. Each move is a splice of the whole container,
     // so a dense grid losing dice by the thousand skips it: at that size the
     // overlap is too small to read.
-    if (departed.length <= MAX_PULSED_DICE)
+    if (departed.length <= MAX_RESTACKED_DEPARTURES)
       for (const sprite of departed) this.diceContainer.sendToBack(sprite);
     const departStep =
       departed.length > 1 ? timing.rippleMs / (departed.length - 1) : 0;
@@ -2675,7 +2733,7 @@ export class GameScene extends Phaser.Scene {
     const created = [...this.sprites]
       .filter(([index]) => this.state.dice.dieAt(index)?.source === source)
       .slice(-count);
-    for (const [, sprite] of evenlySample(created, MAX_PULSED_DICE)) {
+    for (const [, sprite] of evenlySample(created, fx.pulseBudget)) {
       sprite.pulseEffects([borderColor]);
       if (!showText || label === null) continue;
       const pos = this.dieScreenPosition(sprite);
@@ -3120,6 +3178,7 @@ export class GameScene extends Phaser.Scene {
     this.openTrialOnTable();
     this.rolling = true;
     this.tumbling = true;
+    this.notice?.close();
     this.finishBreakdown();
     this.clearFlourishes();
 
@@ -3540,7 +3599,7 @@ export class GameScene extends Phaser.Scene {
       // Sample by grid index rather than taking the first hits, spreading the
       // feedback across the viewport while keeping Graphics/tween cost fixed.
       const pulseCandidates = [...dieColors].sort(([a], [b]) => a - b);
-      const pulsed = evenlySample(pulseCandidates, MAX_PULSED_DICE);
+      const pulsed = evenlySample(pulseCandidates, fx.pulseBudget);
       for (const [i, colors] of pulsed) {
         this.sprites.get(i)?.pulseEffects(colors, bigDice.has(i));
       }
@@ -3617,20 +3676,32 @@ export class GameScene extends Phaser.Scene {
           -1,
         );
     const crossedGoal = crossedTier >= 0;
-    if (crossedGoal && crossedTier > 0)
-      this.banners.push(`${tierName(crossedTier)} goal met`, {
-        holdMs: 1100,
-        detail: `+${TIER_GOLD[crossedTier]} gold when the trial ends.`,
-      });
     const acclaim: RollAcclaim | undefined = !crossedGoal
       ? undefined
       : s.roll === 1
         ? "firstRoll"
         : "goal";
+    // A tier above bronze is named on the callout's ribbon, with the gold it
+    // adds at the trial's end under the total. A first-roll clear keeps its own
+    // ribbon, so the tier goes in that line instead.
+    const tierLabel =
+      crossedTier > 0 ? `${tierName(crossedTier).toUpperCase()} GOAL MET` : "";
+    const tierGold =
+      crossedTier > 0
+        ? `+${TIER_GOLD[crossedTier]} GOLD WHEN THE TRIAL ENDS`
+        : "";
+    const acclaimLabel =
+      acclaim === "goal" && tierLabel ? tierLabel : undefined;
+    const acclaimDetail = !tierGold
+      ? undefined
+      : acclaim === "firstRoll"
+        ? `${tierLabel} · ${tierGold}`
+        : tierGold;
 
     const band = this.layout.calloutBand;
     let floatY = breakdown ? 150 : 195;
-    const rowCount = breakdownRows(breakdown, diceChanges) + bossCues.length;
+    const rowCount =
+      breakdownRows(breakdown, diceChanges, !!acclaimDetail) + bossCues.length;
     const room = band
       ? band.bottom - band.top - 16
       : this.scale.height - floatY - 24;
@@ -3659,6 +3730,8 @@ export class GameScene extends Phaser.Scene {
         pace: autoReroll ? 2.5 : 1,
         acclaim,
         diceChanges,
+        acclaimLabel,
+        acclaimDetail,
         onBonus: (index) => audio.multiply(index),
         onStep: (index) => {
           audio.multiply(index);
@@ -3977,18 +4050,25 @@ export class GameScene extends Phaser.Scene {
     const duel = isMirrorTrial(this.state.trial);
     const bosses = activeBosses(this.state);
     if (!duel && bosses.length === 0) return;
-    const holdMs = 1600;
-    if (duel) {
-      this.banners.push("The Order of Disorder stands opposite you", {
-        holdMs,
-        detail:
-          "An exact copy of your grid, in their hands. Outscore it before the rolls run out.",
-      });
-    } else
-      this.banners.push(
-        `${bosses.map((b) => b.name).join(" and ")} preside${bosses.length > 1 ? "" : "s"}`,
-        { holdMs, detail: bosses.map((b) => b.desc).join(" ") },
-      );
+    this.notice?.close();
+    this.notice = showNoticePanel(this, {
+      ...(duel
+        ? {
+            title: "The Order of Disorder stands opposite you",
+            body: "An exact copy of your grid, in their hands. Outscore it before the rolls run out.",
+          }
+        : {
+            title: `${bosses.map((b) => b.name).join(" and ")} preside${bosses.length > 1 ? "" : "s"}`,
+            body: bosses.map((b) => b.desc).join(" "),
+          }),
+      // Over the table between the HUD and the seal, where the roll's callout
+      // goes, so it never covers the seal the player presses next.
+      centerY: () => {
+        const band = this.layout.calloutBand;
+        return band ? (band.top + band.bottom) / 2 : this.scale.height / 2;
+      },
+      register: (objs) => this.overlay(objs),
+    });
   }
 
   /** Resolve the end of a trial (win/lose/advance) with the matching audio,

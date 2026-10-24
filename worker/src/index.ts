@@ -539,41 +539,140 @@ async function sweepDaily(env: Env): Promise<void> {
     .run();
 }
 
+// --- Schema -----------------------------------------------------------------
+//
+// The tables are brought up to date by the Worker itself, once per isolate,
+// rather than trusting that every migration was run before every deploy. A
+// deploy that reads a column the live database lacks fails every request, and
+// the board was down that way once: the `medal` column shipped in the code
+// before migrations/0001 ran. Every statement here is a no-op on a current
+// database, so the check costs one PRAGMA per cold start.
+
+const SCHEMA = [
+  `CREATE TABLE IF NOT EXISTS runs (
+     member_id    TEXT PRIMARY KEY,
+     initials     TEXT NOT NULL,
+     rank         INTEGER NOT NULL,
+     trial        INTEGER NOT NULL,
+     endless      INTEGER NOT NULL,
+     character    TEXT NOT NULL DEFAULT 'diebert',
+     medal        INTEGER NOT NULL DEFAULT -1,
+     score_exact  TEXT NOT NULL,
+     score_len    INTEGER NOT NULL,
+     rolls        INTEGER NOT NULL,
+     has_analysis INTEGER NOT NULL DEFAULT 0,
+     created_at   INTEGER NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS runs_board
+     ON runs (rank DESC, score_len DESC, score_exact DESC)`,
+  `CREATE TABLE IF NOT EXISTS daily_runs (
+     day          TEXT NOT NULL,
+     member_id    TEXT NOT NULL,
+     initials     TEXT NOT NULL,
+     rank         INTEGER NOT NULL,
+     trial        INTEGER NOT NULL,
+     endless      INTEGER NOT NULL,
+     character    TEXT NOT NULL DEFAULT 'diebert',
+     medal        INTEGER NOT NULL DEFAULT -1,
+     score_exact  TEXT NOT NULL,
+     score_len    INTEGER NOT NULL,
+     rolls        INTEGER NOT NULL,
+     has_analysis INTEGER NOT NULL DEFAULT 0,
+     created_at   INTEGER NOT NULL,
+     PRIMARY KEY (day, member_id)
+   )`,
+  `CREATE INDEX IF NOT EXISTS daily_runs_board
+     ON daily_runs (day, rank DESC, score_len DESC, score_exact DESC)`,
+  `CREATE TABLE IF NOT EXISTS throttle (
+     member_id    TEXT PRIMARY KEY,
+     window_start INTEGER NOT NULL,
+     count        INTEGER NOT NULL
+   )`,
+];
+
+/** Columns added to `runs` after it first shipped. `CREATE TABLE IF NOT
+ *  EXISTS` skips a table that already exists, so these need their own ALTER. */
+const RUNS_ADDED_COLUMNS: Record<string, string> = {
+  character: `TEXT NOT NULL DEFAULT 'diebert'`,
+  medal: `INTEGER NOT NULL DEFAULT -1`,
+};
+
+let schemaReady: Promise<void> | null = null;
+
+function ensureSchema(env: Env): Promise<void> {
+  schemaReady ??= migrate(env).catch((err) => {
+    schemaReady = null; // try again on the next request
+    throw err;
+  });
+  return schemaReady;
+}
+
+async function migrate(env: Env): Promise<void> {
+  await env.DB.batch(SCHEMA.map((sql) => env.DB.prepare(sql)));
+  const { results } = await env.DB.prepare(`PRAGMA table_info(runs)`).all<{
+    name: string;
+  }>();
+  const have = new Set((results ?? []).map((col) => col.name));
+  for (const [name, type] of Object.entries(RUNS_ADDED_COLUMNS)) {
+    if (have.has(name)) continue;
+    try {
+      await env.DB.prepare(`ALTER TABLE runs ADD COLUMN ${name} ${type}`).run();
+    } catch (err) {
+      // Another isolate added it between our PRAGMA and this ALTER.
+      if (!String(err).includes("duplicate column")) throw err;
+    }
+  }
+}
+
+async function route(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/\/+$/, "");
+
+  if (request.method === "GET" && path === "/v1/health")
+    return json({ ok: true });
+
+  if (request.method === "GET" && path === "/v1/top")
+    return getTop(request, env);
+
+  if (request.method === "POST" && path === "/v1/runs")
+    return postRun(request, env);
+
+  const analysis = /^\/v1\/runs\/([^/]+)$/.exec(path);
+  if (request.method === "GET" && analysis)
+    return getAnalysis(decodeURIComponent(analysis[1]), env);
+
+  const daily = /^\/v1\/daily\/([^/]+)\/(top|runs)(?:\/([^/]+))?$/.exec(path);
+  if (daily) {
+    const [, day, route, member] = daily;
+    if (request.method === "GET" && route === "top" && !member)
+      return getDailyTop(request, env, day);
+    if (request.method === "POST" && route === "runs" && !member)
+      return postDailyRun(request, env, day);
+    if (request.method === "GET" && route === "runs" && member) {
+      if (!isDay(day)) return fail(400, "bad day");
+      return getAnalysis(decodeURIComponent(member), env, day);
+    }
+  }
+
+  return fail(404, "not found");
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === "OPTIONS")
       return new Response(null, { status: 204, headers: CORS });
 
-    const url = new URL(request.url);
-    const path = url.pathname.replace(/\/+$/, "");
-
-    if (request.method === "GET" && path === "/v1/health")
-      return json({ ok: true });
-
-    if (request.method === "GET" && path === "/v1/top")
-      return getTop(request, env);
-
-    if (request.method === "POST" && path === "/v1/runs")
-      return postRun(request, env);
-
-    const analysis = /^\/v1\/runs\/([^/]+)$/.exec(path);
-    if (request.method === "GET" && analysis)
-      return getAnalysis(decodeURIComponent(analysis[1]), env);
-
-    const daily = /^\/v1\/daily\/([^/]+)\/(top|runs)(?:\/([^/]+))?$/.exec(path);
-    if (daily) {
-      const [, day, route, member] = daily;
-      if (request.method === "GET" && route === "top" && !member)
-        return getDailyTop(request, env, day);
-      if (request.method === "POST" && route === "runs" && !member)
-        return postDailyRun(request, env, day);
-      if (request.method === "GET" && route === "runs" && member) {
-        if (!isDay(day)) return fail(400, "bad day");
-        return getAnalysis(decodeURIComponent(member), env, day);
-      }
+    // Anything that throws below would otherwise become Cloudflare's own 500
+    // page, which carries no CORS headers, so the browser reports a CORS
+    // block and hides the real error. Answer with our own 500 instead, which
+    // keeps the headers and names the failure in the Worker's logs.
+    try {
+      await ensureSchema(env);
+      return await route(request, env);
+    } catch (err) {
+      console.error(`${request.method} ${new URL(request.url).pathname}`, err);
+      return fail(500, "internal error");
     }
-
-    return fail(404, "not found");
   },
 
   /** Sweep throttle rows whose window has passed, and daily boards past

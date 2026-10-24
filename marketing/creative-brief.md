@@ -6,7 +6,7 @@
 - Primary call to action: **Play the Open Beta**
 - Primary surfaces: standalone website, itch.io, future steam page and phone app
 - Standalone domain: <https://the-order-of-order.com>
-- Typical winning run: 15–20 minutes; longer for a first-time reader
+- Typical winning run: 15–30 minutes; longer for a first-time reader
 - Spoiler boundary: Boss modifiers, late grids, and the King are safe. Never reveal
   the Order of Disorder or frame the King as openly evil.
 

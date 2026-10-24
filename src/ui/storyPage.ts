@@ -379,13 +379,15 @@ function compactGeometry(
 }
 
 /** The page dots that close a sequence's control block. Returned so the block
- *  can be rebuilt in place when the page turns. */
+ *  can be rebuilt in place when the page turns. Given `onPick`, every dot but
+ *  the current page's is a link to its page. */
 export function buildPageDots(
   scene: Phaser.Scene,
   cx: number,
   y: number,
   count: number,
   current: number,
+  onPick?: (page: number) => void,
 ): Phaser.GameObjects.Arc[] {
   const dotGap = 22;
   const dots: Phaser.GameObjects.Arc[] = [];
@@ -396,8 +398,45 @@ export function buildPageDots(
       5,
       COLORS.gold,
     );
-    dot.setAlpha(i === current ? 1 : 0.35);
+    const rest = i === current ? 1 : 0.35;
+    dot.setAlpha(rest);
     dots.push(dot);
+    if (!onPick || i === current) continue;
+
+    // Each dot is a way to that page. The hit area fills the gap to either
+    // neighbour and stands a thumb tall, measured from the circle's top-left.
+    const hitW = dotGap;
+    const hitH = SKIP_HIT_H;
+    dot.setInteractive({
+      hitArea: new Phaser.Geom.Rectangle(
+        5 - hitW / 2,
+        5 - hitH / 2,
+        hitW,
+        hitH,
+      ),
+      hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+      useHandCursor: true,
+    });
+    // Fires on release, like the skip link, so a touch that slides off does
+    // not turn the page.
+    let pressed = false;
+    dot.on("pointerover", () => dot.setAlpha(0.75));
+    dot.on("pointerout", () => {
+      pressed = false;
+      dot.setAlpha(rest);
+    });
+    dot.on("pointerdown", () => {
+      pressed = true;
+      audio.click();
+    });
+    dot.on("pointerup", () => {
+      if (!pressed) return;
+      pressed = false;
+      onPick(i);
+    });
+    dot.on("pointerupoutside", () => {
+      pressed = false;
+    });
   }
   return dots;
 }

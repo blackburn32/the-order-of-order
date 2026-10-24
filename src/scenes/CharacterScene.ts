@@ -5,7 +5,7 @@ import {
   characterUnlocked,
   type CharacterId,
 } from "../systems/Characters";
-import { charactersBeaten } from "../systems/SaveData";
+import { charactersBeaten, loadProgress } from "../systems/SaveData";
 import { audio } from "../systems/Audio";
 import { beginRun } from "../systems/Tutorial";
 import {
@@ -57,6 +57,7 @@ export class CharacterScene extends Phaser.Scene {
   private leaving = false;
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
   private beaten: CharacterId[] = [];
+  private runsFinished = 0;
 
   constructor() {
     super("Character");
@@ -67,6 +68,7 @@ export class CharacterScene extends Phaser.Scene {
     // Read once per visit rather than per rebuild: a resize must not re-read
     // storage, and nothing can win a run while this screen is open.
     this.beaten = charactersBeaten();
+    this.runsFinished = loadProgress().gamesCompleted;
     responsive(this, () => this.build());
     slideSceneIn(this, this.slideBackdrop);
   }
@@ -158,7 +160,7 @@ export class CharacterScene extends Phaser.Scene {
     y: number,
     scale: number,
   ): void {
-    const locked = !characterUnlocked(id, this.beaten);
+    const locked = !characterUnlocked(id, this.beaten, this.runsFinished);
     const card = buildCharacterCard(this, id, { locked, displayScale: scale });
     card.setPosition(x, y);
     card.setSize(CHARACTER_CARD_W * scale, CHARACTER_CARD_H * scale);

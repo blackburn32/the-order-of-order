@@ -197,7 +197,6 @@ export function buildTextures(scene: Phaser.Scene): void {
   buildCalloutButton(scene);
   buildCornerButtons(scene);
   buildPanel(scene);
-  buildBanner(scene);
   buildSpark(scene);
   buildShockwave(scene);
   buildSigils(scene);
@@ -1509,15 +1508,4 @@ function buildPanel(scene: Phaser.Scene): void {
   g.lineStyle(2, COLORS.inkSoft, 0.5);
   g.strokeRoundedRect(14, 14, 1072, 552, 10);
   bakeGraphics(g, "panel", 1100, 580);
-}
-
-/** Announcement banner strip. */
-function buildBanner(scene: Phaser.Scene): void {
-  const g = scene.add.graphics();
-  g.fillStyle(COLORS.feltDark, 0.92);
-  g.fillRect(0, 0, 720, 92);
-  g.lineStyle(2, COLORS.gold, 1);
-  g.lineBetween(0, 3, 720, 3);
-  g.lineBetween(0, 89, 720, 89);
-  bakeGraphics(g, "banner", 720, 92);
 }

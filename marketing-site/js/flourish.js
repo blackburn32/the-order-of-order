@@ -117,7 +117,7 @@ export function initParallax(root = document) {
 const COUNT_MS = 1100;
 
 /** Animate every run of digits in the element's text up to its final value,
- *  leaving anything else (the en dash in "15–20") exactly where it is. */
+ *  leaving anything else (the en dash in "15–30") exactly where it is. */
 function countUp(el) {
   const template = el.textContent;
   const numbers = template.match(/\d+/g);
