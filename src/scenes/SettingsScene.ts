@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { showToast } from "../ui/toast";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { PHONE_BUILD } from "../buildFlags";
 import { getRun } from "../state/RunState";
@@ -18,7 +19,6 @@ import {
   bannerButton,
   BannerAction,
   fitTextWidth,
-  showBanner,
   stackBannerButtons,
   toggleRow,
 } from "../ui/widgets";
@@ -565,7 +565,7 @@ export class SettingsScene extends Phaser.Scene {
         confirming = false;
         resetAllProgress();
         label.setText("Progress reset");
-        showBanner(this, "All progress has been reset", 1200);
+        showToast(this, "All progress has been reset", { tone: "success" });
       },
       maxWidth,
     );

@@ -60,7 +60,7 @@ export interface DuelShowdownOptions {
   continueLabel: string;
   onContinue: () => void;
   /** Routes freshly-created objects through the owning scene's overlay camera,
-   *  exactly as `BannerStack` does — GameScene draws its grid through a second
+   *  as the boss notice panel does — GameScene draws its grid through a second
    *  camera, and anything left on the main camera would be covered by dice. */
   register?: (objs: Phaser.GameObjects.GameObject[]) => void;
 }

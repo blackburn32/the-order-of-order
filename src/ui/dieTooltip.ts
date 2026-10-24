@@ -176,6 +176,22 @@ export class DieTooltip {
     return this.pressOpened;
   }
 
+  /** Open the panel for `content` at `pointer` now, as if hovered, and close
+   *  it again after `ms` unless something else already has. For a control
+   *  that answers a press by explaining itself — a locked button saying why.
+   *  Deferred a tick, so the pointer events of the press that asked for it
+   *  (which close the panel) have all run first. */
+  flash(content: TooltipContent, pointer: Phaser.Input.Pointer, ms = 2200) {
+    this.scene.time.delayedCall(0, () => {
+      if (!this.scene.sys.isActive()) return;
+      this.show(content, pointer);
+      const panel = this.panel;
+      this.scene.time.delayedCall(ms, () => {
+        if (this.panel === panel) this.hide();
+      });
+    });
+  }
+
   private cancelPress(): void {
     clearTimeout(this.pressTimer);
     this.pressTimer = undefined;
