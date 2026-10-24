@@ -52,12 +52,16 @@ const DETAIL_LEVELS: GridDetailLevel[] = [
   "noEffects",
   "cards",
 ];
-const DETAIL_THRESHOLDS = [
-  0,
-  GRID_LOD_THRESHOLDS.callouts,
-  GRID_LOD_THRESHOLDS.effects,
-  GRID_LOD_THRESHOLDS.cards,
-];
+/** The dice-in-view cutoff for each detail level. The effects cutoff is the
+ *  player's graphics level (see `systems/GraphicsLevel`), kept between the
+ *  callout and card cutoffs so the levels stay in order. */
+function detailThresholds(effectsLodDice: number): number[] {
+  const effects = Math.min(
+    GRID_LOD_THRESHOLDS.cards,
+    Math.max(GRID_LOD_THRESHOLDS.callouts, effectsLodDice),
+  );
+  return [0, GRID_LOD_THRESHOLDS.callouts, effects, GRID_LOD_THRESHOLDS.cards];
+}
 // Empty margin kept around the dice on every edge of the pannable area, so
 // zooming out past the point where the whole grid fits still shows a bit of
 // breathing room beyond the dice rather than pinning them flush against the
@@ -163,7 +167,9 @@ function clamp(value: number, min: number, max: number): number {
 export function gridDetailLevel(
   equivalentDice: number,
   previous?: GridDetailLevel,
+  effectsLodDice: number = GRID_LOD_THRESHOLDS.effects,
 ): GridDetailLevel {
+  const DETAIL_THRESHOLDS = detailThresholds(effectsLodDice);
   let target = 0;
   for (let i = 1; i < DETAIL_THRESHOLDS.length; i++) {
     if (equivalentDice >= DETAIL_THRESHOLDS[i]) target = i;

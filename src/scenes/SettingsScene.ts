@@ -4,6 +4,7 @@ import { PHONE_BUILD } from "../buildFlags";
 import { getRun } from "../state/RunState";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
+import { GRAPHICS_LEVELS, graphicsLevelSpec } from "../systems/GraphicsLevel";
 import {
   loadSettings,
   resetAllProgress,
@@ -16,6 +17,7 @@ import {
   addFelt,
   bannerButton,
   BannerAction,
+  fitTextWidth,
   showBanner,
   stackBannerButtons,
   toggleRow,
@@ -269,6 +271,10 @@ export class SettingsScene extends Phaser.Scene {
       this.settings.visualEffects = value;
       this.apply();
     });
+
+    this.makeGraphicsLevelRow(content, x0, x1, y);
+    y += SLIDER_ROW_H;
+    divider();
 
     if (!PHONE_BUILD) {
       const row = toggle("Fullscreen", this.scale.isFullscreen, (value) => {
@@ -570,7 +576,110 @@ export class SettingsScene extends Phaser.Scene {
   private apply(): void {
     audio.setVolumes(this.settings.musicVol, this.settings.sfxVol);
     fx.setEnabled(this.settings.visualEffects);
+    if (this.settings.graphicsLevel)
+      fx.setGraphicsLevel(this.settings.graphicsLevel);
     saveSettings(this.settings);
+  }
+
+  /**
+   * The graphics level: the level in force on the right, flanked by arrows that
+   * step it down and up, and under the label a line saying what it buys — how
+   * many dice may be in view before the per-die effects stop drawing. A tap on
+   * the row itself steps up and wraps, so a thumb can cycle without aiming.
+   */
+  private makeGraphicsLevelRow(
+    content: Phaser.GameObjects.Container,
+    x0: number,
+    x1: number,
+    top: number,
+  ): void {
+    let index = GRAPHICS_LEVELS.indexOf(fx.graphicsLevel);
+
+    const labelText = this.add
+      .text(x0, top + 20, "Graphics Level", {
+        fontFamily: SERIF,
+        fontSize: "21px",
+        color: CSS.parchment,
+      })
+      .setOrigin(0, 0.5);
+    const hint = this.add
+      .text(x0, top + 50, "", {
+        fontFamily: SERIF,
+        fontSize: "15px",
+        color: CSS.dim,
+        fontStyle: "italic",
+      })
+      .setOrigin(0, 0.5);
+    const arrowStyle = {
+      fontFamily: SERIF,
+      fontSize: "24px",
+      color: CSS.gold,
+      fontStyle: "bold",
+    };
+    const up = this.add.text(x1, top + 20, "›", arrowStyle).setOrigin(1, 0.5);
+    const readout = this.add
+      .text(x1 - 26, top + 20, "", {
+        fontFamily: SERIF,
+        fontSize: "18px",
+        color: CSS.gold,
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+    // Centred in a slot as wide as the widest level, so the arrows hold still
+    // while the value changes between them.
+    const slot = GRAPHICS_LEVELS.reduce((widest, level) => {
+      readout.setText(graphicsLevelSpec(level).label);
+      return Math.max(widest, readout.width);
+    }, 0);
+    readout.setX(x1 - up.width - 10 - slot / 2);
+    const down = this.add
+      .text(readout.x - slot / 2 - 10, top + 20, "‹", arrowStyle)
+      .setOrigin(1, 0.5);
+
+    const show = () => {
+      const spec = graphicsLevelSpec(GRAPHICS_LEVELS[index]);
+      readout.setText(spec.label);
+      hint.setText(
+        `Dice effects draw with up to ${spec.effectsLodDice.toLocaleString("en-US")} dice in view`,
+      );
+      fitTextWidth(hint, x1 - x0);
+      down.setAlpha(index > 0 ? 1 : 0.3);
+      up.setAlpha(index < GRAPHICS_LEVELS.length - 1 ? 1 : 0.3);
+    };
+    const step = (delta: number, wrap: boolean) => {
+      const n = GRAPHICS_LEVELS.length;
+      const next = wrap
+        ? (index + delta + n) % n
+        : Phaser.Math.Clamp(index + delta, 0, n - 1);
+      if (next === index) return;
+      index = next;
+      audio.click();
+      show();
+      this.settings.graphicsLevel = GRAPHICS_LEVELS[index];
+      this.apply();
+    };
+    show();
+
+    // The whole band is the "step up" target; the left arrow gets its own
+    // zone on top of it. Both keep the scroll-drag from claiming the press
+    // (see onDown).
+    const band = this.add
+      .rectangle(
+        (x0 + x1) / 2,
+        top + SLIDER_ROW_H / 2,
+        x1 - x0,
+        SLIDER_ROW_H - 8,
+        COLORS.gold,
+        0.001,
+      )
+      .setInteractive({ useHandCursor: true });
+    band.on("pointerdown", () => step(1, true));
+    const downZone = this.add
+      .rectangle(down.x - down.width / 2, top + 20, 44, 44, COLORS.gold, 0.001)
+      .setInteractive({ useHandCursor: true });
+    downZone.on("pointerdown", () => step(-1, false));
+
+    content.add([band, labelText, hint, readout, down, up, downZone]);
   }
 
   /**
