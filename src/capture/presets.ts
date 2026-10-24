@@ -222,6 +222,15 @@ export const CAPTURE_PRESETS = [
     script: "roll-callout",
   },
   {
+    id: "roll-callout-dice",
+    label: "Roll callout — dice gained and lost",
+    kind: "gameplay",
+    defaultBackdrop: "felt",
+    defaultFormat: "wide",
+    readyDelayMs: 700,
+    script: "roll-callout",
+  },
+  {
     id: "gameplay-eclipse",
     label: "Gameplay — Eclipse arrival",
     kind: "gameplay",

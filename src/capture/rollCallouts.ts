@@ -31,6 +31,7 @@ export const ROLL_CALLOUT_PRESET_IDS = [
   "roll-callout-spotlight",
   "roll-callout-procession",
   "roll-callout-sigil",
+  "roll-callout-dice",
 ] as const;
 
 export type RollCalloutPresetId = (typeof ROLL_CALLOUT_PRESET_IDS)[number];
@@ -317,6 +318,24 @@ export function rollCalloutRun(id: RollCalloutPresetId): RunState {
       run.extraNumberCount = 2;
       run.royalSealSizes = [4, 6];
       run.purchases = { royal_seal: 1 };
+      return run;
+    }
+    // Thirty d6 that grow and burn on the same roll: Double the Fun and Genesis
+    // add dice, The Ouroboros shatters half of what scored and The Brazier
+    // burns the 1s, so the callout's dice row counts both ways to the net.
+    case "roll-callout-dice": {
+      const run = baseRun(0x5eed0009);
+      run.trial = 9;
+      run.roll = 0;
+      run.dice = DicePool.fromDice(mixedDice(30, [[6, 1]], 0xd1ce));
+      run.scoringNumbers = [1, 2, 3];
+      run.extraNumberCount = 2;
+      run.hasDoubleTheFun = true;
+      run.genesis = 1;
+      run.hasBrazier = true;
+      run.afflictions = ["ouroboros"];
+      run.purchases = { double_the_fun: 1, genesis: 1, the_brazier: 1 };
+      run.ownedUnique = ["double_the_fun", "the_brazier"];
       return run;
     }
     // Twenty thousand dice: a long climb through stacked cards and two engines.

@@ -33,6 +33,7 @@ const PRESETS = [
   "roll-callout-spotlight",
   "roll-callout-procession",
   "roll-callout-sigil",
+  "roll-callout-dice",
 ];
 
 const projectRoot = process.cwd();

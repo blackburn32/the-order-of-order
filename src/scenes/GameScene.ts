@@ -373,16 +373,13 @@ interface BossRollCue {
 }
 
 /**
- * What a standing affliction did to this roll, in the same red notices the Boss
- * Trials use — a roll taken outright, dice shattered by breakage, dice lost to
- * defection, dice culled by a grid cap. Written here rather than in
- * `bossRollCues` because none of it depends on which boss (if any) is
- * presiding: these are the run's own curses.
+ * A roll a standing affliction took outright, in the same red notices the Boss
+ * Trials use. Written here rather than in `bossRollCues` because it does not
+ * depend on which boss (if any) is presiding: these are the run's own curses.
+ * The dice afflictions shatter, turn or cull are counted on the callout's dice
+ * row instead (see ui/rollBreakdown).
  */
 function afflictionRollCues(
-  broken: number,
-  defected: number,
-  culled: number,
   denied: "tollkeeper" | "gamblersCurse" | null,
 ): BossRollCue[] {
   const cues: BossRollCue[] = [];
@@ -390,21 +387,6 @@ function afflictionRollCues(
     cues.push({ kind: "penalty", message: "TOLL UNPAID · ROLL FORFEIT" });
   if (denied === "gamblersCurse")
     cues.push({ kind: "penalty", message: "GAMBLER'S CURSE · ROLL FORFEIT" });
-  if (broken > 0)
-    cues.push({
-      kind: "penalty",
-      message: `${broken.toLocaleString()} DICE SHATTERED`,
-    });
-  if (defected > 0)
-    cues.push({
-      kind: "penalty",
-      message: `${defected.toLocaleString()} DICE DEFECTED`,
-    });
-  if (culled > 0)
-    cues.push({
-      kind: "penalty",
-      message: `${culled.toLocaleString()} DICE CULLED`,
-    });
   return cues;
 }
 
@@ -2668,11 +2650,13 @@ export class GameScene extends Phaser.Scene {
   /** Identify dice added by an automatic passive after the grid has been
    *  re-laid. Foundry and Genesis otherwise change the grid silently; Double
    *  the Fun already identifies the parent die that triggered each copy, and
-   *  shop additions are the direct result of the player's selection. */
+   *  shop additions are the direct result of the player's selection. A roll's
+   *  callout already names and counts what it grew (its dice row), so a roll
+   *  passes no `label` and the new dice only flash. */
   private cueCreatedDice(
     count: number,
     source: string,
-    label: string,
+    label: string | null,
     borderColor: number,
     textColor: string,
   ): void {
@@ -2683,7 +2667,7 @@ export class GameScene extends Phaser.Scene {
     )
       return;
 
-    const showText = this.gridDetail === "full";
+    const showText = label !== null && this.gridDetail === "full";
     // In list mode, taking the last source-matching dice selects the copies that
     // were just appended. Bucket mode merges indistinguishable dice into their
     // existing source bucket, so the last visible matches are the closest
@@ -2693,7 +2677,7 @@ export class GameScene extends Phaser.Scene {
       .slice(-count);
     for (const [, sprite] of evenlySample(created, MAX_PULSED_DICE)) {
       sprite.pulseEffects([borderColor]);
-      if (!showText) continue;
+      if (!showText || label === null) continue;
       const pos = this.dieScreenPosition(sprite);
       this.overlay(floatText(this, pos.x, pos.y - 40, label, textColor, 18));
     }
@@ -3416,6 +3400,7 @@ export class GameScene extends Phaser.Scene {
       defected,
       culled,
       denied,
+      diceChanges,
     } = resolveRoll(
       s,
       // A separate stream from the dice above, not a continuation of it: taking
@@ -3451,7 +3436,7 @@ export class GameScene extends Phaser.Scene {
     });
     const bossCues = [
       ...this.bossRollCues(rolledAgg, result),
-      ...afflictionRollCues(broken, defected, culled, denied),
+      ...afflictionRollCues(denied),
     ];
     if (shrunk.length > 0 || broken > 0 || defected > 0 || culled > 0)
       this.cardDataDirty = true;
@@ -3645,8 +3630,7 @@ export class GameScene extends Phaser.Scene {
 
     const band = this.layout.calloutBand;
     let floatY = breakdown ? 150 : 195;
-    const rowCount =
-      (breakdown ? breakdownRows(breakdown) : 0) + bossCues.length;
+    const rowCount = breakdownRows(breakdown, diceChanges) + bossCues.length;
     const room = band
       ? band.bottom - band.top - 16
       : this.scale.height - floatY - 24;
@@ -3655,8 +3639,10 @@ export class GameScene extends Phaser.Scene {
     this.breakdownView?.destroy();
     this.breakdownView = undefined;
     this.scoreRevealAt = 0;
-    if (breakdown) {
+    if (breakdown)
       audio.score(Number(result.points > 100n ? 100n : result.points));
+    else audio.dud();
+    if (breakdown || diceChanges.length > 0) {
       const view = playRollBreakdown(this, breakdown, {
         x: this.scale.width / 2,
         top: floatY,
@@ -3672,20 +3658,21 @@ export class GameScene extends Phaser.Scene {
         },
         pace: autoReroll ? 2.5 : 1,
         acclaim,
+        diceChanges,
         onBonus: (index) => audio.multiply(index),
         onStep: (index) => {
           audio.multiply(index);
-          this.pulseForMultiplier(breakdown.steps, index);
+          this.pulseForMultiplier(breakdown?.steps ?? [], index);
         },
       });
       this.breakdownView = view;
-      this.scoreRevealAt = this.time.now + view.totalAtMs;
-      this.celebrateTimer = this.time.delayedCall(view.totalAtMs, () =>
-        this.celebrateRoll(result.points),
-      );
+      if (breakdown) {
+        this.scoreRevealAt = this.time.now + view.totalAtMs;
+        this.celebrateTimer = this.time.delayedCall(view.totalAtMs, () =>
+          this.celebrateRoll(result.points),
+        );
+      }
       floatY = view.bottomY;
-    } else {
-      audio.dud();
     }
 
     for (const cue of bossCues) {
@@ -3730,7 +3717,7 @@ export class GameScene extends Phaser.Scene {
         this.cueCreatedDice(
           spawnedBySource.genesis,
           "genesis",
-          "GENESIS",
+          null,
           COLORS.rarityRare,
           CSS.rarityRare,
         );
@@ -3738,7 +3725,7 @@ export class GameScene extends Phaser.Scene {
           this.cueCreatedDice(
             mold.count,
             mold.id,
-            sourceLabel(mold.id).toUpperCase(),
+            null,
             COLORS.rarityUncommon,
             CSS.rarityUncommon,
           );

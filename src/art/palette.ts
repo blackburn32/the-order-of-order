@@ -42,6 +42,8 @@ export const CSS = {
   // roll that met the goal, and the light every burst is drawn in.
   glow: "#ffd977",
   steel: "#cfd6df",
+  /** Dice the grid gained, counted on the roll callout's dice row. */
+  gain: "#86e07a",
   dim: "#8c7a55",
   red: "#d96a5a",
   waxRed: "#8a1f2b",
