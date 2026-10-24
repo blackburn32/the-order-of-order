@@ -70,6 +70,7 @@ console.log("The roster");
   );
   check(
     CHARACTERS[DEFAULT_CHARACTER].unlockedBy.length === 0 &&
+      CHARACTERS[DEFAULT_CHARACTER].unlockedAfterRuns === 0 &&
       CHARACTERS[DEFAULT_CHARACTER].gridCeiling === Infinity &&
       CHARACTERS[DEFAULT_CHARACTER].sizeChaos === null,
     "the default novice adds no rule a resumed run could inherit",
@@ -80,18 +81,24 @@ console.log("The roster");
 console.log("\nUnlocking");
 
 {
+  check(characterUnlocked("diebert", [], 0), "Diebert needs nothing");
+  check(!characterUnlocked("melodie", [], 0), "Melodie starts locked");
   check(
-    characterUnlocked("diebert", []) && characterUnlocked("melodie", []),
-    "the two starters need nothing",
+    characterUnlocked("melodie", [], 1),
+    "and one finished run opens her, won or lost",
   );
-  check(!characterUnlocked("roland", []), "Roland starts locked");
   check(
-    !characterUnlocked("roland", ["diebert"]) &&
-      !characterUnlocked("roland", ["melodie"]),
+    describeCharacterUnlock("melodie") === "Finish a run.",
+    "and her locked card says so",
+  );
+  check(!characterUnlocked("roland", [], 5), "Roland starts locked");
+  check(
+    !characterUnlocked("roland", ["diebert"], 5) &&
+      !characterUnlocked("roland", ["melodie"], 5),
     "and one win is not enough",
   );
   check(
-    characterUnlocked("roland", ["diebert", "melodie"]),
+    characterUnlocked("roland", ["diebert", "melodie"], 2),
     "but both wins open him",
   );
   check(

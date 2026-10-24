@@ -13,7 +13,9 @@ import {
 import {
   slideSceneIn,
   slideSceneOut,
+  PAGE_TURN,
   turnPage,
+  type SlideTravel,
   type PageTurn,
 } from "../ui/sceneSlide";
 
@@ -152,6 +154,7 @@ export class IntroScene extends Phaser.Scene {
         rowY + DOTS_GAP,
         INTRO_PAGES.length,
         this.page,
+        (page) => this.jumpTo(page),
       ),
     );
   }
@@ -181,11 +184,22 @@ export class IntroScene extends Phaser.Scene {
     this.turnTo(this.page + 1);
   }
 
+  /** A page dot: land any turn in flight, then turn to that page — back the
+   *  way the reader came for an earlier one, onward for a later one. */
+  private jumpTo(page: number): void {
+    this.turn?.finish();
+    if (page === this.page) return;
+    this.turnTo(
+      page,
+      page < this.page ? (-PAGE_TURN as SlideTravel) : PAGE_TURN,
+    );
+  }
+
   /** Send the current chapter to the left, draw the one at `page`, then bring
    *  it in from the right — a page turning in a book. Only the chapter travels —
    *  the room behind it and the controls beneath it hold their place, so the
    *  page turns within the screen rather than the whole screen turning over. */
-  private turnTo(page: number): void {
+  private turnTo(page: number, travel: SlideTravel = PAGE_TURN): void {
     this.page = page;
     this.turn = turnPage(
       this,
@@ -198,6 +212,7 @@ export class IntroScene extends Phaser.Scene {
       () => {
         this.turn = undefined;
       },
+      travel,
     );
   }
 
