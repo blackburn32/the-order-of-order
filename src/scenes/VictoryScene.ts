@@ -13,12 +13,16 @@ import {
   isCompactLandscape,
   responsive,
 } from "../ui/layout";
-import { buildCompactEndScreen } from "../ui/endScreen";
+import {
+  buildCompactEndScreen,
+  buildNoviceUnlocks,
+  endScreenFrame,
+} from "../ui/endScreen";
 import { takePendingSubmission } from "../systems/GlobalScores";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { finalizeRun } from "../systems/RunEnd";
 import { AmbientLayer } from "../ui/AmbientLayer";
-import { describeNewCharacters, type CharacterId } from "../systems/Characters";
+import type { CharacterId } from "../systems/Characters";
 import { streamFor } from "../systems/Rng";
 import {
   createFreshShopCheckpoint,
@@ -64,11 +68,14 @@ export class VictoryScene extends Phaser.Scene {
     const state = getRun(this.registry);
     const W = this.scale.width;
     const H = this.scale.height;
-    const cx = W / 2;
+    // Only an ended run has been counted, so only then is there anyone new to
+    // show: a win can be the one that opens Roland.
+    const frame = endScreenFrame(W, H, this.newCharacters);
+    const cx = frame.cx;
 
     const felt = addFelt(this);
     const ambient = new AmbientLayer(this, { ring: true });
-    ambient.setPosition(cx, H / 2);
+    ambient.setPosition(W / 2, H / 2);
     ambient.setArea(W, H);
     ambient.setProgress(VICTORY_AMBIENCE, false);
     this.slideBackdrop = [felt, ambient];
@@ -87,10 +94,6 @@ export class VictoryScene extends Phaser.Scene {
     const scoreLine = `Total score: ${formatScore(state.totalScore)}${rank < 0 ? "" : ` · ${tierName(rank)} rank`}`;
     const scoreColor = rank < 0 ? CSS.goldLight : tierCss(rank);
     const gridLine = `Your grid: ${state.dice.summary()}`;
-    // Only an ended run has been counted, so only then is there anyone new to
-    // announce: a win can be the one that opens Roland.
-    const novices = describeNewCharacters(this.newCharacters);
-    const unlockLine = novices ? `${novices}\nAvailable next run.` : null;
 
     const hasPoints =
       Object.keys(state.dicePoints).length > 0 ||
@@ -152,25 +155,14 @@ export class VictoryScene extends Phaser.Scene {
                 },
               ]
             : []),
-          ...(unlockLine
-            ? [
-                {
-                  text: unlockLine,
-                  size: 14,
-                  color: CSS.goldLight,
-                  bold: true,
-                  gapBefore: 10,
-                },
-              ]
-            : []),
         ],
         actions,
+        novices: this.newCharacters,
       });
       return;
     }
 
-    const top = H * 0.2;
-    const step = Math.min(H * 0.09, 60);
+    const { top, step } = frame;
 
     // The run's rank, as a medal standing behind the title.
     buildMedal(this, cx, top - 4, Math.min(step * 1.15, 68), rank);
@@ -210,46 +202,51 @@ export class VictoryScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
 
-    this.add
+    let lastText = this.add
       .text(cx, top + step * 4.1, gridLine, {
         fontFamily: SERIF,
         fontSize: "18px",
         color: CSS.dim,
         align: "center",
-        wordWrap: { width: Math.min(900, W - 60) },
+        wordWrap: { width: frame.wrap },
       })
       .setOrigin(0.5);
 
     if (liftLine) {
-      this.add
+      lastText = this.add
         .text(cx, top + step * 4.8, liftLine, {
           fontFamily: SERIF,
           fontSize: "16px",
           color: CSS.goldLight,
           fontStyle: "italic",
           align: "center",
-          wordWrap: { width: Math.min(900, W - 60) },
-        })
-        .setOrigin(0.5);
-    }
-
-    const unlockY = top + step * (liftLine ? 5.5 : 4.9);
-    if (unlockLine) {
-      this.add
-        .text(cx, unlockY, unlockLine, {
-          fontFamily: SERIF,
-          fontSize: "18px",
-          color: CSS.goldLight,
-          fontStyle: "bold",
-          align: "center",
-          wordWrap: { width: Math.min(820, W - 60) },
+          wordWrap: { width: frame.wrap },
         })
         .setOrigin(0.5);
     }
 
     const gap = Math.min(82, H * 0.12);
-    const textBottom = unlockLine ? unlockY + step * 0.8 : top + step * 5.0;
-    let btnY = Math.min(H - gap * actions.length - 20, textBottom) + gap;
+    const lowest = H - gap * actions.length - 20;
+    let btnY = Math.min(lowest, top + step * 5.0) + gap;
+    if (this.newCharacters.length > 0) {
+      if (frame.side) {
+        buildNoviceUnlocks(this, this.newCharacters, {
+          ...frame.side,
+          top: top - step * 0.6,
+          bottom: H - 30,
+        });
+      } else {
+        // No column to spare: the cards take the gap between the verdict and
+        // the ways on, which drop as low as the screen allows to widen it.
+        btnY = lowest + gap;
+        buildNoviceUnlocks(this, this.newCharacters, {
+          cx,
+          top: lastText.getBounds().bottom + 14,
+          bottom: btnY - gap * 0.5,
+          width: W - 40,
+        });
+      }
+    }
     for (const action of actions) {
       bannerButton(this, cx, btnY, action.label, action.onClick);
       btnY += gap;

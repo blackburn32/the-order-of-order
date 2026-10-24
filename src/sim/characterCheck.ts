@@ -16,7 +16,7 @@ import {
   characterUnlocked,
   DEFAULT_CHARACTER,
   describeCharacterUnlock,
-  describeNewCharacters,
+  describeCharacterDeed,
   isCharacterId,
   MELODIE_DISCOUNT_PERCENT,
   MELODIE_GRID_CEILING,
@@ -140,11 +140,9 @@ console.log("\nAnnouncing an unlock");
     "and winning with her again announces nobody",
   );
   check(
-    describeNewCharacters([]) === undefined &&
-      describeNewCharacters(["melodie"]) === "New novice unlocked: Melodie" &&
-      describeNewCharacters(["melodie", "roland"]) ===
-        "New novices unlocked: Melodie and Roland",
-    "and the end screen's line names them",
+    describeCharacterDeed("melodie") === "Finished a run" &&
+      describeCharacterDeed("roland") === "Won a run as Diebert and Melodie",
+    "and each card names the deed that opened it",
   );
 }
 

@@ -71,6 +71,10 @@ const LOCKED_ART_TINT = 0x2b2438;
 
 export interface CharacterCardOptions {
   locked: boolean;
+  /** Printed below an unlocked card, in the caption a locked one fills with
+   *  its condition: the end screens put the deed that opened it here, as the
+   *  results screen does under a newly unlocked item. */
+  note?: string;
   /** Render directly at this size rather than scaling finished Text textures,
    *  which is what keeps the type crisp as the screen shrinks the hand. */
   displayScale?: number;
@@ -135,7 +139,7 @@ export function buildCharacterCard(
     .text(
       0,
       CAPTION_Y * scale,
-      opts.locked ? describeCharacterUnlock(id) : "",
+      opts.locked ? describeCharacterUnlock(id) : (opts.note ?? ""),
       {
         fontFamily: SERIF,
         fontSize: fontSize(16, 10),

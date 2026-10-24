@@ -201,18 +201,20 @@ export function describeCharacterUnlock(id: CharacterId): string {
   return `Win a run as ${list}.`;
 }
 
-/** What a run-end screen prints for the characters that run unlocked, or
- *  undefined when it unlocked none. */
-export function describeNewCharacters(
-  ids: readonly CharacterId[],
-): string | undefined {
-  if (ids.length === 0) return undefined;
-  const names = ids.map((id) => CHARACTERS[id].name);
+/** What a newly unlocked card says the player did to open it, in the past
+ *  tense of an item card's deed ("Won a run") — the other half of
+ *  `describeCharacterUnlock`, read once the condition has been met. */
+export function describeCharacterDeed(id: CharacterId): string {
+  const names = CHARACTERS[id].unlockedBy.map((who) => CHARACTERS[who].name);
+  if (names.length === 0) {
+    const runs = CHARACTERS[id].unlockedAfterRuns;
+    return runs === 1 ? "Finished a run" : `Finished ${runs} runs`;
+  }
   const list =
     names.length === 1
       ? names[0]
       : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-  return `New novice${ids.length === 1 ? "" : "s"} unlocked: ${list}`;
+  return `Won a run as ${list}`;
 }
 
 /**
