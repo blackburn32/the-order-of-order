@@ -27,6 +27,7 @@ import {
   BOOSTER_PACKS,
   leaveShop,
   offerFor,
+  refreshOffer,
   openBooster,
   shopClosed,
   rerollShopOffers,
@@ -1593,6 +1594,34 @@ function buy(
       state.dice.length === 20 &&
       goalFor(state) === goal,
     "and double the grid without touching the goals",
+  );
+}
+
+// A shop saved while they were cursed resumes with them sold plainly: priced
+// afresh, uncursed, and with the text the card has now.
+{
+  const state = newRun();
+  const stale = {
+    ...offerFor("mult2", state),
+    cost: 0,
+    listPrice: 0,
+    cursed: true,
+    desc: "Duplicate every die in your grid, but every goal from here on grows ×1.6.",
+  };
+  const fresh = refreshOffer(stale, state);
+  check(
+    !fresh.cursed &&
+      fresh.cost === 12 &&
+      fresh.desc === "Duplicate every die in your grid.",
+    "a Gathering saved cursed should resume uncursed, at 12 gold",
+  );
+  const kept = refreshOffer(
+    { ...offerFor("twin", state, 1.25), cost: 14 },
+    state,
+  );
+  check(
+    kept.cost === 14,
+    "and a card whose drawback has not changed should keep its saved price",
   );
 }
 

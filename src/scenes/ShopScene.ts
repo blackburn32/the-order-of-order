@@ -19,6 +19,7 @@ import {
   shopClosed,
   discountsShopPrices,
   repriceOffers,
+  refreshOffer,
   openBooster,
   rerollCost,
   rerollIsFree,
@@ -311,9 +312,13 @@ export class ShopScene extends Phaser.Scene {
     this.shelfAnimating = false;
     this.visitWeights = { ...checkpoint.visitWeights };
     this.boonSpent = checkpoint.boonSpent;
-    this.offers = checkpoint.offers.map((offer) => ({ ...offer }));
+    this.offers = checkpoint.offers.map((offer) =>
+      refreshOffer(offer, this.state),
+    );
     this.packs = checkpoint.packs.map((pack) => ({ ...pack }));
-    this.packChoices = checkpoint.packChoices?.map((offer) => ({ ...offer }));
+    this.packChoices = checkpoint.packChoices?.map((offer) =>
+      refreshOffer(offer, this.state),
+    );
     this.openingPack = checkpoint.openingPackId
       ? this.packs.find((pack) => pack.id === checkpoint.openingPackId)
       : undefined;

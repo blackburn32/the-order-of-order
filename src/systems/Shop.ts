@@ -224,6 +224,23 @@ export function offerFor(
   };
 }
 
+/** A saved offer brought up to the card it names. A shelf saved mid-visit keeps
+ *  its prices, but a card whose standing drawback has since changed (the grid
+ *  multipliers, sold cursed and free before) is priced afresh, and every card
+ *  takes its current text and marks, so a resumed shop never shows rules the
+ *  game no longer has. */
+export function refreshOffer(offer: ShopOffer, state: RunState): ShopOffer {
+  const current = offerFor(offer.id, state);
+  if (current.cursed !== offer.cursed) return current;
+  return {
+    ...offer,
+    name: current.name,
+    desc: current.desc,
+    rarity: current.rarity,
+    affliction: current.affliction,
+  };
+}
+
 /** ±25% in whole-percent steps, rolled fresh each time a card appears. */
 function rollMarketFactor(rng: () => number): number {
   const steps = Math.round((PRICE_VARIANCE_MAX - PRICE_VARIANCE_MIN) * 100) + 1;
