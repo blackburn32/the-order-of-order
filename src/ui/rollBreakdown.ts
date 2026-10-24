@@ -48,6 +48,12 @@ export interface RollBreakdownOptions {
   onStep?(index: number): void;
   /** Celebrate the total: this roll carried the trial past its goal. */
   acclaim?: RollAcclaim;
+  /** The acclaim ribbon's words in place of its default ("GOAL MET"), e.g.
+   *  naming the tier this roll crossed. */
+  acclaimLabel?: string;
+  /** A line under the total, shown with the acclaim: what crossing the goal
+   *  earned ("+2 GOLD WHEN THE TRIAL ENDS"). */
+  acclaimDetail?: string;
 }
 
 /**
@@ -73,14 +79,22 @@ export interface RollBreakdownView {
 
 /** How many row steps the callout's panel spans: its dice row, the bonus and
  *  the line naming each bonus as it is added, the multiplier and the line
- *  naming each step when anything multiplied the roll, the total, and the
- *  panel's margins. */
-export function breakdownRows(breakdown: RollBreakdown): number {
+ *  naming each step when anything multiplied the roll, the total, the acclaim's
+ *  line under it when there is one (`detail`), and the panel's margins. */
+export function breakdownRows(
+  breakdown: RollBreakdown,
+  detail = false,
+): number {
   const sum =
     (breakdown.dice > 0n ? 1 : 0) +
     (breakdown.subtotal > breakdown.dice ? BONUS_ROWS : 0);
-  return sum + (breakdown.steps.length > 0 ? 4.8 : 2.1);
+  return (
+    sum + (breakdown.steps.length > 0 ? 4.8 : 2.1) + (detail ? DETAIL_ROWS : 0)
+  );
 }
+
+/** The acclaim's line under the total. */
+const DETAIL_ROWS = 0.9;
 
 /** The bonus row plus the line under it naming the bonus being added. */
 const BONUS_ROWS = 1.6;
@@ -263,12 +277,27 @@ export function playRollBreakdown(
     CSS.goldLight,
     totalSize,
   );
+  // What crossing the goal earned, under the total. Hidden until the acclaim
+  // lands, so the callout reads as the sum it is until then.
+  const detail =
+    opts.acclaim && opts.acclaimDetail
+      ? text(
+          totalY + totalSize / 2 + rowStep * 0.5,
+          opts.acclaimDetail,
+          CSS.goldLight,
+          labelSize,
+        ).setAlpha(0)
+      : undefined;
 
   // The panel is as wide as the widest thing it will ever hold: every row, the
   // final multiplier, and the longest step name.
   const finalHundredths = multiplierHundredths(breakdown.multiplier);
   const finalFractional = breakdown.multiplier.den !== 1n;
-  let widest = Math.max(total.width, ...sumRows.map((row) => row.width));
+  let widest = Math.max(
+    total.width,
+    detail?.width ?? 0,
+    ...sumRows.map((row) => row.width),
+  );
   if (bonusLabel) {
     for (const effect of breakdown.bonuses) {
       bonusLabel.setText(bonusStepText(effect.name, effect.points));
@@ -295,7 +324,9 @@ export function playRollBreakdown(
     Math.max(fontSize * 13, widest + padX * 2),
   );
   let panelTop = opts.top - rowStep / 2 - padY * 0.45;
-  let panelBottom = totalY + rowStep * 0.75;
+  let panelBottom = detail
+    ? detail.y + rowStep * 0.55
+    : totalY + rowStep * 0.75;
   // Laid out from `top`; a centred callout slides everything down (or up) so
   // the panel's middle lands on `centerY`.
   if (opts.centerY !== undefined) {
@@ -339,7 +370,7 @@ export function playRollBreakdown(
 
   // Anything wider than the panel (a very long card name) shrinks to fit.
   const room = panelW - padX;
-  for (const piece of [...sumRows, total])
+  for (const piece of [...sumRows, total, ...(detail ? [detail] : [])])
     if (piece.width > room) piece.setScale(room / piece.width);
 
   // Every scale animation returns to the piece's resting scale, recorded here.
@@ -440,12 +471,17 @@ export function playRollBreakdown(
 
     const plate = scene.add.graphics();
     const ribbonText = scene.add
-      .text(0, 0, grand ? "FIRST ROLL CLEAR" : "GOAL MET", {
-        fontFamily: SERIF,
-        fontSize: `${Math.round(labelSize)}px`,
-        color: grand ? CSS.ink : CSS.goldLight,
-        fontStyle: "bold",
-      })
+      .text(
+        0,
+        0,
+        grand ? "FIRST ROLL CLEAR" : (opts.acclaimLabel ?? "GOAL MET"),
+        {
+          fontFamily: SERIF,
+          fontSize: `${Math.round(labelSize)}px`,
+          color: grand ? CSS.ink : CSS.goldLight,
+          fontStyle: "bold",
+        },
+      )
       .setOrigin(0.5);
     const ribbonH = labelSize * 1.8;
     const ribbonW = Math.min(
@@ -499,6 +535,10 @@ export function playRollBreakdown(
     if (ribbon) {
       ribbon.setAlpha(1);
       punch(ribbon, 1.22, 150);
+    }
+    if (detail) {
+      detail.setAlpha(1);
+      punch(detail, 1.15, 150);
     }
     // The ring and the sparks belong to the scene rather than to `pieces`: both
     // tear themselves down on their own clock, and a second destroy from the

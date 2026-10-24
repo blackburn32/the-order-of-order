@@ -3638,21 +3638,33 @@ export class GameScene extends Phaser.Scene {
           -1,
         );
     const crossedGoal = crossedTier >= 0;
-    if (crossedGoal && crossedTier > 0)
-      this.banners.push(`${tierName(crossedTier)} goal met`, {
-        holdMs: 1100,
-        detail: `+${TIER_GOLD[crossedTier]} gold when the trial ends.`,
-      });
     const acclaim: RollAcclaim | undefined = !crossedGoal
       ? undefined
       : s.roll === 1
         ? "firstRoll"
         : "goal";
+    // A tier above bronze is named on the callout's ribbon, with the gold it
+    // adds at the trial's end under the total. A first-roll clear keeps its own
+    // ribbon, so the tier goes in that line instead.
+    const tierLabel =
+      crossedTier > 0 ? `${tierName(crossedTier).toUpperCase()} GOAL MET` : "";
+    const tierGold =
+      crossedTier > 0
+        ? `+${TIER_GOLD[crossedTier]} GOLD WHEN THE TRIAL ENDS`
+        : "";
+    const acclaimLabel =
+      acclaim === "goal" && tierLabel ? tierLabel : undefined;
+    const acclaimDetail = !tierGold
+      ? undefined
+      : acclaim === "firstRoll"
+        ? `${tierLabel} · ${tierGold}`
+        : tierGold;
 
     const band = this.layout.calloutBand;
     let floatY = breakdown ? 150 : 195;
     const rowCount =
-      (breakdown ? breakdownRows(breakdown) : 0) + bossCues.length;
+      (breakdown ? breakdownRows(breakdown, !!acclaimDetail) : 0) +
+      bossCues.length;
     const room = band
       ? band.bottom - band.top - 16
       : this.scale.height - floatY - 24;
@@ -3678,6 +3690,8 @@ export class GameScene extends Phaser.Scene {
         },
         pace: autoReroll ? 2.5 : 1,
         acclaim,
+        acclaimLabel,
+        acclaimDetail,
         onBonus: (index) => audio.multiply(index),
         onStep: (index) => {
           audio.multiply(index);
