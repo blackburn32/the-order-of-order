@@ -10,10 +10,10 @@ import {
   BannerAction,
   BannerButtonStyle,
   fitTextWidth,
-  showBanner,
   stackBannerButtons,
 } from "../ui/widgets";
 import { AmbientLayer } from "../ui/AmbientLayer";
+import { DieTooltip, type NoteTooltipContent } from "../ui/dieTooltip";
 import { RuleDice } from "../ui/RuleDice";
 import { compactColumns, isCompactLandscape, responsive } from "../ui/layout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
@@ -66,6 +66,9 @@ export class MenuScene extends Phaser.Scene {
   // so the Vestibule and the rooms reached from it read as one place.
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
   private leaving = false;
+  // Explains a locked button on hover (or a long press), and again when it is
+  // pressed anyway.
+  private lockTooltip!: DieTooltip;
 
   constructor() {
     super("Menu");
@@ -74,6 +77,7 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     this.cursorGlowActivated = false;
     this.leaving = false;
+    this.lockTooltip = new DieTooltip(this);
     responsive(this, () => this.build());
     slideSceneIn(this, this.slideBackdrop);
 
@@ -231,6 +235,14 @@ export class MenuScene extends Phaser.Scene {
     // and the Daily Rite until they have won one.
     const itemsUnlocked = loadProgress().gamesCompleted > 0;
     const dailyOpen = dailyUnlocked();
+    const dailyLock: NoteTooltipContent = {
+      title: "The Daily Rite",
+      lines: ["Locked. Win a run to open the Daily Rite."],
+    };
+    const codexLock: NoteTooltipContent = {
+      title: "Codex",
+      lines: ["Locked. Complete a run to unlock the Codex."],
+    };
     const actions: BannerAction[] = [
       {
         label: "Start New Run",
@@ -248,7 +260,7 @@ export class MenuScene extends Phaser.Scene {
         label: "The Daily Rite",
         onClick: () => {
           if (dailyOpen) this.leave(() => this.scene.start("Daily"));
-          else showBanner(this, "Win a run to open the Daily Rite", 1200);
+          else this.refuseLocked(dailyLock);
         },
       },
       {
@@ -260,7 +272,7 @@ export class MenuScene extends Phaser.Scene {
         onClick: () => {
           if (itemsUnlocked)
             this.leave(() => this.scene.start("Items", { returnTo: "Menu" }));
-          else showBanner(this, "Complete a run to unlock the Codex", 1200);
+          else this.refuseLocked(codexLock);
         },
       },
       {
@@ -337,6 +349,8 @@ export class MenuScene extends Phaser.Scene {
     };
     if (!dailyOpen) padlock(buttons[1]);
     if (!itemsUnlocked) padlock(buttons[3]);
+    if (!dailyOpen) this.lockTooltip.attach(buttons[1], () => dailyLock);
+    if (!itemsUnlocked) this.lockTooltip.attach(buttons[3], () => codexLock);
 
     // The pointer's ambient light belongs behind the controls now that their
     // face is bare type. Keeping the button containers above it prevents the
@@ -391,6 +405,15 @@ export class MenuScene extends Phaser.Scene {
 
   /** Send the menu off to the left, then hand over to the next scene, which
    *  brings its own interface in from the right over the same still room. */
+  /** A locked button pressed anyway: the screen gives a short shake and the
+   *  button's tooltip says what opens it. A long press that was spent reading
+   *  the tooltip is not also a press. */
+  private refuseLocked(note: NoteTooltipContent): void {
+    if (this.lockTooltip.tookPress) return;
+    fx.shakeCamera(this.cameras.main, 220, 0.006);
+    this.lockTooltip.flash(note, this.input.activePointer);
+  }
+
   private leave(complete: () => void): void {
     if (this.leaving) return;
     this.leaving = true;

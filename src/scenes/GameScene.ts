@@ -73,12 +73,7 @@ import {
   type RollBreakdownView,
 } from "../ui/rollBreakdown";
 import { buildItemCard } from "../ui/itemCard";
-import {
-  addFelt,
-  floatText,
-  struckFloatText,
-  BannerStack,
-} from "../ui/widgets";
+import { addFelt, floatText, struckFloatText } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
 import { DuelShowdown } from "../ui/duelShowdown";
 import { ChainLightning, type ChainGroup } from "../ui/chainLightning";
@@ -106,6 +101,7 @@ import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { streamFor } from "../systems/Rng";
 import { DieTooltip, type NoteTooltipContent } from "../ui/dieTooltip";
+import { showNoticePanel, type NoticePanelHandle } from "../ui/noticePanel";
 import { statusRows, type StatusRow } from "../ui/statusRows";
 import {
   StatusTable,
@@ -516,9 +512,9 @@ export class GameScene extends Phaser.Scene {
   // interface and popups (banners, float-ups) land on top of dice drawn by the
   // grid camera's later render pass. See overlay().
   private overlayCamera?: Phaser.Cameras.Scene2D.Camera;
-  // Vertically-stacked announcement banners (unlocks, boss, trial end) so that
-  // several firing at once never overlap — see BannerStack.
-  private banners!: BannerStack;
+  // The boss (or the mirror duel) announcing itself as the trial opens. Closed
+  // when the player rolls, since the roll's callout takes the same space.
+  private notice?: NoticePanelHandle;
   private viewport: Viewport = { scrollX: 0, scrollY: 0, zoom: 1 };
   private gridDetail: GridDetailLevel = "full";
   private gridCount = -1;
@@ -695,7 +691,7 @@ export class GameScene extends Phaser.Scene {
     this.gridContainer.add([this.diceContainer, this.cardContainer]);
     // Recreated each build: routes new banners through the overlay camera so
     // they composite above the windowed grid, just like other popups.
-    this.banners = new BannerStack(this, (objs) => this.overlay(objs));
+    this.notice = undefined;
     this.statusTooltip = new DieTooltip(this);
 
     this.growthTiming = ROLL_GROWTH;
@@ -780,6 +776,7 @@ export class GameScene extends Phaser.Scene {
     if (this.overlayCamera) {
       setCameraSize(this.overlayCamera, this.scale.width, this.scale.height);
     }
+    this.notice?.relayout();
     // The showdown owns its own layout — it re-lays in place rather than being
     // rebuilt, so a rotation mid-sequence doesn't restart the verdict.
     this.showdown?.layout();
@@ -3159,6 +3156,7 @@ export class GameScene extends Phaser.Scene {
     this.openTrialOnTable();
     this.rolling = true;
     this.tumbling = true;
+    this.notice?.close();
     this.finishBreakdown();
     this.clearFlourishes();
 
@@ -4027,18 +4025,25 @@ export class GameScene extends Phaser.Scene {
     const duel = isMirrorTrial(this.state.trial);
     const bosses = activeBosses(this.state);
     if (!duel && bosses.length === 0) return;
-    const holdMs = 1600;
-    if (duel) {
-      this.banners.push("The Order of Disorder stands opposite you", {
-        holdMs,
-        detail:
-          "An exact copy of your grid, in their hands. Outscore it before the rolls run out.",
-      });
-    } else
-      this.banners.push(
-        `${bosses.map((b) => b.name).join(" and ")} preside${bosses.length > 1 ? "" : "s"}`,
-        { holdMs, detail: bosses.map((b) => b.desc).join(" ") },
-      );
+    this.notice?.close();
+    this.notice = showNoticePanel(this, {
+      ...(duel
+        ? {
+            title: "The Order of Disorder stands opposite you",
+            body: "An exact copy of your grid, in their hands. Outscore it before the rolls run out.",
+          }
+        : {
+            title: `${bosses.map((b) => b.name).join(" and ")} preside${bosses.length > 1 ? "" : "s"}`,
+            body: bosses.map((b) => b.desc).join(" "),
+          }),
+      // Over the table between the HUD and the seal, where the roll's callout
+      // goes, so it never covers the seal the player presses next.
+      centerY: () => {
+        const band = this.layout.calloutBand;
+        return band ? (band.top + band.bottom) / 2 : this.scale.height / 2;
+      },
+      register: (objs) => this.overlay(objs),
+    });
   }
 
   /** Resolve the end of a trial (win/lose/advance) with the matching audio,
