@@ -25,11 +25,23 @@ export interface DieTooltipContent {
   vigil?: readonly VigilGroup[];
 }
 
+/** One row of a note's table: a label on the left, its figure on the right.
+ *  A row that is not `current` is dimmed, so the one that applies stands out. */
+export interface NoteTableRow {
+  label: string;
+  value: string;
+  /** The label's colour, where the thing it names has one (a goal tier). */
+  color?: string;
+  current?: boolean;
+}
+
 /** What a tooltip says about anything other than a die: a heading, a few
- *  lines of plain rules, and an optional dim aside under them. */
+ *  lines of plain rules, an optional small table, and an optional dim aside
+ *  under them. */
 export interface NoteTooltipContent {
   title: string;
   lines: readonly string[];
+  table?: readonly NoteTableRow[];
   aside?: string;
 }
 
@@ -50,6 +62,8 @@ const PRESS_SLOP = 8;
 /** Kept clear above a finger, which hides far more of the screen than a
  *  cursor does. */
 const TOUCH_OFFSET = 44;
+/** Where a note's table right-aligns its figures. */
+const TABLE_VALUE_X = 170;
 /** The most distinct tallies listed before the rest are counted off. */
 const VIGIL_LINES = 3;
 
@@ -232,6 +246,30 @@ export class DieTooltip {
       parts.push(text);
       y += text.height;
     });
+    if (content.table?.length) {
+      y += 6;
+      const anyCurrent = content.table.some((row) => row.current);
+      for (const row of content.table) {
+        const alpha = !anyCurrent || row.current ? 1 : 0.55;
+        const style = {
+          fontFamily: SERIF,
+          fontSize: "14px",
+          fontStyle: row.current ? "bold" : "normal",
+        };
+        const label = scene.add
+          .text(PAD, y, row.label, {
+            ...style,
+            color: row.color ?? CSS.parchment,
+          })
+          .setAlpha(alpha);
+        const value = scene.add
+          .text(TABLE_VALUE_X, y, row.value, { ...style, color: CSS.gold })
+          .setOrigin(1, 0)
+          .setAlpha(alpha);
+        parts.push(label, value);
+        y += Math.max(label.height, value.height) + 2;
+      }
+    }
     if (content.aside) {
       const aside = scene.add.text(PAD, y + 6, content.aside, {
         fontFamily: SERIF,
