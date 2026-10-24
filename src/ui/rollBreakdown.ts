@@ -822,8 +822,11 @@ export function playRollBreakdown(
   // The dice row follows the total, counting from nothing through each gain and
   // loss to where the grid ended up. Alone in its panel it starts at once.
   let diceEvent: Phaser.Time.TimerEvent | undefined;
+  // A roll that left the grid alone has no dice row, and nothing to settle:
+  // hurrying its callout must not try to summarise an empty ledger.
   const settleDice = () => {
     diceEvent?.remove();
+    if (diceChanges.length === 0) return;
     diceRow?.setText(diceText(netDice)).setColor(diceColor(netDice));
     fitDiceLabel(diceSummaryText(diceChanges));
   };
