@@ -1,7 +1,14 @@
 import Phaser from "phaser";
 import { COLORS, CSS, SERIF } from "../art/palette";
 import { isMirrorTrial, rankOf, trialName } from "../config";
-import { tierName } from "../systems/GoalTiers";
+import { TIER_GOLD, tierCss, tierName } from "../systems/GoalTiers";
+import {
+  GOLD_PER_INTEREST,
+  INTEREST_CAP,
+  interestCap,
+  VAULT_INTEREST_CAP,
+} from "../systems/Gold";
+import { DieTooltip, type NoteTooltipContent } from "../ui/dieTooltip";
 import { buildMedal } from "../ui/medal";
 import type { TrialEndOutcome } from "../sim/engine";
 import { audio } from "../systems/Audio";
@@ -206,6 +213,9 @@ interface ResultsLayout {
 export class TrialResultsScene extends Phaser.Scene {
   private dataIn!: TrialResultsData;
   private revealObjects: Phaser.GameObjects.GameObject[] = [];
+  // Where each object revealed with a rise comes to rest, so skipping the
+  // reveal partway through can still land it there.
+  private restYs = new Map<Phaser.GameObjects.GameObject, number>();
   private timers: Phaser.Time.TimerEvent[] = [];
   private complete = false;
   private leaving = false;
@@ -234,6 +244,8 @@ export class TrialResultsScene extends Phaser.Scene {
     close: () => void;
   };
   private expandables: Phaser.GameObjects.GameObject[] = [];
+  // Explains the interest and tier-gold rows on hover, or a long press.
+  private tooltip!: DieTooltip;
 
   constructor() {
     super("TrialResults");
@@ -246,6 +258,7 @@ export class TrialResultsScene extends Phaser.Scene {
   create(): void {
     this.complete = false;
     this.leaving = false;
+    this.tooltip = new DieTooltip(this);
     this.build(true);
     slideSceneIn(this, this.slideBackdrop);
     // A press anywhere finishes the reveal; a press anywhere that is not a card
@@ -288,6 +301,7 @@ export class TrialResultsScene extends Phaser.Scene {
 
   private build(animate: boolean): void {
     this.revealObjects = [];
+    this.restYs.clear();
     this.fanFocus = undefined;
     this.expansion = undefined;
     this.expandables = [];
@@ -697,6 +711,14 @@ export class TrialResultsScene extends Phaser.Scene {
         );
       if (label === INTEREST_LABEL) this.interestRect = rowRect();
       else if (label.endsWith(TIER_LABEL)) this.tierRect = rowRect();
+      // The two rows whose rule is not in their label spell it out when read.
+      const note =
+        label === INTEREST_LABEL
+          ? this.interestNote(amount)
+          : label.endsWith(TIER_LABEL)
+            ? this.tierNote(amount)
+            : undefined;
+      const hit = note ? [this.readableRow(rowRect(), note)] : [];
       const name = this.add
         .text(cx - labelDx, y, label, {
           fontFamily: SERIF,
@@ -713,7 +735,7 @@ export class TrialResultsScene extends Phaser.Scene {
           fontStyle: "bold",
         })
         .setOrigin(1, 0.5);
-      if (struck === undefined) return [name, amountText];
+      if (struck === undefined) return [...hit, name, amountText];
       // Set the way a shop card cancels a figure it is replacing — same slash,
       // same red — so "this is the number that no longer counts" reads the same
       // on the receipt as it does on a card.
@@ -731,10 +753,63 @@ export class TrialResultsScene extends Phaser.Scene {
           cancelled.width / 2,
         y,
       );
-      return [name, amountText, cancelled];
+      return [...hit, name, amountText, cancelled];
     });
 
     return { objects: [goldTitle, ...rows], bottom };
+  }
+
+  /** An invisible strip over a receipt row that opens `note` while hovered or
+   *  held. Revealed with the row, so it cannot be read before it is shown. */
+  private readableRow(
+    rect: Phaser.Geom.Rectangle,
+    note: NoteTooltipContent,
+  ): Phaser.GameObjects.Rectangle {
+    const hit = this.add
+      .rectangle(rect.centerX, rect.centerY, rect.width, rect.height, 0, 0)
+      .setInteractive();
+    this.tooltip.attach(hit, () => note);
+    return hit;
+  }
+
+  /** The interest rule, with the cap this run has reached and what it paid. */
+  private interestNote(paid: number): NoteTooltipContent {
+    const cap = interestCap(getRun(this.registry));
+    return {
+      title: "Interest",
+      lines: [
+        `Every trial you clear pays 1 gold for each ${GOLD_PER_INTEREST} gold you were holding as it ended.`,
+        `Your interest is capped at ${cap} gold. This clear paid ${paid}.`,
+      ],
+      aside:
+        cap > INTEREST_CAP
+          ? `The Vault has raised the cap from ${INTEREST_CAP}.`
+          : `The Vault raises the cap to ${VAULT_INTEREST_CAP}.`,
+    };
+  }
+
+  /** What each goal tier pays on top of the trial reward, with the one this
+   *  clear met picked out. */
+  private tierNote(paid: number): NoteTooltipContent {
+    const tier = this.dataIn.outcome.goldBreakdown.tier;
+    const scaled = paid !== TIER_GOLD[tier];
+    return {
+      title: "Medal bonus",
+      lines: [
+        "Every trial plays to its last roll. The highest goal it met pays extra gold on top of the trial reward.",
+      ],
+      table: TIER_GOLD.map((gold, index) => ({
+        label: tierName(index),
+        value: `+${gold} gold`,
+        color: tierCss(index),
+        current: index === tier,
+      })),
+      ...(scaled
+        ? {
+            aside: `This clear's gold modifiers made your ${tierName(tier)} bonus +${paid}.`,
+          }
+        : {}),
+    };
   }
 
   /** Where a step this screen owns points, or nothing when this receipt never
@@ -1202,6 +1277,7 @@ export class TrialResultsScene extends Phaser.Scene {
         Phaser.GameObjects.Components.Alpha &
         Phaser.GameObjects.Components.Transform;
       const restY = target.y;
+      this.restYs.set(target, restY);
       target.setAlpha(0).setY(restY + 12);
       this.tweens.add({
         targets: target,
@@ -1229,10 +1305,15 @@ export class TrialResultsScene extends Phaser.Scene {
     for (const obj of this.revealObjects) this.tweens.killTweensOf(obj);
     for (const obj of this.revealObjects) {
       const target = obj as unknown as Phaser.GameObjects.Components.Alpha &
-        Phaser.GameObjects.Components.Visible;
+        Phaser.GameObjects.Components.Visible &
+        Phaser.GameObjects.Components.Transform;
       target.setVisible(true);
       target.setAlpha(1);
+      // A row cut off mid-rise is put back where it was rising to.
+      const restY = this.restYs.get(obj);
+      if (restY !== undefined) target.setY(restY);
     }
+    this.restYs.clear();
     this.complete = true;
     this.renderTutorial();
   }

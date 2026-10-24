@@ -105,7 +105,7 @@ import { GridArea } from "../ui/gridLayout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { streamFor } from "../systems/Rng";
-import { DieTooltip } from "../ui/dieTooltip";
+import { DieTooltip, type NoteTooltipContent } from "../ui/dieTooltip";
 import { statusRows, type StatusRow } from "../ui/statusRows";
 import {
   StatusTable,
@@ -1301,8 +1301,25 @@ export class GameScene extends Phaser.Scene {
       cross.lineBetween(left, upper, right, lower);
       cross.lineBetween(right, upper, left, lower);
       card.add(cross);
+      // The X says the card is off; reading it says why. A long press does
+      // the same on a phone, and the card does nothing when tapped.
+      this.statusTooltip.attach(card, () => this.disabledCardNote(def));
       return card;
     });
+  }
+
+  /** What a disabled card says when read: the boss modifiers switching it
+   *  off, and that it comes back once the trial is over. */
+  private disabledCardNote(def: ItemDef): NoteTooltipContent {
+    const bosses = activeBosses(this.state).filter((boss) =>
+      itemDisabledDuringTrialByAffliction(def, boss.id),
+    );
+    return {
+      title: `${def.name}: disabled`,
+      lines: bosses.map((boss) => `${boss.name}: ${boss.desc}`),
+      aside:
+        "This Boss Trial's effect has switched this card off. It works again once the trial is over.",
+    };
   }
 
   /** One modifier's pill. Built in two steps, because a row of them has to
