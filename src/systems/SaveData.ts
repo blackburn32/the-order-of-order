@@ -12,6 +12,7 @@ import {
 } from "./Characters";
 import { ITEMS, meetsCriterion, ShopItemId } from "./Items";
 import { isSeed } from "./Rng";
+import { GraphicsLevel, isGraphicsLevel } from "./GraphicsLevel";
 import { runRank } from "./GoalTiers";
 import { metaUnlockOwner } from "./Shop";
 import {
@@ -106,6 +107,9 @@ export interface Settings {
   // On by default; how much it actually turns on is capped by the device's
   // effect tier and the OS reduce-motion preference.
   visualEffects: boolean;
+  // How far out per-die flourishes draw (see systems/GraphicsLevel). Unset
+  // until the player picks one, so the device's own default applies.
+  graphicsLevel?: GraphicsLevel;
 }
 
 const itemIds: ReadonlySet<string> = new Set(ITEMS.map((item) => item.id));
@@ -299,6 +303,9 @@ export function loadSettings(): Settings {
         showIntro: parsed.showIntro ?? true,
         showTutorial: parsed.showTutorial ?? true,
         visualEffects: parsed.visualEffects ?? true,
+        graphicsLevel: isGraphicsLevel(parsed.graphicsLevel)
+          ? parsed.graphicsLevel
+          : undefined,
       };
     }
   } catch {

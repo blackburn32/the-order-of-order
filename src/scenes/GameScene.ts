@@ -311,8 +311,10 @@ const TRIAL_OPEN_GROWTH: GridGrowthTiming = {
  *  reads as happening to the grid the player just saw. */
 const TRIAL_OPEN_DELAY_MS = 220;
 
-/** Keep roll feedback bounded even when a modifier hits the whole grid. */
-const MAX_PULSED_DICE = 64;
+/** Past this many departing dice, they skip being re-stacked under the
+ *  survivors. Roll pulses have their own budget, set by the graphics level
+ *  (`fx.pulseBudget`). */
+const MAX_RESTACKED_DEPARTURES = 64;
 /** The Procession's first hop waits out the roll's own border pulse (a 260ms
  *  bounce), so the hop is not read as more of it — and so its scale tween
  *  starts from the die at rest. */
@@ -1688,7 +1690,11 @@ export class GameScene extends Phaser.Scene {
     const visible = view.visible;
     const scale = view.scale;
     const previousDetail = this.gridDetail;
-    this.gridDetail = gridDetailLevel(view.equivalentDice, previousDetail);
+    this.gridDetail = gridDetailLevel(
+      view.equivalentDice,
+      previousDetail,
+      fx.effectsLodDice,
+    );
     const enteringCards =
       !firstLayout && previousDetail !== "cards" && this.gridDetail === "cards";
     const leavingCards =
@@ -2162,7 +2168,7 @@ export class GameScene extends Phaser.Scene {
     // it rather than behind it. Each move is a splice of the whole container,
     // so a dense grid losing dice by the thousand skips it: at that size the
     // overlap is too small to read.
-    if (departed.length <= MAX_PULSED_DICE)
+    if (departed.length <= MAX_RESTACKED_DEPARTURES)
       for (const sprite of departed) this.diceContainer.sendToBack(sprite);
     const departStep =
       departed.length > 1 ? timing.rippleMs / (departed.length - 1) : 0;
@@ -2691,7 +2697,7 @@ export class GameScene extends Phaser.Scene {
     const created = [...this.sprites]
       .filter(([index]) => this.state.dice.dieAt(index)?.source === source)
       .slice(-count);
-    for (const [, sprite] of evenlySample(created, MAX_PULSED_DICE)) {
+    for (const [, sprite] of evenlySample(created, fx.pulseBudget)) {
       sprite.pulseEffects([borderColor]);
       if (!showText) continue;
       const pos = this.dieScreenPosition(sprite);
@@ -3555,7 +3561,7 @@ export class GameScene extends Phaser.Scene {
       // Sample by grid index rather than taking the first hits, spreading the
       // feedback across the viewport while keeping Graphics/tween cost fixed.
       const pulseCandidates = [...dieColors].sort(([a], [b]) => a - b);
-      const pulsed = evenlySample(pulseCandidates, MAX_PULSED_DICE);
+      const pulsed = evenlySample(pulseCandidates, fx.pulseBudget);
       for (const [i, colors] of pulsed) {
         this.sprites.get(i)?.pulseEffects(colors, bigDice.has(i));
       }

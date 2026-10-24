@@ -53,7 +53,11 @@ export class BootScene extends Phaser.Scene {
     audio.setVolumes(settings.musicVol, settings.sfxVol);
     // First point the live renderer is known — the config asks for WebGL, but
     // Phaser falls back to Canvas where it isn't available.
-    fx.init(this.game.renderer.type, settings.visualEffects);
+    fx.init(
+      this.game.renderer.type,
+      settings.visualEffects,
+      settings.graphicsLevel,
+    );
     // A buttonStyle query is a self-contained design review link. Always land
     // it on the menu being reviewed, without deleting or modifying a saved run.
     if (new URLSearchParams(window.location.search).has("buttonStyle")) {

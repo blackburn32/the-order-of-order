@@ -4,6 +4,11 @@ import {
   EffectsTier,
   prefersReducedMotion,
 } from "../renderQuality";
+import {
+  defaultGraphicsLevel,
+  GraphicsLevel,
+  graphicsLevelSpec,
+} from "./GraphicsLevel";
 
 /**
  * The single gate every visual flourish in the game asks before it draws
@@ -32,21 +37,44 @@ class Effects {
   private ceiling: EffectsTier = "basic";
   private reduceMotion = false;
   private allowed = true;
+  private chosenLevel?: GraphicsLevel;
 
   /**
    * Called once from BootScene, which is the earliest point the *live*
    * renderer type is known (the Game config asks for WebGL, but Phaser may
    * have fallen back to Canvas).
    */
-  init(renderType: number, enabled: boolean): void {
+  init(renderType: number, enabled: boolean, level?: GraphicsLevel): void {
     this.ceiling = detectEffectsTier(renderType);
     this.reduceMotion = prefersReducedMotion();
     this.allowed = enabled;
+    this.chosenLevel = level;
   }
 
   /** Live update from the Settings toggle. */
   setEnabled(enabled: boolean): void {
     this.allowed = enabled;
+  }
+
+  /** Live update from the Settings graphics level. */
+  setGraphicsLevel(level: GraphicsLevel): void {
+    this.chosenLevel = level;
+  }
+
+  /** The player's graphics level, or the device's default until they pick
+   *  one (see `systems/GraphicsLevel`). */
+  get graphicsLevel(): GraphicsLevel {
+    return this.chosenLevel ?? defaultGraphicsLevel(this.ceiling);
+  }
+
+  /** Dice in view past which per-die flourishes stop drawing. */
+  get effectsLodDice(): number {
+    return graphicsLevelSpec(this.graphicsLevel).effectsLodDice;
+  }
+
+  /** Most dice a single roll pulses (and so links with lightning). */
+  get pulseBudget(): number {
+    return graphicsLevelSpec(this.graphicsLevel).pulseBudget;
   }
 
   /** Any flourish at all beyond the base game's own feedback. */
