@@ -70,18 +70,19 @@ not a secret: it ships in the client bundle and anyone who opens devtools can re
 it. It turns away scanners that have not looked, and nothing more. Leave both
 sides unset to run without it.
 
-## Upgrading a board that predates run ranks
+## Upgrading an older board
 
-The `medal` column was added after the board shipped. A database created before
-it needs the column added once, **before** the Worker that writes it is deployed:
+Columns and tables added after the board first shipped (`medal`, `character`,
+`daily_runs`) are created by the Worker itself on its first request after a
+deploy, so upgrading is just:
 
 ```bash
-npm run db:migrate:medal
 npm run deploy
 ```
 
-Existing rows read as unranked. A database created from the current
-`schema.sql` already has the column; skip the migration there.
+Existing rows read as unranked. The migration scripts (`db:migrate:medal`,
+`db:migrate:daily`) still work and are harmless to run, but are no longer
+required before a deploy.
 
 ## Adding the Daily Rite's boards
 
@@ -185,6 +186,11 @@ game's `src/systems/SaveData.ts`, so the local and global halls agree on what
 cannot enumerate: itch.io's per-project CDN subdomain, the Capacitor Android
 WebView, and a local dev server. Every endpoint is anonymous with no cookie or
 credential to protect; write access is bounded by the per-device throttle instead.
+
+If the browser reports a CORS block anyway, the Worker is almost certainly
+failing: Cloudflare's own error page carries no CORS headers. The Worker catches
+its own errors and answers with a JSON 500 that keeps them, and logs the cause;
+`npx wrangler tail` shows it.
 
 ## What this does and does not check
 

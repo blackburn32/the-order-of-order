@@ -21,18 +21,14 @@ CREATE TABLE IF NOT EXISTS runs (
   -- is shown beside a run, never sorted or filtered on. The default is what a
   -- client too old to send one is recorded as.
   --
-  -- Added after the board shipped, and NOT by an ALTER: `CREATE TABLE IF NOT
-  -- EXISTS` cannot add a column to a table that already exists, so a deployment
-  -- carrying rows from before this column must DROP TABLE runs and let this
-  -- recreate it. That is a deliberate choice rather than a migration — the rows
-  -- it discards predate characters and could only be back-filled with a guess.
+  -- Added after the board shipped. The Worker adds it to an older table on its
+  -- own (src/index.ts, "Schema"), and rows from before it read as the default.
   character   TEXT NOT NULL DEFAULT 'diebert',
 
   -- The run's goal-tier rank (src/systems/GoalTiers.runRank): 0 bronze …
   -- 3 legendary for a win, -1 for a loss. Shown beside the run, never sorted
-  -- on. Added after the board shipped: a deployment whose table predates it
-  -- runs migrations/0001_medal.sql once, which adds it without touching rows
-  -- (they read as -1, unranked, which is what they were).
+  -- on. Added after the board shipped; the Worker adds it to an older table on
+  -- its own, and existing rows read as -1, unranked, which is what they were.
   medal       INTEGER NOT NULL DEFAULT -1,
 
   -- The run's total points as an exact decimal, plus its digit count.
