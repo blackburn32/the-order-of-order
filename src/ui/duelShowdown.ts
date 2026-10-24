@@ -25,6 +25,7 @@ import { artImage } from "../art/textures";
 import { audio } from "../systems/Audio";
 import { fx } from "../systems/Effects";
 import { formatScore } from "./formatScore";
+import { tugLeadCopy, TugOfWarBar } from "./tugOfWar";
 import { bannerButton, fitTextWidth } from "./widgets";
 
 /** The showdown owns the top of the display list: it must sit over the banner
@@ -86,6 +87,8 @@ interface Metrics {
   colW: number;
   colH: number;
   rowY: number;
+  tugY: number;
+  tugH: number;
   kickerY: number;
   verdictY: number;
   marginY: number;
@@ -105,6 +108,9 @@ export class DuelShowdown {
   private kicker!: Phaser.GameObjects.Text;
   private sides!: [Side, Side];
   private divider!: Phaser.GameObjects.Graphics;
+  /** The rope under the plaques: at a final rank the two totals often print
+   *  the same in scientific notation, and this is what tells them apart. */
+  private tug!: TugOfWarBar;
   private verdict!: Phaser.GameObjects.Text;
   private margin!: Phaser.GameObjects.Text;
   private button?: Phaser.GameObjects.Container;
@@ -168,6 +174,13 @@ export class DuelShowdown {
         flareColor: COLORS.waxRed,
       }),
     ];
+
+    // Built level, then hauled to the result as the totals count up.
+    this.tug = new TugOfWarBar(scene, { x: 0, y: 0, w: 100, h: 22 });
+    this.tug.setReading(0n, 0n);
+    this.tug.container.setDepth(DEPTH_CONTENT).setAlpha(0);
+    this.objects.push(this.tug.container);
+    this.register([this.tug.container]);
 
     this.verdict = this.text(
       this.opts.won ? "The Order Holds" : "Disorder Prevails",
@@ -259,7 +272,13 @@ export class DuelShowdown {
     const gap = this.opts.playerScore - this.opts.rivalScore;
     if (gap === 0n) return "A dead heat — and a dead heat is not a lead.";
     const size = formatScore(gap < 0n ? -gap : gap);
-    return gap > 0n ? `Ahead by ${size}.` : `Behind by ${size}.`;
+    // In notation the gap alone can read as large while being a sliver of
+    // either total, so the relative margin rides along with it.
+    const share = tugLeadCopy(this.opts.playerScore, this.opts.rivalScore);
+    const margin = share ? ` (${share})` : "";
+    return gap > 0n
+      ? `Ahead by ${size}${margin}.`
+      : `Behind by ${size}${margin}.`;
   }
 
   // ---- layout --------------------------------------------------------------
@@ -292,6 +311,12 @@ export class DuelShowdown {
     for (const side of this.sides) this.layoutSide(side, m);
 
     this.drawDivider(m);
+    this.tug.layout({
+      x: m.cx,
+      y: m.tugY,
+      w: Math.min(m.colW * 2 + this.gap(m), width - 48),
+      h: m.tugH,
+    });
 
     this.verdict.setFontSize(m.verdictFont).setPosition(m.cx, m.verdictY);
     fitTextWidth(this.verdict, width - 40);
@@ -329,15 +354,20 @@ export class DuelShowdown {
     // portrait gets two narrow plaques rather than two that overlap.
     const colW = Phaser.Math.Clamp((W - 32) / 2 - 12, 96, 360);
     const colH = Phaser.Math.Clamp(H * 0.26, 88, 190);
-    const rowY = H * 0.44;
+    const rowY = H * 0.42;
+    const tugH = Phaser.Math.Clamp(H * 0.05, 20, 30);
+    const tugY = rowY + colH / 2 + 8 + tugH / 2;
+    const below = tugY + tugH / 2;
     return {
       cx,
       colW,
       colH,
       rowY,
+      tugY,
+      tugH,
       kickerY: rowY - colH / 2 - Math.max(20, H * 0.06),
-      verdictY: rowY + colH / 2 + Math.max(26, H * 0.09),
-      marginY: rowY + colH / 2 + Math.max(52, H * 0.155),
+      verdictY: below + Math.max(22, H * 0.075),
+      marginY: below + Math.max(50, H * 0.14),
       buttonY: H - Math.max(40, H * 0.11),
       buttonW: Math.min(340, W - 48),
       buttonH: Math.max(38, H * 0.11),
@@ -450,6 +480,8 @@ export class DuelShowdown {
         this.renderScore(side);
       });
     }
+    this.tug.container.setAlpha(1);
+    this.tug.setReading(this.opts.playerScore, this.opts.rivalScore);
     audio.roll(6);
   }
 
@@ -471,6 +503,8 @@ export class DuelShowdown {
       side.shown = side.total;
       this.renderScore(side);
     }
+    this.tug.container.setAlpha(1);
+    this.tug.setReading(this.opts.playerScore, this.opts.rivalScore);
 
     const scene = this.scene;
     const m = this.metrics;
@@ -629,6 +663,7 @@ export class DuelShowdown {
     this.destroyed = true;
     this.clearTimers();
     for (const side of this.sides) side.count?.remove();
+    this.tug.destroy();
     for (const tween of this.introTweens) tween.stop();
     this.introTweens = [];
     for (const object of this.objects) object.destroy();

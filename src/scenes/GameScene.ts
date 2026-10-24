@@ -81,6 +81,7 @@ import {
 } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
 import { DuelShowdown } from "../ui/duelShowdown";
+import { tugBalance, TugOfWarBar, type TugCell } from "../ui/tugOfWar";
 import { ChainLightning, type ChainGroup } from "../ui/chainLightning";
 import { Spotlight } from "../ui/spotlight";
 import { SigilBurst } from "../ui/sigilBurst";
@@ -241,12 +242,11 @@ const FELT_OVERSCAN = 16;
  * climbing toward 1 as the player pulls ahead and falling toward 0 as the Order
  * of Disorder does. An ordinary trial can measure its progress against a fixed
  * goal; a duel has only the gap, so the scale is centred on the tie rather than
- * on zero.
+ * on zero. Read off the same amplified scale as the tug of war, since the
+ * share of the combined total barely leaves 0.5 in a duel between equals.
  */
 function duelProgress(score: bigint, rival: bigint): number {
-  const total = score + rival;
-  if (total <= 0n) return 0.5;
-  return Number((score * 1000n) / total) / 1000;
+  return 0.5 + tugBalance(score, rival) / 2;
 }
 
 /** A roll worth this fraction of the trial's goal is a "big" one: it earns a
@@ -439,6 +439,8 @@ interface HudCell {
 interface Layout {
   hud: Record<HudStatKey, HudCell>;
   bossRibbon?: { x: number; y: number; w: number; h: number; compact: boolean };
+  /** The duel's tug of war, a thin row under the rest of the header. */
+  duelBar?: TugCell;
   disabledCards?: DisabledCardOverlayLayout;
   footer: {
     settingsY: number;
@@ -627,6 +629,8 @@ export class GameScene extends Phaser.Scene {
   // The duel's closing tally, alive only between the last roll of the final
   // Boss Trial and the player leaving it.
   private showdown?: DuelShowdown;
+  /** The duel's tug of war under the HUD; rebuilt with the chrome. */
+  private tug?: TugOfWarBar;
 
   constructor() {
     super("Game");
@@ -947,6 +951,19 @@ export class GameScene extends Phaser.Scene {
       cellH,
     );
     const hudBottom = hudMargin + cellH;
+    // The duel's two totals are too close, and too large, to compare in
+    // print, so a rope under the header shows the lead instead.
+    const duel = isMirrorTrial(this.state.trial);
+    const duelBarH = duel ? Phaser.Math.Clamp(H * 0.045, 20, 26) : 0;
+    const duelBarAt = (top: number): TugCell | undefined =>
+      duel
+        ? {
+            x: W / 2,
+            y: top + duelBarH / 2,
+            w: Math.min(hudWidth, W - 32) - 24,
+            h: duelBarH,
+          }
+        : undefined;
     // The closing rule tracks the strip rather than the screen: on a wide
     // monitor a full-bleed line would float away from the 600px-capped stats
     // it belongs to. A small outset keeps it reading as their underline.
@@ -969,7 +986,8 @@ export class GameScene extends Phaser.Scene {
     if (compact) {
       // A few px more than the bare gap the strip used to need: the rule sits
       // in the middle of it and wants air on both sides.
-      const gridTop = hudBottom + 14;
+      const duelBar = duelBarAt(hudBottom + 2);
+      const gridTop = hudBottom + 14 + duelBarH;
       // Seal in a rail down the right edge, dice filling everything left of
       // it. Stacking them would leave the grid a band a couple of dice tall.
       const railW = Phaser.Math.Clamp(W * 0.2, 132, 200);
@@ -1009,6 +1027,7 @@ export class GameScene extends Phaser.Scene {
       return {
         hud,
         bossRibbon,
+        duelBar,
         disabledCards:
           headerDisabledCards ??
           disabledCardOverlayLayout(disabledCount, gridFrame, true),
@@ -1047,10 +1066,15 @@ export class GameScene extends Phaser.Scene {
           compact: false,
         }
       : undefined;
-    const chromeBottom = bossRibbon
-      ? bossRibbon.y + bossRibbon.h / 2
-      : hudBottom;
-    const gridTop = chromeBottom + (bossRibbon ? 12 : 16);
+    const duelBar = duelBarAt(
+      (bossRibbon ? bossRibbon.y + bossRibbon.h / 2 : hudBottom) + 4,
+    );
+    const chromeBottom = duelBar
+      ? duelBar.y + duelBar.h / 2
+      : bossRibbon
+        ? bossRibbon.y + bossRibbon.h / 2
+        : hudBottom;
+    const gridTop = chromeBottom + (bossRibbon || duelBar ? 12 : 16);
     const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14, scale: 1 };
     const gridBottom = button.y - SEAL_RADIUS - 16;
     const calloutBand = { top: chromeBottom, bottom: button.y - SEAL_RADIUS };
@@ -1064,6 +1088,7 @@ export class GameScene extends Phaser.Scene {
     return {
       hud,
       bossRibbon,
+      duelBar,
       disabledCards:
         headerDisabledCards ??
         disabledCardOverlayLayout(disabledCount, gridFrame, false),
@@ -1096,6 +1121,8 @@ export class GameScene extends Phaser.Scene {
     this.scoreRevealTimer?.remove();
     this.scoreRevealTimer = undefined;
     this.shownScore = this.state.score;
+    this.tug?.destroy();
+    this.tug = undefined;
     this.stopSealBreathe();
 
     // Ambient belongs to the room for draw order, but survives HUD rebuilds so
@@ -1165,6 +1192,10 @@ export class GameScene extends Phaser.Scene {
 
     const bossRibbon = this.buildBossRibbon(layout);
     if (bossRibbon) items.push(bossRibbon);
+    this.tug = layout.duelBar
+      ? new TugOfWarBar(this, layout.duelBar, "right")
+      : undefined;
+    if (this.tug) items.push(this.tug.container);
     items.push(...this.buildDisabledBossCards(layout));
 
     const { status } = layout.footer;
@@ -1501,6 +1532,13 @@ export class GameScene extends Phaser.Scene {
       this.hudTargetLabel.setScale(labelRoom / this.hudTargetLabel.width);
     this.setHudValue(this.hudGold, hud.gold);
     this.statusTable.setRows(hud.status);
+    // Hauled as the score plaque starts to climb, not before it.
+    if (hud.duel)
+      this.tug?.setReading(
+        hud.score,
+        hud.goal,
+        this.scoreRevealAt - this.time.now,
+      );
 
     this.updateTension(hud);
   }
