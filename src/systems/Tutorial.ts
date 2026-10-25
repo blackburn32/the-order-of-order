@@ -50,8 +50,8 @@ export enum TutorialStage {
   Begin, // TrialOverview: the button that starts the first trial
   Grid, // Game: where the dice are
   Roll, // Game: the seal
-  RollOne, // Game: after the first roll
-  Tiers, // Game: every roll is played, and the tiers above bronze
+  Tiers, // Game: after the first roll, bronze to survive and the tiers above
+  RollOne, // Game: how to score
   Cleared, // TrialResults: the verdict
   Gold, // TrialResults: what the clear paid
   EarlyGold, // TrialResults: and what it paid for reaching a tier past bronze
@@ -96,9 +96,9 @@ export const TUTORIAL_TEXT: Record<
 
   [TutorialStage.Grid]: "This is where your dice are shown.",
   [TutorialStage.Roll]: `${PRESS} here to roll your dice.`,
-  [TutorialStage.RollOne]: "To score you must roll a 1, good luck.",
   [TutorialStage.Tiers]:
-    "Every roll is played. Meet bronze to survive, and climb to silver, gold or legendary for extra gold.",
+    "To survive you must meet the bronze goal, but push further to score some extra gold!",
+  [TutorialStage.RollOne]: "To score you must roll a 1, good luck.",
 
   [TutorialStage.Cleared]: "Congratulations on completing your first trial!",
   [TutorialStage.Gold]:
@@ -455,7 +455,7 @@ export function beginRun(
   // never is — its dice are the day's, and the same for everyone.
   const opening = getTutorial(scene.registry);
   state.tutorialArmed =
-    !daily && opening.active && opening.stage <= TutorialStage.Tiers;
+    !daily && opening.active && opening.stage <= TutorialStage.RollOne;
   saveActiveRun(scene.registry, { scene: "TrialOverview" });
   scene.scene.start("TrialOverview");
 }

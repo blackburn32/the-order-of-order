@@ -55,8 +55,8 @@ export interface TrialCardStatus {
 // explanation onto two lines of ragged type costs more than the words are worth.
 // The goal shown is bronze, the one the run's survival hangs on; the three
 // above it are climbed in play (see systems/GoalTiers), and every roll is.
-const GOAL_CAPTION = "bronze points to survive";
-const GOAL_CAPTION_SHORT = "bronze to survive";
+const GOAL_CAPTION = "points to survive";
+const GOAL_CAPTION_SHORT = "to survive";
 const ROLLS_CAPTION = "rolls, every one played";
 const ROLLS_CAPTION_SHORT = "rolls, all played";
 const CURSE_HEADING = "THIS TRIAL'S CURSE";
