@@ -216,6 +216,10 @@ check(
   "the Crown never demands a daily bane",
 );
 check(
+  !demands.has("drought") && demands.has("locustIdol"),
+  "the Crown writes The Locust Writ, never its twin The Dry Decree",
+);
+check(
   DAILY_BANE_IDS.every((id) => id in AFFLICTIONS),
   "every bane is an affliction",
 );
