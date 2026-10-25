@@ -342,7 +342,7 @@ export const AFFLICTION_COPY: Record<AfflictionId, AfflictionCopy> = {
   // --- Granted by the story ------------------------------------------------
   betrayal: {
     name: "Betrayal",
-    desc: `Each die that fails to score has a ${Math.round(BETRAYAL_DEFECT_CHANCE * 100)}% chance to defect to the Order of Disorder, leaving your grid for good.`,
+    desc: `Each die that adds nothing to a roll's score has a ${Math.round(BETRAYAL_DEFECT_CHANCE * 100)}% chance to defect to the Order of Disorder, leaving your grid for good. Your last die never leaves.`,
   },
 
   // --- The Daily Rite's banes ----------------------------------------------
@@ -372,7 +372,7 @@ export const AFFLICTION_COPY: Record<AfflictionId, AfflictionCopy> = {
   },
   dailyWavering: {
     name: "Wavering Faith",
-    desc: `Each die that fails to score has a ${Math.round(DAILY_WAVERING_CHANCE * 100)}% chance to defect, leaving your grid for good.`,
+    desc: `Each die that adds nothing to a roll's score has a ${Math.round(DAILY_WAVERING_CHANCE * 100)}% chance to defect, leaving your grid for good. Your last die never leaves.`,
   },
   dailyLongNight: {
     name: "The Sleepless Watch",
