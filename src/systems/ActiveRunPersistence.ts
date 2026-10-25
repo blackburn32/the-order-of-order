@@ -650,6 +650,19 @@ function hydrateOutcome(value: unknown): TrialEndOutcome | null {
   const rollsPaid = isNonNegativeInteger(goldBreakdown.rollsPaid)
     ? Math.min(goldBreakdown.rollsPaid, rollsLeft)
     : rollsLeft;
+  // `itemSources` only feeds the receipt's tooltip, so a list that does not
+  // read is dropped rather than costing the run its checkpoint.
+  const itemSources = Array.isArray(goldBreakdown.itemSources)
+    ? goldBreakdown.itemSources.filter(
+        (entry: unknown) =>
+          isRecord(entry) &&
+          ["counting_house", "prospector", "boss_clear"].includes(
+            entry.source as string,
+          ) &&
+          isNonNegativeInteger(entry.raw) &&
+          isNonNegativeInteger(entry.gold),
+      )
+    : undefined;
   return {
     ...(value as unknown as TrialEndOutcome),
     completedScore,
@@ -661,6 +674,7 @@ function hydrateOutcome(value: unknown): TrialEndOutcome | null {
       ...goldBreakdown,
       rollsLeft,
       rollsPaid,
+      itemSources,
     } as unknown as TrialEndOutcome["goldBreakdown"],
     rollGold: {
       offering: 0,

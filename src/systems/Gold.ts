@@ -76,7 +76,22 @@ export interface GoldBreakdown {
   interest: number;
   /** Gold items that pay out on a clear. */
   items: number;
+  /** `items`, itemised by where it came from, for the receipt's tooltip.
+   *  Each share is after this clear's gold modifiers, and the shares always
+   *  add up to `items`. Absent on receipts saved before it was recorded. */
+  itemSources?: ItemGoldSource[];
   total: number;
+}
+
+/** Where a share of a clear's item gold came from. */
+export type ItemGoldSourceId = "counting_house" | "prospector" | "boss_clear";
+
+export interface ItemGoldSource {
+  source: ItemGoldSourceId;
+  /** What the source paid before this clear's gold modifiers. */
+  raw: number;
+  /** What it paid after them. */
+  gold: number;
 }
 
 /** Optional payout knobs used by the balance simulator. Live play omits this
@@ -154,14 +169,21 @@ export function trialPayout(
   );
   const rolls = baseRollGold + paidRolls * state.reserve;
 
-  let items = state.countingHouse;
+  const rawSources: { source: ItemGoldSourceId; raw: number }[] = [];
+  if (state.countingHouse > 0)
+    rawSources.push({ source: "counting_house", raw: state.countingHouse });
   if (state.hasProspector) {
-    items += Math.min(
-      PROSPECTOR_CAP,
-      Math.floor(state.dice.length / PROSPECTOR_DICE_PER_GOLD),
-    );
+    rawSources.push({
+      source: "prospector",
+      raw: Math.min(
+        PROSPECTOR_CAP,
+        Math.floor(state.dice.length / PROSPECTOR_DICE_PER_GOLD),
+      ),
+    });
   }
-  if (isBossTrial(state.trial)) items += BOSS_CLEAR_GOLD;
+  if (isBossTrial(state.trial))
+    rawSources.push({ source: "boss_clear", raw: BOSS_CLEAR_GOLD });
+  const items = rawSources.reduce((sum, { raw }) => sum + raw, 0);
 
   // The Hoard's doubling, Reliquary's share, and any affliction that garnishes
   // a clear (Iron Debt garnishes it) all meet in one per-mille factor.
@@ -173,6 +195,18 @@ export function trialPayout(
   );
   const scale = (n: number) => Math.floor((n * multMilli) / 1000);
 
+  // The modifiers round the item gold as one sum, so each source is given the
+  // step its share makes in the scaled running total: the shares then add up
+  // to exactly what the receipt's row prints.
+  let runningRaw = 0;
+  const itemSources = rawSources
+    .map(({ source, raw }) => {
+      const before = scale(runningRaw);
+      runningRaw += raw;
+      return { source, raw, gold: scale(runningRaw) - before };
+    })
+    .filter(({ gold }) => gold > 0);
+
   const scaled = {
     base: scale(base),
     tier,
@@ -181,6 +215,7 @@ export function trialPayout(
     rollsPaid: paidRolls,
     rolls: scale(rolls),
     items: scale(items),
+    itemSources,
     interest: interestOn(state),
   };
 
