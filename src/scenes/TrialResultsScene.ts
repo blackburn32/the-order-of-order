@@ -412,14 +412,21 @@ export class TrialResultsScene extends Phaser.Scene {
       })
       .setOrigin(0.5)
       .setShadow(0, 4, "#000000", 10, true, true);
+    // This line runs straight across the medal's ribbon, so it is set the way
+    // the verdict is — light, outlined and shadowed — rather than dim, which
+    // the ribbon's colour swallowed.
+    const subtitleSize = Phaser.Math.Clamp(panelW * 0.023, 14, 21);
     const subtitle = this.add
       .text(cx, top + 50, this.trialLine(), {
         fontFamily: SERIF,
-        fontSize: `${Phaser.Math.Clamp(panelW * 0.023, 14, 21)}px`,
-        color: CSS.dim,
+        fontSize: `${subtitleSize}px`,
+        color: CSS.parchment,
         fontStyle: "italic",
+        stroke: "#0d0a12",
+        strokeThickness: Math.max(3, Math.round(subtitleSize * 0.22)),
       })
-      .setOrigin(0.5);
+      .setOrigin(0.5)
+      .setShadow(0, 2, "#000000", 6, true, true);
 
     const ruleY = top + 86;
     const ruleDice = new RuleDice(this, cx, ruleY, 12);
