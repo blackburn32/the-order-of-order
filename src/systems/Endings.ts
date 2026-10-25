@@ -130,9 +130,15 @@ export function markEndingSeen(state: RunState, id: EndingId): void {
  *
  * Betrayal is the Order of Disorder's to give, not the King's, and it arrives on
  * its own card two acts later. The Daily Rite's banes belong to the day rather
- * than to the Crown, and keep normal runs' writs exactly as they were.
+ * than to the Crown, and keep normal runs' writs exactly as they were. The
+ * drought would be written as The Dry Decree, word for word The Locust Writ, so
+ * the Crown leaves it to the Boss Trial that bears it.
  */
-const NEVER_DEMANDED: readonly AfflictionId[] = ["betrayal", ...DAILY_BANE_IDS];
+const NEVER_DEMANDED: readonly AfflictionId[] = [
+  "betrayal",
+  "drought",
+  ...DAILY_BANE_IDS,
+];
 
 /**
  * The drawbacks the King's writ offers, of which the player must accept one.
