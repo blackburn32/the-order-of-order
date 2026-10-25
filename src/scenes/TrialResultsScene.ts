@@ -6,6 +6,7 @@ import {
   GOLD_PER_INTEREST,
   INTEREST_CAP,
   interestCap,
+  type ItemGoldSourceId,
   VAULT_INTEREST_CAP,
 } from "../systems/Gold";
 import { DieTooltip, type NoteTooltipContent } from "../ui/dieTooltip";
@@ -108,6 +109,16 @@ function receiptHeight(lines: number, lineGap: number): number {
 /** The label of the interest row, which the tutorial's Interest step points at. */
 const INTEREST_LABEL = "Interest";
 
+/** The item-gold row, which spells out each relic and boss reward it adds up. */
+const ITEMS_LABEL = "Relics and boss rewards";
+
+/** What the item-gold tooltip calls each of its sources. */
+const ITEM_SOURCE_NAMES: Record<ItemGoldSourceId, string> = {
+  counting_house: ITEMS.find(({ id }) => id === "counting_house")!.name,
+  prospector: ITEMS.find(({ id }) => id === "prospector")!.name,
+  boss_clear: "Boss Trial cleared",
+};
+
 /** The rolls-left row. Every trial plays out, so it pays only on a save made
  *  before goal tiers, but the receipt keeps printing what it was paid. */
 const ROLLS_LABEL = "Rolls left in hand";
@@ -176,7 +187,7 @@ function receiptLines(o: TrialEndOutcome): ReceiptLine[] {
       ...(rollsLeft > rollsPaid ? { struck: rollsLeft } : {}),
     },
     { label: INTEREST_LABEL, amount: o.goldBreakdown.interest },
-    { label: "Relics and boss rewards", amount: o.goldBreakdown.items },
+    { label: ITEMS_LABEL, amount: o.goldBreakdown.items },
     { label: "Tithe Bowl during rolls", amount: o.rollGold.titheBowl },
     { label: "Lucky Coin during rolls", amount: o.rollGold.luckyCoin },
     { label: "An Offering during rolls", amount: o.rollGold.offering },
@@ -711,13 +722,16 @@ export class TrialResultsScene extends Phaser.Scene {
         );
       if (label === INTEREST_LABEL) this.interestRect = rowRect();
       else if (label.endsWith(TIER_LABEL)) this.tierRect = rowRect();
-      // The two rows whose rule is not in their label spell it out when read.
+      // The rows whose rule or sources are not in their label spell them out
+      // when read.
       const note =
         label === INTEREST_LABEL
           ? this.interestNote(amount)
           : label.endsWith(TIER_LABEL)
             ? this.tierNote(amount)
-            : undefined;
+            : label === ITEMS_LABEL
+              ? this.itemsNote(amount)
+              : undefined;
       const hit = note ? [this.readableRow(rowRect(), note)] : [];
       const name = this.add
         .text(cx - labelDx, y, label, {
@@ -807,6 +821,34 @@ export class TrialResultsScene extends Phaser.Scene {
       ...(scaled
         ? {
             aside: `This clear's gold modifiers made your ${tierName(tier)} bonus +${paid}.`,
+          }
+        : {}),
+    };
+  }
+
+  /** Each relic and boss reward the item-gold row adds up, and what it paid. */
+  private itemsNote(paid: number): NoteTooltipContent {
+    const sources = this.dataIn.outcome.goldBreakdown.itemSources;
+    const lines = [
+      "Gold paid on a clear by your relics, and the reward for beating a Boss Trial.",
+    ];
+    // A receipt saved before its sources were recorded can only give the sum.
+    if (!sources || sources.length === 0)
+      return {
+        title: ITEMS_LABEL,
+        lines: [...lines, `This clear paid ${paid}.`],
+      };
+    const modified = sources.some(({ raw, gold }) => raw !== gold);
+    return {
+      title: ITEMS_LABEL,
+      lines,
+      table: sources.map(({ source, gold }) => ({
+        label: ITEM_SOURCE_NAMES[source],
+        value: `+${gold} gold`,
+      })),
+      ...(modified
+        ? {
+            aside: `This clear's gold modifiers are included: before them, these paid ${sources.reduce((sum, { raw }) => sum + raw, 0)}.`,
           }
         : {}),
     };

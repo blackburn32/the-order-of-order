@@ -183,6 +183,25 @@ console.log("\nBoss trials");
 }
 
 {
+  // The receipt's item-gold tooltip lists each source, and its shares must add
+  // up to the row it explains even once a modifier rounds them as one sum.
+  const state = runAt(3, 20);
+  state.bossModifiers = ["famine"];
+  state.countingHouse = 3;
+  state.hasReliquary = true;
+  const payout = trialPayout(state);
+  const sources = payout.itemSources ?? [];
+  check(
+    sources.map(({ source }) => source).join() === "counting_house,boss_clear",
+    "item gold names each source that paid",
+  );
+  check(
+    sources.reduce((sum, { gold }) => sum + gold, 0) === payout.items,
+    "and its shares add up to the item-gold row",
+  );
+}
+
+{
   const plain = runAt(3, 20);
   plain.bossModifiers = ["famine"];
   const hoard = runAt(3, 20);
