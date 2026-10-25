@@ -13,8 +13,15 @@ import { Die, DieSides, faceFloor, faceRange, isVoiceDie } from "./Dice";
 import type { RollRules } from "./DicePool";
 import { probit } from "./ExactMath";
 import { RunState } from "../state/RunState";
-import { groupScores, growRoll, type VigilGroup } from "./GrowthEngines";
 import {
+  groupScores,
+  growRoll,
+  unrepeatedFaces,
+  type VigilGroup,
+} from "./GrowthEngines";
+import {
+  CANTICLE_FREE_FACES,
+  countSevens,
   counterpointDice,
   solitudePoints,
   voiceDice,
@@ -807,4 +814,44 @@ export function scoreRollHistogram(
   const growth = points - multiplied;
   modifiers.push(...growthModifiers(shares));
   return { points, multiplier, modifiers, growth, growthShares: shares };
+}
+
+/**
+ * Which of a roll's faces fed its score even on a die that scored by no rule of
+ * its own: a face Consensus paired, a lone face A New Voice, Counterpoint or The
+ * Canticle paid for, a face in a Parade that landed, a seven Lucky Seven
+ * multiplied on. Betrayal spares every such die — it takes only the dice that
+ * gave the roll nothing — so this reads the same conditions scoreRollHistogram
+ * does, from the same aggregate.
+ *
+ * Rules that pay for the grid's size alone (Dividend, Uniform, The Cell,
+ * Gravitas) are not here: every die feeds those equally, and naming them would
+ * make Betrayal a dead card for any build that owns one.
+ *
+ * Returns a test on a die's face and whether it is A New Voice's.
+ */
+export function contributingFaces(
+  state: RunState,
+  agg: DiceAgg,
+  afflictions: ActiveAfflictions,
+): (value: number, voice: boolean) => boolean {
+  const counts = agg.valueCounts;
+  const shown = (v: number) => (counts.get(v) ?? 0) > 0;
+  const consensus = snakeEyesFor(state, afflictions);
+  const parade = state.hasParade && shown(1) && shown(2) && shown(3);
+  const luckySeven = luckySevenFor(state, afflictions) && showsASeven(counts);
+  const canticle =
+    state.hasCanticle && unrepeatedFaces(counts) > CANTICLE_FREE_FACES;
+  return (value, voice) => {
+    const count = counts.get(value) ?? 0;
+    if (count <= 0) return false;
+    if (consensus && count >= 2) return true;
+    if (count === 1) {
+      if (state.hasCounterpoint || canticle) return true;
+      if (voice) return true;
+    }
+    if (parade && value >= 1 && value <= 3) return true;
+    if (luckySeven && countSevens(value) > 0) return true;
+    return false;
+  };
 }

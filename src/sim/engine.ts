@@ -54,6 +54,7 @@ import {
   vigilPercent,
 } from "../systems/GrowthEngines";
 import {
+  contributingFaces,
   everyLiveDieScored,
   scoreRollHistogram,
 } from "../systems/ScoringHistogram";
@@ -442,10 +443,6 @@ export function applyGridPassives(
   // defection bill the same roll rather than the grid the other one left behind.
   const agg = pool.agg();
   const scoringCount = agg.scoringCount;
-  // The dice that failed are the LIVE dice that failed. An inert die produced no
-  // outcome either way, so it is neither a success breakage can tax nor a
-  // failure the Order of Disorder can point at.
-  const nonScoringCount = agg.total - agg.inertCount - agg.scoringCount;
 
   // Grid-growing passives, applied after scoring so the new copies don't score
   // the roll they were born on. The pool computes these from the cached roll and
@@ -516,15 +513,20 @@ export function applyGridPassives(
     ashes += riseFromTheAshes(state, pool, offered, growthBlocked, rng);
   }
 
-  // Defection bills the other half of the same roll: the dice that came up with
-  // nothing are the ones the Order of Disorder can talk to. A denied roll is not
-  // a failure the traitors can point at, so nothing defects on it either.
-  const defected =
-    !denied && afflictions.defectChance > 0
-      ? pool.breakNonScoring(
-          breakCount(nonScoringCount, afflictions.defectChance, rng),
-        )
-      : 0;
+  // Defection bills the other half of the same roll: the dice that gave it
+  // nothing are the ones the Order of Disorder can talk to. A die that scored is
+  // safe, and so is one whose face fed the score another way — a pair Consensus
+  // paid, a lone face Counterpoint paid. A denied roll is not a failure the
+  // traitors can point at, so nothing defects on it either, and the last die on
+  // the grid never leaves (see DicePool.breakNonScoring).
+  let defected = 0;
+  if (!denied && afflictions.defectChance > 0) {
+    const spared = contributingFaces(state, agg, afflictions);
+    defected = pool.breakNonScoring(
+      breakCount(pool.defectableCount(spared), afflictions.defectChance, rng),
+      spared,
+    );
+  }
 
   // Whatever the grid grew to this roll, the cap has the last word.
   const culled = enforceGridCap(state, pool);

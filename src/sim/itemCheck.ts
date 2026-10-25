@@ -1086,6 +1086,67 @@ function buy(
   );
 }
 
+// Betrayal takes only the dice that gave the roll nothing. A die that scored no
+// point of its own but still fed the score — here, a 6 Consensus paired with
+// every other 6 — stays, on a small grid read die by die and a large one read
+// by bucket alike.
+for (const count of [5, 200]) {
+  const state = newRun();
+  state.afflictions = ["betrayal"];
+  state.hasSnakeEyes = true;
+  state.dice.addDice(6, count);
+  const before = state.dice.length;
+  state.dice.roll(() => 0.99, state.scoringNumbers);
+  const { defected } = resolveRoll(state, () => 0);
+  check(
+    defected === 0 && state.dice.length === before,
+    `Betrayal should spare dice Consensus paid for (${count} dice)`,
+  );
+}
+
+// A lone face Counterpoint paid for is the same: it scored for the roll.
+{
+  const state = newRun();
+  state.afflictions = ["betrayal"];
+  state.hasCounterpoint = true;
+  state.dice.addDice(6, 2);
+  let face = 0;
+  // The opening die and two more, on 4, 5 and 6: none is a sacred number, and
+  // each is alone on its face.
+  state.dice.roll(() => [0.55, 0.7, 0.9][face++ % 3], state.scoringNumbers);
+  check(
+    [4, 5, 6].every((v) => state.dice.agg().valueCounts.get(v) === 1),
+    "the roll should put one die on each of 4, 5 and 6",
+  );
+  const { defected } = resolveRoll(state, () => 0);
+  check(defected === 0, "Betrayal should spare dice Counterpoint paid for");
+}
+
+// However the roll falls, Betrayal never takes the last die on the grid —
+// through a whole roll on a small grid, and asked outright for more dice than a
+// bucketed grid holds.
+for (const count of [0, 4]) {
+  const state = newRun();
+  state.afflictions = ["betrayal"];
+  state.dice.addDice(6, count);
+  state.dice.roll(() => 0.99, state.scoringNumbers);
+  resolveRoll(state, () => 0);
+  check(
+    state.dice.length === 1,
+    `Betrayal should leave the last die standing (${count + 1} dice)`,
+  );
+}
+{
+  const state = newRun();
+  state.dice.addDice(6, 500);
+  state.dice.roll(() => 0.99, state.scoringNumbers);
+  state.dice.breakNonScoring(10_000);
+  check(
+    state.dice.length === 1,
+    "a bucketed grid should keep its last die through defection",
+  );
+}
+
 // Breakage and defection bill one roll between them, each taking only from its
 // own half of it. Run with both afflictions at full tilt and an rng that always
 // fires, so each pass takes everything it is entitled to and no more — the way

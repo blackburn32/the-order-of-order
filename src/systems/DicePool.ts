@@ -1308,17 +1308,77 @@ export class DicePool {
     );
   }
 
-  /** Destroy `count` dice from among those that did NOT score on the most recent
-   *  roll — Betrayal's defectors, who leave to join the Order of Disorder.
-   *  Returns how many were actually destroyed. */
-  breakNonScoring(count: number): number {
+  /** How many dice Betrayal could take after the most recent roll: the live
+   *  dice that scored by no rule and whose face `spared` (systems/
+   *  ScoringHistogram.contributingFaces) says fed the score in no other way. */
+  defectableCount(spared: (value: number, voice: boolean) => boolean): number {
+    if (!this.roll_) return 0;
+    if (this.mode === "list") {
+      let n = 0;
+      const end = Math.min(this.rolledTo, this.list.length);
+      for (let k = this.rolledFrom; k < end; k++)
+        if (this.mayDefect(this.list[k], spared)) n += 1;
+      return n;
+    }
+    let n = 0;
+    for (const b of this.buckets) n += this.bucketDefectable(b, spared);
+    return n;
+  }
+
+  /** Destroy `count` dice from among those that gave the most recent roll
+   *  nothing — Betrayal's defectors, who leave to join the Order of Disorder. A
+   *  die that scored, or whose face `spared` says fed the score some other way,
+   *  stays. Never empties the grid. Returns how many were actually destroyed. */
+  breakNonScoring(
+    count: number,
+    spared: (value: number, voice: boolean) => boolean = () => false,
+  ): number {
     return this.destroyRolled(
-      count,
-      (d) => !this.dieScored(d),
-      (b) => b.lastNonScoring ?? 0,
+      Math.min(count, this._count - 1),
+      (d) => this.mayDefect(d, spared),
+      (b) => this.bucketDefectable(b, spared),
       (b) => {
         b.lastNonScoring = 0;
       },
+    );
+  }
+
+  private mayDefect(
+    d: Die,
+    spared: (value: number, voice: boolean) => boolean,
+  ): boolean {
+    return !this.scoredOnLastRoll(d) && !spared(d.value, isVoiceDie(d));
+  }
+
+  /** A bucket's dice that may defect: those of its live faces that scored by no
+   *  rule and are not spared, capped by what the bucket still holds of the
+   *  roll's failures. */
+  private bucketDefectable(
+    b: Bucket,
+    spared: (value: number, voice: boolean) => boolean,
+  ): number {
+    const failed = b.lastNonScoring ?? 0;
+    if (failed <= 0 || !b.lastFaces) return 0;
+    const voice = isVoiceDie(b);
+    let n = 0;
+    for (let v = 1; v <= b.lastFaces.length; v++) {
+      const c = b.lastFaces[v - 1];
+      if (c > 0 && !this.faceScored(b, v) && !spared(v, voice)) n += c;
+    }
+    return Math.min(n, failed, b.count);
+  }
+
+  /** Whether face `v` scored for bucket `b` on the most recent roll, by the
+   *  same rules the roll's tallies counted. */
+  private faceScored(b: Bucket, v: number): boolean {
+    const numberScores = this.lastScales
+      ? v * 2 > b.sides
+      : this.lastScoringNumbers.includes(v);
+    return (
+      numberScores ||
+      b.wildFace ||
+      (b.maxFaceBonus > 0 && !b.loaded && v === b.sides) ||
+      (!this.lastScales && this.lastSealed.has(b.sides) && v === b.sides)
     );
   }
 
