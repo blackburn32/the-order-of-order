@@ -1,4 +1,5 @@
 import Phaser from "phaser";
+import { showToast } from "../ui/toast";
 import { GOAL_TIERS, isMirrorTrial, rankOf, trialInRank } from "../config";
 import { nextTier, TIER_GOLD, tierCss, tierName } from "../systems/GoalTiers";
 import { COLORS, CSS, SERIF } from "../art/palette";
@@ -393,6 +394,28 @@ function afflictionRollCues(
   if (denied === "gamblersCurse")
     cues.push({ kind: "penalty", message: "GAMBLER'S CURSE · ROLL FORFEIT" });
   return cues;
+}
+
+/**
+ * The dice a full grid refused this roll (Melodie's ceiling), one struck line
+ * per card that wanted to add them — the same crossed-out float a cancelled
+ * bonus wears, since the dice were earned and then not given.
+ */
+function turnedAwayCues(
+  turnedAway: ReadonlyMap<string, number>,
+): BossRollCue[] {
+  const cues: BossRollCue[] = [];
+  for (const [source, count] of turnedAway)
+    if (count > 0)
+      cues.push({ kind: "struck", message: turnedAwayLabel(source, count) });
+  if (cues.length > 0)
+    cues.unshift({ kind: "penalty", message: "GRID FULL · NO ROOM FOR DICE" });
+  return cues;
+}
+
+function turnedAwayLabel(source: string, count: number): string {
+  const dice = count === 1 ? "DIE" : "DICE";
+  return `${sourceLabel(source).toUpperCase()} +${count.toLocaleString()} ${dice}`;
 }
 
 /** Select evenly across an index-ordered list instead of clustering feedback
@@ -3495,6 +3518,7 @@ export class GameScene extends Phaser.Scene {
       culled,
       denied,
       diceChanges,
+      turnedAway,
     } = resolveRoll(
       s,
       // A separate stream from the dice above, not a continuation of it: taking
@@ -3531,6 +3555,7 @@ export class GameScene extends Phaser.Scene {
     const bossCues = [
       ...this.bossRollCues(rolledAgg, result),
       ...afflictionRollCues(denied),
+      ...turnedAwayCues(turnedAway),
     ];
     if (shrunk.length > 0 || broken > 0 || defected > 0 || culled > 0)
       this.cardDataDirty = true;
@@ -4060,7 +4085,9 @@ export class GameScene extends Phaser.Scene {
     this.openingTimer = undefined;
     if (!this.state.trialOpenPending) return;
     const before = { ...this.state.itemValues };
+    this.state.dice.takeTurnedAway();
     openTrial(this.state);
+    const turnedAway = this.state.dice.takeTurnedAway();
     // Committed at once, like a roll: a reload after this point must not pour
     // the trial's dice a second time.
     saveActiveRun(this.registry, {
@@ -4078,6 +4105,15 @@ export class GameScene extends Phaser.Scene {
       if (added <= 0) continue;
       this.cueCreatedDice(added, id, sourceLabel(id).toUpperCase(), color, css);
     }
+    // A full grid turns a trial-start card's dice away: say so, card by card,
+    // rather than let the card look as if it stopped working.
+    for (const [source, count] of turnedAway)
+      if (count > 0)
+        showToast(
+          this,
+          `Grid full: ${sourceLabel(source)} could not add ${count.toLocaleString()} ${count === 1 ? "die" : "dice"}`,
+          { tone: "warning", register: (objs) => this.overlay(objs) },
+        );
     this.updateHud();
   }
 

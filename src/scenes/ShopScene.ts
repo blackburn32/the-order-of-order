@@ -47,7 +47,11 @@ import {
   runAuras,
   type DieEffect,
 } from "../systems/DieEffects";
-import { dieBodyTexture } from "../art/textures";
+import {
+  afflictionSigilTexture,
+  dieBodyTexture,
+  gridFullSigilTexture,
+} from "../art/textures";
 import { formatSci } from "../ui/formatScore";
 import { DieTooltip } from "../ui/dieTooltip";
 import { vigilGroups } from "../ui/vigilTally";
@@ -64,14 +68,19 @@ import {
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import {
-  buildAfflictionStamp,
+  buildCardStamp,
   buildCursedSeal,
   rarityMark,
   UPGRADE_LABEL,
 } from "../ui/itemCard";
 import { AFFLICTION_COPY, type AfflictionId } from "../systems/Afflictions";
 import { bossById, type BossModifierId } from "../systems/Boss";
-import { afflictionsHinderingItem, ITEMS } from "../systems/Items";
+import {
+  afflictionsHinderingItem,
+  itemGrowsGrid,
+  ITEMS,
+} from "../systems/Items";
+import { CHARACTERS } from "../systems/Characters";
 import { addItemValue, recordRunItemPurchase } from "../systems/ItemValue";
 import { spendGold } from "../systems/Gold";
 import { buildRichCopy, isMarked } from "../ui/richCopy";
@@ -2209,12 +2218,16 @@ export class ShopScene extends Phaser.Scene {
       : undefined;
     // A card some affliction in force would hinder is still for sale, but wears
     // that affliction's sigil inked in its corner, and says which on hover or
-    // a long press.
+    // a long press. A card that grows a grid with no room left (Melodie's
+    // ceiling) is stamped the same way, with the full grid's own mark.
     const hindering = this.hinderingAfflictions(offer);
+    const gridFull = this.turnedAwayByFullGrid(offer);
+    const stampKeys = [
+      ...hindering.map(afflictionSigilTexture),
+      ...(gridFull ? [gridFullSigilTexture()] : []),
+    ];
     const stamp =
-      hindering.length > 0
-        ? buildAfflictionStamp(this, hindering, scale)
-        : undefined;
+      stampKeys.length > 0 ? buildCardStamp(this, stampKeys, scale) : undefined;
     const mark = rarityMark(offer.rarity, offer.cursed);
     const rarityLabel = this.add
       .text(0, -148 * scale, mark.text, {
@@ -2400,7 +2413,9 @@ export class ShopScene extends Phaser.Scene {
       cost.setAlpha(0.86);
     }
     if (stamp)
-      this.dieTooltip.attach(card, () => this.afflictionNote(hindering));
+      this.dieTooltip.attach(card, () =>
+        this.afflictionNote(hindering, gridFull),
+      );
 
     // A cursed card takes the red pulse in place of the rare card's gold one:
     // two glows on one card read as neither, and the warning is the more
@@ -2421,11 +2436,29 @@ export class ShopScene extends Phaser.Scene {
     return def ? afflictionsHinderingItem(this.state, def) : [];
   }
 
+  /** Whether this offer would put dice on a grid already at its ceiling — so
+   *  every die it adds would be turned away. Read fresh on every build, like
+   *  the afflictions, so the purchase that fills the grid marks the rest. */
+  private turnedAwayByFullGrid(offer: ShopOffer): boolean {
+    if (this.state.dice.headroom > 0) return false;
+    const def = ITEMS.find((item) => item.id === offer.id);
+    return def ? itemGrowsGrid(def) : false;
+  }
+
   /** What the affliction stamp on a card says when read: each drawback that
    *  hinders it, by the name it goes by where the player met it. A standing
    *  drawback is named as the card or writ that laid it; a boss's modifier only
-   *  as the Boss Trial ahead, since that is all it lasts. */
-  private afflictionNote(ids: readonly AfflictionId[]) {
+   *  as the Boss Trial ahead, since that is all it lasts. A full grid is named
+   *  last, as the character whose ceiling it is. */
+  private afflictionNote(ids: readonly AfflictionId[], gridFull = false) {
+    const fullNote = `${CHARACTERS[this.state.character].name}'s grid already holds its ${this.state.dice.ceiling} dice, so any die this card adds is turned away.`;
+    if (ids.length === 0)
+      return {
+        title: "Grid full",
+        lines: [fullNote],
+        aside:
+          "Still yours to buy, but it adds no dice while the grid is full.",
+      };
     const lines = ids.map((id) => {
       if (this.state.afflictions.includes(id)) {
         const copy = AFFLICTION_COPY[id];
@@ -2434,8 +2467,9 @@ export class ShopScene extends Phaser.Scene {
       const boss = bossById(id as BossModifierId);
       return `${boss?.name ?? AFFLICTION_COPY[id].name} (this Boss Trial): ${boss?.desc ?? AFFLICTION_COPY[id].desc}`;
     });
+    if (gridFull) lines.push(`Grid full: ${fullNote}`);
     return {
-      title: ids.length > 1 ? "Afflicted" : "Afflicted by",
+      title: ids.length > 1 || gridFull ? "Afflicted" : "Afflicted by",
       lines,
       aside:
         "Still yours to buy, but part of what this card does is switched off while the affliction stands.",

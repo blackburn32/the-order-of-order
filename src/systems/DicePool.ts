@@ -239,6 +239,11 @@ export class DicePool {
    *  none. Nothing is destroyed, and `everAdded` only counts what actually
    *  arrived. */
   private _ceiling = Infinity;
+  // Dice a growth path wanted to add but the ceiling had no room for, since the
+  // last `takeTurnedAway`. Only ever non-zero under a ceiling — the scene reads
+  // it to say that a card's dice did not arrive, rather than letting a full
+  // grid look like a card that silently stopped working.
+  private _turnedAway = new Map<string, number>();
   private roll_?: RollData; // cached result of the most recent roll()
   // The half-open span of grid indices the last roll actually read —
   // [rolledFrom, rolledTo) — and so everything the growth and destruction
@@ -340,6 +345,24 @@ export class DicePool {
     return this._ceiling === Infinity
       ? Infinity
       : Math.max(0, this._ceiling - this._count);
+  }
+
+  /** The dice the ceiling has refused since the last call, by the source that
+   *  wanted to add them, and reset. A path whose full yield is a matter of
+   *  chance (Double the Fun) is counted at its expected yield, since the dice
+   *  it would have drawn were never drawn. */
+  takeTurnedAway(): Map<string, number> {
+    const refused = this._turnedAway;
+    this._turnedAway = new Map();
+    return refused;
+  }
+
+  private turnAway(source: string, wanted: number, added: number): void {
+    if (wanted > added)
+      this._turnedAway.set(
+        source,
+        (this._turnedAway.get(source) ?? 0) + wanted - added,
+      );
   }
 
   /** Dice this pool has ever been given, survivors and casualties alike. */
@@ -770,7 +793,20 @@ export class DicePool {
     // stops rather than trimming afterwards, so the dice that do arrive are the
     // ones the earliest eligible rolls earned.
     const room = this.headroom;
-    if (room <= 0) return 0;
+    // Once the ceiling has stopped the walk, what it cost is the copies the
+    // roll's eligible faces would have drawn on average, less the ones that
+    // did arrive. Read without the rng, so a full grid draws nothing new.
+    const refuse = (added: number) => {
+      if (added < room) return;
+      const expected = Math.round(
+        this.curiousEligible(highestFaceOnly) * Math.min(1, chance),
+      );
+      this.turnAway("double_the_fun", expected, added - this._lastPairs);
+    };
+    if (room <= 0) {
+      refuse(0);
+      return 0;
+    }
     if (this.mode === "list") {
       const copies: Die[] = [];
       for (
@@ -793,6 +829,7 @@ export class DicePool {
       for (const d of copies) this.list.push(d);
       this.gain(copies.length);
       this.ensureMode();
+      refuse(copies.length);
       return copies.length;
     }
     let added = 0;
@@ -838,7 +875,37 @@ export class DicePool {
       }
     }
     this.gain(added);
+    refuse(added);
     return added;
+  }
+
+  /** The dice the last roll showed that Double the Fun copies: a 5 or a 6, or
+   *  with `highestFaceOnly` a d6-or-larger's top face. */
+  private curiousEligible(highestFaceOnly: boolean): number {
+    let eligible = 0;
+    if (this.mode === "list") {
+      for (let k = this.rolledFrom; k < this.rolledTo; k++) {
+        const d = this.list[k];
+        if (
+          highestFaceOnly
+            ? d.sides >= 6 && d.value === facesOf(d.sides, d.loaded)
+            : d.value === 5 || d.value === 6
+        )
+          eligible += 1;
+      }
+      return eligible;
+    }
+    for (const b of this.buckets) {
+      if (!b.lastFaces) continue;
+      const faces = facesOf(b.sides, b.loaded);
+      eligible += highestFaceOnly
+        ? b.sides >= 6
+          ? (b.lastFaces[faces - 1] ?? 0)
+          : 0
+        : (faces >= 5 ? (b.lastFaces[4] ?? 0) : 0) +
+          (faces >= 6 ? (b.lastFaces[5] ?? 0) : 0);
+    }
+    return eligible;
   }
 
   /** Dice The Multitude paired on the most recent Curious pass. */
@@ -849,7 +916,16 @@ export class DicePool {
   /** Genesis: each scoring die spawns a copy, capped at `cap` dice total this
    *  roll. Returns the number added. Uses the cached roll. */
   genesis(cap: number): number {
+    const wanted = cap;
     cap = Math.min(cap, this.headroom);
+    // The ceiling trimmed the cap: what it cost is the copies the roll's
+    // scoring dice would have spawned under the card's own cap.
+    if (cap < wanted)
+      this.turnAway(
+        "genesis",
+        Math.min(wanted, this.lastScoringDice()),
+        Math.max(0, cap),
+      );
     if (cap <= 0) return 0;
     if (this.mode === "list") {
       // List mode retains rolled values, so recover the scoring dice directly.
@@ -891,6 +967,17 @@ export class DicePool {
     return added;
   }
 
+  /** How many dice scored on the last roll, by Genesis's own test. */
+  private lastScoringDice(): number {
+    if (this.mode === "list") {
+      let scored = 0;
+      for (let k = this.rolledFrom; k < this.rolledTo; k++)
+        if (this.dieScored(this.list[k])) scored += 1;
+      return scored;
+    }
+    return this.buckets.reduce((n, b) => n + (b.lastScoring ?? 0), 0);
+  }
+
   private dieScored(d: Die): boolean {
     // Only valid immediately after a list-mode roll. scoringNumbers captured then.
     return (
@@ -920,8 +1007,15 @@ export class DicePool {
   foundryDouble(copies: number): number {
     if (copies <= 0 || this._count === 0) return 0;
     const room = this.headroom;
-    if (room <= 0) return 0;
     const extraPerDie = 2 ** copies - 1;
+    if (room <= 0) {
+      const smallest =
+        this.mode === "list"
+          ? this.list.reduce((m, d) => Math.min(m, d.sides), Infinity)
+          : this.buckets.reduce((m, b) => Math.min(m, b.sides), Infinity);
+      this.turnAway("foundry", this.countOfSize(smallest) * extraPerDie, 0);
+      return 0;
+    }
     if (this.mode === "list") {
       const smallestSides = this.list.reduce(
         (m, d) => (d.sides < m ? d.sides : m),
@@ -929,6 +1023,7 @@ export class DicePool {
       );
       const targets = this.list.filter((d) => d.sides === smallestSides);
       const added = Math.min(targets.length * extraPerDie, room);
+      this.turnAway("foundry", targets.length * extraPerDie, added);
       // A doubling that would cross the threshold buckets first rather than
       // materialise the copies as individual dice.
       if (this._count + added < bucketThreshold) {
@@ -952,6 +1047,8 @@ export class DicePool {
     const targets = this.buckets
       .filter((b) => b.sides === smallestSides)
       .map((b) => ({ ...b }));
+    const wanted = targets.reduce((n, b) => n + b.count, 0) * extraPerDie;
+    this.turnAway("foundry", wanted, Math.min(room, wanted));
     let added = 0;
     for (const b of targets) {
       const extra = Math.min(b.count * extraPerDie, room - added);
@@ -1048,7 +1145,9 @@ export class DicePool {
     opts: DieOpts = {},
     source = "starter",
   ): number {
+    const wanted = count;
     count = Math.min(count, this.headroom);
+    this.turnAway(source, wanted, Math.max(0, count));
     if (count <= 0) return 0;
     // A bulk add that will cross the threshold converts first, so we never
     // materialise the (possibly enormous) new dice as individual objects.
@@ -1078,6 +1177,7 @@ export class DicePool {
     if (factor <= 1) return;
     const wanted = this._count * (factor - 1);
     const added = Math.min(wanted, this.headroom);
+    this.turnAway(source, wanted, Math.max(0, added));
     if (added <= 0) return;
     if (this.mode === "list" && this._count + added < bucketThreshold) {
       const originals = this.list;
