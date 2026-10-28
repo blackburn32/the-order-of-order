@@ -285,6 +285,16 @@ export const AFFLICTION_SIGIL_TEXTURE_KEYS: Record<AfflictionId, string> = {
   dailyGag: "sigil-curse-reckoning",
 };
 
+/** The mark a shop card wears when the grid it would grow is already full
+ *  (Melodie's ceiling). Not an affliction, but stamped in the same place and
+ *  the same ink, since to the player it is the same news: part of this card
+ *  will do nothing. */
+const GRID_FULL_SIGIL_TEXTURE_KEY = "sigil-grid-full";
+
+export function gridFullSigilTexture(): string {
+  return GRID_FULL_SIGIL_TEXTURE_KEY;
+}
+
 export function bossSigilTexture(id: BossModifierId): string {
   return BOSS_SIGIL_TEXTURE_KEYS[id];
 }
@@ -501,6 +511,12 @@ function buildAfflictionSigils(scene: Phaser.Scene): void {
     built.add(key);
     buildAfflictionSigil(scene, key, id, index);
   });
+  buildAfflictionSigil(
+    scene,
+    GRID_FULL_SIGIL_TEXTURE_KEY,
+    "gridFull",
+    built.size,
+  );
 }
 
 /** The only two line weights a cursed mark — frame included — is drawn in. */
@@ -512,7 +528,7 @@ const CURSE_ALPHA_FAINT = 0.5;
 function buildAfflictionSigil(
   scene: Phaser.Scene,
   key: string,
-  id: AfflictionId,
+  id: AfflictionId | "gridFull",
   index: number,
 ): void {
   const size = 512;
@@ -1024,6 +1040,50 @@ function buildAfflictionSigil(
       g.lineBetween(c - 14, c + 94, c, c + 132);
       g.lineBetween(c + 14, c + 94, c, c + 132);
       break;
+    // --- Not an affliction ---------------------------------------------------
+    case "gridFull": {
+      // A grid packed to its frame, and a die turned back at its lid.
+      const cell = 52;
+      const gap = 10;
+      const span = cell * 3 + gap * 2;
+      const left = c - span / 2;
+      const top = c - span / 2 + 34;
+      g.strokeRect(left - 14, top - 14, span + 28, span + 28);
+      for (let row = 0; row < 3; row++)
+        for (let col = 0; col < 3; col++)
+          g.strokeRect(
+            left + col * (cell + gap),
+            top + row * (cell + gap),
+            cell,
+            cell,
+          );
+      faint();
+      for (let row = 0; row < 3; row++)
+        for (let col = 0; col < 3; col++)
+          g.strokeCircle(
+            left + col * (cell + gap) + cell / 2,
+            top + row * (cell + gap) + cell / 2,
+            7,
+          );
+      line();
+      // The die left outside, crossed through.
+      const dieSize = 54;
+      const dieTop = top - 14 - 30 - dieSize;
+      g.strokeRect(c - dieSize / 2, dieTop, dieSize, dieSize);
+      g.lineBetween(
+        c - dieSize / 2 - 14,
+        dieTop - 14,
+        c + dieSize / 2 + 14,
+        dieTop + dieSize + 14,
+      );
+      g.lineBetween(
+        c + dieSize / 2 + 14,
+        dieTop - 14,
+        c - dieSize / 2 - 14,
+        dieTop + dieSize + 14,
+      );
+      break;
+    }
   }
 
   bakeGraphics(g, key, size, size);

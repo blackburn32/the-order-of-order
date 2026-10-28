@@ -181,12 +181,22 @@ export function buildAfflictionStamp(
   ids: readonly AfflictionId[],
   scale: number,
 ): Phaser.GameObjects.Container {
+  return buildCardStamp(scene, ids.map(afflictionSigilTexture), scale);
+}
+
+/** The same stamp for any run of sigil textures — the afflictions' own, and
+ *  the full-grid mark a growth card wears once the grid has no room left. */
+export function buildCardStamp(
+  scene: Phaser.Scene,
+  keys: readonly string[],
+  scale: number,
+): Phaser.GameObjects.Container {
   const stamp = scene.add.container(0, 0);
-  ids.forEach((id, i) => {
-    const x = (STAMP_X - STAMP_STEP * (ids.length - 1 - i)) * scale;
+  keys.forEach((key, i) => {
+    const x = (STAMP_X - STAMP_STEP * (keys.length - 1 - i)) * scale;
     stamp.add(
       scene.add
-        .image(x, STAMP_Y * scale, afflictionSigilTexture(id))
+        .image(x, STAMP_Y * scale, key)
         .setDisplaySize(STAMP_SIZE * scale, STAMP_SIZE * scale)
         .setRotation(STAMP_TILT + i * 0.22)
         .setTint(COLORS.cursedSeal)

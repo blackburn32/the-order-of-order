@@ -167,6 +167,14 @@ console.log("\nMelodie's ceiling");
     state.dice.addDice(6, 5, {}, "extra_dice") === 0,
     "and a later add does nothing at all",
   );
+  check(
+    state.dice.takeTurnedAway().get("extra_dice") === 12,
+    "and every die it could not take is tallied against the card",
+  );
+  check(
+    state.dice.takeTurnedAway().size === 0,
+    "a tally that is read is cleared",
+  );
 
   const full = gridOf("melodie", MELODIE_GRID_CEILING);
   full.dice.multiply(4, "mult2");
@@ -186,6 +194,46 @@ console.log("\nMelodie's ceiling");
   check(
     foundry.dice.length === MELODIE_GRID_CEILING,
     "the Foundry's doubling stops at the ceiling too",
+  );
+  check(
+    foundry.dice.takeTurnedAway().get("foundry") ===
+      (MELODIE_GRID_CEILING - 2) * 7 - 2,
+    "and tallies the copies it had no room for",
+  );
+  check(
+    full.dice.takeTurnedAway().get("mult2") === MELODIE_GRID_CEILING * 3,
+    "as does a multiplier on a full grid",
+  );
+
+  // A roll on a full grid: the passive growth cards earn dice the ceiling turns
+  // away, and the roll reports them by card so the table can say so.
+  const passive = gridOf("melodie", MELODIE_GRID_CEILING);
+  passive.genesis = 1;
+  passive.brickMold = 2;
+  rollPool(passive, passive.dice, mulberry32(21));
+  const scored = passive.dice.agg().scoringCount;
+  const roll = resolveRoll(passive, mulberry32(22), { recordHistory: false });
+  check(
+    roll.turnedAway.get("brick_mold") === 2,
+    "a full grid turns a mold's dice away after a roll",
+  );
+  check(
+    (roll.turnedAway.get("genesis") ?? 0) === Math.min(scored, 20),
+    "and Genesis's, one per die that scored",
+  );
+  check(
+    passive.dice.length === MELODIE_GRID_CEILING,
+    "while the grid stays at its ceiling",
+  );
+
+  const open = gridOf("diebert", 10);
+  open.genesis = 1;
+  open.brickMold = 2;
+  rollPool(open, open.dice, mulberry32(21));
+  check(
+    resolveRoll(open, mulberry32(22), { recordHistory: false }).turnedAway
+      .size === 0,
+    "and a grid without a ceiling never turns a die away",
   );
 
   check(

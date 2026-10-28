@@ -205,6 +205,9 @@ export function resolveRoll(
   /** Every way the player's grid gained or lost dice this roll, gains first,
    *  for the callout's dice row (see ui/rollBreakdown). */
   diceChanges: DiceChange[];
+  /** Dice the player's cards would have added this roll but the grid's
+   *  ceiling had no room for, by card (see DicePool.takeTurnedAway). */
+  turnedAway: Map<string, number>;
   /** Points the mirror rival scored on its matching roll (0 outside the duel). */
   rivalPoints: bigint;
 } {
@@ -384,6 +387,7 @@ export function resolveRoll(
     culled: passives.culled,
     denied,
     diceChanges: passives.changes,
+    turnedAway: passives.turnedAway,
     rivalPoints,
   };
 }
@@ -438,7 +442,11 @@ export function applyGridPassives(
   culled: number;
   /** The same counts by cause, gains first, every entry non-zero. */
   changes: DiceChange[];
+  /** What the ceiling refused this pass, by the card that wanted the dice. */
+  turnedAway: Map<string, number>;
 } {
+  // Anything refused before this pass (a shop purchase) is not this roll's.
+  pool.takeTurnedAway();
   // Read the roll's own tallies before anything destroys dice, so breakage and
   // defection bill the same roll rather than the grid the other one left behind.
   const agg = pool.agg();
@@ -581,6 +589,7 @@ export function applyGridPassives(
     defected,
     culled,
     changes,
+    turnedAway: pool.takeTurnedAway(),
   };
 }
 
