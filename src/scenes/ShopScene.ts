@@ -1069,13 +1069,22 @@ export class ShopScene extends Phaser.Scene {
       })
       .setOrigin(0.5);
     const desc = this.add
-      .text(0, 0, pack.sold ? "One card claimed" : pack.desc, {
-        fontFamily: SERIF,
-        fontSize: `${descSize}px`,
-        color: CSS.parchment,
-        align: "center",
-        wordWrap: { width: w * 0.86 },
-      })
+      .text(
+        0,
+        0,
+        pack.sold
+          ? pack.declined
+            ? "No card claimed"
+            : "One card claimed"
+          : pack.desc,
+        {
+          fontFamily: SERIF,
+          fontSize: `${descSize}px`,
+          color: CSS.parchment,
+          align: "center",
+          wordWrap: { width: w * 0.86 },
+        },
+      )
       .setOrigin(0.5);
     const cost = this.add
       .text(0, 0, pack.sold ? "SOLD" : `${price} gold`, {
@@ -1155,12 +1164,21 @@ export class ShopScene extends Phaser.Scene {
       })
       .setOrigin(0, 0.5);
     const desc = this.add
-      .text(textLeft, 0, pack.sold ? "One card claimed" : pack.desc, {
-        fontFamily: SERIF,
-        fontSize: `${descSize}px`,
-        color: CSS.parchment,
-        wordWrap: { width: Math.max(40, w - padX * 2 - cost.width - 10) },
-      })
+      .text(
+        textLeft,
+        0,
+        pack.sold
+          ? pack.declined
+            ? "No card claimed"
+            : "One card claimed"
+          : pack.desc,
+        {
+          fontFamily: SERIF,
+          fontSize: `${descSize}px`,
+          color: CSS.parchment,
+          wordWrap: { width: Math.max(40, w - padX * 2 - cost.width - 10) },
+        },
+      )
       .setOrigin(0, 0.5);
     const lineGap = 4;
 
@@ -2675,10 +2693,14 @@ export class ShopScene extends Phaser.Scene {
     objects.push(title);
     this.packTitle = title;
 
+    // A strip under the hand holds the way out for a pack with nothing worth
+    // taking in it.
+    const declineH = Phaser.Math.Clamp(H * 0.075, 34, 56);
+    const declineY = H - 12 - declineH / 2;
     const n = this.packChoices.length;
     const gap = 14;
     const top = Math.max(78, H * 0.13);
-    const bottom = H - 25;
+    const bottom = H - declineH - 20;
     const plan = planChoiceLayout(n, W - 34, bottom - top, gap);
     const { cols, rows, scale, fanned } = plan;
     const cw = CARD_W * scale;
@@ -2742,6 +2764,17 @@ export class ShopScene extends Phaser.Scene {
       ? { layer: cardLayer, cards, restY, restRotation }
       : undefined;
 
+    const decline = bannerButton(
+      this,
+      W / 2,
+      declineY,
+      "Take None",
+      () => this.declinePack(),
+      Math.min(300, W - 40),
+      declineH,
+    );
+    objects.push(decline);
+
     const shellW = Math.min(260, W * 0.48);
     const shellH = Math.min(340, H * 0.55);
     const shell = this.buildOpeningPack(
@@ -2761,6 +2794,8 @@ export class ShopScene extends Phaser.Scene {
     }
 
     title.setAlpha(0);
+    decline.setAlpha(0);
+    if (decline.input) decline.input.enabled = false;
     cards.forEach((card) => {
       card.setAlpha(0).setScale(0.04, 1);
       if (card.input) card.input.enabled = false;
@@ -2814,6 +2849,17 @@ export class ShopScene extends Phaser.Scene {
             });
             shell.destroy();
             this.tweens.add({ targets: title, alpha: 1, duration: 220 });
+            // Offered only once the hand is down: passing on cards the player
+            // has not yet seen is not a choice.
+            this.tweens.add({
+              targets: decline,
+              alpha: 1,
+              duration: 220,
+              delay: cards.length * 115 + 200,
+              onComplete: () => {
+                if (decline.input) decline.input.enabled = true;
+              },
+            });
             cards.forEach((card, index) => {
               this.tweens.add({
                 targets: card,
@@ -2969,6 +3015,85 @@ export class ShopScene extends Phaser.Scene {
       return;
     }
     this.completePurchase(offer);
+  }
+
+  /** Close an opened pack without taking any of its cards. The pack stays
+   *  paid for, and counts as the visit's purchase just as a pick would: the
+   *  gold left the purse either way. */
+  private declinePack(): void {
+    if (!this.packChoices || !this.openingPack || this.pickerOffer) return;
+    const overlay = this.packGroup;
+    const leftBehind = this.packChoices
+      .map((candidate) => this.offerCards.get(candidate))
+      .filter((card): card is Phaser.GameObjects.Container => !!card);
+    const title = this.packTitle;
+    this.openingPack.declined = true;
+    this.purchasesMade += 1;
+    this.packChoices = undefined;
+    this.openingPack = undefined;
+    this.openingPackCost = undefined;
+    this.pickedIndices = [];
+    this.packGroup = undefined;
+    this.packFan = undefined;
+    this.packTitle = undefined;
+    this.saveCheckpoint();
+    if (!fx.motion || !overlay || this.shelfAnimating) {
+      this.rebuildShop();
+      return;
+    }
+    // Nothing in the dissolving hand may be pressed: its cards are no longer
+    // the pack's, and would be taken as loose cards off the shelf.
+    overlay.each((child: Phaser.GameObjects.GameObject) => {
+      if (child.input) child.input.enabled = false;
+    });
+    leftBehind.forEach((card, index) => {
+      if (card.input) card.input.enabled = false;
+      this.tweens.killTweensOf(card);
+      this.tweens.add({
+        targets: card,
+        y: card.y + 46,
+        scaleX: card.scaleX * 0.9,
+        scaleY: card.scaleY * 0.9,
+        alpha: 0,
+        duration: 260,
+        delay: index * 45,
+        ease: "Cubic.easeIn",
+      });
+    });
+    if (title) {
+      this.tweens.add({
+        targets: title,
+        alpha: 0,
+        y: title.y - 18,
+        duration: 240,
+        ease: "Cubic.easeIn",
+      });
+    }
+    this.time.delayedCall(260 + leftBehind.length * 45, () => {
+      this.packOutro = overlay;
+      this.rebuildShop([overlay]);
+      const cam = this.carouselCamera;
+      if (cam) {
+        cam.visible = true;
+        cam.alpha = 0;
+        this.tweens.add({
+          targets: cam,
+          alpha: 1,
+          duration: 320,
+          ease: "Sine.easeInOut",
+        });
+      }
+      this.tweens.add({
+        targets: overlay,
+        alpha: 0,
+        duration: 320,
+        ease: "Sine.easeInOut",
+        onComplete: () => {
+          overlay.destroy();
+          this.packOutro = undefined;
+        },
+      });
+    });
   }
 
   /** Carry the chosen card off on the same lift-and-dissolve a loose card takes,
