@@ -26,6 +26,7 @@ import {
   GILDED_ALTAR_MAX_DOUBLINGS,
   GRAVITAS_SIZE_PER_FACTOR,
   CANTICLE_FREE_FACES,
+  CHOIRMASTER_FACTOR,
   DOWNBEAT_INTERVAL,
   DOWNBEAT_MULT,
   FLAT_MULTIPLIERS,
@@ -1922,14 +1923,14 @@ export const ITEMS: ItemDef[] = [
     desc: `Points ×2 for every face exactly one die shows, beyond the ${ORDINALS[CANTICLE_FREE_FACES]}.`,
     effects: [setFlag("hasCanticle")],
   },
-  // A second copy would remove nothing the first did not, so it sells once.
+  // A small grid's reward for keeping every voice apart.
   {
     id: "the_choirmaster",
     name: "The Choirmaster",
     priceBand: "standard",
     rarity: "uncommon",
     unique: true,
-    desc: "After each trial, remove every die that showed a repeated face on its final roll, leaving Counterpoint more faces to itself.",
+    desc: `Points ×${CHOIRMASTER_FACTOR} when no two dice show the same face.`,
     available: (s) => s.hasCounterpoint,
     effects: [setFlag("hasChoirmaster")],
   },
@@ -2958,7 +2959,7 @@ export const ITEM_THEMES: Record<ShopItemId, ItemTheme[]> = {
   a_new_voice: ["swarm"],
   counterpoint: ["precision"],
   the_canticle: ["multiplier"],
-  the_choirmaster: ["precision"],
+  the_choirmaster: ["multiplier"],
   plainsong: ["precision"],
   descant: ["precision"],
   a_full_choir: ["swarm"],

@@ -81,7 +81,7 @@ export const ITEM_VALUE_KIND: Record<ShopItemId, ItemValueKind> = {
   a_new_voice: "diceAdded",
   counterpoint: "points",
   the_canticle: "points",
-  the_choirmaster: "diceModified",
+  the_choirmaster: "points",
   plainsong: "points",
   descant: "points",
   a_full_choir: "diceAdded",

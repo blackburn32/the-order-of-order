@@ -37,6 +37,7 @@ const TREE_MULTIPLIER_ITEM: Record<string, ShopItemId> = {
   cell: "the_cell",
   ashenCrown: "the_ashen_crown",
   canticle: "the_canticle",
+  choirmaster: "the_choirmaster",
   gravitas: "gravitas",
 };
 

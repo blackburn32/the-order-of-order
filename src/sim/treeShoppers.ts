@@ -226,8 +226,8 @@ const CANTICLE: TreePlan = {
   boost: "descant",
   worth: (state, offer) => {
     const id = offer.id;
-    // Copies and small dice repeat faces; The Choirmaster culls the big dice
-    // that do too.
+    // Copies and small dice repeat faces, and a grid this size never shows a
+    // face apiece for The Choirmaster.
     if (GROWS.has(id) || SHRINKS.has(id) || id === "the_choirmaster")
       return TIER.refuse;
     if (BIG_DICE.has(id))

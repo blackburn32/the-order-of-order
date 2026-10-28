@@ -383,7 +383,7 @@ export const ITEM_TREES: ItemTree[] = [
     nodes: chain("a_new_voice", "counterpoint", "plainsong", "descant"),
     supports: [],
     branches: [
-      // Before Counterpoint a repeated face is usually a scoring 1.
+      // Before Counterpoint a lone face mostly scores nothing.
       { id: "the_choirmaster", parent: "counterpoint" },
       { id: "the_canticle" },
       { id: "parade" },
