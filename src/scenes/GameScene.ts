@@ -152,6 +152,10 @@ interface HudReading {
   duel: boolean;
   /** The goal, or in the duel the Order of Disorder's running score. */
   goal: bigint;
+  /** The duel before either side has rolled. The only points on the board
+   *  then are the Edge's banked one, and a point over nothing reads as an
+   *  infinite lead — so the rope and the felt open level instead. */
+  duelOpening: boolean;
   lastRoll: boolean;
 }
 /** The seal's radius in layout pixels — half the size the wax is *designed* at,
@@ -1546,6 +1550,7 @@ export class GameScene extends Phaser.Scene {
       status: statusRows(s),
       duel,
       goal,
+      duelOpening: duel && (s.rival?.roll ?? 0) === 0,
       lastRoll: trialRollTarget(s) - s.roll <= 1,
     };
   }
@@ -1566,8 +1571,8 @@ export class GameScene extends Phaser.Scene {
     // Hauled as the score plaque starts to climb, not before it.
     if (hud.duel)
       this.tug?.setReading(
-        hud.score,
-        hud.goal,
+        hud.duelOpening ? 0n : hud.score,
+        hud.duelOpening ? 0n : hud.goal,
         this.scoreRevealAt - this.time.now,
       );
 
@@ -1621,7 +1626,9 @@ export class GameScene extends Phaser.Scene {
     // bloody on the last roll from behind.
     const { duel, goal, score } = hud;
     const progress = duel
-      ? duelProgress(score, goal)
+      ? hud.duelOpening
+        ? 0.5
+        : duelProgress(score, goal)
       : goal > 0n
         ? Number(score) / Number(goal)
         : 0;
