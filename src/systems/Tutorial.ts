@@ -112,7 +112,7 @@ export const TUTORIAL_TEXT: Record<
   [TutorialStage.Reroll]:
     "You can reroll the selection if nothing is to your liking.",
   [TutorialStage.Boosters]:
-    "Booster packs allow you to choose 1 out of the 3 cards in the pack.",
+    "Booster packs allow you to choose 1 out of the 3 cards in the pack, or take none.",
   [TutorialStage.LeaveShop]:
     "When you're ready, press here to get to the next trial.",
 

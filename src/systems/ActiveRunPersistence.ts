@@ -581,7 +581,8 @@ function validPack(value: unknown): value is BoosterOffer {
     typeof value.desc === "string" &&
     isNonNegativeInteger(value.cost) &&
     isFiniteNumber(value.color) &&
-    typeof value.sold === "boolean"
+    typeof value.sold === "boolean" &&
+    (value.declined === undefined || typeof value.declined === "boolean")
   );
 }
 

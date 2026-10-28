@@ -513,6 +513,8 @@ export interface BoosterPackDef {
 
 export interface BoosterOffer extends BoosterPackDef {
   sold: boolean;
+  /** Opened, and closed again without any of its cards taken. */
+  declined?: boolean;
 }
 
 /** Packs are priced below the strongest card they can contain, but above a
