@@ -183,7 +183,7 @@ export interface RunState {
   descant: number; // +2% to Plainsong's cap per copy
   fullChoir: number; // a d100 as each trial starts, per copy
   hasAntiphon: boolean; // Plainsong counts every unrepeated face twice
-  hasChoirmaster: boolean; // removes the dice that repeated a face as a trial ends
+  hasChoirmaster: boolean; // ×3 on a roll where no two dice share a face
   hasScales: boolean; // the upper half of each die scores its face value
   gravitas: number; // ×(average die size ÷ 10) per copy
   hasWeightOfAges: boolean; // growth from the dice showing 50 or higher

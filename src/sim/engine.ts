@@ -738,7 +738,6 @@ export function resolveTrialEnd(
     rng,
     state.bossModifiers,
   );
-  singChoirmaster(state);
   state.trialOpenPending = true;
   prepareDuel(state);
   return {
@@ -813,7 +812,6 @@ export function continueEndless(
     rng,
     state.bossModifiers,
   );
-  singChoirmaster(state);
   state.trialOpenPending = true;
   prepareDuel(state);
 }
@@ -850,14 +848,6 @@ export function openTrial(state: RunState): number {
     }
   }
   return added;
-}
-
-/** The Choirmaster: as a trial gives way to the next, remove every die that
- *  repeated a face on the trial's final roll — read before the next trial's
- *  passives pour anything in. */
-function singChoirmaster(state: RunState): void {
-  if (!state.hasChoirmaster) return;
-  addItemValue(state, "the_choirmaster", state.dice.removeRepeatedFaces());
 }
 
 /** Permanent tempo cards pay once for the next trial when purchased, then once

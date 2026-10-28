@@ -3598,7 +3598,7 @@ export class GameScene extends Phaser.Scene {
                             : id === "counterpoint"
                               ? lone &&
                                 !rolledAgg.scoringValueCounts.get(die.value)
-                              : id === "canticle"
+                              : id === "canticle" || id === "choirmaster"
                                 ? lone
                                 : id === "parade"
                                   ? die.value >= 1 && die.value <= 3

@@ -17,6 +17,7 @@ import { trialRollTarget } from "./Trial";
 import {
   groupScores,
   growRoll,
+  inHarmony,
   unrepeatedFaces,
   type GrowthShare,
   type VigilGroup,
@@ -140,6 +141,8 @@ export function setAshenCrownForSimulation(
 }
 /** The Canticle doubles a roll for every unrepeated face beyond this many. */
 export const CANTICLE_FREE_FACES = 4;
+/** The Choirmaster multiplies a roll on which no two live dice share a face. */
+export const CHOIRMASTER_FACTOR = 3;
 /** Gravitas multiplies by the grid's mean die size over this, per copy. */
 export const GRAVITAS_SIZE_PER_FACTOR = 10;
 
@@ -164,7 +167,7 @@ export interface TreeMultiplier {
 }
 
 /** The strategy trees' multipliers that land on this roll: The Gilded Altar,
- *  The Cell, The Canticle and Gravitas. One list both scorers and the
+ *  The Cell, The Canticle, The Choirmaster and Gravitas. One list both scorers and the
  *  attribution pass read, so the three cannot disagree. */
 export function treeMultipliers(
   state: RunState,
@@ -203,6 +206,13 @@ export function treeMultipliers(
       "The Canticle",
       unrepeatedFaces(grid.valueCounts) - CANTICLE_FREE_FACES,
     );
+  if (state.hasChoirmaster && inHarmony(grid.valueCounts))
+    out.push({
+      id: "choirmaster",
+      item: "the_choirmaster",
+      name: "The Choirmaster",
+      mult: BigInt(CHOIRMASTER_FACTOR),
+    });
   if (state.gravitas > 0 && grid.total > 0) {
     const factor = Math.floor(
       grid.sidesTotal / (GRAVITAS_SIZE_PER_FACTOR * grid.total),
@@ -238,8 +248,11 @@ export function treeMultiplierModifiers(
     dice: [],
     bigPulse: false,
     float: "aggregate" as const,
-    // The Canticle pays for the faces no other die shares.
-    flourish: mult.id === "canticle" ? ("spotlight" as const) : undefined,
+    // The Canticle and The Choirmaster pay for the faces no other die shares.
+    flourish:
+      mult.id === "canticle" || mult.id === "choirmaster"
+        ? ("spotlight" as const)
+        : undefined,
   }));
 }
 

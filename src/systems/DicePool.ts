@@ -1580,7 +1580,7 @@ export class DicePool {
     });
   }
 
-  // --- The Vigil and The Choirmaster (read the most recent roll) -----------
+  // --- The Vigil (reads the most recent roll) -------------------------------
 
   /** Count one score at `percent` on every live die that scored on the most
    *  recent roll (The Vigil). Returns how many dice it counted. */
@@ -1615,42 +1615,6 @@ export class DicePool {
     }
     this.pruneEmpty();
     return counted;
-  }
-
-  /** Remove every live die that showed a face another live die also showed on
-   *  the most recent roll (The Choirmaster). Never empties the grid: a roll on
-   *  which every die repeated a face removes nothing. Returns how many went. */
-  removeRepeatedFaces(): number {
-    const counts = this.roll_?.agg.valueCounts;
-    if (!counts) return 0;
-    const repeated = (value: number) => (counts.get(value) ?? 0) >= 2;
-    if (this.mode === "list") {
-      const doomed: number[] = [];
-      const end = Math.min(this.rolledTo, this.list.length);
-      for (let k = this.rolledFrom; k < end; k++)
-        if (repeated(this.list[k].value)) doomed.push(k);
-      if (doomed.length === 0 || doomed.length >= this._count) return 0;
-      for (let j = doomed.length - 1; j >= 0; j--)
-        this.list.splice(doomed[j], 1);
-      this._count -= doomed.length;
-      this.rolledTo -= doomed.length;
-      return doomed.length;
-    }
-    const takes = this.buckets.map((b) => {
-      let shown = 0;
-      b.lastFaces?.forEach((count, index) => {
-        if (repeated(index + 1)) shown += count;
-      });
-      return Math.min(b.count, shown);
-    });
-    const removed = takes.reduce((sum, take) => sum + take, 0);
-    if (removed === 0 || removed >= this._count) return 0;
-    this.buckets.forEach((b, index) => {
-      b.count -= takes[index];
-    });
-    this._count -= removed;
-    this.pruneEmpty();
-    return removed;
   }
 
   /** Burn every live die larger than a d1 that showed a 1 on the most recent

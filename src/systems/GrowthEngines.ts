@@ -196,6 +196,13 @@ export function unrepeatedFaces(valueCounts: Map<number, number>): number {
   return faces;
 }
 
+/** Whether the live dice showed a face apiece, none of them shared. */
+export function inHarmony(valueCounts: Map<number, number>): boolean {
+  if (valueCounts.size === 0) return false;
+  for (const count of valueCounts.values()) if (count > 1) return false;
+  return true;
+}
+
 /** How many live dice show `face` or higher. */
 export function diceShowingAtLeast(
   valueCounts: Map<number, number>,

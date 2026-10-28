@@ -38,6 +38,7 @@ import {
   metaUnlockOwner,
 } from "../systems/Shop";
 import {
+  CHOIRMASTER_FACTOR,
   CRUNCH_TIME_MULT,
   DOWNBEAT_INTERVAL,
   FLAT_MULTIPLIERS,
@@ -2007,14 +2008,35 @@ function rollWith(state: RunState, rng: () => number, resolveRng = rng) {
     "Plainsong should count 1% for each of the six unrepeated faces",
   );
   check(
-    state.dice.removeRepeatedFaces() === 2 && state.dice.length === 6,
-    "The Choirmaster should remove the dice that repeated a face",
+    !roll.result.modifiers.some((mod) => mod.id === "choirmaster"),
+    "The Choirmaster should not sing while two dice share a face",
   );
-  const chorus = gridOf([1, 4]);
-  rollPool(chorus, chorus.dice, () => 0.5);
+  const harmony = gridOf([100, 6]);
+  harmony.hasCounterpoint = true;
+  harmony.hasChoirmaster = true;
+  const sung6 = rollWith(
+    harmony,
+    sequence([11, 22, 33, 44, 55, 66].map((face) => faceOf(face, 100))),
+    () => 0.5,
+  );
   check(
-    chorus.dice.removeRepeatedFaces() === 0 && chorus.dice.length === 4,
-    "and never empty a grid on which every die repeated one",
+    sung6.result.points === 6n * BigInt(CHOIRMASTER_FACTOR) &&
+      sung6.result.modifiers.some(
+        (mod) => mod.id === "choirmaster" && mod.mult === 3n,
+      ) &&
+      (harmony.itemPoints.the_choirmaster ?? 0n) > 0n &&
+      harmony.dice.length === 6,
+    "The Choirmaster should triple a roll on which no two dice share a face, and keep every die",
+  );
+  const discord = rollWith(
+    harmony,
+    sequence([11, 22, 33, 44, 55, 11].map((face) => faceOf(face, 100))),
+    () => 0.5,
+  );
+  check(
+    !discord.result.modifiers.some((mod) => mod.id === "choirmaster") &&
+      harmony.dice.length === 6,
+    "and pay nothing, and take nothing, on one where two do",
   );
 
   // Plainsong's fuel.
