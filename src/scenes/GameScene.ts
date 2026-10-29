@@ -3,7 +3,12 @@ import { showToast } from "../ui/toast";
 import { GOAL_TIERS, isMirrorTrial, rankOf, trialInRank } from "../config";
 import { nextTier, TIER_GOLD, tierCss, tierName } from "../systems/GoalTiers";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { artImage, artScale, bossSigilTexture } from "../art/textures";
+import {
+  artImage,
+  artScale,
+  bossSigilTexture,
+  dieBodyTexture,
+} from "../art/textures";
 import { DIE_SIZE } from "../art/dieArt";
 import { getRun, type RunState } from "../state/RunState";
 import { isVoiceDie, type Die } from "../systems/Dice";
@@ -347,6 +352,9 @@ const LIFT_SCALE = 1.2;
  *  not hide the die it is moving. */
 const LIFT_TOUCH_RAISE = 30;
 const LIFT_MS = 170;
+/** A carried die's shadow, relative to the die: a little smaller, and faint. */
+const SHADOW_SCALE = 0.88;
+const SHADOW_ALPHA = 0.35;
 /** How long the dice in the way take to slide aside as a carried die passes. */
 const REFLOW_MS = 210;
 const DROP_MS = 260;
@@ -362,7 +370,7 @@ interface HeldDie {
   from: number;
   to: number;
   sprite: DieSprite;
-  shadow: Phaser.GameObjects.Graphics;
+  shadow: Phaser.GameObjects.Container;
   pointerId: number;
   /** Where the pointer carrying it is, on screen. */
   screen: { x: number; y: number };
@@ -3282,11 +3290,19 @@ export class GameScene extends Phaser.Scene {
     const world = this.gridWorldAt(pointer.x, pointer.y);
     const raise = pointer.wasTouch ? LIFT_TOUCH_RAISE / this.viewport.zoom : 0;
 
-    const shadow = this.add.graphics();
-    const size = DIE_SIZE * 0.92;
-    shadow.fillStyle(0x000000, 0.4);
-    shadow.fillRoundedRect(-size / 2, -size / 2, size, size, size * 0.18);
-    shadow.setPosition(home.x, home.y).setScale(view.scale).setAlpha(0);
+    // The die's own silhouette, filled dark: a shadow the shape of whichever
+    // die is in hand.
+    const silhouette = artImage(
+      this,
+      0,
+      0,
+      dieBodyTexture(this, sprite.die.sides, []),
+    )
+      .setTint(0x000000)
+      .setTintMode(Phaser.TintModes.FILL)
+      .setAlpha(SHADOW_ALPHA);
+    const shadow = this.add.container(home.x, home.y, [silhouette]);
+    shadow.setScale(view.scale * SHADOW_SCALE).setAlpha(0);
     this.diceContainer.add(shadow);
     this.cameras.main.ignore(shadow);
     this.overlayCamera?.ignore(shadow);
@@ -3319,13 +3335,13 @@ export class GameScene extends Phaser.Scene {
       this.tweens.add({
         targets: shadow,
         alpha: 1,
-        scale: lifted,
+        scale: lifted * SHADOW_SCALE,
         duration: LIFT_MS,
         ease: "Sine.easeOut",
       });
     } else {
       sprite.setScale(lifted);
-      shadow.setAlpha(1).setScale(lifted);
+      shadow.setAlpha(1).setScale(lifted * SHADOW_SCALE);
     }
     audio.click();
     if (pointer.wasTouch) navigator.vibrate?.(12);
@@ -3429,7 +3445,7 @@ export class GameScene extends Phaser.Scene {
     sprite.setRotation(
       sprite.rotation + (lean - sprite.rotation) * Math.min(1, k * 1.5),
     );
-    shadow.setPosition(sprite.x + size * 0.06, sprite.y + size * 0.12);
+    shadow.setPosition(sprite.x + size * 0.04, sprite.y + size * 0.11);
     shadow.setRotation(sprite.rotation);
   }
 
