@@ -3810,12 +3810,14 @@ export class GameScene extends Phaser.Scene {
     const actions: RollAction[] = [];
     if (this.preRollSnapshot && rerollsLeft(s) > 0)
       actions.push({
-        label: `REROLL · ${rerollsLeft(s)} LEFT`,
+        label: `Reroll ·${rerollsLeft(s)}`,
+        color: COLORS.glowSteel,
         onPress: () => this.rerollLastRoll(),
       });
     if (blessingsLeft(s) > 0 && result.points > 0n)
       actions.push({
-        label: `BLESS ×${blessingFactor(s)} · ${blessingsLeft(s)} LEFT`,
+        label: `Bless ×${blessingFactor(s)} ·${blessingsLeft(s)}`,
+        color: COLORS.glow,
         onPress: () => this.blessLastRoll(result.points),
       });
     const holdForFavour = actions.length > 0;
@@ -3825,7 +3827,7 @@ export class GameScene extends Phaser.Scene {
     const rowCount =
       breakdownRows(breakdown, diceChanges, !!acclaimDetail) +
       bossCues.length +
-      (holdForFavour ? 2 : 0);
+      (holdForFavour ? 1 : 0);
     const room = band
       ? band.bottom - band.top - 16
       : this.scale.height - floatY - 24;

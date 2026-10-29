@@ -77,6 +77,8 @@ export interface RollBreakdownOptions {
 /** One button on the callout's foot. */
 export interface RollAction {
   label: string;
+  /** The pill's ink: its outline, its label, and the wash it takes on hover. */
+  color: number;
   onPress(): void;
 }
 
@@ -433,11 +435,14 @@ export function playRollBreakdown(
       .setVisible(true);
   }
 
-  // The favours' buttons, side by side along the panel's foot. Built at the
-  // origin and placed once the panel's width is known.
-  const actionH = rowStep * 1.25;
-  const actionSize = Math.min(fontSize * 0.86, actionH * 0.5);
-  const actionGap = fontSize * 0.7;
+  // The favours' buttons: small outlined pills side by side along the panel's
+  // foot, each in its own ink, so they sit under the total as a footnote
+  // rather than competing with it. Built at the origin and placed once the
+  // panel's width is known.
+  const actionH = rowStep * 0.85;
+  const actionSize = Math.min(labelSize, actionH * 0.56);
+  const actionPad = actionSize * 1.3;
+  const actionGap = fontSize * 0.6;
   const actionY = lastY + lastPad + actionH * 0.5;
   const buttons = actions.map((action) => {
     const plate = scene.add.graphics();
@@ -445,8 +450,7 @@ export function playRollBreakdown(
       .text(0, 0, action.label, {
         fontFamily: SERIF,
         fontSize: `${Math.round(actionSize)}px`,
-        color: CSS.goldLight,
-        fontStyle: "bold",
+        color: `#${action.color.toString(16).padStart(6, "0")}`,
       })
       .setOrigin(0.5);
     const button = opts.add(
@@ -456,7 +460,7 @@ export function playRollBreakdown(
     return { action, button, plate, label };
   });
   const actionsWidth =
-    buttons.reduce((sum, b) => sum + b.label.width + actionSize * 1.6, 0) +
+    buttons.reduce((sum, b) => sum + b.label.width + actionPad * 2, 0) +
     actionGap * Math.max(0, buttons.length - 1);
   // The line that replaces the buttons once one is spent.
   const actionNote = holds
@@ -574,16 +578,18 @@ export function playRollBreakdown(
     if (diceLabel.width > room) diceLabel.setScale(room / diceLabel.width);
   };
 
-  // The buttons share the panel's inner width evenly.
-  const actionRoom = panelW - padX * 1.2;
-  const buttonW =
-    (actionRoom - actionGap * Math.max(0, buttons.length - 1)) /
-    Math.max(1, buttons.length);
-  buttons.forEach(({ action, button, plate, label }, index) => {
-    button.x = x - actionRoom / 2 + buttonW / 2 + index * (buttonW + actionGap);
-    const draw = (fill: number, alpha: number) => {
+  // Each pill is as wide as its own label, and the row is centred, shrinking
+  // together only if a narrow panel cannot hold it.
+  const actionFit = Math.min(1, (panelW - padX) / Math.max(1, actionsWidth));
+  let actionX = x - (actionsWidth * actionFit) / 2;
+  buttons.forEach(({ action, button, plate, label }) => {
+    label.setScale(actionFit);
+    const buttonW = (label.width + actionPad * 2) * actionFit;
+    button.x = actionX + buttonW / 2;
+    actionX += buttonW + actionGap * actionFit;
+    const draw = (alpha: number) => {
       plate.clear();
-      plate.fillStyle(fill, alpha);
+      plate.fillStyle(action.color, alpha);
       plate.fillRoundedRect(
         -buttonW / 2,
         -actionH / 2,
@@ -591,7 +597,7 @@ export function playRollBreakdown(
         actionH,
         actionH / 2,
       );
-      plate.lineStyle(2, COLORS.goldLight, 0.95);
+      plate.lineStyle(1.5, action.color, 0.85);
       plate.strokeRoundedRect(
         -buttonW / 2,
         -actionH / 2,
@@ -600,25 +606,23 @@ export function playRollBreakdown(
         actionH / 2,
       );
     };
-    draw(COLORS.waxRedDark, 1);
-    if (label.width > buttonW - actionSize)
-      label.setScale((buttonW - actionSize) / label.width);
+    draw(0);
     button.setSize(buttonW, actionH);
     button.setAlpha(0);
     let pressed = false;
-    button.on("pointerover", () => draw(COLORS.waxRed, 1));
+    button.on("pointerover", () => draw(0.16));
     button.on("pointerout", () => {
       pressed = false;
-      draw(COLORS.waxRedDark, 1);
+      draw(0);
     });
     button.on("pointerdown", () => {
       pressed = true;
-      draw(COLORS.feltDark, 1);
+      draw(0.3);
     });
     button.on("pointerup", () => {
       if (!pressed || button.alpha < 1) return;
       pressed = false;
-      draw(COLORS.waxRed, 1);
+      draw(0.16);
       action.onPress();
     });
   });
