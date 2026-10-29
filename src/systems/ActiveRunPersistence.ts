@@ -204,7 +204,8 @@ export function serializeRunState(state: RunState): SerializedRunState {
     score: state.score.toString(),
     trialScore: state.trialScore.toString(),
     totalScore: state.totalScore.toString(),
-    dice: state.dice.summarize().map((stack) => ({ ...stack })),
+    // In grid order, so a grid the player rearranged comes back as they left it.
+    dice: state.dice.orderedStacks(),
     diceEverAdded: state.dice.everAdded,
     trialRollGold: { ...state.trialRollGold },
     bossModifiers: [...state.bossModifiers],
