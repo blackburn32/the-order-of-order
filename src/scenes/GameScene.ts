@@ -3,7 +3,12 @@ import { showToast } from "../ui/toast";
 import { GOAL_TIERS, isMirrorTrial, rankOf, trialInRank } from "../config";
 import { nextTier, TIER_GOLD, tierCss, tierName } from "../systems/GoalTiers";
 import { COLORS, CSS, SERIF } from "../art/palette";
-import { artImage, artScale, bossSigilTexture } from "../art/textures";
+import {
+  artImage,
+  artScale,
+  bossSigilTexture,
+  dieBodyTexture,
+} from "../art/textures";
 import { DIE_SIZE } from "../art/dieArt";
 import { getRun, type RunState } from "../state/RunState";
 import { isVoiceDie, type Die } from "../systems/Dice";
@@ -55,7 +60,10 @@ import {
 import type { DiceAgg } from "../systems/ScoringHistogram";
 import { evaluateAndUnlock } from "../systems/SaveData";
 import { finalizeRun } from "../systems/RunEnd";
-import { saveActiveRun } from "../systems/ActiveRunPersistence";
+import {
+  refreshActiveRun,
+  saveActiveRun,
+} from "../systems/ActiveRunPersistence";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import {
   DEPART_MS,
@@ -118,8 +126,12 @@ import {
   computeVisibleDiceCards,
   computeWindowedView,
   fitGridZoom,
+  cellCenter,
+  cellIndexAt,
+  dieInSlotWhileMoving,
   GRID_WHEEL_ZOOM_RATE,
   GridFocus,
+  slotWhileMoving,
   gridDetailLevel,
   GridDetailLevel,
   VisibleDiceCard,
@@ -327,6 +339,51 @@ const PROCESSION_STEP_MS = 170;
 /** How many of the 1s on screen the march is tried from. */
 const PROCESSION_CANDIDATES = 24;
 
+/** How long a die is held down before it lifts out of the grid to be moved —
+ *  the same for a finger and a mouse button. Long enough that a press that
+ *  only meant to pan never gets there. */
+const HOLD_TO_LIFT_MS = 380;
+/** How far a press may wander while it waits to lift a die. Past this it is a
+ *  pan, and the die stays where it is. */
+const HOLD_SLOP = 8;
+/** How much larger a die draws while it is carried. */
+const LIFT_SCALE = 1.2;
+/** Screen pixels a die carried by a finger rides above it, so the finger does
+ *  not hide the die it is moving. */
+const LIFT_TOUCH_RAISE = 30;
+const LIFT_MS = 170;
+/** A carried die's shadow, relative to the die: a little smaller, and faint. */
+const SHADOW_SCALE = 0.88;
+const SHADOW_ALPHA = 0.35;
+/** How long the dice in the way take to slide aside as a carried die passes. */
+const REFLOW_MS = 210;
+const DROP_MS = 260;
+/** How quickly a carried die catches up with the pointer, per second. High
+ *  enough to feel attached, low enough that a flick has some weight to it. */
+const CARRY_FOLLOW_RATE = 26;
+/** How far a carried die leans into the direction it is moving, at most. */
+const CARRY_MAX_LEAN = 0.18;
+
+/** A die lifted out of the grid and carried by the player. */
+interface HeldDie {
+  /** The grid index it was lifted from, and the one it would drop into now. */
+  from: number;
+  to: number;
+  sprite: DieSprite;
+  shadow: Phaser.GameObjects.Container;
+  pointerId: number;
+  /** Where the pointer carrying it is, on screen. */
+  screen: { x: number; y: number };
+  /** The die's centre relative to the point under the pointer, in grid-world
+   *  units — where it was gripped. */
+  grab: { x: number; y: number };
+  /** How far above that a finger carries it, in grid-world units. Drawn, but
+   *  not aimed with: the die lands in the cell under the finger. */
+  raise: number;
+  /** The cell each other die is currently sliding to (or resting in). */
+  slots: Map<DieSprite, number>;
+}
+
 /** A grid flourish GameScene tracks until the next roll or relayout. */
 type Flourish =
   | { readonly object: Phaser.GameObjects.GameObject; destroy(): void }
@@ -531,6 +588,10 @@ export class GameScene extends Phaser.Scene {
   private notice?: NoticePanelHandle;
   private viewport: Viewport = { scrollX: 0, scrollY: 0, zoom: 1 };
   private gridDetail: GridDetailLevel = "full";
+  // The layout the dice were last laid out to, for placing a die by its cell
+  // while the player moves one (see liftDie).
+  private gridView?: WindowedView;
+  private heldDie?: HeldDie;
   private gridCount = -1;
   // True while the player is at the grid's fully zoomed-out / fit-to-grid
   // position. In that state grid growth may lower the zoom automatically.
@@ -664,6 +725,8 @@ export class GameScene extends Phaser.Scene {
     this.pendingAdvance = undefined;
     this.endedTrialHud = undefined;
     this.sprites = new Map();
+    this.gridView = undefined;
+    this.heldDie = undefined;
     this.cards = new Map();
     this.cardRegions = new Map();
     this.retiringCards = new Set();
@@ -759,7 +822,8 @@ export class GameScene extends Phaser.Scene {
    * steps are. One sine per visible die is cheap, and the windowed grid caps
    * how many of those there can ever be.
    */
-  override update(time: number): void {
+  override update(time: number, delta: number): void {
+    this.carryHeldDie(delta);
     if (!this.tumbling || !fx.motion) return;
     const elapsed = (time - this.tumbleStartedAt) / 1000;
     for (const sprite of this.sprites.values()) sprite.tumbleTo(elapsed);
@@ -1722,6 +1786,10 @@ export class GameScene extends Phaser.Scene {
    *  scrolled out, and repositioning the rest.
    *  Used for the initial build, resize, and every pan/zoom step. */
   private syncGrid(layout: Layout, spawned?: number): void {
+    // A relayout re-seats every die in its own cell, so a die still in the
+    // player's hand goes back where it came from rather than being dropped
+    // somewhere they did not choose.
+    this.cancelHeldDie();
     this.layout = layout;
     // Flourishes are drawn against the cells of the layout being replaced.
     this.clearFlourishes();
@@ -1782,6 +1850,7 @@ export class GameScene extends Phaser.Scene {
       );
     }
     if (countChanged) this.gridCount = n;
+    this.gridView = view;
     this.viewport.scrollX = view.scrollX;
     this.viewport.scrollY = view.scrollY;
     const visible = view.visible;
@@ -1902,17 +1971,8 @@ export class GameScene extends Phaser.Scene {
         let sprite = this.sprites.get(index);
         const priorPosition = from?.positions.get(index);
         if (!sprite) {
-          const die = this.state.dice.dieAt(index);
-          if (!die) continue;
-          sprite = new DieSprite(this, x, y, die);
-          this.diceContainer.add(sprite);
-          this.sprites.set(index, sprite);
-          // A die renders only through the clipped grid camera. Ignoring the
-          // sprite sets `cameraFilter` on the Container itself, so the whole
-          // subtree is skipped — including the children a die builds later when
-          // it is drawn large (see DieSprite.setMagnification).
-          this.cameras.main.ignore(sprite);
-          this.overlayCamera?.ignore(sprite);
+          sprite = this.addGridSprite(index, x, y);
+          if (!sprite) continue;
         } else {
           sprite.clearPulse();
           const die = this.state.dice.dieAt(index);
@@ -1988,6 +2048,28 @@ export class GameScene extends Phaser.Scene {
         departed.length > 0 ? DEPART_SLIDE_DELAY_MS : 0,
       );
     }
+  }
+
+  /** A sprite for the die at grid index `index`, placed at (x, y) and added
+   *  to the grid under that index, or nothing if there is no such die. The
+   *  caller sets its scale and the rest of its per-layout state. */
+  private addGridSprite(
+    index: number,
+    x: number,
+    y: number,
+  ): DieSprite | undefined {
+    const die = this.state.dice.dieAt(index);
+    if (!die) return undefined;
+    const sprite = new DieSprite(this, x, y, die);
+    this.diceContainer.add(sprite);
+    this.sprites.set(index, sprite);
+    // A die renders only through the clipped grid camera. Ignoring the
+    // sprite sets `cameraFilter` on the Container itself, so the whole
+    // subtree is skipped — including the children a die builds later when
+    // it is drawn large (see DieSprite.setMagnification).
+    this.cameras.main.ignore(sprite);
+    this.overlayCamera?.ignore(sprite);
+    return sprite;
   }
 
   /** Cross-fade the dense raw grid as one layer. Thousands of per-die tweens
@@ -2868,12 +2950,67 @@ export class GameScene extends Phaser.Scene {
       );
     };
 
-    /** The grid-world point currently drawn under a screen position. */
-    const worldAt = (x: number, y: number) => {
-      const area = this.layout.grid;
-      return {
-        x: this.viewport.scrollX + (x - area.x) / this.viewport.zoom,
-        y: this.viewport.scrollY + (y - area.y) / this.viewport.zoom,
+    const worldAt = (x: number, y: number) => this.gridWorldAt(x, y);
+
+    // A press on a die waiting to find out whether it is a hold — which lifts
+    // the die to be moved — or the start of a pan. Wall-clock rather than the
+    // scene's clock, like the tooltip's long press: it is the player's timing.
+    let holdPress:
+      | {
+          id: number;
+          x: number;
+          y: number;
+          timer: ReturnType<typeof setTimeout>;
+          squash?: Phaser.Tweens.Tween;
+          sprite: DieSprite;
+        }
+      | undefined;
+    const cancelHold = () => {
+      if (!holdPress) return;
+      const { timer, squash, sprite } = holdPress;
+      holdPress = undefined;
+      clearTimeout(timer);
+      if (!squash) return;
+      squash.remove();
+      if (sprite.active && this.gridView) {
+        this.tweens.add({
+          targets: sprite,
+          scale: this.gridView.scale,
+          duration: 120,
+          ease: "Sine.easeOut",
+        });
+      }
+    };
+    /** Start timing a hold on the die under `p`, if there is one the player
+     *  may pick up. While it waits the die gives a little under the press, so
+     *  the hold reads as doing something before the die comes up. */
+    const armHold = (p: Phaser.Input.Pointer) => {
+      if (p.button !== 0 || !this.canLiftDice()) return;
+      const index = this.dieUnder(p.x, p.y);
+      if (index === undefined) return;
+      const sprite = this.sprites.get(index);
+      if (!sprite) return;
+      const squash = fx.motion
+        ? this.tweens.add({
+            targets: sprite,
+            scale: sprite.scaleX * 0.93,
+            duration: HOLD_TO_LIFT_MS,
+            ease: "Sine.easeIn",
+          })
+        : undefined;
+      holdPress = {
+        id: p.id,
+        x: p.x,
+        y: p.y,
+        sprite,
+        squash,
+        timer: setTimeout(() => {
+          const press = holdPress;
+          holdPress = undefined;
+          if (!press || !this.sys.isActive() || !p.isDown) return;
+          press.squash?.remove();
+          if (this.liftDie(index, p)) dragging = false;
+        }, HOLD_TO_LIFT_MS),
       };
     };
 
@@ -2940,6 +3077,9 @@ export class GameScene extends Phaser.Scene {
     };
 
     const onDown = (p: Phaser.Input.Pointer) => {
+      // A die in hand owns the grid until it is put down: another finger can
+      // neither pan nor pinch out from under it.
+      if (this.heldDie) return;
       if (!inBounds(p)) return;
       this.finishGridGlide();
       // Extra fingers beyond the two driving the pinch are ignored rather than
@@ -2947,6 +3087,8 @@ export class GameScene extends Phaser.Scene {
       if (p.wasTouch && touches.size < 2) {
         touches.set(p.id, { x: p.x, y: p.y });
         if (touches.size === 2) {
+          // A second finger makes it a pinch, never a hold.
+          cancelHold();
           const span = pinchSpan();
           const world = worldAt(span.x, span.y);
           dragging = false;
@@ -2961,8 +3103,22 @@ export class GameScene extends Phaser.Scene {
         }
       }
       beginDrag(p.x, p.y);
+      cancelHold();
+      armHold(p);
     };
     const onMove = (p: Phaser.Input.Pointer) => {
+      const held = this.heldDie;
+      if (held) {
+        if (p.id === held.pointerId) this.moveHeldDie(p);
+        return;
+      }
+      // A press waiting to lift a die does not pan while it stays within the
+      // slop; once it leaves it, it is a pan and the die stays put.
+      if (holdPress && p.id === holdPress.id) {
+        if (Math.hypot(p.x - holdPress.x, p.y - holdPress.y) <= HOLD_SLOP)
+          return;
+        cancelHold();
+      }
       const touch = touches.get(p.id);
       if (touch) {
         touch.x = p.x;
@@ -2995,6 +3151,17 @@ export class GameScene extends Phaser.Scene {
       this.syncGrid(this.layout);
     };
     const onUp = (p: Phaser.Input.Pointer) => {
+      if (holdPress?.id === p.id) cancelHold();
+      const held = this.heldDie;
+      if (held) {
+        touches.delete(p.id);
+        if (p.id !== held.pointerId) return;
+        this.dropHeldDie();
+        dragging = false;
+        touches.clear();
+        this.input.setDefaultCursor(inBounds(p) ? "grab" : "default");
+        return;
+      }
       touches.delete(p.id);
       if (dragging && dragTravel >= PAN_TUTORIAL_TRAVEL) {
         this.noteGridGesture("pan");
@@ -3014,7 +3181,8 @@ export class GameScene extends Phaser.Scene {
       _dx: number,
       dy: number,
     ) => {
-      if (!inBounds(p)) return;
+      if (this.heldDie || !inBounds(p)) return;
+      cancelHold();
       this.finishGridGlide();
       this.noteGridGesture("zoom");
       const screen = { x: p.x, y: p.y };
@@ -3050,6 +3218,7 @@ export class GameScene extends Phaser.Scene {
     this.input.on("wheel", onWheel);
 
     return () => {
+      cancelHold();
       this.input.off("pointerdown", onDown);
       this.input.off("pointermove", onMove);
       this.input.off("pointerup", onUp);
@@ -3057,6 +3226,296 @@ export class GameScene extends Phaser.Scene {
       this.input.off("wheel", onWheel);
       this.input.setDefaultCursor("default");
     };
+  }
+
+  // ---- moving dice -----------------------------------------------------------
+  //
+  // A die held down (a finger or a mouse button, for HOLD_TO_LIFT_MS) comes up
+  // out of the grid and follows the pointer; the dice between where it came
+  // from and where it is over slide aside to show where it would land, and
+  // letting go drops it into that cell. The pool's order is only changed on
+  // the drop, so a die put back where it started — or knocked out of the hand
+  // by a relayout — changes nothing.
+
+  /** The grid-world point currently drawn under a screen position. */
+  private gridWorldAt(x: number, y: number): { x: number; y: number } {
+    const area = this.layout.grid;
+    return {
+      x: this.viewport.scrollX + (x - area.x) / this.viewport.zoom,
+      y: this.viewport.scrollY + (y - area.y) / this.viewport.zoom,
+    };
+  }
+
+  /** Whether the player may pick a die up right now: a grid of individual
+   *  dice (more than one of them) drawn as dice, between rolls. */
+  private canLiftDice(): boolean {
+    return (
+      this.state.dice.reorderable &&
+      this.gridDetail !== "cards" &&
+      this.gridView !== undefined &&
+      !this.rolling &&
+      !this.tumbling &&
+      !this.gridGrowth &&
+      !this.showdown &&
+      !trialComplete(this.state)
+    );
+  }
+
+  /** The grid index of the die drawn under a screen position, if any. */
+  private dieUnder(x: number, y: number): number | undefined {
+    const view = this.gridView;
+    if (!view) return undefined;
+    const world = this.gridWorldAt(x, y);
+    const index = cellIndexAt(view, this.state.dice.length, world.x, world.y);
+    const sprite = this.sprites.get(index);
+    if (!sprite) return undefined;
+    const half = (DIE_SIZE * view.scale) / 2;
+    return Math.abs(world.x - sprite.x) <= half &&
+      Math.abs(world.y - sprite.y) <= half
+      ? index
+      : undefined;
+  }
+
+  /** Pick the die at grid index `index` up under `pointer`. */
+  private liftDie(index: number, pointer: Phaser.Input.Pointer): boolean {
+    const view = this.gridView;
+    const sprite = this.sprites.get(index);
+    if (!view || !sprite || this.heldDie || !this.canLiftDice()) return false;
+    // A callout or flash over the grid belongs to the cells as the roll left
+    // them, which are about to move.
+    this.clearFlourishes();
+    sprite.clearPulse();
+    const home = cellCenter(view, index);
+    sprite.setPosition(home.x, home.y);
+    const world = this.gridWorldAt(pointer.x, pointer.y);
+    const raise = pointer.wasTouch ? LIFT_TOUCH_RAISE / this.viewport.zoom : 0;
+
+    // The die's own silhouette, filled dark: a shadow the shape of whichever
+    // die is in hand.
+    const silhouette = artImage(
+      this,
+      0,
+      0,
+      dieBodyTexture(this, sprite.die.sides, []),
+    )
+      .setTint(0x000000)
+      .setTintMode(Phaser.TintModes.FILL)
+      .setAlpha(SHADOW_ALPHA);
+    const shadow = this.add.container(home.x, home.y, [silhouette]);
+    shadow.setScale(view.scale * SHADOW_SCALE).setAlpha(0);
+    this.diceContainer.add(shadow);
+    this.cameras.main.ignore(shadow);
+    this.overlayCamera?.ignore(shadow);
+    this.diceContainer.bringToTop(shadow);
+    this.diceContainer.bringToTop(sprite);
+
+    const slots = new Map<DieSprite, number>();
+    for (const [i, other] of this.sprites)
+      if (other !== sprite) slots.set(other, i);
+    this.heldDie = {
+      from: index,
+      to: index,
+      sprite,
+      shadow,
+      pointerId: pointer.id,
+      screen: { x: pointer.x, y: pointer.y },
+      grab: { x: home.x - world.x, y: home.y - world.y },
+      raise,
+      slots,
+    };
+
+    const lifted = view.scale * LIFT_SCALE;
+    if (fx.motion) {
+      this.tweens.add({
+        targets: sprite,
+        scale: lifted,
+        duration: LIFT_MS,
+        ease: "Back.easeOut",
+      });
+      this.tweens.add({
+        targets: shadow,
+        alpha: 1,
+        scale: lifted * SHADOW_SCALE,
+        duration: LIFT_MS,
+        ease: "Sine.easeOut",
+      });
+    } else {
+      sprite.setScale(lifted);
+      shadow.setAlpha(1).setScale(lifted * SHADOW_SCALE);
+    }
+    audio.click();
+    if (pointer.wasTouch) navigator.vibrate?.(12);
+    this.input.setDefaultCursor("grabbing");
+    this.noteGridGesture("move");
+    return true;
+  }
+
+  /** Follow the pointer carrying the die: work out which cell it is over now,
+   *  and if that has changed, part the grid around it. */
+  private moveHeldDie(pointer: Phaser.Input.Pointer): void {
+    const held = this.heldDie;
+    const view = this.gridView;
+    if (!held || !view) return;
+    held.screen = { x: pointer.x, y: pointer.y };
+    const world = this.gridWorldAt(pointer.x, pointer.y);
+    const to = cellIndexAt(
+      view,
+      this.state.dice.length,
+      world.x + held.grab.x,
+      world.y + held.grab.y,
+    );
+    if (to === held.to) return;
+    held.to = to;
+    this.reflowAroundHeldDie();
+  }
+
+  /** Slide every die to the cell it would have if the carried die were
+   *  dropped where it is now, so the grid morphs around it as it passes. Dice
+   *  the window had no sprite for are made as they slide into view. */
+  private reflowAroundHeldDie(): void {
+    const held = this.heldDie;
+    const view = this.gridView;
+    if (!held || !view) return;
+    const { from, to } = held;
+    const n = this.state.dice.length;
+    const inert = inertDiceCount(this.state, n);
+    for (const [index, sprite] of this.sprites) {
+      if (sprite === held.sprite) continue;
+      this.slideHeldAside(sprite, slotWhileMoving(index, from, to), inert);
+    }
+    for (const { index: slot } of view.visible) {
+      const index = dieInSlotWhileMoving(slot, from, to);
+      if (index === from || this.sprites.has(index)) continue;
+      const home = cellCenter(view, index);
+      const sprite = this.addGridSprite(index, home.x, home.y);
+      if (!sprite) continue;
+      sprite.setScale(view.scale);
+      sprite.setMagnification(view.scale * view.zoom * DPR);
+      sprite.setInert(index < inert);
+      sprite.refreshGrowth();
+      held.slots.set(sprite, index);
+      this.slideHeldAside(sprite, slot, inert);
+    }
+    // An inert head is counted from the front of the grid, so the carried die
+    // already shows whether it would be struck out where it would land.
+    held.sprite.setInert(to < inert);
+    // Dice just made draw over the one in hand otherwise.
+    this.diceContainer.bringToTop(held.shadow);
+    this.diceContainer.bringToTop(held.sprite);
+  }
+
+  private slideHeldAside(sprite: DieSprite, slot: number, inert: number) {
+    const held = this.heldDie;
+    const view = this.gridView;
+    if (!held || !view || held.slots.get(sprite) === slot) return;
+    held.slots.set(sprite, slot);
+    sprite.setInert(slot < inert);
+    const cell = cellCenter(view, slot);
+    this.tweens.killTweensOf(sprite);
+    if (!fx.motion) {
+      sprite.setPosition(cell.x, cell.y);
+      return;
+    }
+    this.tweens.add({
+      targets: sprite,
+      x: cell.x,
+      y: cell.y,
+      duration: REFLOW_MS,
+      ease: "Cubic.easeOut",
+    });
+  }
+
+  /** Per frame: ease the carried die after the pointer, leaning it into its
+   *  motion, with its shadow dropped below and behind it. */
+  private carryHeldDie(delta: number): void {
+    const held = this.heldDie;
+    const view = this.gridView;
+    if (!held || !view) return;
+    const world = this.gridWorldAt(held.screen.x, held.screen.y);
+    const tx = world.x + held.grab.x;
+    const ty = world.y + held.grab.y - held.raise;
+    const { sprite, shadow } = held;
+    const k = fx.motion ? 1 - Math.exp((-CARRY_FOLLOW_RATE * delta) / 1000) : 1;
+    const dx = tx - sprite.x;
+    sprite.setPosition(sprite.x + dx * k, sprite.y + (ty - sprite.y) * k);
+    const size = DIE_SIZE * view.scale;
+    const lean = fx.motion
+      ? Phaser.Math.Clamp((dx / size) * 0.35, -CARRY_MAX_LEAN, CARRY_MAX_LEAN)
+      : 0;
+    sprite.setRotation(
+      sprite.rotation + (lean - sprite.rotation) * Math.min(1, k * 1.5),
+    );
+    shadow.setPosition(sprite.x + size * 0.04, sprite.y + size * 0.11);
+    shadow.setRotation(sprite.rotation);
+  }
+
+  /** Put the carried die down in the cell it is over, and commit the new
+   *  order to the pool. */
+  private dropHeldDie(): void {
+    const held = this.heldDie;
+    const view = this.gridView;
+    if (!held || !view) return;
+    this.heldDie = undefined;
+    const { from, to, sprite, shadow } = held;
+    if (from !== to && this.state.dice.move(from, to)) {
+      const rekeyed = new Map<number, DieSprite>();
+      for (const [index, s] of this.sprites)
+        rekeyed.set(slotWhileMoving(index, from, to), s);
+      this.sprites = rekeyed;
+      // The order is part of the run: save it, so a reload keeps it.
+      refreshActiveRun(this.registry);
+    }
+    sprite.setInert(to < inertDiceCount(this.state, this.state.dice.length));
+    const cell = cellCenter(view, to);
+    this.tweens.killTweensOf(sprite);
+    this.tweens.killTweensOf(shadow);
+    if (!fx.motion) {
+      sprite.setPosition(cell.x, cell.y).setScale(view.scale).setRotation(0);
+      shadow.destroy();
+    } else {
+      this.tweens.add({
+        targets: sprite,
+        x: cell.x,
+        y: cell.y,
+        scale: view.scale,
+        rotation: 0,
+        duration: DROP_MS,
+        ease: "Back.easeOut",
+      });
+      this.tweens.add({
+        targets: shadow,
+        x: cell.x,
+        y: cell.y,
+        scale: view.scale,
+        rotation: 0,
+        alpha: 0,
+        duration: DROP_MS * 0.7,
+        ease: "Sine.easeIn",
+        onComplete: () => shadow.destroy(),
+      });
+    }
+    audio.click();
+  }
+
+  /** Knock the carried die out of the player's hand: every die goes straight
+   *  back to its own cell and the order is left as it was. For anything that
+   *  needs the grid to itself — a relayout, a roll. */
+  private cancelHeldDie(): void {
+    const held = this.heldDie;
+    if (!held) return;
+    this.heldDie = undefined;
+    held.shadow.destroy();
+    const view = this.gridView;
+    if (view) {
+      const inert = inertDiceCount(this.state, this.state.dice.length);
+      for (const [index, sprite] of this.sprites) {
+        this.tweens.killTweensOf(sprite);
+        const cell = cellCenter(view, index);
+        sprite.setPosition(cell.x, cell.y).setScale(view.scale).setRotation(0);
+        sprite.setInert(index < inert);
+      }
+    }
+    this.input.setDefaultCursor("default");
   }
 
   // ---- roll button ---------------------------------------------------------
@@ -3159,6 +3618,8 @@ export class GameScene extends Phaser.Scene {
     if (t.active && t.stage === TutorialStage.Grid) {
       return;
     }
+    // A roll lays the grid out afresh; a die still in hand goes back first.
+    this.cancelHeldDie();
     this.stopSealBreathe();
     this.setSealScale(this.sealScale * 0.96);
     this.time.delayedCall(120, () => {

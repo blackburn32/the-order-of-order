@@ -1907,6 +1907,32 @@ export class DicePool {
     return true;
   }
 
+  /** Whether the player may rearrange the grid by hand: there has to be more
+   *  than one die to put in a different order, and every die has to be its
+   *  own — a bucketed grid has no single die to lift out of its stack. */
+  get reorderable(): boolean {
+    return this.mode === "list" && this.list.length > 1;
+  }
+
+  /** Lift the die at grid index `from` out of the grid and put it back in at
+   *  index `to`, shifting the dice between the two along by one. Only the
+   *  order changes: every die keeps its face, tally and effects. False (and
+   *  nothing moved) for a grid that is not `reorderable` or an index outside
+   *  it.
+   *
+   *  Order is not purely cosmetic — an inert head (see
+   *  Afflictions.inertDiceCount) is counted from the front of the grid — so
+   *  this is the player's choice of which dice stand there. */
+  move(from: number, to: number): boolean {
+    if (!this.reorderable) return false;
+    const n = this.list.length;
+    if (from < 0 || from >= n || to < 0 || to >= n) return false;
+    if (from === to) return true;
+    const [die] = this.list.splice(from, 1);
+    this.list.splice(to, 0, die);
+    return true;
+  }
+
   /** Remove every die whose size `pred` selects (The Winnowing,
    *  Excommunication). Returns how many were removed. */
   removeSizes(pred: (sides: DieSides) => boolean): number {
@@ -2427,6 +2453,44 @@ export class DicePool {
       offset += b.count;
     }
     return [...map.values()];
+  }
+
+  /** Like `summarize`, but merging only *neighbouring* alike dice, so the
+   *  stacks list the grid in its order and `fromStacks` rebuilds it die for
+   *  die — the order the player arranged survives a reload. A bucketed grid
+   *  has no order of its own beyond its buckets, which it returns as they are.
+   *  Never longer than the grid, which in list mode is under the bucket
+   *  threshold. */
+  orderedStacks(): DiceStack[] {
+    if (this.mode === "bucket") return this.summarize();
+    const stacks: DiceStack[] = [];
+    let lastKey = "";
+    for (const d of this.list) {
+      const key = bucketKey(
+        d.sides,
+        d.maxFaceBonus,
+        d.loaded,
+        d.wildFace,
+        d.source,
+        d.scores,
+      );
+      if (key === lastKey) {
+        stacks[stacks.length - 1].count += 1;
+        continue;
+      }
+      lastKey = key;
+      const scores = keptScores(d.scores);
+      stacks.push({
+        sides: d.sides,
+        maxFaceBonus: d.maxFaceBonus,
+        loaded: d.loaded,
+        wildFace: d.wildFace,
+        source: d.source,
+        count: 1,
+        ...(scores ? { scores } : {}),
+      });
+    }
+    return stacks;
   }
 
   /** Storable per-stack summary (for save + Hall entries), always bucketed and

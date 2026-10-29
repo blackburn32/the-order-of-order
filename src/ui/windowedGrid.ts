@@ -592,3 +592,64 @@ function visibleRegionSpan(
   const end = clamp(Math.floor(visibleEnd / target), 0, regionCount - 1);
   return [Math.max(0, start - 1), Math.min(regionCount - 1, end + 1)];
 }
+
+/** The world-space centre of grid cell `index` in `view`'s layout. */
+export function cellCenter(
+  view: WindowedView,
+  index: number,
+): { x: number; y: number } {
+  const col = index % view.cols;
+  const row = Math.floor(index / view.cols);
+  return {
+    x: view.originX + col * view.cell + view.cell / 2,
+    y: view.originY + row * view.cell + view.cell / 2,
+  };
+}
+
+/** The grid cell of a grid of `n` dice nearest the world point (x, y). A point
+ *  off the block lands on its nearest edge cell, and one past the end of a
+ *  short last row on the last die. */
+export function cellIndexAt(
+  view: WindowedView,
+  n: number,
+  x: number,
+  y: number,
+): number {
+  const col = clamp(
+    Math.floor((x - view.originX) / view.cell),
+    0,
+    view.cols - 1,
+  );
+  const row = clamp(
+    Math.floor((y - view.originY) / view.cell),
+    0,
+    view.rows - 1,
+  );
+  return Math.min(row * view.cols + col, n - 1);
+}
+
+/** Where the die now at grid index `index` sits while the die at `from` is
+ *  being carried to `to`: the carried die takes `to`, and every die between
+ *  the two slides one cell towards the gap it left. */
+export function slotWhileMoving(
+  index: number,
+  from: number,
+  to: number,
+): number {
+  if (index === from) return to;
+  if (from < to && index > from && index <= to) return index - 1;
+  if (to < from && index >= to && index < from) return index + 1;
+  return index;
+}
+
+/** The inverse of `slotWhileMoving`: which die is drawn in cell `slot`. */
+export function dieInSlotWhileMoving(
+  slot: number,
+  from: number,
+  to: number,
+): number {
+  if (slot === to) return from;
+  if (from < to && slot >= from && slot < to) return slot + 1;
+  if (to < from && slot > to && slot <= from) return slot - 1;
+  return slot;
+}

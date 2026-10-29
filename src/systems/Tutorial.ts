@@ -131,9 +131,9 @@ export const TUTORIAL_TEXT: Record<
 
 // ---- grid hints ---------------------------------------------------------------
 //
-// Panning and zooming the grid are taught without a step of their own: each is
+// Panning, zooming and moving a die are taught without a step of their own: each is
 // a faint line printed on the felt behind the dice, in the grid's top right,
-// that goes away once the player does it. Neither ever holds the script up.
+// that goes away once the player does it. None ever holds the script up.
 // They are only for the run's first trial, so the first store is as far as
 // they go whether or not the player ever tried them.
 //
@@ -141,12 +141,13 @@ export const TUTORIAL_TEXT: Record<
 // the names the old steps had, so a player who panned under them is not taught
 // again), and forgotten with it when the tutorial is turned back on.
 
-export type GridHint = "pan" | "zoom";
+export type GridHint = "pan" | "zoom" | "move";
 
 /** The hint's line. Zooming is named for the hand on the screen: a pinch on
  *  the phone build, or in a browser whose main pointer is a finger. */
 export function gridHintText(hint: GridHint): string {
   if (hint === "pan") return "Drag to pan";
+  if (hint === "move") return "Hold a die to move it";
   const touch =
     PHONE_BUILD ||
     (typeof matchMedia === "function" &&
@@ -154,16 +155,22 @@ export function gridHintText(hint: GridHint): string {
   return touch ? "Pinch to zoom" : "Scroll to zoom";
 }
 
-const GRID_HINT_NAME: Record<GridHint, string> = { pan: "Pan", zoom: "Zoom" };
+const GRID_HINT_NAME: Record<GridHint, string> = {
+  pan: "Pan",
+  zoom: "Zoom",
+  move: "Move",
+};
 
 /** The grid hints still to show on this table: those the player has not yet
  *  done, on the first trial of a run armed to teach it. */
 export function pendingGridHints(state: RunState): GridHint[] {
   if (!state.tutorialArmed || state.trial !== 1) return [];
   const seen = seenSteps();
-  return (["pan", "zoom"] as const).filter(
-    (hint) => !seen.has(GRID_HINT_NAME[hint]),
-  );
+  // Moving a die needs another to trade places with.
+  const hints: GridHint[] = state.dice.reorderable
+    ? ["pan", "zoom", "move"]
+    : ["pan", "zoom"];
+  return hints.filter((hint) => !seen.has(GRID_HINT_NAME[hint]));
 }
 
 /** Record that the player has done what `hint` asks. */
