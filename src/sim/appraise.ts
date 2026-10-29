@@ -27,9 +27,9 @@ import { applyOffer, type ShopOffer } from "../systems/Shop";
 import type { RunState } from "../state/RunState";
 import { cloneRunState } from "./cloneRun";
 import {
-  resolveRoll,
+  newFavourMemory,
+  playRoll,
   resolveTrialEnd,
-  rollPool,
   trialComplete,
   trialRollTarget,
 } from "./engine";
@@ -147,9 +147,10 @@ export function measureCapacity(
     // only ever one, and this is its score.
     let peakLog = 0;
     let trialsCleared = 0;
+    const favours = newFavourMemory();
+    const streams = () => ({ dice: rng, resolve: rng });
     for (let r = 0; r < rolls; r++) {
-      const context = rollPool(trial, trial.dice, rng);
-      resolveRoll(trial, rng, { context, recordHistory: false });
+      playRoll(trial, streams, favours, { recordHistory: false });
       if (clearedOn === 0 && trial.trial === firstTrial && trial.trialCleared)
         clearedOn = trial.roll;
       if (crossing && trialComplete(trial)) {

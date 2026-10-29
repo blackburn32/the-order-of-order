@@ -446,6 +446,18 @@ export const OUTSIDE_TREES: Partial<Record<ShopItemId, OutsidePlacement>> = {
   metronome: { status: "neutral", note: TEMPO },
   insurance_policy: { status: "neutral", note: TEMPO },
   long_night: { status: "neutral", note: TEMPO },
+  absolution: {
+    status: "neutral",
+    note: "A reroll spent from the score panel serves every strategy alike.",
+  },
+  benediction: {
+    status: "neutral",
+    note: "A blessed roll multiplies whatever the run is building.",
+  },
+  doxology: {
+    status: "neutral",
+    note: "Benediction's boost, neutral as Benediction is.",
+  },
   ledger: {
     status: "neutral",
     note: "A shop utility with no strategy of its own.",

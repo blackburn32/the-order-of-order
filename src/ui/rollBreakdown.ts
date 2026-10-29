@@ -11,10 +11,15 @@
 //        │ ──────────────────────── │
 //        │         +82 DICE         │  ← only when the grid changed size
 //        │     SHATTERED −14        │  ← each gain and loss, then the sum
+//        │  [ REROLL ]  [ BLESS ×4 ]│  ← only with a roll favour to spend
 //        └──────────────────────────┘
 //
 // A roll that scored nothing but still changed the grid (dice defecting off a
 // dud, say) gets a panel holding the dice row alone.
+//
+// A callout with actions (the roll favours, systems/RollFavours) does not clear
+// itself away: it holds until the player spends one or rolls on, and the caller
+// closes it.
 //
 // Numbers come from systems/RollBreakdown; this file only stages them. The panel
 // behind the rows is what keeps them legible over a grid of pale dice. Every
@@ -64,6 +69,15 @@ export interface RollBreakdownOptions {
   /** A line under the total, shown with the acclaim: what crossing the goal
    *  earned ("+2 GOLD WHEN THE TRIAL ENDS"). */
   acclaimDetail?: string;
+  /** Buttons along the panel's foot, shown once the total lands. A callout
+   *  with any holds open until the caller closes it. */
+  actions?: readonly RollAction[];
+}
+
+/** One button on the callout's foot. */
+export interface RollAction {
+  label: string;
+  onPress(): void;
 }
 
 /**
@@ -85,6 +99,16 @@ export interface RollBreakdownView {
   /** Jump to the final numbers and clear away quickly: a new roll is starting. */
   hurry(): void;
   destroy(): void;
+  /** Whether a screen point lands on the panel, for input that must not fall
+   *  through it to the grid underneath. */
+  contains(x: number, y: number): boolean;
+  /** Show the total a blessing made of the roll, with the line saying so where
+   *  the buttons were. */
+  bless(points: bigint, label: string): void;
+  /** Take the buttons away, leaving the panel up. */
+  clearActions(): void;
+  /** Clear the callout away at its ordinary pace. */
+  close(): void;
 }
 
 /** How many row steps the callout's panel spans: its dice row, the bonus and
@@ -397,12 +421,59 @@ export function playRollBreakdown(
     lastPad = rowStep * 0.6;
   }
 
+  // A dud with a favour to spend still needs something to say above its
+  // buttons.
+  const actions = opts.actions ?? [];
+  const holds = actions.length > 0;
+  if (!scored && holds && diceChanges.length === 0) {
+    total
+      .setText("NOTHING SCORED")
+      .setColor(CSS.parchment)
+      .setFontSize(Math.round(fontSize))
+      .setVisible(true);
+  }
+
+  // The favours' buttons, side by side along the panel's foot. Built at the
+  // origin and placed once the panel's width is known.
+  const actionH = rowStep * 1.25;
+  const actionSize = Math.min(fontSize * 0.86, actionH * 0.5);
+  const actionGap = fontSize * 0.7;
+  const actionY = lastY + lastPad + actionH * 0.5;
+  const buttons = actions.map((action) => {
+    const plate = scene.add.graphics();
+    const label = scene.add
+      .text(0, 0, action.label, {
+        fontFamily: SERIF,
+        fontSize: `${Math.round(actionSize)}px`,
+        color: CSS.goldLight,
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5);
+    const button = opts.add(
+      scene.add.container(x, actionY, [plate, label]).setDepth(52),
+    );
+    pieces.push(button);
+    return { action, button, plate, label };
+  });
+  const actionsWidth =
+    buttons.reduce((sum, b) => sum + b.label.width + actionSize * 1.6, 0) +
+    actionGap * Math.max(0, buttons.length - 1);
+  // The line that replaces the buttons once one is spent.
+  const actionNote = holds
+    ? text(actionY, "", CSS.glow, labelSize).setVisible(false)
+    : undefined;
+  if (holds) {
+    lastY = actionY + actionH * 0.5;
+    lastPad = rowStep * 0.45;
+  }
+
   // The panel is as wide as the widest thing it will ever hold: every row, the
   // final multiplier, and the longest step name.
   const finalHundredths = multiplierHundredths(breakdown.multiplier);
   const finalFractional = breakdown.multiplier.den !== 1n;
   let widest = Math.max(
-    scored ? total.width : 0,
+    actionsWidth,
+    scored || holds ? total.width : 0,
     detail?.width ?? 0,
     diceRow?.width ?? 0,
     diceLabel?.width ?? 0,
@@ -501,6 +572,70 @@ export function playRollBreakdown(
     if (!diceLabel) return;
     diceLabel.setScale(1).setText(message);
     if (diceLabel.width > room) diceLabel.setScale(room / diceLabel.width);
+  };
+
+  // The buttons share the panel's inner width evenly.
+  const actionRoom = panelW - padX * 1.2;
+  const buttonW =
+    (actionRoom - actionGap * Math.max(0, buttons.length - 1)) /
+    Math.max(1, buttons.length);
+  buttons.forEach(({ action, button, plate, label }, index) => {
+    button.x = x - actionRoom / 2 + buttonW / 2 + index * (buttonW + actionGap);
+    const draw = (fill: number, alpha: number) => {
+      plate.clear();
+      plate.fillStyle(fill, alpha);
+      plate.fillRoundedRect(
+        -buttonW / 2,
+        -actionH / 2,
+        buttonW,
+        actionH,
+        actionH / 2,
+      );
+      plate.lineStyle(2, COLORS.goldLight, 0.95);
+      plate.strokeRoundedRect(
+        -buttonW / 2,
+        -actionH / 2,
+        buttonW,
+        actionH,
+        actionH / 2,
+      );
+    };
+    draw(COLORS.waxRedDark, 1);
+    if (label.width > buttonW - actionSize)
+      label.setScale((buttonW - actionSize) / label.width);
+    button.setSize(buttonW, actionH);
+    button.setAlpha(0);
+    let pressed = false;
+    button.on("pointerover", () => draw(COLORS.waxRed, 1));
+    button.on("pointerout", () => {
+      pressed = false;
+      draw(COLORS.waxRedDark, 1);
+    });
+    button.on("pointerdown", () => {
+      pressed = true;
+      draw(COLORS.feltDark, 1);
+    });
+    button.on("pointerup", () => {
+      if (!pressed || button.alpha < 1) return;
+      pressed = false;
+      draw(COLORS.waxRed, 1);
+      action.onPress();
+    });
+  });
+  const showActions = () => {
+    for (const { button } of buttons) {
+      if (!button.scene) continue;
+      stopOwn(button);
+      button.setAlpha(1).setScale(rest(button));
+      button.setInteractive({ useHandCursor: true });
+    }
+  };
+  const clearActions = () => {
+    for (const { button } of buttons) {
+      if (!button.scene) continue;
+      button.disableInteractive();
+      button.setVisible(false);
+    }
   };
 
   // Every scale animation returns to the piece's resting scale, recorded here.
@@ -922,7 +1057,14 @@ export function playRollBreakdown(
     scored ? totalAtMs + scaled(holdMs) : 0,
     diceRow ? ms(diceEnd) + scaled(DICE_HOLD_MS) : 0,
   );
-  at(closeAtMs, () => fadeOut(scaled(FADE_MS)));
+  // A callout holding a choice stays up until the caller closes it; its
+  // buttons arrive once everything above them has been counted out.
+  if (holds)
+    at(
+      Math.max(scored ? totalAtMs : 0, diceRow ? ms(diceEnd) : 0),
+      showActions,
+    );
+  else at(closeAtMs, () => fadeOut(scaled(FADE_MS)));
 
   return {
     bottomY: panelBottom + rowStep * 0.5,
@@ -953,6 +1095,37 @@ export function playRollBreakdown(
       // the roll met the goal whether or not they waited to be told.
       celebrate();
       fadeOut(160);
+    },
+    contains(px, py) {
+      if (fading || !panel.scene) return false;
+      return (
+        px >= x - panelW / 2 &&
+        px <= x + panelW / 2 &&
+        py >= panelTop &&
+        py <= panelBottom
+      );
+    },
+    bless(points, label) {
+      if (fading || !panel.scene) return;
+      clearActions();
+      total
+        .setText(`+${formatScore(points)}`)
+        .setColor(CSS.glow)
+        .setScale(1);
+      if (total.width > room) total.setScale(room / total.width);
+      restScale.set(total, total.scale);
+      punch(total, 1.4, 180);
+      actionNote?.setText(label).setVisible(true).setAlpha(1);
+      if (actionNote) punch(actionNote, 1.2, 150);
+    },
+    clearActions,
+    close() {
+      for (const timer of timers) timer.remove();
+      countEvent?.remove();
+      diceEvent?.remove();
+      if (fading || !panel.scene) return;
+      clearActions();
+      fadeOut(scaled(FADE_MS));
     },
     destroy() {
       for (const timer of timers) timer.remove();

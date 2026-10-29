@@ -47,6 +47,18 @@ import {
   scoreRoll,
 } from "../systems/Scoring";
 import { trialRollTarget } from "../systems/Trial";
+import {
+  ABSOLUTION_MAX_COPIES,
+  BENEDICTION_MAX_COPIES,
+  blessingFactor,
+  blessingsLeft,
+  blessRoll,
+  DOXOLOGY_MAX_COPIES,
+  restoreRun,
+  rollStreamKey,
+  snapshotRun,
+  spendReroll,
+} from "../systems/RollFavours";
 import { playerLeadsDuel } from "../systems/Rival";
 import {
   INNER_CIRCLE_POUR,
@@ -67,7 +79,9 @@ import {
 import { rollsForTrial } from "../config";
 import { scoreRollHistogram } from "../systems/ScoringHistogram";
 import {
+  newFavourMemory,
   openTrial,
+  playRoll,
   prepareDuel,
   resolveRoll,
   resolveTrialEnd,
@@ -852,6 +866,8 @@ function die(sides: 4 | 6 | 8 | 100, value: number) {
     ["rain_check", (s) => s.rainCheck === 1],
     ["downbeat", (s) => s.downbeat === 1],
     ["crunch_time", (s) => s.hasCrunchTime],
+    ["absolution", (s) => s.absolution === 1],
+    ["benediction", (s) => s.benediction === 1],
   ];
   for (const [id, applied] of tempoItems) {
     const state = newRun();
@@ -2464,4 +2480,104 @@ function rollWith(state: RunState, rng: () => number, resolveRng = rng) {
     "a roll that scored nothing has no callout",
   );
 }
+
+// --- The roll favours ---------------------------------------------------------
+//
+// Absolution rerolls, Benediction blesses, Doxology doubles the blessing. Each
+// sells up to its cap, and each copy is one use a trial.
+{
+  const buy = (state: RunState, id: ShopItemId) =>
+    applyOffer(state, freeOffer(id, state));
+
+  const state = gridOf([1, 10]);
+  check(
+    !availableIds(state).includes("doxology"),
+    "Doxology should wait for Benediction",
+  );
+  for (let i = 0; i < ABSOLUTION_MAX_COPIES; i++)
+    check(buy(state, "absolution"), "Absolution should be purchasable");
+  check(
+    !availableIds(state).includes("absolution"),
+    `Absolution should stop at ${ABSOLUTION_MAX_COPIES} copies`,
+  );
+  for (let i = 0; i < BENEDICTION_MAX_COPIES; i++)
+    check(buy(state, "benediction"), "Benediction should be purchasable");
+  check(
+    !availableIds(state).includes("benediction"),
+    `Benediction should stop at ${BENEDICTION_MAX_COPIES} copies`,
+  );
+  check(blessingFactor(state) === 2n, "a blessing should start at ×2");
+  for (let i = 0; i < DOXOLOGY_MAX_COPIES; i++)
+    check(buy(state, "doxology"), "Doxology should be purchasable");
+  check(
+    !availableIds(state).includes("doxology"),
+    `Doxology should stop at ${DOXOLOGY_MAX_COPIES} copies`,
+  );
+  check(blessingFactor(state) === 64n, "five Doxologies should bless at ×64");
+
+  // A blessing banks the rest of the multiplied roll, three times a trial.
+  const blessed = gridOf([1, 10]);
+  blessed.benediction = 3;
+  blessed.doxology = 1;
+  const { result } = rollWith(blessed, () => 0.5);
+  const before = blessed.score;
+  check(
+    blessRoll(blessed, result.points) === result.points * 3n &&
+      blessed.score === before + result.points * 3n,
+    "a ×4 blessing should add three more of the roll's points",
+  );
+  blessRoll(blessed, result.points);
+  blessRoll(blessed, result.points);
+  check(
+    blessingsLeft(blessed) === 0 && blessRoll(blessed, result.points) === 0n,
+    "a fourth blessing in one trial should do nothing",
+  );
+
+  // A reroll puts the whole run back and draws different dice.
+  const rerolled = gridOf([6, 20]);
+  rerolled.absolution = 1;
+  const key = rollStreamKey(rerolled);
+  const snapshot = snapshotRun(rerolled);
+  rollWith(rerolled, () => 0.1);
+  check(rerolled.roll === 1, "the roll should have been made");
+  restoreRun(rerolled, snapshot);
+  check(spendReroll(rerolled), "a reroll should be spendable");
+  check(
+    rerolled.roll === 0 &&
+      rerolled.score === 0n &&
+      rerolled.dice.length === 20 &&
+      rerolled.rerollsUsed === 1 &&
+      rollStreamKey(rerolled) !== key,
+    "a reroll should restore the run, keep the charge spent and change the stream",
+  );
+  check(!spendReroll(rerolled), "a second reroll should need a second copy");
+
+  // The simulation spends them through engine.playRoll: a dud is struck and
+  // rolled again under the reroll's own key, and the trial's last roll is
+  // blessed rather than leaving the blessing unspent.
+  const simmed = gridOf([6, 10]);
+  simmed.absolution = 1;
+  simmed.benediction = 1;
+  const memory = newFavourMemory();
+  const streams = (key: string) => {
+    const face = key.includes("reroll") ? () => 0 : () => 0.99;
+    return { dice: face, resolve: face };
+  };
+  playRoll(simmed, streams, memory, { recordHistory: false });
+  check(
+    simmed.rerollsUsed === 1 && simmed.score > 0n && simmed.roll === 1,
+    "the sim should reroll a dud and keep the reroll's roll",
+  );
+  check(simmed.blessingsUsed === 0, "the sim should save its blessing");
+  while (simmed.roll < trialRollTarget(simmed) - 1)
+    playRoll(simmed, streams, memory, { recordHistory: false });
+  const beforeLast = simmed.score;
+  const last = playRoll(simmed, streams, memory, { recordHistory: false });
+  check(
+    simmed.blessingsUsed === 1 &&
+      simmed.score === beforeLast + last.result.points * 2n,
+    "the sim should bless the trial's last scoring roll",
+  );
+}
+
 console.log("Item mechanics check: ALL PASS");

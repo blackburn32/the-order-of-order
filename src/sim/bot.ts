@@ -61,9 +61,9 @@ import {
 } from "../systems/Shop";
 import {
   beginRun,
-  resolveRoll,
+  newFavourMemory,
+  playRoll,
   resolveTrialEnd,
-  rollPool,
   trialComplete,
   trialRollTarget,
 } from "./engine";
@@ -1170,6 +1170,7 @@ export function simulateRun(
 
   let rolls = 0;
   let goldSpent = 0;
+  const favours = newFavourMemory();
   // Reset per trial, below, as the ladder advances.
   let clearedOnRoll: number | null = null;
   let rollScores: number[] | undefined = cfg.traceRolls ? [] : undefined;
@@ -1179,15 +1180,16 @@ export function simulateRun(
     // It is what `benchmark.ts` measures a bot's capacity from, and the same
     // moment a run exported from the dev panel is usually captured at.
     if (state.roll === 0) cfg.onTrialStart?.(state);
-    const context = rollPool(
+    // The roll favours are spent by the same rules the appraiser values them
+    // by (engine.playRoll); a run without one rolls exactly as it always did.
+    playRoll(
       state,
-      state.dice,
-      contentStream(state, "roll", `${state.trial}:${state.roll}`, rng),
-    );
-    resolveRoll(
-      state,
-      contentStream(state, "roll", `${state.trial}:${state.roll}:resolve`, rng),
-      { context, recordHistory: false },
+      (key) => ({
+        dice: contentStream(state, "roll", key, rng),
+        resolve: contentStream(state, "roll", `${key}:resolve`, rng),
+      }),
+      favours,
+      { recordHistory: false },
     );
     rolls += 1;
     rollScores?.push(Number(state.score));

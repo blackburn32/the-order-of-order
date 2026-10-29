@@ -12,7 +12,8 @@ export type ItemValueKind =
   | "goldReturned"
   | "choicesAdded"
   | "trialsSaved"
-  | "bonusApplications";
+  | "bonusApplications"
+  | "rerolls";
 
 export interface ItemPurchaseEvent {
   id: ShopItemId;
@@ -43,6 +44,9 @@ export const ITEM_VALUE_KIND: Record<ShopItemId, ItemValueKind> = {
   overtime: "rollsAdded",
   metronome: "rollsAdded",
   rain_check: "rollsAdded",
+  absolution: "rerolls",
+  benediction: "points",
+  doxology: "points",
   downbeat: "points",
   crunch_time: "points",
   grindstone: "diceModified",
@@ -200,6 +204,11 @@ const META: Record<ItemValueKind, Omit<ItemValueMeta, "kind">> = {
     badgeLabel: "Bonus applications",
     chartTitle: "Cumulative bonus applications",
     unit: "effects",
+  },
+  rerolls: {
+    badgeLabel: "Rolls rerolled",
+    chartTitle: "Cumulative rolls rerolled",
+    unit: "rolls",
   },
 };
 
