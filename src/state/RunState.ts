@@ -237,6 +237,13 @@ export interface RunState {
   luckyCoin: number; // 10% chance per copy each roll of +1 gold
   countingHouse: number; // +1 gold per copy at every trial clear
   deepPockets: number; // +2 to the unused-roll gold cap per copy
+  // The roll favours: cards spent from the score panel rather than read by the
+  // scorer (see systems/RollFavours). Each copy is one use a trial.
+  absolution: number; // rerolls a trial, per copy
+  benediction: number; // blessings (one roll's points multiplied) a trial, per copy
+  doxology: number; // doubles Benediction's factor, per copy
+  rerollsUsed: number; // Absolution spent this trial
+  blessingsUsed: number; // Benediction spent this trial
   // Always-maintained trackers that drive unlock criteria (not tied to owning
   // any particular item).
   scoreStreak: number; // consecutive scoring rolls this run; a dud resets it
@@ -421,6 +428,11 @@ export function newRun(
     luckyCoin: 0,
     countingHouse: 0,
     deepPockets: 0,
+    absolution: 0,
+    benediction: 0,
+    doxology: 0,
+    rerollsUsed: 0,
+    blessingsUsed: 0,
     scoreStreak: 0,
     momentumStreak: 0,
     clutchClear: false,

@@ -61,6 +61,15 @@ import {
 import { trialRollTarget } from "../systems/Trial";
 import { addItemValue } from "../systems/ItemValue";
 import { cardReworksEnabled, curiousCopyChance } from "../systems/CardReworks";
+import {
+  blessingsLeft,
+  blessRoll,
+  rerollsLeft,
+  restoreRun,
+  rollStreamKey,
+  snapshotRun,
+  spendReroll,
+} from "../systems/RollFavours";
 
 // Re-exported so GameScene and the bot keep a single import site for the
 // trial loop; the definition lives in systems/Trial to stay importable from the
@@ -390,6 +399,95 @@ export function resolveRoll(
     turnedAway: passives.turnedAway,
     rivalPoints,
   };
+}
+
+/** What a simulated player remembers of the trial it is playing, for deciding
+ *  when to spend a roll favour: the points of every roll it kept. */
+export interface FavourMemory {
+  trial: number;
+  kept: bigint[];
+}
+
+export function newFavourMemory(): FavourMemory {
+  return { trial: 0, kept: [] };
+}
+
+/** The dice and resolve streams for one attempt at a roll, by its stream key
+ *  (see RollFavours.rollStreamKey). */
+export type RollStreams = (key: string) => {
+  dice: () => number;
+  resolve: () => number;
+};
+
+/**
+ * Strike the roll just made? A dud always, and a roll that scored under half
+ * of what this trial's kept rolls have averaged — a cold roll in a trial whose
+ * grid is warm. The trial's first roll has nothing to be measured against, so
+ * only a dud is struck there.
+ */
+export function wantsReroll(points: bigint, kept: readonly bigint[]): boolean {
+  if (points <= 0n) return true;
+  if (kept.length === 0) return false;
+  const mean = kept.reduce((sum, p) => sum + p, 0n) / BigInt(kept.length);
+  return points * 2n < mean;
+}
+
+/**
+ * Bless the roll just made? A grid usually grows through a trial, so its
+ * biggest rolls tend to come last: the blessings are saved for the trial's
+ * final rolls — one for each roll still to come that it would otherwise go
+ * unspent on — unless a roll doubles the best the trial has kept so far, which
+ * is worth taking whenever it comes.
+ */
+export function wantsBlessing(
+  state: RunState,
+  points: bigint,
+  kept: readonly bigint[],
+): boolean {
+  const left = blessingsLeft(state);
+  if (left <= 0 || points <= 0n) return false;
+  // `roll` has already counted this one, so this is the rolls after it.
+  const after = trialRollTarget(state) - state.roll;
+  if (after < left) return true;
+  const best = kept.reduce((top, p) => (p > top ? p : top), 0n);
+  return kept.length >= 2 && points >= best * 2n;
+}
+
+/**
+ * Make one roll the way a player holding the roll favours plays it: roll it,
+ * strike it and roll again while `wantsReroll` says so and an Absolution is
+ * left, then bless it when `wantsBlessing` says so. The live game asks the
+ * player instead (GameScene's score panel); the simulation and the appraiser
+ * play through here so both value the favours the way they are used.
+ *
+ * Without a favour owned this is exactly `rollPool` and `resolveRoll`, under
+ * the same stream keys, so a run that never buys one plays as it always did.
+ */
+export function playRoll(
+  state: RunState,
+  streams: RollStreams,
+  memory: FavourMemory,
+  opts: Omit<ResolveRollOptions, "context"> = {},
+): ReturnType<typeof resolveRoll> {
+  if (memory.trial !== state.trial) {
+    memory.trial = state.trial;
+    memory.kept = [];
+  }
+  for (;;) {
+    const snapshot = rerollsLeft(state) > 0 ? snapshotRun(state) : null;
+    const { dice, resolve } = streams(rollStreamKey(state));
+    const context = rollPool(state, state.dice, dice);
+    const outcome = resolveRoll(state, resolve, { ...opts, context });
+    const points = outcome.result.points;
+    if (snapshot && wantsReroll(points, memory.kept)) {
+      restoreRun(state, snapshot);
+      spendReroll(state);
+      continue;
+    }
+    if (wantsBlessing(state, points, memory.kept)) blessRoll(state, points);
+    memory.kept.push(points);
+    return outcome;
+  }
 }
 
 /**
@@ -736,6 +834,8 @@ export function resolveTrialEnd(
   state.roll = 0;
   state.trialCleared = false;
   state.bonusRollsThisRound = carriedRolls;
+  state.rerollsUsed = 0;
+  state.blessingsUsed = 0;
   // Score is progress toward one trial's goal and nothing else — it always
   // starts a trial at zero. Gold is what carries across.
   state.score = 0n;
@@ -812,6 +912,8 @@ export function continueEndless(
   state.roll = 0;
   state.trialCleared = false;
   state.bonusRollsThisRound = carriedRolls;
+  state.rerollsUsed = 0;
+  state.blessingsUsed = 0;
   state.score = 0n;
   state.trialScore = 0n;
   state.trialRollGold = { titheBowl: 0, luckyCoin: 0, offering: 0 };

@@ -434,6 +434,8 @@ function jumpToTrial(
   state.trialCleared = false;
   state.trialRollGold = { titheBowl: 0, luckyCoin: 0, offering: 0 };
   state.bonusRollsThisRound = 0;
+  state.rerollsUsed = 0;
+  state.blessingsUsed = 0;
   // Opened like any trial the ladder lands on, so the trial-start passives
   // (The Inner Circle, A Full Choir) can be tested by jumping.
   state.trialOpenPending = true;

@@ -11,10 +11,15 @@
 //        │ ──────────────────────── │
 //        │         +82 DICE         │  ← only when the grid changed size
 //        │     SHATTERED −14        │  ← each gain and loss, then the sum
+//        │  [ REROLL ]  [ BLESS ×4 ]│  ← only with a roll favour to spend
 //        └──────────────────────────┘
 //
 // A roll that scored nothing but still changed the grid (dice defecting off a
 // dud, say) gets a panel holding the dice row alone.
+//
+// A callout with actions (the roll favours, systems/RollFavours) does not clear
+// itself away: it holds until the player spends one or rolls on, and the caller
+// closes it.
 //
 // Numbers come from systems/RollBreakdown; this file only stages them. The panel
 // behind the rows is what keeps them legible over a grid of pale dice. Every
@@ -64,6 +69,17 @@ export interface RollBreakdownOptions {
   /** A line under the total, shown with the acclaim: what crossing the goal
    *  earned ("+2 GOLD WHEN THE TRIAL ENDS"). */
   acclaimDetail?: string;
+  /** Buttons along the panel's foot, shown once the total lands. A callout
+   *  with any holds open until the caller closes it. */
+  actions?: readonly RollAction[];
+}
+
+/** One button on the callout's foot. */
+export interface RollAction {
+  label: string;
+  /** The pill's ink: its outline, its label, and the wash it takes on hover. */
+  color: number;
+  onPress(): void;
 }
 
 /**
@@ -85,6 +101,16 @@ export interface RollBreakdownView {
   /** Jump to the final numbers and clear away quickly: a new roll is starting. */
   hurry(): void;
   destroy(): void;
+  /** Whether a screen point lands on the panel, for input that must not fall
+   *  through it to the grid underneath. */
+  contains(x: number, y: number): boolean;
+  /** Show the total a blessing made of the roll, with the line saying so where
+   *  the buttons were. */
+  bless(points: bigint, label: string): void;
+  /** Take the buttons away, leaving the panel up. */
+  clearActions(): void;
+  /** Clear the callout away at its ordinary pace. */
+  close(): void;
 }
 
 /** How many row steps the callout's panel spans: its dice row, the bonus and
@@ -397,12 +423,61 @@ export function playRollBreakdown(
     lastPad = rowStep * 0.6;
   }
 
+  // A dud with a favour to spend still needs something to say above its
+  // buttons.
+  const actions = opts.actions ?? [];
+  const holds = actions.length > 0;
+  if (!scored && holds && diceChanges.length === 0) {
+    total
+      .setText("NOTHING SCORED")
+      .setColor(CSS.parchment)
+      .setFontSize(Math.round(fontSize))
+      .setVisible(true);
+  }
+
+  // The favours' buttons: small outlined pills side by side along the panel's
+  // foot, each in its own ink, so they sit under the total as a footnote
+  // rather than competing with it. Built at the origin and placed once the
+  // panel's width is known.
+  const actionH = rowStep * 0.85;
+  const actionSize = Math.min(labelSize, actionH * 0.56);
+  const actionPad = actionSize * 1.3;
+  const actionGap = fontSize * 0.6;
+  const actionY = lastY + lastPad + actionH * 0.5;
+  const buttons = actions.map((action) => {
+    const plate = scene.add.graphics();
+    const label = scene.add
+      .text(0, 0, action.label, {
+        fontFamily: SERIF,
+        fontSize: `${Math.round(actionSize)}px`,
+        color: `#${action.color.toString(16).padStart(6, "0")}`,
+      })
+      .setOrigin(0.5);
+    const button = opts.add(
+      scene.add.container(x, actionY, [plate, label]).setDepth(52),
+    );
+    pieces.push(button);
+    return { action, button, plate, label };
+  });
+  const actionsWidth =
+    buttons.reduce((sum, b) => sum + b.label.width + actionPad * 2, 0) +
+    actionGap * Math.max(0, buttons.length - 1);
+  // The line that replaces the buttons once one is spent.
+  const actionNote = holds
+    ? text(actionY, "", CSS.glow, labelSize).setVisible(false)
+    : undefined;
+  if (holds) {
+    lastY = actionY + actionH * 0.5;
+    lastPad = rowStep * 0.45;
+  }
+
   // The panel is as wide as the widest thing it will ever hold: every row, the
   // final multiplier, and the longest step name.
   const finalHundredths = multiplierHundredths(breakdown.multiplier);
   const finalFractional = breakdown.multiplier.den !== 1n;
   let widest = Math.max(
-    scored ? total.width : 0,
+    actionsWidth,
+    scored || holds ? total.width : 0,
     detail?.width ?? 0,
     diceRow?.width ?? 0,
     diceLabel?.width ?? 0,
@@ -501,6 +576,70 @@ export function playRollBreakdown(
     if (!diceLabel) return;
     diceLabel.setScale(1).setText(message);
     if (diceLabel.width > room) diceLabel.setScale(room / diceLabel.width);
+  };
+
+  // Each pill is as wide as its own label, and the row is centred, shrinking
+  // together only if a narrow panel cannot hold it.
+  const actionFit = Math.min(1, (panelW - padX) / Math.max(1, actionsWidth));
+  let actionX = x - (actionsWidth * actionFit) / 2;
+  buttons.forEach(({ action, button, plate, label }) => {
+    label.setScale(actionFit);
+    const buttonW = (label.width + actionPad * 2) * actionFit;
+    button.x = actionX + buttonW / 2;
+    actionX += buttonW + actionGap * actionFit;
+    const draw = (alpha: number) => {
+      plate.clear();
+      plate.fillStyle(action.color, alpha);
+      plate.fillRoundedRect(
+        -buttonW / 2,
+        -actionH / 2,
+        buttonW,
+        actionH,
+        actionH / 2,
+      );
+      plate.lineStyle(1.5, action.color, 0.85);
+      plate.strokeRoundedRect(
+        -buttonW / 2,
+        -actionH / 2,
+        buttonW,
+        actionH,
+        actionH / 2,
+      );
+    };
+    draw(0);
+    button.setSize(buttonW, actionH);
+    button.setAlpha(0);
+    let pressed = false;
+    button.on("pointerover", () => draw(0.16));
+    button.on("pointerout", () => {
+      pressed = false;
+      draw(0);
+    });
+    button.on("pointerdown", () => {
+      pressed = true;
+      draw(0.3);
+    });
+    button.on("pointerup", () => {
+      if (!pressed || button.alpha < 1) return;
+      pressed = false;
+      draw(0.16);
+      action.onPress();
+    });
+  });
+  const showActions = () => {
+    for (const { button } of buttons) {
+      if (!button.scene) continue;
+      stopOwn(button);
+      button.setAlpha(1).setScale(rest(button));
+      button.setInteractive({ useHandCursor: true });
+    }
+  };
+  const clearActions = () => {
+    for (const { button } of buttons) {
+      if (!button.scene) continue;
+      button.disableInteractive();
+      button.setVisible(false);
+    }
   };
 
   // Every scale animation returns to the piece's resting scale, recorded here.
@@ -922,7 +1061,14 @@ export function playRollBreakdown(
     scored ? totalAtMs + scaled(holdMs) : 0,
     diceRow ? ms(diceEnd) + scaled(DICE_HOLD_MS) : 0,
   );
-  at(closeAtMs, () => fadeOut(scaled(FADE_MS)));
+  // A callout holding a choice stays up until the caller closes it; its
+  // buttons arrive once everything above them has been counted out.
+  if (holds)
+    at(
+      Math.max(scored ? totalAtMs : 0, diceRow ? ms(diceEnd) : 0),
+      showActions,
+    );
+  else at(closeAtMs, () => fadeOut(scaled(FADE_MS)));
 
   return {
     bottomY: panelBottom + rowStep * 0.5,
@@ -953,6 +1099,37 @@ export function playRollBreakdown(
       // the roll met the goal whether or not they waited to be told.
       celebrate();
       fadeOut(160);
+    },
+    contains(px, py) {
+      if (fading || !panel.scene) return false;
+      return (
+        px >= x - panelW / 2 &&
+        px <= x + panelW / 2 &&
+        py >= panelTop &&
+        py <= panelBottom
+      );
+    },
+    bless(points, label) {
+      if (fading || !panel.scene) return;
+      clearActions();
+      total
+        .setText(`+${formatScore(points)}`)
+        .setColor(CSS.glow)
+        .setScale(1);
+      if (total.width > room) total.setScale(room / total.width);
+      restScale.set(total, total.scale);
+      punch(total, 1.4, 180);
+      actionNote?.setText(label).setVisible(true).setAlpha(1);
+      if (actionNote) punch(actionNote, 1.2, 150);
+    },
+    clearActions,
+    close() {
+      for (const timer of timers) timer.remove();
+      countEvent?.remove();
+      diceEvent?.remove();
+      if (fading || !panel.scene) return;
+      clearActions();
+      fadeOut(scaled(FADE_MS));
     },
     destroy() {
       for (const timer of timers) timer.remove();

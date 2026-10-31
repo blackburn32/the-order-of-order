@@ -37,6 +37,12 @@ import {
   SOLITUDE_POINTS_PER_SEAT,
 } from "./Scoring";
 import { trialRollTarget } from "./Trial";
+import {
+  ABSOLUTION_MAX_COPIES,
+  BENEDICTION_MAX_COPIES,
+  blessingFactorFor,
+  DOXOLOGY_MAX_COPIES,
+} from "./RollFavours";
 import { addItemValue } from "./ItemValue";
 import {
   BOOST_MAX_COPIES,
@@ -73,6 +79,9 @@ export type ShopItemId =
   | "overtime"
   | "metronome"
   | "rain_check"
+  | "absolution"
+  | "benediction"
+  | "doxology"
   | "downbeat"
   | "crunch_time"
   | "grindstone"
@@ -271,6 +280,9 @@ type RunCounter =
   | "luckyCoin"
   | "countingHouse"
   | "deepPockets"
+  | "absolution"
+  | "benediction"
+  | "doxology"
   | "litany"
   | "harmonics"
   | "multitude"
@@ -917,6 +929,55 @@ export const ITEMS: ItemDef[] = [
     available: paysForUnusedRolls,
     unlock: { kind: "rollsLeftOnClear", count: 8 },
     effects: [incCounter("rainCheck")],
+  },
+  // The roll favours (systems/RollFavours) are spent from the score panel on a
+  // roll the player has just seen, not read by the scorer. Each copy is one
+  // use a trial, three at most; Doxology raises what a blessing is worth.
+  {
+    id: "absolution",
+    name: "Absolution",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: stacking(
+      (s) => s.absolution,
+      (copies) => copies,
+      (times, plural) =>
+        `Strike a roll from the record and roll it again, ${times} time${plural ? "s" : ""} a trial. Up to ${ABSOLUTION_MAX_COPIES} copies.`,
+    ),
+    available: (s) => s.absolution < ABSOLUTION_MAX_COPIES,
+    effects: [incCounter("absolution")],
+  },
+  {
+    id: "benediction",
+    name: "Benediction",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: (s) =>
+      stacking(
+        (st) => st.benediction,
+        (copies) => copies,
+        (times, plural) =>
+          `Bless a roll to multiply its points by ×${blessingFactorFor(s.doxology)}, ${times} time${plural ? "s" : ""} a trial. Up to ${BENEDICTION_MAX_COPIES} copies.`,
+      )(s),
+    available: (s) => s.benediction < BENEDICTION_MAX_COPIES,
+    effects: [incCounter("benediction")],
+  },
+  {
+    id: "doxology",
+    name: "Doxology",
+    priceBand: "strong",
+    stackPricing: "linear",
+    rarity: "rare",
+    desc: stacking(
+      (s) => s.doxology,
+      (copies) => `×${blessingFactorFor(copies)}`,
+      (factor) =>
+        `Benediction multiplies a blessed roll by ${factor}. Up to ${DOXOLOGY_MAX_COPIES} copies.`,
+    ),
+    available: (s) => s.benediction > 0 && s.doxology < DOXOLOGY_MAX_COPIES,
+    effects: [incCounter("doxology")],
   },
   {
     id: "downbeat",
@@ -3024,6 +3085,9 @@ export const ITEM_THEMES: Record<ShopItemId, ItemTheme[]> = {
   metronome: ["tempo"],
   insurance_policy: ["tempo"],
   rain_check: ["tempo"],
+  absolution: ["tempo"],
+  benediction: ["multiplier"],
+  doxology: ["multiplier"],
   downbeat: ["tempo", "multiplier"],
   crunch_time: ["tempo", "multiplier"],
 };
