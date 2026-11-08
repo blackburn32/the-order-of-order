@@ -47,6 +47,15 @@ await cp(marketingRoot, outputRoot, {
   },
 });
 
+// Cloudflare's Workers Builds name the branch being built. A preview of any
+// branch but main gets the dev panel, so a pull request can be demoed with it;
+// the production deploy (main) and local builds never do.
+const ciBranch = process.env.WORKERS_CI_BRANCH;
+if (ciBranch && ciBranch !== "main" && !process.env.VITE_DEV_PANEL) {
+  process.env.VITE_DEV_PANEL = "true";
+  console.log(`Preview build of ${ciBranch}: dev panel on.`);
+}
+
 runNode("node_modules/vite/bin/vite.js", [
   "build",
   "--base=/game/",
