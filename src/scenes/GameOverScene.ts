@@ -74,8 +74,8 @@ export class GameOverScene extends Phaser.Scene {
     const state = getRun(this.registry);
     const W = this.scale.width;
     const H = this.scale.height;
-    // A first finished run, won or lost, is what opens Melodie: a loss is as
-    // good a moment as any to show her, and the only one the player gets.
+    // A novice opened by a deed is announced however the run ended: a loss is
+    // as good a moment as any to show them, and may be the only one.
     const frame = endScreenFrame(W, H, this.newCharacters);
     const cx = frame.cx;
 
