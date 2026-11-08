@@ -79,6 +79,9 @@ export interface DiceAgg {
   // summed over every scoring die
   sidesTotal: number; // the sides of every die in the grid, inert ones included
   vigil: VigilGroup[]; // the scoring dice carrying The Vigil's score counts
+  haloBonus?: number; // points The Halo added over what the scoring dice in its
+  // reach paid on their own (each ×4 per Halo; see systems/RadiusDice). Absent
+  // when no Halo went off, and always on a bucketed grid, which has no reach.
 }
 
 /** O(dice) bridge from the existing per-die array to a DiceAgg. Use this below
@@ -434,6 +437,19 @@ export function scoreRollHistogram(
       id: "ouroboros",
       name: "Ouroboros",
       points: BigInt(basePoints) * OUROBOROS_BONUS,
+      color: COLORS.goldLight,
+      dice: noDice,
+      bigPulse: true,
+      float: "aggregate",
+    });
+  }
+
+  // The Halo: the scoring dice in a firing Halo's reach pay ×4 apiece.
+  if ((agg.haloBonus ?? 0) > 0) {
+    modifiers.push({
+      id: "halo",
+      name: "The Halo",
+      points: BigInt(agg.haloBonus!),
       color: COLORS.goldLight,
       dice: noDice,
       bigPulse: true,

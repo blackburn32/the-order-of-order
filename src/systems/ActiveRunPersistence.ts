@@ -9,8 +9,13 @@ import type { TrialEndOutcome } from "../sim/engine";
 import { AFFLICTIONS, type AfflictionId } from "./Afflictions";
 import { BOSS_MODIFIERS } from "./Boss";
 import { ENDINGS, type EndingId } from "./Endings";
-import { CHARACTERS, DEFAULT_CHARACTER, isCharacterId } from "./Characters";
-import { DIE_LADDER } from "./Dice";
+import {
+  CHARACTERS,
+  DEFAULT_CHARACTER,
+  isCharacterDeed,
+  isCharacterId,
+} from "./Characters";
+import { DIE_SIZES } from "./Dice";
 import { DicePool, type DiceStack } from "./DicePool";
 import { ITEMS, type ShopItemId } from "./Items";
 import { isDailyBoonId, isDailyDay, type DailyRite } from "./Daily";
@@ -145,7 +150,7 @@ const bossIds: ReadonlySet<string> = new Set(
 );
 const afflictionIds: ReadonlySet<string> = new Set(Object.keys(AFFLICTIONS));
 const endingIds: ReadonlySet<string> = new Set(ENDINGS.map((e) => e.id));
-const dieSides = new Set<number>(DIE_LADDER);
+const dieSides = new Set<number>(DIE_SIZES);
 const packIds = new Set([
   "common_pack",
   "uncommon_pack",
@@ -350,6 +355,10 @@ export function hydrateRunState(value: unknown): RunState | null {
   } else {
     hydrated.character = value.character;
   }
+
+  // Deeds are kept only as this build knows them; one it does not is dropped
+  // rather than failing a run that is otherwise fine to resume.
+  hydrated.deeds = hydrated.deeds.filter(isCharacterDeed);
 
   const score = parseBigInt(value.score);
   const trialScore = parseBigInt(value.trialScore);

@@ -97,7 +97,7 @@ const SCORE_RE = /^\d+$/;
  *  does not know is one no client can render. A submission carrying one is not
  *  rejected — the run is real and the board should hold it — it is simply
  *  recorded as the default, exactly as a client too old to send one is. */
-const CHARACTERS = ["diebert", "melodie", "roland"] as const;
+const CHARACTERS = ["diebert", "melodie", "roland", "dieanne"] as const;
 const DEFAULT_CHARACTER = "diebert";
 
 function readCharacter(params: URLSearchParams): string {

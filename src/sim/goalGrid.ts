@@ -27,7 +27,7 @@
 //   GRID_POOLS       all,none (default all — the fully unlocked shop)
 //   GRID_APPETITES   curse appetites (default 0,0.5,1). The player bot refuses
 //                    every curse by rule, so it gets one point, not three.
-//   GRID_CHARACTERS  diebert,melodie,roland (default diebert)
+//   GRID_CHARACTERS  diebert,melodie,roland,dieanne (default diebert)
 //   SIM_WORKERS      worker threads (default cores - 1, at most 8)
 //
 // The grid is run through worker threads by `runGrid`; `goalGridWorker.mjs`

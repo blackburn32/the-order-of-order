@@ -7,6 +7,9 @@ import { loadSettings } from "../systems/SaveData";
 import diebertUrl from "../../images/characters/diebert-game.webp";
 import melodieUrl from "../../images/characters/melodie-game.webp";
 import rolandUrl from "../../images/characters/roland-game.webp";
+// Drawn as vector art (images/characters/dieanne.svg) rather than painted like
+// the other three, so its game cut is exported from that file directly.
+import dieanneUrl from "../../images/characters/dieanne-game.webp";
 import { restoreActiveRun } from "../systems/ActiveRunPersistence";
 
 /**
@@ -42,6 +45,7 @@ export class BootScene extends Phaser.Scene {
     this.load.image("character-diebert", diebertUrl);
     this.load.image("character-melodie", melodieUrl);
     this.load.image("character-roland", rolandUrl);
+    this.load.image("character-dieanne", dieanneUrl);
   }
 
   create(): void {

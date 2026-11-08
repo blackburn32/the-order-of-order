@@ -4,7 +4,7 @@
 //
 // Flags (all optional; defaults from src/sim/config.ts):
 //   --runs=N       runs per strategy
-//   --character=ID the novice every run is played as (diebert|melodie|roland)
+//   --character=ID the novice every run is played as (diebert|melodie|roland|dieanne)
 //   --seed=N     base RNG seed (reproducible)
 //   --out=path   output HTML path (default sim-out/report.html)
 //   SIM_WORKERS=N overrides the default bounded CPU worker count (use 1 for serial)

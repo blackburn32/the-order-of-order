@@ -1,4 +1,5 @@
 import { ANVIL_SIZE, isVoiceDie } from "./Dice";
+import { radiusKindOf } from "./RadiusDice";
 
 /**
  * The per-die effects a die can carry, in the order they are drawn and listed.
@@ -17,6 +18,9 @@ export const DIE_EFFECTS = [
   "windfall2", // Rollplayer: highest face scores and doubles the roll
   "ascension", // Ascension: highest face always scores
   "royalSeal", // Royal Seal: highest face scores its own value
+  "halo", // The Halo: highest face makes the dice around it score ×4
+  "grace", // Grace: highest face rolls the dice around it that missed again
+  "censer", // The Censer: highest face turns the specials around it to theirs
   "voice", // A New Voice: scores when no other die shows its face
   "wild", // Contentment: scores on every face
   "loaded", // The Vow: never rolls its two highest faces
@@ -53,6 +57,9 @@ export function dieEffects(
     windfall2: die.maxFaceBonus > 1 && die.maxFaceBonus < 4,
     ascension: die.maxFaceBonus === 1,
     royalSeal: auras.royalSealSizes?.includes(die.sides) ?? false,
+    halo: radiusKindOf(die) === "halo",
+    grace: radiusKindOf(die) === "grace",
+    censer: radiusKindOf(die) === "censer",
     voice: isVoiceDie(die),
     wild: die.wildFace,
     loaded: die.loaded,
@@ -74,6 +81,9 @@ export const DIE_EFFECT_LABEL: Record<DieEffect, string> = {
   windfall2: "×2 on max",
   ascension: "Max always scores",
   royalSeal: "Max scores its face",
+  halo: "Max: ×4 around it",
+  grace: "Max: rerolls misses around it",
+  censer: "Max: sets off specials around it",
   voice: "Scores when alone",
   wild: "Scores on every face",
   loaded: "Never rolls top two",
@@ -90,6 +100,11 @@ export const DIE_EFFECT_DETAIL: Record<DieEffect, string> = {
   ascension: "Its highest face always scores.",
   royalSeal:
     "Its highest face scores its own value. Every die of this size has it.",
+  halo: "On its highest face, every die within two of it that scores, scores ×4.",
+  grace:
+    "On its highest face, every die within two of it that missed, itself included, rolls once more.",
+  censer:
+    "On its highest face, every die within two of it with a highest-face power turns to that face.",
   voice: "Scores whenever no other die shows the same face.",
   wild: "Scores on every face it rolls.",
   loaded: "Never rolls its two highest faces.",
@@ -103,6 +118,9 @@ export const DIE_EFFECT_SOURCE: Record<DieEffect, string> = {
   windfall2: "rollplayer",
   ascension: "ascension",
   royalSeal: "royal_seal",
+  halo: "the_halo",
+  grace: "the_grace",
+  censer: "the_censer",
   voice: "a_new_voice",
   wild: "wild_face",
   loaded: "loaded_die",

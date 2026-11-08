@@ -55,7 +55,7 @@ const NUMERAL_LIFT_D6 = 0;
 /**
  * Draw one die body into `g`, in a 96x96 box with its top-left at the origin,
  * shaped by side count so the grid reads at a glance: d1/d2 coin, d4 triangle,
- * d6 square, d8/d10 octagon, d20+ hex.
+ * d6 square, d8/d10 octagon, d12 pentagon, d20+ hex.
  *
  * A die carrying per-die effects (see `systems/DieEffects`) swaps its ivory for
  * each effect's shade and texture — one vertical slice of the body per effect,
@@ -141,6 +141,8 @@ export function dieOutline(sides: number): Phaser.Math.Vector2[] {
   if (sides === 6) return roundedRectPoints(0, 0, 96, 96, 18);
   if (sides === 8 || sides === 10)
     return polygonPoints(DIE_CENTER, 40, 40, 8, -90 - 22.5);
+  // The d12's face is a pentagon, point up.
+  if (sides === 12) return polygonPoints(DIE_CENTER, 45, 45, 5, -90);
   return polygonPoints(DIE_CENTER, 40, 43, 6, 0);
 }
 
@@ -181,7 +183,10 @@ type Pattern =
   | "checks"
   | "bars"
   | "chevrons"
-  | "columns";
+  | "columns"
+  | "rings"
+  | "sparkles"
+  | "crosses";
 
 /**
  * What each effect looks like: a shade laid over the body and a texture drawn
@@ -199,6 +204,10 @@ export const DIE_EFFECT_STYLE: Record<
   windfall2: { color: 0xe8c040, pattern: "stripes" },
   ascension: { color: 0xf7e39a, pattern: "rays" },
   royalSeal: { color: 0xd9556a, pattern: "dots" },
+  // The radius dice wear their circle's colour (systems/RadiusDice).
+  halo: { color: 0x7fe3f0, pattern: "rings" },
+  grace: { color: 0xf28cc0, pattern: "sparkles" },
+  censer: { color: 0xb48cff, pattern: "crosses" },
   voice: { color: 0x6fa8e6, pattern: "waves" },
   wild: { color: 0x72c66c, pattern: "checks" },
   loaded: { color: 0x9aa6b4, pattern: "bars" },
@@ -243,6 +252,7 @@ function platesFor(sides: number): Pt[][] {
     ];
   if (sides === 8 || sides === 10)
     return [ellipsePoints(DIE_CENTER, cy, 28, 23)];
+  if (sides === 12) return [ellipsePoints(DIE_CENTER, cy + 2, 25, 21)];
   return [ellipsePoints(DIE_CENTER, cy, 31, 23)];
 }
 
@@ -390,6 +400,56 @@ function patternShapes(pattern: Pattern): Pt[][] {
       break;
     case "columns":
       for (let x = 3; x < 100; x += 14) shapes.push(rect(x, -4, 5, 104));
+      break;
+    case "rings": {
+      // Concentric rings about the die's centre, each a run of short convex
+      // quads like a wave line: the reach of the die drawn on its body.
+      const steps = 36;
+      for (let r = 10; r < 80; r += 13)
+        for (let i = 0; i < steps; i++) {
+          const a0 = (Math.PI * 2 * i) / steps;
+          const a1 = (Math.PI * 2 * (i + 1)) / steps;
+          const at = (a: number, rr: number) => ({
+            x: DIE_CENTER + Math.cos(a) * rr,
+            y: DIE_CENTER + Math.sin(a) * rr,
+          });
+          shapes.push([
+            at(a0, r - 2.4),
+            at(a1, r - 2.4),
+            at(a1, r + 2.4),
+            at(a0, r + 2.4),
+          ]);
+        }
+      break;
+    }
+    case "sparkles":
+      // Four-pointed stars, as two thin diamonds each.
+      for (let row = 0; row * 18 < 112; row++) {
+        const y = row * 18 + 4;
+        for (let x = row % 2 ? 9 : 0; x < 106; x += 18) {
+          shapes.push([
+            { x, y: y - 6.5 },
+            { x: x + 1.8, y },
+            { x, y: y + 6.5 },
+            { x: x - 1.8, y },
+          ]);
+          shapes.push([
+            { x: x - 6.5, y },
+            { x, y: y - 1.8 },
+            { x: x + 6.5, y },
+            { x, y: y + 1.8 },
+          ]);
+        }
+      }
+      break;
+    case "crosses":
+      for (let row = 0; row * 16 < 112; row++) {
+        const y = row * 16 + 2;
+        for (let x = row % 2 ? 8 : 0; x < 106; x += 16) {
+          shapes.push(rect(x - 1.6, y - 4.5, 3.2, 9));
+          shapes.push(rect(x - 4.5, y - 1.6, 9, 3.2));
+        }
+      }
       break;
     case "chevrons":
       // Pointing down: the weight under a ballasted die.

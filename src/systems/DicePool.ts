@@ -22,8 +22,16 @@ import {
   isVoiceDie,
   makeDie,
   rollDie,
+  sizeAbove,
+  sizeBelow,
   windfallFactor,
 } from "./Dice";
+import {
+  HALO_FACTOR,
+  gridColumnsFor,
+  resolveRadius,
+  type RadiusReport,
+} from "./RadiusDice";
 import {
   addScores,
   groupScores,
@@ -260,6 +268,12 @@ export class DicePool {
   // Faces the last breakage pass destroyed (a die's faces are its sides), for
   // The Pyre; and the dice The Multitude paired on the last Curious pass.
   private _lastBrokenFaces = 0;
+  /** The shape of the frame the grid is shown in (width / height), which sets
+   *  how many columns it is laid out in — and so which dice a radius die
+   *  reaches. The table sets it as it lays the grid out; a headless grid
+   *  (the sim) keeps a square frame. */
+  private _gridAspect = 1;
+  private lastRadius_: RadiusReport | null = null;
   private _lastPairs = 0;
 
   private constructor() {}
@@ -406,6 +420,8 @@ export class DicePool {
     copy.rollVersion = this.rollVersion;
     copy._lastBrokenFaces = this._lastBrokenFaces;
     copy._lastPairs = this._lastPairs;
+    copy._gridAspect = this._gridAspect;
+    copy.lastRadius_ = this.lastRadius_;
     if (this.roll_) {
       const agg = this.roll_.agg;
       copy.roll_ = {
@@ -572,11 +588,35 @@ export class DicePool {
     let faceValueBonus = 0;
     let sidesTotal = 0;
 
+    let haloBonus = 0;
+    this.lastRadius_ = null;
     if (this.mode === "list") {
+      // Every die rolls, inert or not — the grid shows a face on all of them.
+      for (const die of this.list)
+        rollDie(die, rng, ballast.has(die.sides), faceFloor(die.sides, anvil));
+      // Then the radius dice reach out to their neighbours, before anything
+      // reads a face: the Censer and Grace change faces, and the Halo
+      // multiplies what the dice it reaches go on to score.
+      const scoresAsIs = (die: Die) =>
+        (scales ? die.value * 2 > die.sides : scoring.has(die.value)) ||
+        die.wildFace ||
+        (die.maxFaceBonus > 0 && !die.loaded && die.value === die.sides) ||
+        (!scales && sealed.has(die.sides) && die.value === die.sides);
+      const radius = resolveRadius(this.list, this.radiusCols, inert, {
+        scores: scoresAsIs,
+        topSpecial: (die) =>
+          die.maxFaceBonus > 0 || (!scales && sealed.has(die.sides)),
+        reroll: (die) =>
+          rollDie(
+            die,
+            rng,
+            ballast.has(die.sides),
+            faceFloor(die.sides, anvil),
+          ),
+      });
+      this.lastRadius_ = radius;
       for (let k = 0; k < this.list.length; k++) {
         const die = this.list[k];
-        // Every die rolls, inert or not — the grid shows a face on all of them.
-        rollDie(die, rng, ballast.has(die.sides), faceFloor(die.sides, anvil));
         // A die's size is a fact about the grid rather than about the roll, so
         // the inert head still counts toward Uniform and the rest of `allSizes`.
         allSizes.add(die.sides);
@@ -601,6 +641,16 @@ export class DicePool {
           );
           if (scales) faceValueBonus += die.value - 1;
           groupScores(vigil, die.scores, 1);
+          const haloes = radius?.halo.get(k) ?? 0;
+          if (haloes > 0) {
+            // What this die pays on its own — its point, and the face a seal
+            // or The Scales adds to it — paid again for each ×4 over one.
+            const own =
+              1 +
+              (scales ? die.value - 1 : 0) +
+              (royalSealHit ? die.sides - 1 : 0);
+            haloBonus += own * (HALO_FACTOR ** haloes - 1);
+          }
           if (die.sides === 1) scoringD1Count += 1;
           if (numberScores && die.value !== 1) {
             if (!scales) extraNumberScoringCount += 1;
@@ -738,6 +788,7 @@ export class DicePool {
         faceValueBonus,
         sidesTotal,
         vigil: [...vigil.values()],
+        ...(haloBonus > 0 ? { haloBonus } : {}),
       },
       scoringBySource,
       windfallTriggers,
@@ -758,6 +809,42 @@ export class DicePool {
    *  factor), for crediting the multiplier to Rollplayer / Centurion. */
   windfallTriggers(): Map<number, bigint> {
     return this.roll_?.windfallTriggers ?? new Map();
+  }
+
+  /** Whether any die in the grid — or any bucket of them — passes `pred`. */
+  someDie(
+    pred: (die: {
+      sides: number;
+      maxFaceBonus: number;
+      loaded: boolean;
+      wildFace: boolean;
+      source: string;
+    }) => boolean,
+  ): boolean {
+    return this.mode === "list"
+      ? this.list.some(pred)
+      : this.buckets.some((b) => b.count > 0 && pred(b));
+  }
+
+  /** What the radius dice did on the last roll, or null when none went off
+   *  (or the grid is bucketed, where dice have no place to reach from). */
+  lastRadius(): RadiusReport | null {
+    return this.lastRadius_;
+  }
+
+  /** Set the shape of the frame the grid is laid out in (width / height). */
+  setGridAspect(aspect: number): void {
+    if (Number.isFinite(aspect) && aspect > 0) this._gridAspect = aspect;
+  }
+
+  get gridAspect(): number {
+    return this._gridAspect;
+  }
+
+  /** How many columns the grid is laid out in, which is what a radius die's
+   *  reach is measured across. */
+  get radiusCols(): number {
+    return gridColumnsFor(this._count, this._gridAspect);
   }
 
   /** Largest number of dice that showed the same face on the last roll (drives
@@ -1098,27 +1185,22 @@ export class DicePool {
   }
 
   private stepUp(die: Die): void {
-    const i = DIE_LADDER.indexOf(die.sides);
-    if (i >= 0 && i < DIE_LADDER.length - 1) {
-      die.sides = DIE_LADDER[i + 1];
-      die.value = die.sides;
-    }
+    if (die.sides >= 100) return;
+    die.sides = sizeAbove(die.sides);
+    die.value = die.sides;
   }
 
   private stepDown(die: Die): void {
-    const i = DIE_LADDER.indexOf(die.sides);
-    if (i > 0) {
-      die.sides = DIE_LADDER[i - 1];
-      die.value = die.sides;
-    }
+    if (die.sides <= 1) return;
+    die.sides = sizeBelow(die.sides);
+    die.value = die.sides;
   }
 
   private shrinkOneFromBucket(b: Bucket): void {
-    const i = DIE_LADDER.indexOf(b.sides);
-    if (i <= 0) return;
+    if (b.sides <= 1) return;
     b.count -= 1;
     this.addBucket(
-      DIE_LADDER[i - 1],
+      sizeBelow(b.sides),
       b.maxFaceBonus,
       b.loaded,
       b.wildFace,
@@ -1240,9 +1322,7 @@ export class DicePool {
       const old = this.buckets;
       this.buckets = [];
       for (const b of old) {
-        const i = DIE_LADDER.indexOf(b.sides);
-        const sides =
-          i >= 0 && i < DIE_LADDER.length - 1 ? DIE_LADDER[i + 1] : b.sides;
+        const sides = sizeAbove(b.sides);
         this.addBucket(
           sides,
           b.maxFaceBonus,
@@ -1629,8 +1709,7 @@ export class DicePool {
       const old = this.buckets;
       this.buckets = [];
       for (const b of old) {
-        const i = DIE_LADDER.indexOf(b.sides);
-        const sides = i > 0 ? DIE_LADDER[i - 1] : b.sides;
+        const sides = sizeBelow(b.sides);
         this.addBucket(
           sides,
           b.maxFaceBonus,
@@ -1784,8 +1863,7 @@ export class DicePool {
   /** Shrink every die of `sides` down `steps` rungs. Returns how many moved. */
   shrinkAllOfSize(sides: DieSides, steps: number): number {
     if (sides <= 1) return 0;
-    const i = DIE_LADDER.indexOf(sides);
-    const target = DIE_LADDER[Math.max(0, i - steps)];
+    const target = sizeBelow(sides, steps);
     if (target === sides) return 0;
     if (this.mode === "list") {
       let n = 0;
@@ -1820,9 +1898,8 @@ export class DicePool {
   /** Grow every die of `sides` up `steps` rungs (Exaltation). Returns how many
    *  moved. */
   growAllOfSize(sides: DieSides, steps: number): number {
-    const i = DIE_LADDER.indexOf(sides);
-    if (i < 0 || !canGrow({ sides })) return 0;
-    const target = DIE_LADDER[Math.min(DIE_LADDER.length - 1, i + steps)];
+    if (!canGrow({ sides })) return 0;
+    const target = sizeAbove(sides, steps);
     if (this.mode === "list") {
       let n = 0;
       for (const d of this.list)
@@ -1930,6 +2007,22 @@ export class DicePool {
     if (from === to) return true;
     const [die] = this.list.splice(from, 1);
     this.list.splice(to, 0, die);
+    return true;
+  }
+
+  /** Lay the grid out in a new order: `order[k]` is the grid index of the die
+   *  that should stand at index k. The headless player's version of moving
+   *  dice by hand (see sim/arrange). False, and nothing moved, for a grid that
+   *  is not `reorderable` or an order that is not a permutation of it. */
+  arrange(order: readonly number[]): boolean {
+    if (!this.reorderable || order.length !== this.list.length) return false;
+    const seen = new Set<number>();
+    for (const i of order) {
+      if (!Number.isInteger(i) || i < 0 || i >= this.list.length || seen.has(i))
+        return false;
+      seen.add(i);
+    }
+    this.list = order.map((i) => this.list[i]);
     return true;
   }
 

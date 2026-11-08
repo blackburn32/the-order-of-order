@@ -16,7 +16,7 @@ import {
   type AfflictionId,
 } from "../systems/Afflictions";
 import { bossesForRank, goalFor } from "../systems/Boss";
-import { CHARACTERS, sizeWeights } from "../systems/Characters";
+import { CHARACTERS, noteDeeds, sizeWeights } from "../systems/Characters";
 import type { DicePool } from "../systems/DicePool";
 import { createRival, playerLeadsDuel, rollRival } from "../systems/Rival";
 import {
@@ -371,6 +371,8 @@ export function resolveRoll(
   // is the whole of what the storm is for. The duel's mirror is scrambled with
   // it, from the same stream, so the two grids stay each other's copy.
   applySizeStorm(state, rng);
+  // Whatever this roll left the grid showing that opens a character.
+  noteDeeds(state);
 
   // The run's timeline, taken last so the sample carries the grid the player is
   // actually left looking at — everything this roll grew, shattered or culled.

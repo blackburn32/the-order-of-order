@@ -1,10 +1,12 @@
 import { STARTING_DICE } from "../config";
 import { makeDie, DieSides } from "../systems/Dice";
 import { DicePool } from "../systems/DicePool";
+import { radiusKindOf } from "../systems/RadiusDice";
 import type { BossModifierId } from "../systems/Boss";
 import {
   CHARACTERS,
   DEFAULT_CHARACTER,
+  type CharacterDeed,
   type CharacterId,
 } from "../systems/Characters";
 import type { AfflictionId } from "../systems/Afflictions";
@@ -27,6 +29,15 @@ export interface RunState {
   // DEFAULT_CHARACTER, whose rules are the game as it was — an in-progress run
   // must never have a rule added to it underneath the player.
   character: CharacterId;
+  // Deeds this run has done that open a character (see systems/Characters),
+  // kept for good when the run ends.
+  deeds: CharacterDeed[];
+  // The "hold a die to move it" tip, owed once a run gains a die that wants
+  // placing (a radius die, systems/RadiusDice). It shows on the felt for one
+  // trial, until the player picks a die up, and at most once a run.
+  // `moveTipTrial` is the trial it showed on, 0 until it has.
+  moveTipOwed: boolean;
+  moveTipTrial: number;
   // Ladder position. `trial` runs straight through the whole run (1..30 for the
   // ten ranks, then 31+ in endless); rank and trial-within-rank are derived
   // from it by config's rankOf/trialInRank rather than stored.
@@ -294,6 +305,10 @@ export function newRun(
   const who = CHARACTERS[character];
   return {
     character,
+    deeds: [],
+    // Dieanne's Grace is a die to place from the first trial.
+    moveTipOwed: !!who.startingDie && radiusKindOf(who.startingDie) !== null,
+    moveTipTrial: 0,
     trial: 1,
     endless: false,
     roll: 0,
@@ -310,7 +325,12 @@ export function newRun(
     goldSpent: 0,
     trialRollGold: { titheBowl: 0, luckyCoin: 0, offering: 0 },
     dice: DicePool.fromDice(
-      Array.from({ length: STARTING_DICE }, () => makeDie(6)),
+      Array.from({ length: STARTING_DICE }, (_, i) =>
+        // A character's own starting die stands first; any others are plain.
+        i === 0 && who.startingDie
+          ? makeDie(who.startingDie.sides, {}, who.startingDie.source)
+          : makeDie(6),
+      ),
       who.gridCeiling,
     ),
     scoringNumbers: [1],

@@ -1,3 +1,5 @@
+import { noteDeeds } from "./Characters";
+import { radiusKindOf } from "./RadiusDice";
 import { RunState } from "../state/RunState";
 import {
   afflictionsFor,
@@ -870,6 +872,12 @@ export function applyOffer(
   // A card that grew the grid may have pushed it past a cap affliction; the
   // ceiling holds between rolls as well as during them.
   enforceGridCap(state);
+  // A shrink card may just have taken a Centurion down to a d1.
+  noteDeeds(state);
+  // A radius die is worth where it stands: owe the tip that dice can be moved
+  // (see GameScene's grid hints), once a run.
+  if (radiusKindOf({ source: def.id }) && state.moveTipTrial === 0)
+    state.moveTipOwed = true;
   return true;
 }
 

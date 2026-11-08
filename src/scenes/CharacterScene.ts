@@ -3,6 +3,7 @@ import { CSS, SERIF } from "../art/palette";
 import {
   CHARACTER_ORDER,
   characterUnlocked,
+  type CharacterDeed,
   type CharacterId,
 } from "../systems/Characters";
 import { charactersBeaten, loadProgress } from "../systems/SaveData";
@@ -58,6 +59,7 @@ export class CharacterScene extends Phaser.Scene {
   private slideBackdrop: Phaser.GameObjects.GameObject[] = [];
   private beaten: CharacterId[] = [];
   private runsFinished = 0;
+  private deeds: CharacterDeed[] = [];
 
   constructor() {
     super("Character");
@@ -68,7 +70,9 @@ export class CharacterScene extends Phaser.Scene {
     // Read once per visit rather than per rebuild: a resize must not re-read
     // storage, and nothing can win a run while this screen is open.
     this.beaten = charactersBeaten();
-    this.runsFinished = loadProgress().gamesCompleted;
+    const progress = loadProgress();
+    this.runsFinished = progress.gamesCompleted;
+    this.deeds = progress.deeds;
     responsive(this, () => this.build());
     slideSceneIn(this, this.slideBackdrop);
   }
@@ -160,7 +164,12 @@ export class CharacterScene extends Phaser.Scene {
     y: number,
     scale: number,
   ): void {
-    const locked = !characterUnlocked(id, this.beaten, this.runsFinished);
+    const locked = !characterUnlocked(
+      id,
+      this.beaten,
+      this.runsFinished,
+      this.deeds,
+    );
     const card = buildCharacterCard(this, id, { locked, displayScale: scale });
     card.setPosition(x, y);
     card.setSize(CHARACTER_CARD_W * scale, CHARACTER_CARD_H * scale);

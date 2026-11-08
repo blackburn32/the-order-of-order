@@ -65,6 +65,7 @@ export const DIE_BORDER: Record<number, number> = {
   6: 0xc9a227,
   8: 0xb07830,
   10: 0xa4552f,
+  12: 0x7a3f5e,
   20: 0x8a1f2b,
   100: 0x5e3a72,
 };

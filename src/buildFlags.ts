@@ -28,3 +28,9 @@ export const GOLD_BORDER = flag(env.VITE_GOLD_BORDER);
 
 /** Whether this bundle is intended for the Capacitor phone app. */
 export const PHONE_BUILD = flag(env.VITE_PHONE_BUILD);
+
+/** Whether the dev panel (src/dev/DevPanel) ships in a production bundle. It
+ *  is always there under `vite dev`; this turns it on for the Cloudflare
+ *  preview builds of branches other than main, so a pull request can be
+ *  demoed with it. The production site never sets it. */
+export const DEV_PANEL = flag(env.VITE_DEV_PANEL);

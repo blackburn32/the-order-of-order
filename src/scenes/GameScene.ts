@@ -95,6 +95,8 @@ import {
   getTutorial,
   gridHintText,
   markGridHintDone,
+  markMoveTipDone,
+  markMoveTipShown,
   pendingGridHints,
   tutorialBlocksScore,
   tutorialForcesRoll,
@@ -131,6 +133,7 @@ import {
   dieInSlotWhileMoving,
   GRID_WHEEL_ZOOM_RATE,
   GridFocus,
+  gridAspectOf,
   slotWhileMoving,
   gridDetailLevel,
   GridDetailLevel,
@@ -138,6 +141,16 @@ import {
   Viewport,
   WindowedView,
 } from "../ui/windowedGrid";
+import {
+  RADIUS_STAGGER_MS,
+  RadiusRings,
+  type RadiusCircle,
+} from "../ui/radiusRings";
+import {
+  RADIUS_DICE,
+  radiusKindOf,
+  type RadiusReport,
+} from "../systems/RadiusDice";
 
 // The HUD strip. Adding an entry here is all it takes: computeLayout sizes the
 // cells proportionally by `weight`, and buildHud/makePlaque draw them. RANK
@@ -647,6 +660,11 @@ export class GameScene extends Phaser.Scene {
    *  spotlight, sigil bursts. See playFlourishes. */
   private flourishes: Flourish[] = [];
   private flourishTimers: Phaser.Time.TimerEvent[] = [];
+  // The radius dice's circles (see ui/radiusRings), and the faces a firing
+  // has yet to turn: a die Grace rolled again or a Censer turned up shows the
+  // face it first landed on until its circle reaches it.
+  private radiusRings?: RadiusRings;
+  private radiusFlips: { index: number; timer: Phaser.Time.TimerEvent }[] = [];
   private finishEffects?: (skipHold: boolean) => void;
   private pendingAdvance?: Phaser.Time.TimerEvent;
   private hudRank!: Phaser.GameObjects.Text;
@@ -768,6 +786,16 @@ export class GameScene extends Phaser.Scene {
     this.diceContainer = this.add.container(0, 0);
     this.cardContainer = this.add.container(0, 0);
     this.gridContainer.add([this.diceContainer, this.cardContainer]);
+    this.radiusRings = new RadiusRings(
+      this,
+      this.gridContainer,
+      this.diceContainer,
+      (objects) => {
+        this.cameras.main.ignore(objects);
+        this.overlayCamera?.ignore(objects);
+      },
+    );
+    this.radiusFlips = [];
     // Recreated each build: routes new banners through the overlay camera so
     // they composite above the windowed grid, just like other popups.
     this.notice = undefined;
@@ -824,6 +852,7 @@ export class GameScene extends Phaser.Scene {
    */
   override update(time: number, delta: number): void {
     this.carryHeldDie(delta);
+    this.drawRadiusRings();
     if (!this.tumbling || !fx.motion) return;
     const elapsed = (time - this.tumbleStartedAt) / 1000;
     for (const sprite of this.sprites.values()) sprite.tumbleTo(elapsed);
@@ -944,7 +973,9 @@ export class GameScene extends Phaser.Scene {
       12,
       16,
     );
-    return pendingGridHints(this.state).map((hint, i) => {
+    const hints = pendingGridHints(this.state);
+    if (hints.includes("move")) markMoveTipShown(this.state);
+    return hints.map((hint, i) => {
       const text = this.add
         .text(
           frame.x + frame.width - inset,
@@ -969,6 +1000,7 @@ export class GameScene extends Phaser.Scene {
    *  rather than by the viewport moving, since a single die can leave the grid
    *  nowhere to go. */
   private noteGridGesture(kind: GridHint): void {
+    if (kind === "move") markMoveTipDone(this.state);
     const text = this.gridHints.get(kind);
     if (!text) return;
     this.gridHints.delete(kind);
@@ -1791,6 +1823,10 @@ export class GameScene extends Phaser.Scene {
     // somewhere they did not choose.
     this.cancelHeldDie();
     this.layout = layout;
+    // The radius dice reach across the columns the grid is laid out in, which
+    // follow the shape of its frame — so the pool is told that shape here,
+    // where the layout the player sees is decided.
+    this.state.dice.setGridAspect(gridAspectOf(layout.gridFrame));
     // Flourishes are drawn against the cells of the layout being replaced.
     this.clearFlourishes();
     const n = this.state.dice.length;
@@ -2841,6 +2877,112 @@ export class GameScene extends Phaser.Scene {
     this.flourishes = [];
     for (const timer of this.flourishTimers) timer.remove();
     this.flourishTimers = [];
+    this.radiusRings?.clearEffects();
+    // A face still waiting on its circle lands at once.
+    const flips = this.radiusFlips;
+    this.radiusFlips = [];
+    for (const flip of flips) {
+      flip.timer.remove();
+      this.showDieFace(flip.index);
+    }
+  }
+
+  /** Show the face the die at `index` really shows. */
+  private showDieFace(index: number): void {
+    const sprite = this.sprites.get(index);
+    const die = this.state.dice.dieAt(index);
+    if (sprite && die) sprite.showFace(die.value);
+  }
+
+  /** Where each radius die's circle is centred right now: on its sprite where
+   *  it has one — so a carried die drags its circle with it, and a reflow
+   *  slides it — and on its cell otherwise. Empty at card detail and on a
+   *  bucketed grid, where no die has a place of its own. */
+  private radiusCircles(): RadiusCircle[] {
+    const view = this.gridView;
+    const pool = this.state?.dice;
+    if (!view || !pool || pool.bucketed || this.gridDetail === "cards")
+      return [];
+    const circles: RadiusCircle[] = [];
+    const n = pool.length;
+    for (let index = 0; index < n; index++) {
+      const die = pool.dieAt(index);
+      const kind = die ? radiusKindOf(die) : null;
+      if (!kind) continue;
+      const sprite = this.sprites.get(index);
+      const at = sprite ?? cellCenter(view, index);
+      circles.push({ index, kind, x: at.x, y: at.y });
+    }
+    return circles;
+  }
+
+  private drawRadiusRings(): void {
+    const rings = this.radiusRings;
+    const view = this.gridView;
+    if (!rings || !view) return;
+    const cam = this.gridCamera;
+    rings.draw(
+      this.radiusCircles(),
+      view.cell,
+      cam ? cameraZoom(cam) : view.zoom,
+    );
+  }
+
+  /**
+   * Play what the radius dice did on this roll (see systems/RadiusDice): each
+   * one that went off sweeps its circle out in firing order — Censers, then
+   * Grace, then Halos — and a die Grace rolled again, or a Censer turned up,
+   * shows the face it first landed on until the circle that changed it
+   * arrives.
+   */
+  private playRadius(report: RadiusReport | null): void {
+    const rings = this.radiusRings;
+    const view = this.gridView;
+    if (!report || !rings || !view || !fx.on) return;
+    const zoom = this.gridCamera ? cameraZoom(this.gridCamera) : view.zoom;
+    const firedAt = new Map<number, number>();
+    report.fired.forEach((firing, order) => {
+      const delay = order * RADIUS_STAGGER_MS;
+      firedAt.set(firing.index, delay);
+      const sprite = this.sprites.get(firing.index);
+      const at = sprite ?? cellCenter(view, firing.index);
+      rings.fire(
+        { index: firing.index, kind: firing.kind, x: at.x, y: at.y },
+        view.cell,
+        zoom,
+        delay,
+      );
+      if (sprite && fx.motion)
+        sprite.pulseEffects([RADIUS_DICE[firing.kind].color], true);
+    });
+    // The die that changed it is the first circle of its kind to reach it.
+    const changedBy = (index: number, kind: "censer" | "grace"): number => {
+      for (const f of report.fired)
+        if (f.kind === kind && (f.index === index || f.reach.includes(index)))
+          return firedAt.get(f.index) ?? 0;
+      return 0;
+    };
+    const flips = [
+      ...report.stirred.map((s) => ({ ...s, kind: "censer" as const })),
+      ...report.rerolled.map((r) => ({ ...r, kind: "grace" as const })),
+    ];
+    const seen = new Set<number>();
+    for (const flip of flips) {
+      // A die both turned up and rolled again starts from its first face.
+      if (seen.has(flip.index)) continue;
+      seen.add(flip.index);
+      const sprite = this.sprites.get(flip.index);
+      if (!sprite) continue;
+      sprite.showFace(flip.from);
+      const delay = changedBy(flip.index, flip.kind) + 320;
+      const timer = this.time.delayedCall(delay, () => {
+        this.radiusFlips = this.radiusFlips.filter((f) => f.timer !== timer);
+        this.showDieFace(flip.index);
+        const live = this.sprites.get(flip.index);
+        if (live && fx.motion) live.pulseEffects([0xffffff], false);
+      });
+      this.radiusFlips.push({ index: flip.index, timer });
+    }
   }
 
   /** A die's drawn edge length in grid-world units: every sprite in a layout
@@ -3969,6 +4111,8 @@ export class GameScene extends Phaser.Scene {
     // Score the roll and grow the grid (Genesis / Double the Fun) — all state
     // mutation lives in the shared engine so the sim can't drift from the game.
     const rolledAgg = s.dice.agg();
+    // Read before the roll's passives can reshape the grid under it.
+    const radiusReport = s.dice.lastRadius();
     const {
       result,
       spawnedCount,
@@ -4080,22 +4224,24 @@ export class GameScene extends Phaser.Scene {
                   ? (s.dice.agg().valueCounts.get(die.value) ?? 0) >= 2
                   : id === "jackpot"
                     ? scoring
-                    : id === "windfall"
-                      ? windfall
-                      : id === "royalSeal"
-                        ? royalSeal
-                        : id === "luckySeven"
-                          ? String(die.value).includes("7")
-                          : id === "aNewVoice"
-                            ? lone && !scoring && isVoiceDie(die)
-                            : id === "counterpoint"
-                              ? lone &&
-                                !rolledAgg.scoringValueCounts.get(die.value)
-                              : id === "canticle" || id === "choirmaster"
-                                ? lone
-                                : id === "parade"
-                                  ? die.value >= 1 && die.value <= 3
-                                  : false;
+                    : id === "halo"
+                      ? scoring && (radiusReport?.halo.has(index) ?? false)
+                      : id === "windfall"
+                        ? windfall
+                        : id === "royalSeal"
+                          ? royalSeal
+                          : id === "luckySeven"
+                            ? String(die.value).includes("7")
+                            : id === "aNewVoice"
+                              ? lone && !scoring && isVoiceDie(die)
+                              : id === "counterpoint"
+                                ? lone &&
+                                  !rolledAgg.scoringValueCounts.get(die.value)
+                                : id === "canticle" || id === "choirmaster"
+                                  ? lone
+                                  : id === "parade"
+                                    ? die.value >= 1 && die.value <= 3
+                                    : false;
           if (hit) hits.push(index);
         }
         return hits;
@@ -4130,6 +4276,7 @@ export class GameScene extends Phaser.Scene {
         new Set(pulsed.map(([i]) => i)),
         rolledVisible,
       );
+      this.playRadius(radiusReport);
 
       const floatRows = new Map<number, number>();
       const dieFloat = (

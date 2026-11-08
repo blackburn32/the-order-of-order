@@ -3,6 +3,7 @@ import {
   canLoad,
   canShrink,
   DIE_LADDER,
+  DIE_SIZES,
   DieSides,
   makeDie,
 } from "../systems/Dice";
@@ -33,6 +34,7 @@ import { serializeRunState } from "../systems/ActiveRunPersistence";
 import { rankOf as rankOfTrial } from "../config";
 import { rivalScore } from "../systems/Rival";
 import { trialRollTarget } from "../systems/Trial";
+import { DEV_PANEL } from "../buildFlags";
 import { formatScore } from "../ui/formatScore";
 import type { ItemsData } from "../scenes/ItemsScene";
 import {
@@ -73,7 +75,8 @@ function button(
 }
 
 /**
- * Dev-only overlay (excluded from production builds via `import.meta.env.DEV`)
+ * Dev-only overlay (excluded from production builds via `import.meta.env.DEV`,
+ * unless the build sets `DEV_PANEL`; see src/buildFlags.ts)
  * for reshaping the live run — its dice, novice, trial, points, gold and cards —
  * without having to play to the state being tested.
  * Plain HTML/DOM, not a Phaser GameObject: far simpler than wiring up
@@ -81,7 +84,7 @@ function button(
  * need to appear in the actual game.
  */
 export function installDevPanel(game: Phaser.Game): void {
-  if (!import.meta.env.DEV) return;
+  if (!import.meta.env.DEV && !DEV_PANEL) return;
 
   const toggle = document.createElement("button");
   toggle.textContent = "DEV ▾";
@@ -143,7 +146,7 @@ export function installDevPanel(game: Phaser.Game): void {
     <select id="dp-type" style="${INPUT_CSS}">
       <option value="mixed">Mixed (cycle all types)</option>
       <option value="random">Random per die</option>
-      ${DIE_LADDER.map((s) => `<option value="${s}">d${s}</option>`).join("")}
+      ${DIE_SIZES.map((s) => `<option value="${s}">d${s}</option>`).join("")}
     </select>
     <label style="display:flex;align-items:center;gap:5px;margin-top:8px;font-size:11px;opacity:.85;">
       <input id="dp-bonus" type="checkbox" style="margin:0;" />

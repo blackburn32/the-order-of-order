@@ -16,6 +16,7 @@
 //   gridCeiling    -> systems/DicePool's own ceiling, enforced by the pool
 //   sizeChaos      -> systems/DicePool.randomizeSizes, driven from
 //                     sim/engine.applyGridPassives
+//   startingDie    -> state/RunState.newRun
 //
 // The ceiling is deliberately NOT an affliction, though `gridCap` — Famished
 // Idol's — is. The two are different mechanisms: a cap CULLS a grid that has
@@ -27,10 +28,34 @@
 // Nothing branches on a CharacterId outside this file. A fourth character is a
 // fourth entry in CHARACTERS plus its art, and no new rule anywhere.
 
-import { DIE_LADDER } from "./Dice";
+import { DIE_LADDER, type DieSides } from "./Dice";
 import { STARTING_GOLD } from "./Gold";
+import { RADIUS_DICE } from "./RadiusDice";
 
-export type CharacterId = "diebert" | "melodie" | "roland";
+export type CharacterId = "diebert" | "melodie" | "roland" | "dieanne";
+
+/**
+ * Something done in a run that opens a character, rather than a run won or a
+ * number of runs finished. Seen on the run as it happens (see `deedsIn`) and
+ * kept for good when the run ends (SaveData.recordRunEnd), so the end screen
+ * can name who it opened just as it does for a win.
+ */
+export type CharacterDeed = "centurionToD1";
+
+const DEED_TEXT: Record<CharacterDeed, { ask: string; done: string }> = {
+  centurionToD1: {
+    ask: "Shrink a Centurion to a d1.",
+    done: "Shrank a Centurion to a d1",
+  },
+};
+
+/** A die a character's grid opens with in place of the plain d6. */
+export interface StartingDie {
+  sides: DieSides;
+  /** The card the die is credited to, which is also what gives it its rule
+   *  (see systems/RadiusDice). */
+  source: string;
+}
 
 /** The character a run is played as when nothing says otherwise: the novice
  *  whose rules are the game's own. Runs saved before characters existed resume
@@ -92,6 +117,11 @@ export interface Character {
   /** Runs the player must have finished, won or lost, before this one can be
    *  picked. 0 for a character available from the start. */
   unlockedAfterRuns: number;
+  /** A deed the player must have done in some run before this one can be
+   *  picked. */
+  unlockedByDeed?: CharacterDeed;
+  /** The die the grid opens with, when it is not a plain d6. */
+  startingDie?: StartingDie;
 }
 
 /** Melodie's ceiling, named because her card quotes it. */
@@ -155,10 +185,36 @@ export const CHARACTERS: Record<CharacterId, Character> = {
     unlockedBy: ["diebert", "melodie"],
     unlockedAfterRuns: 0,
   },
+  // The diemancer. Her grid opens on Grace rather than a plain d6, and that is
+  // her whole rule: a soft second chance from the first roll, which grows into
+  // a way of playing once there are dice around it to reach.
+  dieanne: {
+    id: "dieanne",
+    name: "Dieanne",
+    art: "character-dieanne",
+    ability:
+      "A kindly diemancer. Her first die is Grace, which gives the dice around it a second roll.",
+    startingGold: STARTING_GOLD,
+    shopDiscountPercent: 0,
+    gridCeiling: Infinity,
+    sizeChaos: null,
+    unlockedBy: [],
+    unlockedAfterRuns: 0,
+    unlockedByDeed: "centurionToD1",
+    startingDie: {
+      sides: RADIUS_DICE.grace.sides,
+      source: RADIUS_DICE.grace.source,
+    },
+  },
 };
 
 /** The roster, in the order the selection screen deals it. */
-export const CHARACTER_ORDER: CharacterId[] = ["diebert", "melodie", "roland"];
+export const CHARACTER_ORDER: CharacterId[] = [
+  "diebert",
+  "melodie",
+  "roland",
+  "dieanne",
+];
 
 const CHARACTER_IDS: ReadonlySet<string> = new Set(CHARACTER_ORDER);
 
@@ -170,24 +226,61 @@ export function characterOf(id: CharacterId): Character {
   return CHARACTERS[id];
 }
 
-/** Whether `id` can be picked, given the characters already beaten and the
- *  runs finished so far. */
+/** Whether `id` can be picked, given the characters already beaten, the runs
+ *  finished so far, and the deeds done. */
 export function characterUnlocked(
   id: CharacterId,
   beaten: readonly CharacterId[],
   runsFinished: number,
+  deeds: readonly CharacterDeed[] = [],
 ): boolean {
   const who = CHARACTERS[id];
   return (
     runsFinished >= who.unlockedAfterRuns &&
-    who.unlockedBy.every((required) => beaten.includes(required))
+    who.unlockedBy.every((required) => beaten.includes(required)) &&
+    (who.unlockedByDeed === undefined || deeds.includes(who.unlockedByDeed))
   );
+}
+
+const CHARACTER_DEEDS: ReadonlySet<string> = new Set(Object.keys(DEED_TEXT));
+
+export function isCharacterDeed(value: unknown): value is CharacterDeed {
+  return typeof value === "string" && CHARACTER_DEEDS.has(value);
+}
+
+/** The shape of a die the deeds read: a live die, a bucket, a saved stack. */
+interface DeedDie {
+  sides: number;
+  maxFaceBonus: number;
+}
+
+/** The deeds a grid shows done right now. A Centurion is known by its ×4,
+ *  which survives every shrink (see Dice.windfallFactor). */
+export function deedsIn(grid: {
+  someDie: (pred: (die: DeedDie) => boolean) => boolean;
+}): CharacterDeed[] {
+  const deeds: CharacterDeed[] = [];
+  if (grid.someDie((d) => d.maxFaceBonus >= 4 && d.sides === 1))
+    deeds.push("centurionToD1");
+  return deeds;
+}
+
+/** Add whatever deeds the run's grid now shows to the run's own list. Cheap
+ *  enough to call after every roll and every purchase. */
+export function noteDeeds(state: {
+  deeds: CharacterDeed[];
+  dice: { someDie: (pred: (die: DeedDie) => boolean) => boolean };
+}): void {
+  for (const deed of deedsIn(state.dice))
+    if (!state.deeds.includes(deed)) state.deeds.push(deed);
 }
 
 /** What the selection screen prints under a locked card. Written from the
  *  character's own `unlockedBy` rather than authored per character, so a new
  *  character's lock explains itself. */
 export function describeCharacterUnlock(id: CharacterId): string {
+  const deed = CHARACTERS[id].unlockedByDeed;
+  if (deed) return DEED_TEXT[deed].ask;
   const names = CHARACTERS[id].unlockedBy.map((who) => CHARACTERS[who].name);
   if (names.length === 0) {
     const runs = CHARACTERS[id].unlockedAfterRuns;
@@ -205,6 +298,8 @@ export function describeCharacterUnlock(id: CharacterId): string {
  *  tense of an item card's deed ("Won a run") — the other half of
  *  `describeCharacterUnlock`, read once the condition has been met. */
 export function describeCharacterDeed(id: CharacterId): string {
+  const deed = CHARACTERS[id].unlockedByDeed;
+  if (deed) return DEED_TEXT[deed].done;
   const names = CHARACTERS[id].unlockedBy.map((who) => CHARACTERS[who].name);
   if (names.length === 0) {
     const runs = CHARACTERS[id].unlockedAfterRuns;

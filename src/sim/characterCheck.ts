@@ -19,6 +19,7 @@ import {
   describeCharacterDeed,
   isCharacterId,
   MELODIE_DISCOUNT_PERCENT,
+  noteDeeds,
   MELODIE_GRID_CEILING,
   ROLAND_SIZE_CHAOS,
   sizeWeights,
@@ -26,6 +27,7 @@ import {
 } from "../systems/Characters";
 import { DIE_LADDER, makeDie, type DieSides } from "../systems/Dice";
 import { DicePool } from "../systems/DicePool";
+import { RADIUS_DICE } from "../systems/RadiusDice";
 import { discountedPrice } from "../systems/Shop";
 import {
   hydrateRunState,
@@ -61,7 +63,7 @@ function gridOf(character: CharacterId, count: number): RunState {
 console.log("The roster");
 
 {
-  check(CHARACTER_ORDER.length === 3, "holds three novices");
+  check(CHARACTER_ORDER.length === 4, "holds four novices");
   check(
     CHARACTER_ORDER.every((id) => CHARACTERS[id].id === id),
     "and each entry is keyed by its own id",
@@ -143,6 +145,73 @@ console.log("\nAnnouncing an unlock");
     describeCharacterDeed("melodie") === "Finished a run" &&
       describeCharacterDeed("roland") === "Won a run as Diebert and Melodie",
     "and each card names the deed that opened it",
+  );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nDieanne");
+
+{
+  check(
+    !characterUnlocked("dieanne", ["diebert", "melodie", "roland"], 50),
+    "Dieanne is not opened by wins or runs",
+  );
+  check(
+    characterUnlocked("dieanne", [], 0, ["centurionToD1"]),
+    "only by shrinking a Centurion to a d1",
+  );
+  check(
+    describeCharacterUnlock("dieanne") === "Shrink a Centurion to a d1." &&
+      describeCharacterDeed("dieanne") === "Shrank a Centurion to a d1",
+    "and her card says so, before and after",
+  );
+  const run = newRun([], 1, "dieanne");
+  const first = run.dice.dieAt(0)!;
+  check(
+    run.dice.length === 1 &&
+      first.sides === 6 &&
+      first.source === RADIUS_DICE.grace.source,
+    "her grid opens on Grace",
+  );
+
+  // The deed is read off the grid: a ×4 die that has reached a d1.
+  const grid = newRun([], 1, "diebert");
+  grid.dice.addDice(100, 1, { maxFaceBonus: true }, "centurion");
+  noteDeeds(grid);
+  check(grid.deeds.length === 0, "a Centurion at full size is no deed");
+  const at = grid.dice.length - 1;
+  check(
+    grid.dice.shrinkAt(at, 7),
+    "a Centurion can be shrunk all the way down",
+  );
+  noteDeeds(grid);
+  check(
+    grid.dice.dieAt(at)!.sides === 1 && grid.deeds.includes("centurionToD1"),
+    "and at a d1 the run has done it",
+  );
+  const rollplayer = newRun([], 1, "diebert");
+  rollplayer.dice.addDice(20, 1, { maxFaceBonus: true }, "rollplayer");
+  rollplayer.dice.shrinkAt(rollplayer.dice.length - 1, 7);
+  noteDeeds(rollplayer);
+  check(
+    rollplayer.deeds.length === 0,
+    "a Rollplayer at a d1 is not a Centurion",
+  );
+  const opened = recordRunEnd(grid, false);
+  check(
+    opened.newCharacters.includes("dieanne"),
+    "the run that did it announces Dieanne as it ends",
+  );
+  check(
+    recordRunEnd(grid, false).newCharacters.length === 0,
+    "and only that run",
+  );
+  const resumed = hydrateRunState(
+    JSON.parse(JSON.stringify(serializeRunState(grid))),
+  );
+  check(
+    resumed?.deeds.includes("centurionToD1") === true,
+    "a saved run keeps the deeds it has done",
   );
 }
 

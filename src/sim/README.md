@@ -81,6 +81,23 @@ its starting gold, its discount, its ceiling, the width of its size bell — and
 never the goal curve, the card prices or the item effects. Those are shared, and
 moving one to fix one character moves the other two.
 
+### Radius dice
+
+The Halo, Grace and The Censer reach the dice within two cells of them on the
+grid (see `systems/RadiusDice`), so what they are worth depends on where they
+stand. Every bot stands them the way a player would with the drag-to-rearrange
+tool before each trial — `arrange.ts`, a greedy rule: Censers in the cells that
+reach most with the dice they set off gathered round them, then Halos and Grace
+in the best cells left — and the expert's roll-outs (`appraise.ts`) weigh a
+radius card with its die already stood there. A headless grid is laid out in a
+square frame; the table lays it out in whatever frame the screen gives it, and
+the reach follows what is drawn.
+
+```bash
+npm run radius:check             # reach, the three rules, the bot's arrangement
+npm run radius:survey            # how often each series buys them, Diebert vs Dieanne
+```
+
 ### Reading the report
 
 Most of it is self-explanatory, with one section worth calling out. **Rolls spent

@@ -5,6 +5,7 @@
 // runs die, what they bought, how much gold they held, and which unlock criteria
 // they hit along the way.
 
+import { arrangeRadiusDice } from "./arrange";
 import { newRun, RunState } from "../state/RunState";
 import { CHARACTERS, sizeWeights } from "../systems/Characters";
 import { DIE_LADDER, type DieSides } from "../systems/Dice";
@@ -957,6 +958,7 @@ function visitShop(
     for (const purchase of visit.taken) {
       if (purchase.cursed) record.cursesTaken[purchase.id] = state.trial;
     }
+    arrangeRadiusDice(state.dice, state.royalSealSizes);
     const spent = before - state.gold;
     leaveShop(state, cardsBought(state) > cardsBefore);
     return spent;
@@ -994,6 +996,9 @@ function visitShop(
     repriceOffers(state, shelf);
   }
   strategy.visit(state, shelf, rng, purchasesMade, record, strategy);
+  // Stand any radius dice where they reach the most, as a player would by
+  // dragging them before the next trial (see sim/arrange).
+  arrangeRadiusDice(state.dice, state.royalSealSizes);
   const spent = before - state.gold;
   leaveShop(state, cardsBought(state) > cardsBefore);
   return spent;

@@ -19,6 +19,7 @@
 // random numbers), which cancels most of the variance and lets three samples
 // stand in for thirty.
 
+import { arrangeRadiusDice } from "./arrange";
 import { canLoad, canShrink, type Die } from "../systems/Dice";
 import type { DicePool } from "../systems/DicePool";
 import { goalFor } from "../systems/Boss";
@@ -140,6 +141,9 @@ export function measureCapacity(
     // a baseline and every card weighed against it see identical dice.
     const rng = mulberry32(opts.seed + i * 7_907);
     const trial = cloneRunState(state);
+    // A card that adds a radius die is weighed with the die stood where the
+    // player would stand it, not wherever it happened to be added.
+    arrangeRadiusDice(trial.dice, trial.royalSealSizes);
     const goldBefore = trial.goldEarned;
     const firstTrial = trial.trial;
     let clearedOn = 0;
