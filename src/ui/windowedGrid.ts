@@ -1,4 +1,5 @@
 import { GridArea } from "./gridLayout";
+import { gridColumnsFor } from "../systems/RadiusDice";
 
 // Dense auxiliary pickers still use a threshold. The main game grid now uses
 // the viewport at every count so switching render paths can never leak dice.
@@ -196,14 +197,18 @@ export function gridDetailLevel(
  *  rather than passed in: they are handed different rectangles — the frame and
  *  the camera viewport — and a block laid out to one shape but zoomed to fit
  *  another would not fit. */
-function gridColumns(n: number, frame: GridArea): number {
-  const dice = Math.max(1, n);
-  const aspect = Math.max(1, frame.width) / Math.max(1, frame.height);
+export function gridColumns(n: number, frame: GridArea): number {
   // Never wider than there are dice to fill it. A wide frame asks for more
   // columns than a young grid has — and since a short row is laid out from the
   // left, the first die would sit in the left cell of a block centred on the
-  // sigil rather than in the middle of the ring itself.
-  return clamp(Math.ceil(Math.sqrt(dice * aspect)), 1, dice);
+  // sigil rather than in the middle of the ring itself. The formula lives with
+  // the radius dice, whose reach is counted across these same columns.
+  return gridColumnsFor(n, gridAspectOf(frame));
+}
+
+/** The shape (width / height) of the frame a grid is laid out in. */
+export function gridAspectOf(frame: GridArea): number {
+  return Math.max(1, frame.width) / Math.max(1, frame.height);
 }
 
 /** Where `focus` falls across `area`, as a fraction of each axis. */

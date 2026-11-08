@@ -1,6 +1,38 @@
-export type DieSides = 1 | 2 | 4 | 6 | 8 | 10 | 20 | 100;
+export type DieSides = 1 | 2 | 4 | 6 | 8 | 10 | 12 | 20 | 100;
 
+/** The rungs shrinking and growing walk, one size at a time. */
 export const DIE_LADDER: DieSides[] = [1, 2, 4, 6, 8, 10, 20, 100];
+
+/** Every size a die can be, in order. The d12 is off the ladder: The Censer is
+ *  the only die that is ever one, and a step down or up from it lands back on
+ *  the ladder (a d10 or a d20), so nothing that walks the ladder has to know it
+ *  exists — and Roland's storm and the size-targeting cards stay over the eight
+ *  sizes they were tuned on. */
+export const DIE_SIZES: DieSides[] = [1, 2, 4, 6, 8, 10, 12, 20, 100];
+
+/** The size `steps` rungs below `sides`, stopping at a d1. An off-ladder size
+ *  spends its first step reaching the rung beneath it. */
+export function sizeBelow(sides: DieSides, steps = 1): DieSides {
+  let i = DIE_LADDER.indexOf(sides);
+  if (i < 0) {
+    i = DIE_LADDER.filter((s) => s < sides).length - 1;
+    steps -= 1;
+    if (i < 0) return DIE_LADDER[0];
+  }
+  return DIE_LADDER[Math.max(0, i - Math.max(0, steps))];
+}
+
+/** The size `steps` rungs above `sides`, stopping at a d100. An off-ladder size
+ *  spends its first step reaching the rung above it. */
+export function sizeAbove(sides: DieSides, steps = 1): DieSides {
+  let i = DIE_LADDER.indexOf(sides);
+  if (i < 0) {
+    i = DIE_LADDER.findIndex((s) => s > sides);
+    steps -= 1;
+    if (i < 0) return DIE_LADDER[DIE_LADDER.length - 1];
+  }
+  return DIE_LADDER[Math.min(DIE_LADDER.length - 1, i + Math.max(0, steps))];
+}
 
 /** Resolve the persistent multiplier carried by a max-face die. Item
  *  definitions may still pass `true` for convenience; it is converted to the
@@ -122,9 +154,8 @@ export function canGrow(die: { sides: number }): boolean {
 
 /** Step a die one rung down the ladder (d100 -> d20 -> ... -> d1). */
 export function shrinkDie(die: Die): boolean {
-  const i = DIE_LADDER.indexOf(die.sides);
-  if (i <= 0) return false;
-  die.sides = DIE_LADDER[i - 1];
+  if (die.sides <= 1) return false;
+  die.sides = sizeBelow(die.sides);
   die.value = die.sides;
   return true;
 }

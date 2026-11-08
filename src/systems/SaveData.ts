@@ -9,7 +9,10 @@ import {
   CHARACTER_ORDER,
   characterUnlocked,
   DEFAULT_CHARACTER,
+  isCharacterDeed,
   isCharacterId,
+  noteDeeds,
+  type CharacterDeed,
   type CharacterId,
 } from "./Characters";
 import { ITEMS, meetsCriterion, ShopItemId } from "./Items";
@@ -112,6 +115,9 @@ export interface Settings {
   // How far out per-die flourishes draw (see systems/GraphicsLevel). Unset
   // until the player picks one, so the device's own default applies.
   graphicsLevel?: GraphicsLevel;
+  // Whether a radius die's circle is drawn over the dice it reaches, rather
+  // than on the felt behind them (see ui/radiusRings). Off by default.
+  radiusOverDice: boolean;
 }
 
 const itemIds: ReadonlySet<string> = new Set(ITEMS.map((item) => item.id));
@@ -305,6 +311,7 @@ export function loadSettings(): Settings {
         showIntro: parsed.showIntro ?? true,
         showTutorial: parsed.showTutorial ?? true,
         visualEffects: parsed.visualEffects ?? true,
+        radiusOverDice: parsed.radiusOverDice ?? false,
         graphicsLevel: isGraphicsLevel(parsed.graphicsLevel)
           ? parsed.graphicsLevel
           : undefined,
@@ -319,6 +326,7 @@ export function loadSettings(): Settings {
     showIntro: true,
     showTutorial: true,
     visualEffects: true,
+    radiusOverDice: false,
   };
 }
 
@@ -381,6 +389,9 @@ export interface Progress {
   // player has already beaten the game with must not re-lock because they went
   // on to play well.
   charactersBeaten: CharacterId[];
+  // Every deed done in some run that opens a character (Dieanne's shrunken
+  // Centurion). Kept for good, like a win.
+  deeds: CharacterDeed[];
 }
 
 function defaultProgress(): Progress {
@@ -389,6 +400,7 @@ function defaultProgress(): Progress {
     selectionCounts: {},
     gamesCompleted: 0,
     charactersBeaten: [],
+    deeds: [],
   };
 }
 
@@ -403,6 +415,9 @@ export function loadProgress(): Progress {
         gamesCompleted: parsed.gamesCompleted ?? 0,
         charactersBeaten: Array.isArray(parsed.charactersBeaten)
           ? parsed.charactersBeaten.filter(isCharacterId)
+          : [],
+        deeds: Array.isArray(parsed.deeds)
+          ? parsed.deeds.filter(isCharacterDeed)
           : [],
       };
     }
@@ -510,11 +525,25 @@ export function recordCharacterWin(character: CharacterId): void {
   saveProgress(progress);
 }
 
+/** Keep the deeds a run did, for good. */
+export function recordDeeds(deeds: readonly CharacterDeed[]): void {
+  const progress = loadProgress();
+  const fresh = deeds.filter((deed) => !progress.deeds.includes(deed));
+  if (fresh.length === 0) return;
+  progress.deeds.push(...fresh);
+  saveProgress(progress);
+}
+
 /** The characters the player can pick right now, in roster order. */
 export function unlockedCharacters(): CharacterId[] {
   const progress = loadProgress();
   return CHARACTER_ORDER.filter((id) =>
-    characterUnlocked(id, progress.charactersBeaten, progress.gamesCompleted),
+    characterUnlocked(
+      id,
+      progress.charactersBeaten,
+      progress.gamesCompleted,
+      progress.deeds,
+    ),
   );
 }
 
@@ -539,6 +568,10 @@ export function recordRunEnd(
   const before = unlockedCharacters();
   const opened = () =>
     unlockedCharacters().filter((id) => !before.includes(id));
+  // The grid as the run left it may show a deed no roll or purchase has been
+  // seen doing yet; then the run's deeds are kept, daily or not.
+  noteDeeds(state);
+  recordDeeds(state.deeds);
   const entry: HallEntry = {
     schema: HALL_SCHEMA,
     startedAt: state.startedAt,

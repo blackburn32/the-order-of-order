@@ -11,6 +11,7 @@ import {
 } from "./Afflictions";
 import { goalFor } from "./Boss";
 import { ANVIL_FLOOR, DIE_LADDER, DieOpts, DieSides } from "./Dice";
+import { HALO_FACTOR, RADIUS_DICE } from "./RadiusDice";
 import type { DicePool } from "./DicePool";
 import {
   DEEP_POCKETS_CAP_BONUS,
@@ -130,6 +131,9 @@ export type ShopItemId =
   | "the_endowment"
   | "compound_interest"
   | "a_new_voice"
+  | "the_halo"
+  | "the_grace"
+  | "the_censer"
   | "counterpoint"
   | "the_canticle"
   | "the_choirmaster"
@@ -804,6 +808,35 @@ export const ITEMS: ItemDef[] = [
     rarity: "rare",
     desc: "Add a d100. Its highest face always scores and quadruples all points that roll.",
     effects: [addDice(100, 1, { maxFaceBonus: true })],
+  },
+  // The radius dice (systems/RadiusDice): each reaches the dice within two of
+  // it on the grid, so where the player stands it is the whole of the card.
+  {
+    id: "the_halo",
+    name: "The Halo",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: `Add a d8. On its highest face, every die within two of it that scores, scores ×${HALO_FACTOR}.`,
+    effects: [addDice(RADIUS_DICE.halo.sides)],
+  },
+  {
+    id: "the_grace",
+    name: "Grace",
+    priceBand: "low",
+    stackPricing: "linear",
+    rarity: "common",
+    desc: "Add a d6. On its highest face, every die within two of it that missed, itself included, rolls once more.",
+    effects: [addDice(RADIUS_DICE.grace.sides)],
+  },
+  {
+    id: "the_censer",
+    name: "The Censer",
+    priceBand: "standard",
+    stackPricing: "linear",
+    rarity: "uncommon",
+    desc: "Add a d12. On its highest face, every die within two of it with a highest-face power turns to that face.",
+    effects: [addDice(RADIUS_DICE.censer.sides)],
   },
   {
     id: "pocket_change",
@@ -2926,6 +2959,9 @@ export const ITEM_THEMES: Record<ShopItemId, ItemTheme[]> = {
   hourglass: ["multiplier", "tempo"],
   rollplayer: ["multiplier", "precision"],
   centurion: ["multiplier", "precision"],
+  the_halo: ["multiplier"],
+  the_grace: ["precision"],
+  the_censer: ["multiplier", "precision"],
 
   shrink: ["precision"],
   whetstone: ["precision"],

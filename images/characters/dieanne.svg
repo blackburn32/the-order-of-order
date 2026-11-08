@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="hat" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6b3f8f"/>
+      <stop offset="1" stop-color="#3f2257"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#e98fbd"/>
+      <stop offset="1" stop-color="#c76a9c"/>
+    </linearGradient>
+  </defs>
+  <g stroke="#2b1d1a" stroke-linecap="round" stroke-linejoin="round">
+    <!-- legs -->
+    <path d="M196 418 C192 446 186 462 176 478" fill="none" stroke-width="13"/>
+    <path d="M300 418 C306 446 314 462 326 476" fill="none" stroke-width="13"/>
+    <!-- boots -->
+    <path d="M150 486 C150 466 186 464 192 480 C194 492 156 498 150 486 Z" fill="#4a2c5e" stroke-width="5"/>
+    <path d="M314 482 C318 464 356 466 356 484 C356 496 316 496 314 482 Z" fill="#4a2c5e" stroke-width="5"/>
+    <!-- left arm (resting on hip) -->
+    <path d="M118 262 C78 270 70 318 108 334" fill="none" stroke-width="13"/>
+    <path d="M100 322 C86 316 80 332 90 340 C82 348 94 360 104 354 C108 364 124 360 122 348 C132 344 128 330 118 328 C116 318 106 316 100 322 Z" fill="#ffffff" stroke-width="5"/>
+    <!-- right arm raised with wand -->
+    <path d="M392 266 C430 256 440 214 430 182" fill="none" stroke-width="13"/>
+    <!-- wand -->
+    <path d="M436 186 L470 92" stroke="#5a3a22" stroke-width="10" fill="none"/>
+    <path d="M436 186 L470 92" stroke="#8a5a34" stroke-width="4" fill="none"/>
+    <!-- glove gripping wand -->
+    <path d="M420 178 C408 168 416 152 430 158 C434 146 452 148 452 162 C464 164 462 182 450 184 C450 196 432 200 426 190 C416 192 412 182 420 178 Z" fill="#ffffff" stroke-width="5"/>
+    <!-- star on wand -->
+    <path d="M472 46 L481 72 L508 73 L486 89 L494 115 L472 99 L450 115 L458 89 L436 73 L463 72 Z" fill="#ffd95e" stroke-width="5"/>
+    <!-- sparkles -->
+    <path d="M412 92 L416 104 L428 108 L416 112 L412 124 L408 112 L396 108 L408 104 Z" fill="#f6b3d6" stroke-width="3"/>
+    <path d="M492 140 L495 149 L504 152 L495 155 L492 164 L489 155 L480 152 L489 149 Z" fill="#b48cff" stroke-width="3"/>
+    <!-- die body side (depth) -->
+    <path d="M128 126 L392 126 L402 136 L402 414 L392 424 L128 424 L118 414 L118 136 Z" fill="#c76a9c" stroke-width="6"/>
+    <!-- die face -->
+    <rect x="134" y="140" width="252" height="270" rx="26" fill="#fbf4e4" stroke-width="6"/>
+    <rect x="134" y="140" width="252" height="270" rx="26" fill="none" stroke="#e98fbd" stroke-width="12" transform="translate(0 0)"/>
+    <rect x="128" y="134" width="264" height="282" rx="30" fill="none" stroke-width="6"/>
+    <rect x="140" y="146" width="240" height="258" rx="22" fill="none" stroke-width="4"/>
+    <!-- pips: a six, top row and bottom row, faint -->
+    <circle cx="186" cy="372" r="11" fill="#2b1d1a" stroke="none" opacity="0.85"/>
+    <circle cx="260" cy="372" r="11" fill="#2b1d1a" stroke="none" opacity="0.85"/>
+    <circle cx="334" cy="372" r="11" fill="#2b1d1a" stroke="none" opacity="0.85"/>
+    <!-- eyes -->
+    <ellipse cx="214" cy="262" rx="24" ry="27" fill="#2b1d1a" stroke="none"/>
+    <ellipse cx="306" cy="262" rx="24" ry="27" fill="#2b1d1a" stroke="none"/>
+    <circle cx="222" cy="252" r="8" fill="#ffffff" stroke="none"/>
+    <circle cx="314" cy="252" r="8" fill="#ffffff" stroke="none"/>
+    <circle cx="207" cy="272" r="3.5" fill="#ffffff" stroke="none"/>
+    <circle cx="299" cy="272" r="3.5" fill="#ffffff" stroke="none"/>
+    <!-- lashes -->
+    <path d="M190 246 L178 238 M194 238 L186 226 M330 246 L342 238 M326 238 L334 226" fill="none" stroke-width="5"/>
+    <!-- brows, soft and kind -->
+    <path d="M190 220 C204 210 222 210 236 216" fill="none" stroke-width="5"/>
+    <path d="M284 216 C298 210 316 210 330 220" fill="none" stroke-width="5"/>
+    <!-- cheeks -->
+    <ellipse cx="184" cy="306" rx="20" ry="11" fill="#f4a6c4" stroke="none" opacity="0.8"/>
+    <ellipse cx="336" cy="306" rx="20" ry="11" fill="#f4a6c4" stroke="none" opacity="0.8"/>
+    <!-- freckles -->
+    <circle cx="176" cy="300" r="2.4" fill="#b0705a" stroke="none"/>
+    <circle cx="188" cy="308" r="2.4" fill="#b0705a" stroke="none"/>
+    <circle cx="332" cy="300" r="2.4" fill="#b0705a" stroke="none"/>
+    <circle cx="344" cy="308" r="2.4" fill="#b0705a" stroke="none"/>
+    <!-- smile -->
+    <path d="M232 312 C246 330 276 330 290 312" fill="#d9556a" stroke-width="5"/>
+    <path d="M244 322 C254 328 268 328 278 322" fill="none" stroke="#f4a6c4" stroke-width="4"/>
+    <!-- hat brim -->
+    <path d="M92 164 C120 132 210 118 262 120 C330 122 410 136 432 160 C404 176 318 168 262 168 C200 168 120 182 92 164 Z" fill="url(#hat)" stroke-width="6"/>
+    <!-- hat cone, tipping over to one side -->
+    <path d="M186 150 C190 102 214 62 252 40 C282 22 326 20 350 30 C330 34 312 44 300 62 C290 80 300 116 330 150 C290 158 226 158 186 150 Z" fill="url(#hat)" stroke-width="6"/>
+    <!-- hat band -->
+    <path d="M190 132 C232 140 290 140 326 130 L332 150 C292 160 230 160 188 152 Z" fill="url(#rim)" stroke-width="5"/>
+    <!-- crescent moon on the band -->
+    <path d="M264 128 C252 134 252 150 264 156 C256 156 248 150 248 142 C248 134 256 128 264 128 Z" fill="#ffd95e" stroke-width="3"/>
+    <!-- hat tip star -->
+    <path d="M352 22 L356 34 L368 34 L358 41 L362 53 L352 46 L342 53 L346 41 L336 34 L348 34 Z" fill="#ffd95e" stroke-width="3.5"/>
+    <!-- hat patch -->
+    <path d="M222 92 L246 88 L248 110 L224 114 Z" fill="#8a5aa8" stroke-width="4"/>
+    <path d="M228 96 L242 108 M240 92 L230 110" fill="none" stroke-width="2.5"/>
+  </g>
+</svg>

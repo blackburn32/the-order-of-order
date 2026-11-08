@@ -424,6 +424,8 @@ export const ITEM_TREES: ItemTree[] = [
   },
 ];
 
+const RADIUS =
+  "A radius die: it pays for where the player stands it on the grid, which serves every tree alike.";
 const TEMPO = "Adds rolls or a safety net, which serves every tree alike.";
 const EARLY_CLEAR =
   "Pays for clearing a trial with rolls to spare, and every trial now plays to its last roll: off the shelf.";
@@ -446,6 +448,9 @@ export const OUTSIDE_TREES: Partial<Record<ShopItemId, OutsidePlacement>> = {
   metronome: { status: "neutral", note: TEMPO },
   insurance_policy: { status: "neutral", note: TEMPO },
   long_night: { status: "neutral", note: TEMPO },
+  the_halo: { status: "neutral", note: RADIUS },
+  the_grace: { status: "neutral", note: RADIUS },
+  the_censer: { status: "neutral", note: RADIUS },
   ledger: {
     status: "neutral",
     note: "A shop utility with no strategy of its own.",

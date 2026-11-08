@@ -11,7 +11,7 @@ import {
   faceNumeralStyle,
 } from "./dieArt";
 import { DPR } from "../renderQuality";
-import { DIE_LADDER } from "../systems/Dice";
+import { DIE_SIZES } from "../systems/Dice";
 import type { AfflictionId } from "../systems/Afflictions";
 import type { BossModifierId } from "../systems/Boss";
 import { dieEffectsKey, type DieEffect } from "../systems/DieEffects";
@@ -80,7 +80,7 @@ const BAKE_SCALE: Record<string, number> = {
   "btn-corners-scroll": ART_SCALE,
   banner: ART_SCALE,
   "die-atlas": ART_SCALE,
-  ...Object.fromEntries(DIE_LADDER.map((sides) => [`die-${sides}`, ART_SCALE])),
+  ...Object.fromEntries(DIE_SIZES.map((sides) => [`die-${sides}`, ART_SCALE])),
 };
 
 function bakeScale(key: string): number {
@@ -1248,7 +1248,7 @@ function buildFelt(scene: Phaser.Scene): void {
  * what this bake can serve.
  */
 function buildDice(scene: Phaser.Scene): void {
-  for (const sides of DIE_LADDER) {
+  for (const sides of DIE_SIZES) {
     const g = scene.add.graphics();
     drawDieBody(g, sides);
     bakeGraphics(g, `die-${sides}`, DIE_SIZE, DIE_SIZE);
@@ -1291,14 +1291,14 @@ function buildDiceAtlas(scene: Phaser.Scene): void {
   // lives here so showing one is a frame swap on a texture every die in the
   // grid is already batching with, rather than a Graphics per struck-out die in
   // a grid that can hold a viewport's worth of them.
-  const faces = DIE_LADDER.flatMap((sides) =>
+  const faces = DIE_SIZES.flatMap((sides) =>
     Array.from({ length: sides }, (_, i) => ({
       name: `face-${sides}-${i + 1}`,
       sides,
       value: i + 1,
     })),
   );
-  const labels = DIE_LADDER.map((sides) => ({
+  const labels = DIE_SIZES.map((sides) => ({
     name: `label-d${sides}`,
     sides,
   }));

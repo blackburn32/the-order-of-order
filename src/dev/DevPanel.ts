@@ -3,6 +3,7 @@ import {
   canLoad,
   canShrink,
   DIE_LADDER,
+  DIE_SIZES,
   DieSides,
   makeDie,
 } from "../systems/Dice";
@@ -143,7 +144,7 @@ export function installDevPanel(game: Phaser.Game): void {
     <select id="dp-type" style="${INPUT_CSS}">
       <option value="mixed">Mixed (cycle all types)</option>
       <option value="random">Random per die</option>
-      ${DIE_LADDER.map((s) => `<option value="${s}">d${s}</option>`).join("")}
+      ${DIE_SIZES.map((s) => `<option value="${s}">d${s}</option>`).join("")}
     </select>
     <label style="display:flex;align-items:center;gap:5px;margin-top:8px;font-size:11px;opacity:.85;">
       <input id="dp-bonus" type="checkbox" style="margin:0;" />

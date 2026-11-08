@@ -271,6 +271,14 @@ export class SettingsScene extends Phaser.Scene {
       this.settings.visualEffects = value;
       this.apply();
     });
+    toggle(
+      "Radius Circles Over Dice",
+      this.settings.radiusOverDice,
+      (value) => {
+        this.settings.radiusOverDice = value;
+        this.apply();
+      },
+    );
 
     this.makeGraphicsLevelRow(content, x0, x1, y);
     y += SLIDER_ROW_H;
