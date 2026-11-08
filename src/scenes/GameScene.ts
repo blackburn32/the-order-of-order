@@ -149,7 +149,6 @@ import {
   radiusKindOf,
   type RadiusReport,
 } from "../systems/RadiusDice";
-import { loadSettings } from "../systems/SaveData";
 
 // The HUD strip. Adding an entry here is all it takes: computeLayout sizes the
 // cells proportionally by `weight`, and buildHud/makePlaque draw them. RANK
@@ -789,7 +788,6 @@ export class GameScene extends Phaser.Scene {
       this,
       this.gridContainer,
       this.diceContainer,
-      loadSettings().radiusOverDice,
       (objects) => {
         this.cameras.main.ignore(objects);
         this.overlayCamera?.ignore(objects);
