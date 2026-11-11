@@ -34,6 +34,7 @@ import { serializeRunState } from "../systems/ActiveRunPersistence";
 import { rankOf as rankOfTrial } from "../config";
 import { rivalScore } from "../systems/Rival";
 import { trialRollTarget } from "../systems/Trial";
+import { DEV_PANEL } from "../buildFlags";
 import { formatScore } from "../ui/formatScore";
 import type { ItemsData } from "../scenes/ItemsScene";
 import {
@@ -74,7 +75,8 @@ function button(
 }
 
 /**
- * Dev-only overlay (excluded from production builds via `import.meta.env.DEV`)
+ * Dev-only overlay (excluded from production builds via `import.meta.env.DEV`,
+ * unless the build sets `DEV_PANEL`; see src/buildFlags.ts)
  * for reshaping the live run — its dice, novice, trial, points, gold and cards —
  * without having to play to the state being tested.
  * Plain HTML/DOM, not a Phaser GameObject: far simpler than wiring up
@@ -82,7 +84,7 @@ function button(
  * need to appear in the actual game.
  */
 export function installDevPanel(game: Phaser.Game): void {
-  if (!import.meta.env.DEV) return;
+  if (!import.meta.env.DEV && !DEV_PANEL) return;
 
   const toggle = document.createElement("button");
   toggle.textContent = "DEV ▾";

@@ -162,15 +162,46 @@ const GRID_HINT_NAME: Record<GridHint, string> = {
 };
 
 /** The grid hints still to show on this table: those the player has not yet
- *  done, on the first trial of a run armed to teach it. */
+ *  done, on the first trial of a run armed to teach it — and the move hint
+ *  again, whatever the tutorial, for the one trial after a run gains a radius
+ *  die (see `moveTipPending`). */
 export function pendingGridHints(state: RunState): GridHint[] {
-  if (!state.tutorialArmed || state.trial !== 1) return [];
-  const seen = seenSteps();
-  // Moving a die needs another to trade places with.
-  const hints: GridHint[] = state.dice.reorderable
-    ? ["pan", "zoom", "move"]
-    : ["pan", "zoom"];
-  return hints.filter((hint) => !seen.has(GRID_HINT_NAME[hint]));
+  const hints: GridHint[] = [];
+  if (state.tutorialArmed && state.trial === 1) {
+    const seen = seenSteps();
+    // Moving a die needs another to trade places with.
+    const owed: GridHint[] = state.dice.reorderable
+      ? ["pan", "zoom", "move"]
+      : ["pan", "zoom"];
+    hints.push(...owed.filter((hint) => !seen.has(GRID_HINT_NAME[hint])));
+  }
+  if (moveTipPending(state) && !hints.includes("move")) hints.push("move");
+  return hints;
+}
+
+/** Whether the run's one "hold a die to move it" tip is up on this trial:
+ *  owed since a radius die was bought, and either not shown yet or shown on
+ *  this very trial. It goes when a die is picked up (`markMoveTipDone`) or
+ *  the trial ends, whichever is first. */
+export function moveTipPending(state: RunState): boolean {
+  return (
+    state.moveTipOwed &&
+    state.dice.reorderable &&
+    (state.moveTipTrial === 0 || state.moveTipTrial === state.trial)
+  );
+}
+
+/** The move tip has been put on the felt: it is this trial's, and no other's. */
+export function markMoveTipShown(state: RunState): void {
+  if (state.moveTipOwed && state.moveTipTrial === 0)
+    state.moveTipTrial = state.trial;
+}
+
+/** A die was picked up: the move tip has done its job for the run. */
+export function markMoveTipDone(state: RunState): void {
+  if (!state.moveTipOwed) return;
+  state.moveTipOwed = false;
+  if (state.moveTipTrial === 0) state.moveTipTrial = state.trial;
 }
 
 /** Record that the player has done what `hint` asks. */

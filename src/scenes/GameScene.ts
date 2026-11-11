@@ -95,6 +95,8 @@ import {
   getTutorial,
   gridHintText,
   markGridHintDone,
+  markMoveTipDone,
+  markMoveTipShown,
   pendingGridHints,
   tutorialBlocksScore,
   tutorialForcesRoll,
@@ -149,7 +151,6 @@ import {
   radiusKindOf,
   type RadiusReport,
 } from "../systems/RadiusDice";
-import { loadSettings } from "../systems/SaveData";
 
 // The HUD strip. Adding an entry here is all it takes: computeLayout sizes the
 // cells proportionally by `weight`, and buildHud/makePlaque draw them. RANK
@@ -789,7 +790,6 @@ export class GameScene extends Phaser.Scene {
       this,
       this.gridContainer,
       this.diceContainer,
-      loadSettings().radiusOverDice,
       (objects) => {
         this.cameras.main.ignore(objects);
         this.overlayCamera?.ignore(objects);
@@ -973,7 +973,9 @@ export class GameScene extends Phaser.Scene {
       12,
       16,
     );
-    return pendingGridHints(this.state).map((hint, i) => {
+    const hints = pendingGridHints(this.state);
+    if (hints.includes("move")) markMoveTipShown(this.state);
+    return hints.map((hint, i) => {
       const text = this.add
         .text(
           frame.x + frame.width - inset,
@@ -998,6 +1000,7 @@ export class GameScene extends Phaser.Scene {
    *  rather than by the viewport moving, since a single die can leave the grid
    *  nowhere to go. */
   private noteGridGesture(kind: GridHint): void {
+    if (kind === "move") markMoveTipDone(this.state);
     const text = this.gridHints.get(kind);
     if (!text) return;
     this.gridHints.delete(kind);

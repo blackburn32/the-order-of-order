@@ -115,9 +115,6 @@ export interface Settings {
   // How far out per-die flourishes draw (see systems/GraphicsLevel). Unset
   // until the player picks one, so the device's own default applies.
   graphicsLevel?: GraphicsLevel;
-  // Whether a radius die's circle is drawn over the dice it reaches, rather
-  // than on the felt behind them (see ui/radiusRings). Off by default.
-  radiusOverDice: boolean;
 }
 
 const itemIds: ReadonlySet<string> = new Set(ITEMS.map((item) => item.id));
@@ -311,7 +308,6 @@ export function loadSettings(): Settings {
         showIntro: parsed.showIntro ?? true,
         showTutorial: parsed.showTutorial ?? true,
         visualEffects: parsed.visualEffects ?? true,
-        radiusOverDice: parsed.radiusOverDice ?? false,
         graphicsLevel: isGraphicsLevel(parsed.graphicsLevel)
           ? parsed.graphicsLevel
           : undefined,
@@ -326,7 +322,6 @@ export function loadSettings(): Settings {
     showIntro: true,
     showTutorial: true,
     visualEffects: true,
-    radiusOverDice: false,
   };
 }
 

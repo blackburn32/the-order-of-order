@@ -1,6 +1,7 @@
 import { STARTING_DICE } from "../config";
 import { makeDie, DieSides } from "../systems/Dice";
 import { DicePool } from "../systems/DicePool";
+import { radiusKindOf } from "../systems/RadiusDice";
 import type { BossModifierId } from "../systems/Boss";
 import {
   CHARACTERS,
@@ -31,6 +32,12 @@ export interface RunState {
   // Deeds this run has done that open a character (see systems/Characters),
   // kept for good when the run ends.
   deeds: CharacterDeed[];
+  // The "hold a die to move it" tip, owed once a run gains a die that wants
+  // placing (a radius die, systems/RadiusDice). It shows on the felt for one
+  // trial, until the player picks a die up, and at most once a run.
+  // `moveTipTrial` is the trial it showed on, 0 until it has.
+  moveTipOwed: boolean;
+  moveTipTrial: number;
   // Ladder position. `trial` runs straight through the whole run (1..30 for the
   // ten ranks, then 31+ in endless); rank and trial-within-rank are derived
   // from it by config's rankOf/trialInRank rather than stored.
@@ -299,6 +306,9 @@ export function newRun(
   return {
     character,
     deeds: [],
+    // Dieanne's Grace is a die to place from the first trial.
+    moveTipOwed: !!who.startingDie && radiusKindOf(who.startingDie) !== null,
+    moveTipTrial: 0,
     trial: 1,
     endless: false,
     roll: 0,

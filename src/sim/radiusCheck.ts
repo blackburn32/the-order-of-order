@@ -25,6 +25,12 @@ import { applyOffer, offerFor } from "../systems/Shop";
 import { ITEMS } from "../systems/Items";
 import { dieEffects } from "../systems/DieEffects";
 import { arrangeRadiusDice } from "./arrange";
+import {
+  markMoveTipDone,
+  markMoveTipShown,
+  moveTipPending,
+  pendingGridHints,
+} from "../systems/Tutorial";
 
 function check(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
@@ -235,6 +241,50 @@ for (const kind of ["halo", "grace", "censer"] as const) {
   check(
     added.sides === def.sides && dieEffects(added).includes(kind),
     `${def.name} adds a d${def.sides} that wears its effect`,
+  );
+}
+
+console.log("The move tip");
+{
+  const state = newRun();
+  state.gold = 1000;
+  check(!moveTipPending(state), "a plain run owes no move tip");
+  applyOffer(state, offerFor("the_halo", state));
+  check(moveTipPending(state), "buying a radius die owes it");
+  check(pendingGridHints(state).includes("move"), "as the felt's move hint");
+  markMoveTipShown(state);
+  check(moveTipPending(state), "it stays up for the trial it shows on");
+  state.trial += 1;
+  check(!moveTipPending(state), "and goes when that trial ends");
+  applyOffer(state, offerFor("the_grace", state));
+  check(!moveTipPending(state), "never to come back in the run");
+
+  const held = newRun();
+  held.gold = 1000;
+  applyOffer(held, offerFor("the_censer", held));
+  markMoveTipShown(held);
+  markMoveTipDone(held);
+  check(!moveTipPending(held), "picking a die up takes it off");
+  applyOffer(held, offerFor("the_halo", held));
+  check(!moveTipPending(held), "for good");
+
+  const plainBuy = newRun();
+  plainBuy.gold = 1000;
+  const other = ITEMS.find(
+    (it) => !it.id.startsWith("the_") && offerFor(it.id, plainBuy),
+  );
+  if (other) applyOffer(plainBuy, offerFor(other.id, plainBuy));
+  check(!moveTipPending(plainBuy), "another card does not owe it");
+
+  const dieanne = newRun([], 0, "dieanne");
+  check(
+    !moveTipPending(dieanne),
+    "Dieanne's lone Grace has nothing to trade places with",
+  );
+  dieanne.dice.addDice(6, 1);
+  check(
+    moveTipPending(dieanne),
+    "but the tip is owed for it once she has a second die",
   );
 }
 
