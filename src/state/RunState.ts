@@ -307,7 +307,9 @@ export function newRun(
     character,
     deeds: [],
     // Dieanne's Grace is a die to place from the first trial.
-    moveTipOwed: !!who.startingDie && radiusKindOf(who.startingDie) !== null,
+    moveTipOwed:
+      who.startingDie?.source !== undefined &&
+      radiusKindOf({ source: who.startingDie.source }) !== null,
     moveTipTrial: 0,
     trial: 1,
     endless: false,

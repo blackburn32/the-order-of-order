@@ -1,4 +1,4 @@
-// The three novices a run can be played as.
+// The novices a run can be played as.
 //
 // A character is not a bundle of items and not a difficulty setting: it is a
 // small set of RULES the run carries from its first roll to its last, chosen
@@ -40,12 +40,26 @@ export type CharacterId = "diebert" | "melodie" | "roland" | "dieanne";
  * kept for good when the run ends (SaveData.recordRunEnd), so the end screen
  * can name who it opened just as it does for a win.
  */
-export type CharacterDeed = "centurionToD1";
+export type CharacterDeed = "centurionToD1" | "everySize" | "goldHeld";
+
+/** Melodie's deed: the gold that must be held at once to open her. */
+export const MELODIE_UNLOCK_GOLD = 100;
 
 const DEED_TEXT: Record<CharacterDeed, { ask: string; done: string }> = {
   centurionToD1: {
     ask: "Shrink a Centurion to a d1.",
     done: "Shrank a Centurion to a d1",
+  },
+  // Every rung of the ladder, d1 to d100, at once. The d12 is a size the game
+  // has but the ladder does not (only The Censer makes one, and shrinking or
+  // growing steps straight past it), so it is not asked for here.
+  everySize: {
+    ask: "Hold one die of every size, d1 to d100, at once.",
+    done: "Held one die of every size at once",
+  },
+  goldHeld: {
+    ask: `Hold ${MELODIE_UNLOCK_GOLD} gold at once.`,
+    done: `Held ${MELODIE_UNLOCK_GOLD} gold at once`,
   },
 };
 
@@ -53,8 +67,8 @@ const DEED_TEXT: Record<CharacterDeed, { ask: string; done: string }> = {
 export interface StartingDie {
   sides: DieSides;
   /** The card the die is credited to, which is also what gives it its rule
-   *  (see systems/RadiusDice). */
-  source: string;
+   *  (see systems/RadiusDice). Left out for a plain die of another size. */
+  source?: string;
 }
 
 /** The character a run is played as when nothing says otherwise: the novice
@@ -162,28 +176,33 @@ export const CHARACTERS: Record<CharacterId, Character> = {
     id: "melodie",
     name: "Melodie",
     art: "character-melodie",
-    ability: `Pays ${MELODIE_DISCOUNT_PERCENT}% less for everything in the shop, but her grid never holds more than ${MELODIE_GRID_CEILING} dice.`,
+    ability: `Starts on a d4. Pays ${MELODIE_DISCOUNT_PERCENT}% less for everything in the shop, but her grid never holds more than ${MELODIE_GRID_CEILING} dice.`,
     startingGold: STARTING_GOLD,
     shopDiscountPercent: MELODIE_DISCOUNT_PERCENT,
     gridCeiling: MELODIE_GRID_CEILING,
     sizeChaos: null,
     unlockedBy: [],
-    // A first run is played as Diebert, who adds nothing to learn over the
-    // rules themselves; Melodie's trade is only a trade once the shop is known.
-    unlockedAfterRuns: 1,
+    unlockedAfterRuns: 0,
+    // A purse that size is a run that has learned the shop, which is when her
+    // trade starts to be a trade.
+    unlockedByDeed: "goldHeld",
+    startingDie: { sides: 4 },
   },
   roland: {
     id: "roland",
     name: "Roland",
     art: "character-roland",
     ability:
-      "Every die in his grid is remade at a new size after each roll. Nothing stays what it was.",
+      "Starts on a d20. Every die in his grid is remade at a new size after each roll. Nothing stays what it was.",
     startingGold: STARTING_GOLD,
     shopDiscountPercent: 0,
     gridCeiling: Infinity,
     sizeChaos: ROLAND_SIZE_CHAOS,
-    unlockedBy: ["diebert", "melodie"],
+    unlockedBy: [],
     unlockedAfterRuns: 0,
+    // A grid that has already held every size is the grid his storm deals.
+    unlockedByDeed: "everySize",
+    startingDie: { sides: 20 },
   },
   // The diemancer. Her grid opens on Grace rather than a plain d6, and that is
   // her whole rule: a soft second chance from the first roll, which grows into
@@ -262,16 +281,23 @@ export function deedsIn(grid: {
   const deeds: CharacterDeed[] = [];
   if (grid.someDie((d) => d.maxFaceBonus >= 4 && d.sides === 1))
     deeds.push("centurionToD1");
+  if (DIE_LADDER.every((sides) => grid.someDie((d) => d.sides === sides)))
+    deeds.push("everySize");
   return deeds;
 }
 
-/** Add whatever deeds the run's grid now shows to the run's own list. Cheap
- *  enough to call after every roll and every purchase. */
+/** Add whatever deeds the run now shows to the run's own list: its grid's, and
+ *  its purse's high-water mark (which Gold keeps as gold comes in, so a purse
+ *  that touched the mark between two looks still counts). Cheap enough to call
+ *  after every roll and every purchase. */
 export function noteDeeds(state: {
   deeds: CharacterDeed[];
   dice: { someDie: (pred: (die: DeedDie) => boolean) => boolean };
+  peakGold?: number;
 }): void {
-  for (const deed of deedsIn(state.dice))
+  const done = deedsIn(state.dice);
+  if ((state.peakGold ?? 0) >= MELODIE_UNLOCK_GOLD) done.push("goldHeld");
+  for (const deed of done)
     if (!state.deeds.includes(deed)) state.deeds.push(deed);
 }
 

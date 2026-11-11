@@ -21,6 +21,7 @@ import {
   MELODIE_DISCOUNT_PERCENT,
   noteDeeds,
   MELODIE_GRID_CEILING,
+  MELODIE_UNLOCK_GOLD,
   ROLAND_SIZE_CHAOS,
   sizeWeights,
   type CharacterId,
@@ -33,7 +34,7 @@ import {
   hydrateRunState,
   serializeRunState,
 } from "../systems/ActiveRunPersistence";
-import { recordRunEnd } from "../systems/SaveData";
+import { recordRunEnd, unlockedCharacters } from "../systems/SaveData";
 import { resolveRoll, rollPool } from "./engine";
 import { installStorage, mulberry32 } from "./localStorageShim";
 
@@ -86,29 +87,73 @@ console.log("\nUnlocking");
 
 {
   check(characterUnlocked("diebert", [], 0), "Diebert needs nothing");
-  check(!characterUnlocked("melodie", [], 0), "Melodie starts locked");
   check(
-    characterUnlocked("melodie", [], 1),
-    "and one finished run opens her, won or lost",
+    !characterUnlocked("melodie", ["diebert"], 50),
+    "Melodie is not opened by wins or runs",
   );
   check(
-    describeCharacterUnlock("melodie") === "Finish a run.",
-    "and her locked card says so",
-  );
-  check(!characterUnlocked("roland", [], 5), "Roland starts locked");
-  check(
-    !characterUnlocked("roland", ["diebert"], 5) &&
-      !characterUnlocked("roland", ["melodie"], 5),
-    "and one win is not enough",
+    characterUnlocked("melodie", [], 0, ["goldHeld"]),
+    `only by holding ${MELODIE_UNLOCK_GOLD} gold at once`,
   );
   check(
-    characterUnlocked("roland", ["diebert", "melodie"], 2),
-    "but both wins open him",
+    describeCharacterUnlock("melodie") ===
+      `Hold ${MELODIE_UNLOCK_GOLD} gold at once.` &&
+      describeCharacterDeed("melodie") ===
+        `Held ${MELODIE_UNLOCK_GOLD} gold at once`,
+    "and her card says so, before and after",
   );
   check(
-    describeCharacterUnlock("roland").includes("Diebert") &&
-      describeCharacterUnlock("roland").includes("Melodie"),
-    "and his locked card names them both",
+    !characterUnlocked("roland", ["diebert", "melodie"], 50),
+    "Roland is not opened by wins or runs",
+  );
+  check(
+    characterUnlocked("roland", [], 0, ["everySize"]),
+    "only by holding every die size at once",
+  );
+  check(
+    describeCharacterUnlock("roland") ===
+      "Hold one die of every size, d1 to d100, at once.",
+    "and his locked card says so",
+  );
+
+  // Melodie's deed is read off the purse's high-water mark.
+  const purse = newRun([], 1, "diebert");
+  purse.peakGold = MELODIE_UNLOCK_GOLD - 1;
+  noteDeeds(purse);
+  check(!purse.deeds.includes("goldHeld"), "one gold short is no deed");
+  purse.peakGold = MELODIE_UNLOCK_GOLD;
+  purse.gold = 3;
+  noteDeeds(purse);
+  check(
+    purse.deeds.includes("goldHeld"),
+    "and a purse that once held the mark has done it, spent or not",
+  );
+
+  // Roland's is read off the grid: every rung of the ladder at once.
+  const ladder = newRun([], 1, "diebert");
+  for (const sides of DIE_LADDER.slice(0, -1))
+    ladder.dice.addDice(sides, 1, {}, "extra_dice");
+  noteDeeds(ladder);
+  check(!ladder.deeds.includes("everySize"), "a grid short a d100 is no deed");
+  ladder.dice.addDice(100, 1, {}, "extra_dice");
+  noteDeeds(ladder);
+  check(
+    ladder.deeds.includes("everySize"),
+    "and with one of every size it has done it",
+  );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nStarting dice");
+
+{
+  const sidesOf = (id: CharacterId) => newRun([], 1, id).dice.dieAt(0)!.sides;
+  check(sidesOf("diebert") === 6, "Diebert starts on a d6");
+  check(sidesOf("melodie") === 4, "Melodie starts on a d4");
+  check(sidesOf("roland") === 20, "Roland starts on a d20");
+  check(
+    newRun([], 1, "melodie").dice.dieAt(0)!.source === "starter",
+    "and a plain starting die is still the starter",
   );
 }
 
@@ -119,33 +164,60 @@ console.log("\nAnnouncing an unlock");
   // The end screens name whoever the run just opened, read off the save as the
   // run is recorded — so each run must report exactly the novices it was the
   // one to open, and never one opened before it.
-  const first = recordRunEnd(newRun([], 1, "diebert"), false);
-  check(
-    first.newCharacters.length === 1 && first.newCharacters[0] === "melodie",
-    "a first finished run, even a loss, announces Melodie",
-  );
   check(
     recordRunEnd(newRun([], 1, "diebert"), false).newCharacters.length === 0,
-    "and a second loss announces nobody",
+    "a plain finished run announces nobody",
   );
   check(
     recordRunEnd(newRun([], 1, "diebert"), true).newCharacters.length === 0,
-    "nor does one win, with Roland still waiting on the other",
+    "nor does a win",
   );
-  const both = recordRunEnd(newRun([], 1, "melodie"), true);
+  const rich = newRun([], 1, "diebert");
+  rich.peakGold = MELODIE_UNLOCK_GOLD;
+  const opened = recordRunEnd(rich, false);
   check(
-    both.newCharacters.length === 1 && both.newCharacters[0] === "roland",
-    "but the second novice's win announces Roland",
-  );
-  check(
-    recordRunEnd(newRun([], 1, "melodie"), true).newCharacters.length === 0,
-    "and winning with her again announces nobody",
+    opened.newCharacters.length === 1 && opened.newCharacters[0] === "melodie",
+    "a run that held the gold announces Melodie, even a loss",
   );
   check(
-    describeCharacterDeed("melodie") === "Finished a run" &&
-      describeCharacterDeed("roland") === "Won a run as Diebert and Melodie",
-    "and each card names the deed that opened it",
+    recordRunEnd(rich, false).newCharacters.length === 0,
+    "and only that run",
   );
+}
+
+// ---------------------------------------------------------------------------
+console.log("\nOlder saves");
+
+{
+  // A save from before these unlocks were deeds keeps whoever it had opened.
+  localStorage.setItem(
+    "ooo_progress_v2",
+    JSON.stringify({
+      unlocked: [],
+      selectionCounts: {},
+      gamesCompleted: 3,
+      charactersBeaten: ["diebert", "melodie"],
+    }),
+  );
+  const kept = unlockedCharacters();
+  check(
+    kept.includes("melodie") && kept.includes("roland"),
+    "an older save keeps Melodie and Roland",
+  );
+  localStorage.setItem(
+    "ooo_progress_v2",
+    JSON.stringify({
+      unlocked: [],
+      selectionCounts: {},
+      gamesCompleted: 0,
+      charactersBeaten: [],
+    }),
+  );
+  check(
+    !unlockedCharacters().includes("melodie"),
+    "but an older save that had opened nobody gains nobody",
+  );
+  installStorage([]);
 }
 
 // ---------------------------------------------------------------------------

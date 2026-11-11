@@ -387,6 +387,24 @@ export interface Progress {
   // Every deed done in some run that opens a character (Dieanne's shrunken
   // Centurion). Kept for good, like a win.
   deeds: CharacterDeed[];
+  // Characters opened under rules since retired (Melodie by a finished run,
+  // Roland by wins as Diebert and Melodie), read once from a save written
+  // before their unlocks became deeds. A novice the player has already picked
+  // must not re-lock because the way in changed.
+  charactersKept: CharacterId[];
+}
+
+/** The characters an older save had open under the unlock rules that came
+ *  before Melodie's and Roland's deeds. */
+function legacyCharacters(
+  gamesCompleted: number,
+  beaten: readonly CharacterId[],
+): CharacterId[] {
+  const kept: CharacterId[] = [];
+  if (gamesCompleted >= 1) kept.push("melodie");
+  if (beaten.includes("diebert") && beaten.includes("melodie"))
+    kept.push("roland");
+  return kept;
 }
 
 function defaultProgress(): Progress {
@@ -396,6 +414,7 @@ function defaultProgress(): Progress {
     gamesCompleted: 0,
     charactersBeaten: [],
     deeds: [],
+    charactersKept: [],
   };
 }
 
@@ -404,16 +423,23 @@ export function loadProgress(): Progress {
     const raw = localStorage.getItem(KEY_PROGRESS);
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<Progress>;
+      const gamesCompleted = parsed.gamesCompleted ?? 0;
+      const charactersBeaten = Array.isArray(parsed.charactersBeaten)
+        ? parsed.charactersBeaten.filter(isCharacterId)
+        : [];
       return {
         unlocked: Array.isArray(parsed.unlocked) ? parsed.unlocked : [],
         selectionCounts: parsed.selectionCounts ?? {},
-        gamesCompleted: parsed.gamesCompleted ?? 0,
-        charactersBeaten: Array.isArray(parsed.charactersBeaten)
-          ? parsed.charactersBeaten.filter(isCharacterId)
-          : [],
+        gamesCompleted,
+        charactersBeaten,
         deeds: Array.isArray(parsed.deeds)
           ? parsed.deeds.filter(isCharacterDeed)
           : [],
+        // Absent only from a save older than the field, which is the one save
+        // the old rules still speak for; once written it is never re-derived.
+        charactersKept: Array.isArray(parsed.charactersKept)
+          ? parsed.charactersKept.filter(isCharacterId)
+          : legacyCharacters(gamesCompleted, charactersBeaten),
       };
     }
   } catch {
@@ -532,13 +558,15 @@ export function recordDeeds(deeds: readonly CharacterDeed[]): void {
 /** The characters the player can pick right now, in roster order. */
 export function unlockedCharacters(): CharacterId[] {
   const progress = loadProgress();
-  return CHARACTER_ORDER.filter((id) =>
-    characterUnlocked(
-      id,
-      progress.charactersBeaten,
-      progress.gamesCompleted,
-      progress.deeds,
-    ),
+  return CHARACTER_ORDER.filter(
+    (id) =>
+      progress.charactersKept.includes(id) ||
+      characterUnlocked(
+        id,
+        progress.charactersBeaten,
+        progress.gamesCompleted,
+        progress.deeds,
+      ),
   );
 }
 
@@ -559,7 +587,7 @@ export function recordRunEnd(
   won: boolean,
 ): { personalBest: boolean; newCharacters: CharacterId[] } {
   // Read before the run is counted, so the end screen can name whoever this
-  // run is the one to open — a finished run for Melodie, a win for Roland.
+  // run is the one to open — a deed done, or a win for a novice gated on one.
   const before = unlockedCharacters();
   const opened = () =>
     unlockedCharacters().filter((id) => !before.includes(id));
