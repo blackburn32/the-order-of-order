@@ -198,11 +198,37 @@ The Worker validates the shape of every index field and throttles submissions pe
 device (`SUBMITS_PER_HOUR`, default 20). It cannot prove a run happened — no
 client-submitted leaderboard can, and a determined player can post any score.
 
-The stronger check this design leaves room for is replaying the submitted timeline
-through the game's own `src/sim/engine.ts` and confirming it produces the claimed
-score. That is not possible today: `RunState` carries no RNG seed (the live game
-uses `Math.random`), so a run cannot be re-derived. Making the live run's RNG
-deterministic and persisting the seed would open that door.
+The stronger check is replaying a run, and every run now carries what that
+takes. A submission's analysis blob holds, beside the timeline:
+
+| Field                | What it is                                                                                                        |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `seed`               | The run's seed: every roll, shelf, pack and boss it was dealt (`src/systems/Rng.ts`).                             |
+| `unlocks`            | The run-start snapshot of the cards its shop could draw from.                                                     |
+| `tutorial`, `forced` | Whether the tutorial rigged its dice, and which rolls.                                                            |
+| `log`                | Every choice the player made, in order (`src/systems/InputLog.ts`).                                               |
+| `build`              | The commit of the build that finished the run. The log's `build` entries name every build that played part of it. |
+
+The log's roll entries also record the column count the grid was laid out in,
+which the radius dice measure their reach across and which follows the shape of
+the player's screen. A `dev` entry means the dev panel touched the run, and a
+build ending in `-dirty` was built from uncommitted changes.
+
+To audit a run ad hoc, check the repo out at the run's `build` and replay it:
+
+```bash
+npm run audit -- --api=https://<worker> --member=<memberId>            # a board row
+npm run audit -- --api=https://<worker> --member=<memberId> --daily=2026-11-11
+npm run audit -- run.json                  # a saved blob, Hall entry or active-run save
+```
+
+It fetches the row's blob and its score, plays the log back through the game's
+own rules (`src/sim/replay.ts`, with the shop in `src/systems/ShopVisit.ts`),
+and prints `LEGIT` when the replay lands on the claimed score, or
+`NOT VERIFIED` with where and why it parted ways. The Worker itself never
+replays: it stores the blob as opaque bytes, so a new client field needs no
+Worker change. `npm run replay:e2e` plays real runs in a browser and checks
+they all replay, which is how to tell the replayer and the scenes still agree.
 
 ## Cost
 

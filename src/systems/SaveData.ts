@@ -17,6 +17,8 @@ import {
 } from "./Characters";
 import { ITEMS, meetsCriterion, ShopItemId } from "./Items";
 import { isSeed } from "./Rng";
+import { readInputLog, type InputEvent } from "./InputLog";
+import { BUILD_SHA } from "../buildInfo";
 import { GraphicsLevel, isGraphicsLevel } from "./GraphicsLevel";
 import { runRank } from "./GoalTiers";
 import { metaUnlockOwner } from "./Shop";
@@ -98,6 +100,11 @@ export interface HallEntry {
   // rolls the tutorial rigged (see RunState.forcedRolls).
   tutorialArmed?: boolean;
   forcedRolls?: string[];
+  // And the last two: every choice the player made, in order (see
+  // systems/InputLog), and the build that finished the run. With these an
+  // audit can check the run out at its commit and replay it to its score.
+  inputLog?: InputEvent[];
+  build?: string;
   // The Daily Rite's day ("2026-10-23"), for a run played as one. Only ever set
   // on entries in the daily hall, never on the ordinary one.
   daily?: string;
@@ -192,6 +199,8 @@ function readHall(key: string): HallEntry[] {
         unlocks: knownItemIds(entry.unlocks),
         tutorialArmed: Boolean(entry.tutorialArmed),
         forcedRolls: rollKeys(entry.forcedRolls),
+        inputLog: readInputLog(entry.inputLog),
+        ...(typeof entry.build === "string" ? { build: entry.build } : {}),
         ...(typeof entry.daily === "string" ? { daily: entry.daily } : {}),
       }));
   } catch {
@@ -629,6 +638,8 @@ export function recordRunEnd(
     unlocks: [...state.shopUnlocks],
     tutorialArmed: state.tutorialArmed,
     forcedRolls: [...state.forcedRolls],
+    inputLog: state.inputLog.map((e) => [...e] as InputEvent),
+    build: BUILD_SHA,
   };
   if (state.dailyRite) {
     // A daily run goes to its own hall and its own board. It still counts as a

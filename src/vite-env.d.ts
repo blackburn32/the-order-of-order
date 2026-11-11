@@ -15,6 +15,9 @@ interface ImportMetaEnv {
   readonly VITE_DEV_PANEL?: string;
   /** Build flag: "true"/"1" identifies the Capacitor phone bundle. */
   readonly VITE_PHONE_BUILD?: string;
+  /** The commit the bundle was built from, set by vite.config.ts (see
+   *  src/buildInfo.ts). */
+  readonly VITE_BUILD_SHA?: string;
 }
 
 interface ImportMeta {

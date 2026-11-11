@@ -18,6 +18,7 @@ import type { ItemPurchaseEvent } from "../systems/ItemValue";
 import type { GrowthEngineId } from "../systems/GrowthEngines";
 import { randomSeed } from "../systems/Rng";
 import type { DailyRite } from "../systems/Daily";
+import type { InputEvent } from "../systems/InputLog";
 
 export interface RunState {
   // The novice this run is being played as (see systems/Characters). Chosen
@@ -116,6 +117,11 @@ export interface RunState {
   // dismissed their way to different answers, and only the run that happened
   // knows which rolls were rigged.
   forcedRolls: string[];
+  // Every choice the player has made this run, in order, with the build that
+  // played each stretch of it (see systems/InputLog). The seed and unlocks say
+  // what the run was dealt; this says what the player did with it, which is
+  // what an audit replays to check a score.
+  inputLog: InputEvent[];
   // The Daily Rite this run is playing, or null for an ordinary run (see
   // systems/Daily). Its banes are also on `afflictions` and its granted cards
   // on `purchases`; this is what says the run is a daily one at all, which day
@@ -349,6 +355,7 @@ export function newRun(
     seed,
     tutorialArmed: false,
     forcedRolls: [],
+    inputLog: [],
     dailyRite: null,
     bonusRollsThisRound: 0,
     bonusRollsPerRound: 0,

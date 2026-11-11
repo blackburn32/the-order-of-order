@@ -18,6 +18,7 @@ import { GOLD_PER_INTEREST, INTEREST_CAP } from "./Gold";
 import { refreshActiveRun, saveActiveRun } from "./ActiveRunPersistence";
 import { DEFAULT_CHARACTER, type CharacterId } from "./Characters";
 import { applyDailyRite, dailyShopUnlocks, type DailyRite } from "./Daily";
+import { noteBuild } from "./InputLog";
 
 // The tutorial steps, in the order they are shown — the script in TUTORIAL.md,
 // one member per numbered step. They follow the run's own loop rather than one
@@ -474,6 +475,8 @@ export function beginRun(
   const state = daily
     ? newRun(dailyShopUnlocks(), daily.seed, daily.character)
     : newRun(loadProgress().unlocked, randomSeed(), character);
+  // The log opens on the build that is dealing the run (see systems/InputLog).
+  noteBuild(state);
   // Laid on before anything is rolled, so rank 1's boss already answers to it
   // (The Sleepless Watch rolls two).
   if (daily) {
