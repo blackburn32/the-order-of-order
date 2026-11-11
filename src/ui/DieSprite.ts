@@ -17,6 +17,7 @@ import { scoresKey } from "../systems/GrowthEngines";
 import { Die } from "../systems/Dice";
 import {
   dieEffects,
+  dieEffectsKey,
   type DieAuras,
   type DieEffect,
 } from "../systems/DieEffects";
@@ -136,6 +137,11 @@ export class DieSprite extends Phaser.GameObjects.Container {
   // Resolution the live glyphs were last rasterized at, so a pan that leaves
   // the magnification alone does not re-render every face on screen.
   private sharpResolution = 0;
+  // What the live children were last drawn for — size, shading, plate and
+  // resolution — so a relayout that changes none of them (every frame of a
+  // pan or pinch re-seats every die on screen) does not re-tessellate the body
+  // and re-rasterize both glyphs of every die it touches.
+  private sharpKey = "";
   // The Vigil's growth on this die, pinned over its top-right corner (see
   // refreshGrowth). Built the first time a die has any growth to show, and
   // only on the dice that ask for it — the game's grid does, the shop's
@@ -394,6 +400,9 @@ export class DieSprite extends Phaser.GameObjects.Container {
   private drawSharp(): void {
     const sides = this.die.sides;
     const resolution = Math.max(1, this.sharpResolution);
+    const key = `${sides}|${dieEffectsKey(this.effects)}|${this.plated}|${resolution}`;
+    if (key === this.sharpKey) return;
+    this.sharpKey = key;
 
     if (this.sharpBody) {
       this.sharpBody.clear();
