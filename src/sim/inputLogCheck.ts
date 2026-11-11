@@ -52,17 +52,18 @@ logInput(state, "pack", 1, "booster_x");
 logInput(state, "skip");
 logInput(state, "reroll");
 logInput(state, "leave");
+logInput(state, "open");
 state.trial = 3;
 logInput(state, "tribute", "tollkeeper");
 logInput(state, "endless");
 logInput(state, "dev", "setGold");
-check(state.inputLog.length === 13, "every kind of input is logged");
+check(state.inputLog.length === 14, "every kind of input is logged");
 check(
   state.inputLog.every(isInputEvent),
   "every logged entry reads back as well-formed",
 );
 check(
-  state.inputLog[1][0] === 1 && state.inputLog[10][0] === 3,
+  state.inputLog[1][0] === 1 && state.inputLog[11][0] === 3,
   "each entry carries the trial it happened on",
 );
 
@@ -76,7 +77,7 @@ check(
 );
 resumed!.inputLog.push([1, "move", 0, 1]);
 check(
-  state.inputLog.length === 13,
+  state.inputLog.length === 14,
   "a resumed log is a copy, not the live run's array",
 );
 const legacy = { ...saved };

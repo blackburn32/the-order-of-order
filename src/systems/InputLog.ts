@@ -18,6 +18,8 @@
 //   [trial, "skip"]                        an opened pack closed with no pick
 //   [trial, "reroll"]                      the shelf rerolled
 //   [trial, "leave"]                       the shop left
+//   [trial, "open"]                        the table opened the trial (its
+//                                          trial-start passives ran)
 //   [trial, "tribute", afflictionId]       a drawback taken at the Tribute
 //   [trial, "endless"]                     pressed on past the final rank
 //   [trial, "dev", action]                 the dev panel touched the run
@@ -60,6 +62,7 @@ export type InputEvent =
   | [trial: number, kind: "skip"]
   | [trial: number, kind: "reroll"]
   | [trial: number, kind: "leave"]
+  | [trial: number, kind: "open"]
   | [trial: number, kind: "tribute", id: string]
   | [trial: number, kind: "endless"]
   | [trial: number, kind: "dev", action: string];
@@ -144,6 +147,7 @@ export function isInputEvent(value: unknown): value is InputEvent {
     case "skip":
     case "reroll":
     case "leave":
+    case "open":
     case "endless":
       return rest.length === 0;
     default:

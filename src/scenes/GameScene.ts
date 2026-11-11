@@ -4705,6 +4705,9 @@ export class GameScene extends Phaser.Scene {
     if (!this.state.trialOpenPending) return;
     const before = { ...this.state.itemValues };
     this.state.dice.takeTurnedAway();
+    // Logged because it decides which grid a die moved before it lands on: the
+    // trial-start passives pour dice in, and the table opens on a timer.
+    logInput(this.state, "open");
     openTrial(this.state);
     const turnedAway = this.state.dice.takeTurnedAway();
     // Committed at once, like a roll: a reload after this point must not pour

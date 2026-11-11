@@ -40,8 +40,11 @@ import {
   type SerializedRollSample,
 } from "./RunHistory";
 
-const API = (import.meta.env.VITE_LEADERBOARD_API ?? "").replace(/\/+$/, "");
-const SUBMIT_KEY = import.meta.env.VITE_LEADERBOARD_SUBMIT_KEY ?? "";
+// Defaulted like buildFlags' env: the audit command line (sim/audit) reads
+// blobs through this module under node, where Vite defines nothing.
+const env: Partial<ImportMetaEnv> = import.meta.env ?? {};
+const API = (env.VITE_LEADERBOARD_API ?? "").replace(/\/+$/, "");
+const SUBMIT_KEY = env.VITE_LEADERBOARD_SUBMIT_KEY ?? "";
 
 export const GLOBAL_TOP_N = 100;
 
@@ -116,6 +119,9 @@ export interface RunSubmission {
    *  systems/InputLog) and the build that finished the run. */
   inputLog?: readonly InputEvent[];
   build?: string;
+  /** The Daily Rite's day, for a run played as one: its rite is the rest of
+   *  what a replay needs, and is derived from the day. */
+  daily?: string;
 }
 
 /** What a global row's analysis unpacks into — the same shape the local Hall
@@ -134,6 +140,8 @@ export interface GlobalRunAnalysis {
   forcedRolls?: string[];
   inputLog?: InputEvent[];
   build?: string;
+  daily?: string;
+  character?: CharacterId;
 }
 
 /** True only when the API base is configured; otherwise the whole feature is
@@ -267,9 +275,13 @@ interface AnalysisBlob {
    *  together with the seed and unlocks, everything a replay needs. */
   log?: InputEvent[];
   build?: string;
+  daily?: string;
+  /** The novice, also an index field on the board row, so a blob replays on
+   *  its own. */
+  character?: string;
 }
 
-function encodeAnalysis(run: RunSubmission): string {
+export function encodeAnalysis(run: RunSubmission): string {
   const decimals = (m: Record<string, bigint>): Record<string, string> =>
     Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v.toString()]));
   const blob: AnalysisBlob = {
@@ -288,6 +300,8 @@ function encodeAnalysis(run: RunSubmission): string {
       ? run.inputLog.map((e) => [...e] as InputEvent)
       : undefined,
     build: run.build,
+    daily: run.daily,
+    character: run.character,
   };
   return JSON.stringify(blob);
 }
@@ -295,7 +309,7 @@ function encodeAnalysis(run: RunSubmission): string {
 /** Untrusted input: this came off the network. Anything malformed degrades to
  *  "no analysis" rather than throwing — `hydrateRollHistory` already treats a
  *  bad timeline that way, and the point maps get the same treatment. */
-function decodeAnalysis(text: string): GlobalRunAnalysis | null {
+export function decodeAnalysis(text: string): GlobalRunAnalysis | null {
   let parsed: Partial<AnalysisBlob>;
   try {
     parsed = JSON.parse(text) as Partial<AnalysisBlob>;
@@ -328,6 +342,8 @@ function decodeAnalysis(text: string): GlobalRunAnalysis | null {
       : undefined,
     inputLog: readInputLog(parsed.log),
     build: typeof parsed.build === "string" ? parsed.build : undefined,
+    daily: isDailyDay(parsed.daily) ? parsed.daily : undefined,
+    character: isCharacterId(parsed.character) ? parsed.character : undefined,
   };
 }
 
@@ -421,6 +437,7 @@ export function submissionFromHallEntry(entry: HallEntry): RunSubmission {
     forcedRolls: entry.forcedRolls,
     inputLog: entry.inputLog,
     build: entry.build,
+    daily: entry.daily,
   };
 }
 

@@ -1031,3 +1031,20 @@ crosses the bucket threshold.
 | `catechismExperiment.ts` | Every tree's engine against the engine-gate goal curve, on matched seeds; restores every switch. |
 | `exportItemTrees.ts`     | Validates the strategy trees (`systems/ItemTrees`) and writes them to CSV.                       |
 | `compareScoring.ts`      | Per-die vs histogram scorer parity + perf timing.                                                |
+
+## Auditing a run
+
+Every run records its input log and build (`src/systems/InputLog.ts`), and
+`replay.ts` plays a run back from that record through the same rules the game
+plays by — the trial loop here in `engine.ts`, the shop in
+`src/systems/ShopVisit.ts` (which `ShopScene` drives too), the story's turns in
+`src/systems/Endings.ts`.
+
+```bash
+npm run audit -- run.json                              # blob, Hall entry or active-run save
+npm run audit -- --api=https://<worker> --member=<id>  # a global board row
+npm run replay:e2e                                     # real browser runs must all replay
+```
+
+Check out the run's build before auditing it: rules move between builds. The
+replay refuses any rule that draws from `Math.random` rather than the run's seed.

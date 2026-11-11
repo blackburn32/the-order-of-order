@@ -214,10 +214,21 @@ which the radius dice measure their reach across and which follows the shape of
 the player's screen. A `dev` entry means the dev panel touched the run, and a
 build ending in `-dirty` was built from uncommitted changes.
 
-To audit a run ad hoc, fetch its blob (`GET /v1/runs/:member`, or the daily
-route), gunzip it, check the repo out at its `build`, and replay `log` from
-`seed` + `unlocks` through the game's rules. The Worker itself never replays:
-it stores the blob as opaque bytes, so a new client field needs no Worker change.
+To audit a run ad hoc, check the repo out at the run's `build` and replay it:
+
+```bash
+npm run audit -- --api=https://<worker> --member=<memberId>            # a board row
+npm run audit -- --api=https://<worker> --member=<memberId> --daily=2026-11-11
+npm run audit -- run.json                  # a saved blob, Hall entry or active-run save
+```
+
+It fetches the row's blob and its score, plays the log back through the game's
+own rules (`src/sim/replay.ts`, with the shop in `src/systems/ShopVisit.ts`),
+and prints `LEGIT` when the replay lands on the claimed score, or
+`NOT VERIFIED` with where and why it parted ways. The Worker itself never
+replays: it stores the blob as opaque bytes, so a new client field needs no
+Worker change. `npm run replay:e2e` plays real runs in a browser and checks
+they all replay, which is how to tell the replayer and the scenes still agree.
 
 ## Cost
 
