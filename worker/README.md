@@ -198,11 +198,26 @@ The Worker validates the shape of every index field and throttles submissions pe
 device (`SUBMITS_PER_HOUR`, default 20). It cannot prove a run happened — no
 client-submitted leaderboard can, and a determined player can post any score.
 
-The stronger check this design leaves room for is replaying the submitted timeline
-through the game's own `src/sim/engine.ts` and confirming it produces the claimed
-score. That is not possible today: `RunState` carries no RNG seed (the live game
-uses `Math.random`), so a run cannot be re-derived. Making the live run's RNG
-deterministic and persisting the seed would open that door.
+The stronger check is replaying a run, and every run now carries what that
+takes. A submission's analysis blob holds, beside the timeline:
+
+| Field                | What it is                                                                                                        |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `seed`               | The run's seed: every roll, shelf, pack and boss it was dealt (`src/systems/Rng.ts`).                             |
+| `unlocks`            | The run-start snapshot of the cards its shop could draw from.                                                     |
+| `tutorial`, `forced` | Whether the tutorial rigged its dice, and which rolls.                                                            |
+| `log`                | Every choice the player made, in order (`src/systems/InputLog.ts`).                                               |
+| `build`              | The commit of the build that finished the run. The log's `build` entries name every build that played part of it. |
+
+The log's roll entries also record the column count the grid was laid out in,
+which the radius dice measure their reach across and which follows the shape of
+the player's screen. A `dev` entry means the dev panel touched the run, and a
+build ending in `-dirty` was built from uncommitted changes.
+
+To audit a run ad hoc, fetch its blob (`GET /v1/runs/:member`, or the daily
+route), gunzip it, check the repo out at its `build`, and replay `log` from
+`seed` + `unlocks` through the game's rules. The Worker itself never replays:
+it stores the blob as opaque bytes, so a new client field needs no Worker change.
 
 ## Cost
 

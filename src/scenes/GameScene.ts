@@ -115,6 +115,7 @@ import { GridArea } from "../ui/gridLayout";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { buildRunFooterLinks } from "../ui/runFooterLinks";
 import { streamFor } from "../systems/Rng";
+import { logInput } from "../systems/InputLog";
 import { DieTooltip, type NoteTooltipContent } from "../ui/dieTooltip";
 import { showNoticePanel, type NoticePanelHandle } from "../ui/noticePanel";
 import { statusRows, type StatusRow } from "../ui/statusRows";
@@ -3600,6 +3601,7 @@ export class GameScene extends Phaser.Scene {
     this.heldDie = undefined;
     const { from, to, sprite, shadow } = held;
     if (from !== to && this.state.dice.move(from, to)) {
+      logInput(this.state, "move", from, to);
       const rekeyed = new Map<number, DieSprite>();
       for (const [index, s] of this.sprites)
         rekeyed.set(slotWhileMoving(index, from, to), s);
@@ -3870,6 +3872,12 @@ export class GameScene extends Phaser.Scene {
     // A reload mid-tumble therefore re-makes this same roll rather than dealing
     // a different one (see systems/Rng).
     const diceRng = streamFor(this.state.seed, "roll", rollKey);
+    // The columns the radius dice will reach across, read before the roll can
+    // grow the grid — the layout follows the player's screen, so a replay has
+    // to be told the shape this roll was made on (see systems/InputLog).
+    const cols = this.state.dice.radiusCols;
+    const roll = this.state.roll;
+    let redo = 0;
     const rollDice = () =>
       rollPool(this.state, this.state.dice, forced ? () => 0 : diceRng);
     rollDice();
@@ -3882,9 +3890,12 @@ export class GameScene extends Phaser.Scene {
         let attempt = 0;
         attempt < 32 && this.state.dice.agg().scoringCount > 0;
         attempt++
-      )
+      ) {
         rollDice();
+        redo++;
+      }
     }
+    logInput(this.state, "roll", roll, cols, forced ? 1 : 0, redo);
 
     // Tumble animation: flicker visible dice or one representative die per
     // summary row, then settle on the real rolled values.

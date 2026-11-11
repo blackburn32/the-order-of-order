@@ -24,6 +24,7 @@ import { finalizeRun } from "../systems/RunEnd";
 import { AmbientLayer } from "../ui/AmbientLayer";
 import type { CharacterId } from "../systems/Characters";
 import { streamFor } from "../systems/Rng";
+import { logInput } from "../systems/InputLog";
 import {
   createFreshShopCheckpoint,
   saveActiveRun,
@@ -286,6 +287,7 @@ export class VictoryScene extends Phaser.Scene {
    *  drawbacks they imposed on the way through. */
   private continueRun(): void {
     const state = getRun(this.registry);
+    logInput(state, "endless");
     // Endless opens on a fresh Boss Trial assignment, and it is drawn from the
     // seed like every other one — keyed by the rank being entered, which is one
     // past the trial the run is still sitting on.

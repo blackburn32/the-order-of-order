@@ -31,6 +31,7 @@ import {
 } from "./Characters";
 import { ITEMS, type ShopItemId } from "./Items";
 import { isSeed } from "./Rng";
+import { readInputLog, type InputEvent } from "./InputLog";
 import { isDailyDay } from "./Daily";
 import {
   hydrateRollHistory,
@@ -111,6 +112,10 @@ export interface RunSubmission {
    *  Without these a tutorial run replays into a different run entirely. */
   tutorialArmed?: boolean;
   forcedRolls?: readonly string[];
+  /** And the rest of what an audit needs: every choice the player made (see
+   *  systems/InputLog) and the build that finished the run. */
+  inputLog?: readonly InputEvent[];
+  build?: string;
 }
 
 /** What a global row's analysis unpacks into — the same shape the local Hall
@@ -127,6 +132,8 @@ export interface GlobalRunAnalysis {
   unlocks?: ShopItemId[];
   tutorialArmed?: boolean;
   forcedRolls?: string[];
+  inputLog?: InputEvent[];
+  build?: string;
 }
 
 /** True only when the API base is configured; otherwise the whole feature is
@@ -256,6 +263,10 @@ interface AnalysisBlob {
   unlocks?: string[];
   tutorial?: boolean;
   forced?: string[];
+  /** The input log (systems/InputLog) and the build that finished the run —
+   *  together with the seed and unlocks, everything a replay needs. */
+  log?: InputEvent[];
+  build?: string;
 }
 
 function encodeAnalysis(run: RunSubmission): string {
@@ -273,6 +284,10 @@ function encodeAnalysis(run: RunSubmission): string {
     // player's first: an absent flag reads as "nothing was rigged".
     tutorial: run.tutorialArmed || undefined,
     forced: run.forcedRolls?.length ? [...run.forcedRolls] : undefined,
+    log: run.inputLog?.length
+      ? run.inputLog.map((e) => [...e] as InputEvent)
+      : undefined,
+    build: run.build,
   };
   return JSON.stringify(blob);
 }
@@ -311,6 +326,8 @@ function decodeAnalysis(text: string): GlobalRunAnalysis | null {
             typeof key === "string" && /^\d+:\d+$/.test(key),
         )
       : undefined,
+    inputLog: readInputLog(parsed.log),
+    build: typeof parsed.build === "string" ? parsed.build : undefined,
   };
 }
 
@@ -402,6 +419,8 @@ export function submissionFromHallEntry(entry: HallEntry): RunSubmission {
     unlocks: entry.unlocks,
     tutorialArmed: entry.tutorialArmed,
     forcedRolls: entry.forcedRolls,
+    inputLog: entry.inputLog,
+    build: entry.build,
   };
 }
 

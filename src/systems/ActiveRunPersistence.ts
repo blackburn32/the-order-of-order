@@ -34,6 +34,7 @@ import {
 } from "./Shop";
 import { TutorialStage, type TutorialState } from "./Tutorial";
 import { addItemValue } from "./ItemValue";
+import { isInputEvent, noteBuild, type InputEvent } from "./InputLog";
 
 export const ACTIVE_RUN_STORAGE_KEY = "the-order-of-order.active-run";
 const ACTIVE_RUN_TOMBSTONE_KEY = `${ACTIVE_RUN_STORAGE_KEY}.cleared-at`;
@@ -245,6 +246,7 @@ export function serializeRunState(state: RunState): SerializedRunState {
     dicePoints: serializePointMap(state.dicePoints),
     itemPoints: serializePointMap(state.itemPoints),
     rollHistory: serializeRollHistory(state.rollHistory),
+    inputLog: state.inputLog.map((e) => [...e] as InputEvent),
   };
 }
 
@@ -451,6 +453,11 @@ export function hydrateRunState(value: unknown): RunState | null {
     )
   )
     return null;
+  // The same for the input log, which an audit replays entry by entry: a save
+  // whose log is malformed cannot vouch for the run it describes. A save from
+  // before the log existed has none, and simply starts one from here.
+  if (!hydrated.inputLog.every(isInputEvent)) return null;
+  hydrated.inputLog = hydrated.inputLog.map((e) => [...e] as InputEvent);
   hydrated.trialRollGold = {
     titheBowl: value.trialRollGold.titheBowl,
     luckyCoin: value.trialRollGold.luckyCoin,
@@ -975,6 +982,9 @@ export function restoreActiveRun(
     if (latestRaw || localGet()) clearActiveRun();
     return null;
   }
+  // A run resumed under a different build than it was last played under is
+  // played under new rules from here on, and its log says so.
+  noteBuild(restored.run);
   setRun(registry, restored.run);
   registry.set("tutorial", restored.tutorial);
   latestCheckpoint = restored.checkpoint;

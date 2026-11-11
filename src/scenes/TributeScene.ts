@@ -21,6 +21,7 @@ import { attachCardHover } from "../ui/cardHover";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import { addFelt } from "../ui/widgets";
 import { AmbientLayer } from "../ui/AmbientLayer";
+import { logInput } from "../systems/InputLog";
 
 /** Fixed sigil brightness. Low: this is the one screen in the game where
  *  nothing good is on offer, and the room should not be celebrating. */
@@ -192,6 +193,7 @@ export class TributeScene extends Phaser.Scene {
     if (this.leaving) return;
     this.leaving = true;
     const state = getRun(this.registry);
+    logInput(state, "tribute", id);
     afflict(state, id);
     // Held by id as well as on the affliction list, so endless knows which of
     // the run's drawbacks was the Crown's and can lift exactly that one.

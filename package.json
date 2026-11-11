@@ -57,6 +57,7 @@
     "stats:check": "tsx src/sim/playerStatsCheck.ts",
     "math:check": "tsx src/sim/exactMathCheck.ts",
     "rng:check": "tsx src/sim/rngCheck.ts",
+    "inputlog:check": "tsx src/sim/inputLogCheck.ts",
     "radius:check": "tsx src/sim/radiusCheck.ts",
     "radius:survey": "tsx src/sim/radiusSurvey.ts",
     "benchmark": "tsx src/sim/benchmark.ts",

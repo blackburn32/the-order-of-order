@@ -29,6 +29,10 @@ import {
 } from "../systems/Characters";
 import { DicePool } from "../systems/DicePool";
 import { getRun, RunState } from "../state/RunState";
+// Every tool below that changes the run marks it in the run's input log: a run
+// the dev panel has touched is not one its inputs alone can reproduce, and an
+// audit should see that at once.
+import { logInput } from "../systems/InputLog";
 import { openTrial, prepareDuel } from "../sim/engine";
 import { serializeRunState } from "../systems/ActiveRunPersistence";
 import { rankOf as rankOfTrial } from "../config";
@@ -430,6 +434,7 @@ function jumpToTrial(
   boss: BossModifierId | null,
 ): string {
   const state = getRun(game.registry);
+  logInput(state, "dev", "jumpToTrial");
   state.trial = trial;
   state.roll = 0;
   state.score = 0n;
@@ -471,6 +476,7 @@ function jumpToTrial(
  */
 function setPoints(game: Phaser.Game, points: bigint): string {
   const state = getRun(game.registry);
+  logInput(state, "dev", "setPoints");
   state.score = points;
   if (points > state.trialScore) state.trialScore = points;
   game.registry.set("run", state);
@@ -497,6 +503,7 @@ function completeTrial(game: Phaser.Game): string {
     return "No trial in hand — use this on the table or its overview.";
   }
   const state = getRun(game.registry);
+  logInput(state, "dev", "completeTrial");
   // The trial-start passives run as the table opens. A trial completed before
   // that still gets them, so its payout reads the grid it would have played.
   openTrial(state);
@@ -532,6 +539,7 @@ function completeTrial(game: Phaser.Game): string {
  */
 function setCharacter(game: Phaser.Game, id: CharacterId): string {
   const state = getRun(game.registry);
+  logInput(state, "dev", "setCharacter");
   const who = CHARACTERS[id];
   state.character = id;
   state.dice.setCeiling(who.gridCeiling);
@@ -555,6 +563,7 @@ function setCharacter(game: Phaser.Game, id: CharacterId): string {
 /** Set the run's purse outright, for testing the shop without playing to it. */
 function setGold(game: Phaser.Game, gold: number): string {
   const state = getRun(game.registry);
+  logInput(state, "dev", "setGold");
   state.gold = gold;
   if (gold > state.peakGold) state.peakGold = gold;
   game.registry.set("run", state);
@@ -593,6 +602,7 @@ function openCardPicker(
   if (!base) return "Nothing on screen to open the picker over.";
 
   const state = getRun(game.registry);
+  logInput(state, "dev", "openCardPicker");
   const owned = (id: ShopItemId) => state.purchases[id] ?? 0;
   let granted = 0;
   const data: ItemsData = {
@@ -625,6 +635,7 @@ function openCardPicker(
  *  status message with the granted/skipped tally. */
 function grantAllItems(game: Phaser.Game): string {
   const state = getRun(game.registry);
+  logInput(state, "dev", "grantAllItems");
   let granted = 0;
   const skipped: string[] = [];
 
@@ -649,6 +660,7 @@ function applyDiceSetup(
   maxFaceBonus: boolean,
 ): void {
   const state = getRun(game.registry);
+  logInput(state, "dev", "applyDiceSetup");
 
   const dice = [];
   for (let i = 0; i < count; i++) {

@@ -86,6 +86,7 @@ import { spendGold } from "../systems/Gold";
 import { buildRichCopy, isMarked } from "../ui/richCopy";
 import { WINDOW_THRESHOLD } from "../ui/windowedGrid";
 import { streamFor } from "../systems/Rng";
+import { logInput } from "../systems/InputLog";
 import {
   createFreshShopCheckpoint,
   saveActiveRun,
@@ -2628,6 +2629,7 @@ export class ShopScene extends Phaser.Scene {
       audio.deny();
       return;
     }
+    logInput(this.state, "pack", this.packs.indexOf(pack), pack.id);
     spendGold(this.state, price);
     pack.sold = true;
     // Counted only once the pack is actually bought: a pack that turned up empty
@@ -2968,10 +2970,24 @@ export class ShopScene extends Phaser.Scene {
     const hadCart = this.state.hasShoppingCart;
     const hadPawnbroker = this.state.hasPawnbroker;
     const hadCoupon = this.state.hasCouponBook && !!offer.freeByCoupon;
+    // Where the card stood, read before applying it can change anything: the
+    // shelf and the pack hand are both restored in this order on a reload.
+    const index = fromPack
+      ? this.packChoices!.indexOf(offer)
+      : this.offers.indexOf(offer);
     const applied = fromPack
       ? applyBoosterChoice(this.state, offer, targetIndex, targetIndices)
       : applyOffer(this.state, offer, targetIndex, targetIndices);
     if (!applied) return false;
+    logInput(
+      this.state,
+      "buy",
+      fromPack ? "pack" : "shelf",
+      index,
+      offer.id,
+      targetIndex ?? null,
+      targetIndices ? [...targetIndices] : null,
+    );
     recordRunItemPurchase(this.state, offer.id, paid);
     this.recordShopSavings(
       listPrice,
@@ -3025,7 +3041,7 @@ export class ShopScene extends Phaser.Scene {
       audio.buy();
       this.purchasesMade += 1;
       if (offer.id === "coupon_book") {
-        applyCouponFreebie(this.state, this.offers);
+        applyCouponFreebie(this.state, this.offers, this.couponRng());
       }
       // Taken before the pack's state is dropped: the send-off animates the very
       // cards the choice was made from, and the overlay they stand in.
@@ -3062,6 +3078,7 @@ export class ShopScene extends Phaser.Scene {
       .filter((card): card is Phaser.GameObjects.Container => !!card);
     const title = this.packTitle;
     this.openingPack.declined = true;
+    logInput(this.state, "skip");
     this.purchasesMade += 1;
     this.packChoices = undefined;
     this.openingPack = undefined;
@@ -3721,7 +3738,8 @@ export class ShopScene extends Phaser.Scene {
 
     // Coupon Book affects the rest of the visit in which it is bought: one of
     // the remaining cards becomes free.
-    if (offer.id === "coupon_book") applyCouponFreebie(this.state, this.offers);
+    if (offer.id === "coupon_book")
+      applyCouponFreebie(this.state, this.offers, this.couponRng());
     this.saveCheckpoint();
 
     // Running the loose-card row dry no longer closes the shop: sealed packs
@@ -3740,6 +3758,18 @@ export class ShopScene extends Phaser.Scene {
     }
   }
 
+  /** The stream a Coupon Book bought mid-visit draws its freebie from. Keyed
+   *  by the shelf it lands on (the visit's reroll count) and by how many cards
+   *  the visit has taken, which together name the moment it was bought — so a
+   *  replay frees the same card the player saw freed. */
+  private couponRng(): () => number {
+    return streamFor(
+      this.state.seed,
+      "shop",
+      `${this.state.trial}:${this.rerollsThisVisit}:coupon:${this.purchasesMade}`,
+    );
+  }
+
   private rerollStore(): void {
     if (this.shelfAnimating) return;
     const freeByBell = rerollIsFree(this.state, this.rerollsThisVisit);
@@ -3755,6 +3785,7 @@ export class ShopScene extends Phaser.Scene {
       .map((offer) => this.offerCards.get(offer))
       .filter((card): card is Phaser.GameObjects.Container => !!card);
     this.endShopStep(TutorialStage.Reroll);
+    logInput(this.state, "reroll");
     spendGold(this.state, price);
     if (freeByBell)
       addItemValue(
@@ -3817,6 +3848,7 @@ export class ShopScene extends Phaser.Scene {
     this.endShopStep(TutorialStage.LeaveShop);
     // Abstinence pays for a visit that took nothing, before the run is saved
     // on its way out.
+    logInput(this.state, "leave");
     leaveShop(this.state, this.purchasesMade > 0);
     saveActiveRun(this.registry, { scene: "TrialOverview" });
     slideSceneOut(
