@@ -286,10 +286,16 @@ export class DieSprite extends Phaser.GameObjects.Container {
       this.sharpFace?.setVisible(false);
       return;
     }
+    // Exactly one numeral is ever visible. Switching representation (a zoom
+    // across the sharp threshold) re-runs this, and whichever path is not
+    // live may still be showing the face it last drew, which would otherwise
+    // sit under the new one as a second, stale number.
     if (this.sharp && this.sharpFace) {
+      this.faceImage.setVisible(false);
       this.sharpFace.setVisible(true).setText(String(value));
       return;
     }
+    this.sharpFace?.setVisible(false);
     this.faceImage.setVisible(true).setFrame(`face-${this.die.sides}-${value}`);
   }
 
