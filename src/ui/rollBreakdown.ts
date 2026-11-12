@@ -46,6 +46,15 @@ export interface RollBreakdownOptions {
   fontSize: number;
   /** The widest the panel may be. */
   maxWidth: number;
+  /** Hang the panel from this left edge instead of centring it on `x`: the
+   *  docked callout of a large screen, tucked into the top-left corner. */
+  left?: number;
+  /** The felt's opacity (default 0.93). The docked callout sits over the grid
+   *  rather than over empty table, so it lets the dice show through a little. */
+  fillAlpha?: number;
+  /** Stay on screen once the sequence has run, showing the roll's result until
+   *  the caller destroys it (the next roll's callout replaces it). */
+  persist?: boolean;
   /** Hand every object to the scene's overlay camera. */
   add<T extends Phaser.GameObjects.GameObject>(object: T): T;
   /** Speed the sequence up (2 = twice as fast) for a player mashing the seal. */
@@ -78,10 +87,16 @@ export type RollAcclaim = "goal" | "firstRoll";
 export interface RollBreakdownView {
   /** The y just below the panel, for whatever stacks under it. */
   readonly bottomY: number;
+  /** The panel's horizontal centre, for whatever stacks under it. */
+  readonly centerX: number;
   /** Scene-clock milliseconds from now until the total is shown. */
   readonly totalAtMs: number;
-  /** Scene-clock time at which the callout will have faded away on its own. */
+  /** Scene-clock time at which the callout will have faded away on its own —
+   *  or, for one that persists, finished its sequence and come to rest. */
   readonly closedAt: number;
+  /** A persisting callout that has finished its sequence and now just shows
+   *  the roll's result. */
+  readonly settled: boolean;
   /** Jump to the final numbers and clear away quickly: a new roll is starting. */
   hurry(): void;
   destroy(): void;
@@ -253,7 +268,8 @@ export function playRollBreakdown(
   // for the sequence's delays, which collapse to nothing when motion is off.
   const scaled = (value: number) => (value * TIME_SCALE) / pace;
   const ms = (value: number) => (motion ? scaled(value) : 0);
-  const { x, fontSize, rowStep } = opts;
+  const { fontSize, rowStep } = opts;
+  let x = opts.x;
 
   const pieces: Piece[] = [];
   const text = (
@@ -440,6 +456,13 @@ export function playRollBreakdown(
     opts.maxWidth,
     Math.max(fontSize * 13, widest + padX * 2),
   );
+  // A docked callout is laid out on `x` like any other, then slid across so
+  // its left edge lands on `left` now that its width is known.
+  if (opts.left !== undefined) {
+    const shiftX = opts.left + panelW / 2 - x;
+    for (const piece of pieces) piece.x += shiftX;
+    x += shiftX;
+  }
   let panelTop = opts.top - rowStep / 2 - padY * 0.45;
   let panelBottom = lastY + lastPad;
   divider
@@ -466,7 +489,7 @@ export function playRollBreakdown(
     strokeAlpha: number,
   ) => {
     panel.clear();
-    panel.fillStyle(fill, 0.93);
+    panel.fillStyle(fill, opts.fillAlpha ?? 0.93);
     panel.fillRoundedRect(
       x - panelW / 2,
       panelTop,
@@ -917,23 +940,52 @@ export function playRollBreakdown(
       });
     }
   };
+  // A persisting callout keeps its rows and its gold once the sequence is
+  // done; only the acclaim's washes, which pulse and turn, die away, so the
+  // panel left on screen is a still record of the roll rather than a flare
+  // that never ends.
+  let settled = false;
+  const comeToRest = (duration: number) => {
+    if (settled) return;
+    settled = true;
+    for (const piece of [halo, seal]) {
+      if (!piece) continue;
+      stopOwn(piece);
+      tween(piece, {
+        alpha: 0,
+        duration,
+        ease: "Quad.easeIn",
+      });
+    }
+  };
+  const persist = opts.persist === true;
   const holdMs = HOLD_AFTER_TOTAL_MS + (acclaim ? ACCLAIM_HOLD_MS[acclaim] : 0);
   const closeAtMs = Math.max(
     scored ? totalAtMs + scaled(holdMs) : 0,
     diceRow ? ms(diceEnd) + scaled(DICE_HOLD_MS) : 0,
   );
-  at(closeAtMs, () => fadeOut(scaled(FADE_MS)));
+  let closedAt = scene.time.now + closeAtMs + (persist ? 0 : scaled(FADE_MS));
+  at(closeAtMs, () =>
+    persist ? comeToRest(scaled(FADE_MS)) : fadeOut(scaled(FADE_MS)),
+  );
 
   return {
     bottomY: panelBottom + rowStep * 0.5,
+    centerX: x,
     totalAtMs,
-    closedAt: scene.time.now + closeAtMs + scaled(FADE_MS),
+    get closedAt() {
+      return closedAt;
+    },
+    get settled() {
+      return settled;
+    },
     hurry() {
       for (const timer of timers) timer.remove();
       countEvent?.remove();
       diceEvent?.remove();
-      // Nothing to hurry once the scene has torn the callout down.
-      if (fading || !panel.scene) return;
+      // Nothing to hurry once the scene has torn the callout down, or once a
+      // persisting callout has already come to rest.
+      if (fading || settled || !panel.scene) return;
       settleBonus();
       settleDice();
       if (multiplied) {
@@ -952,7 +1004,9 @@ export function playRollBreakdown(
       // The gold and the ribbon land even on a callout the player skipped past:
       // the roll met the goal whether or not they waited to be told.
       celebrate();
-      fadeOut(160);
+      closedAt = scene.time.now;
+      if (persist) comeToRest(160);
+      else fadeOut(160);
     },
     destroy() {
       for (const timer of timers) timer.remove();
