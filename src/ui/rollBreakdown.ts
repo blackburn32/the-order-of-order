@@ -55,6 +55,9 @@ export interface RollBreakdownOptions {
   /** Stay on screen once the sequence has run, showing the roll's result until
    *  the caller destroys it (the next roll's callout replaces it). */
   persist?: boolean;
+  /** Real milliseconds a docked callout waits before sliding in: the time the
+   *  previous roll's docked callout takes to slide out of the same corner. */
+  enterDelayMs?: number;
   /** Hand every object to the scene's overlay camera. */
   add<T extends Phaser.GameObjects.GameObject>(object: T): T;
   /** Speed the sequence up (2 = twice as fast) for a player mashing the seal. */
@@ -99,6 +102,9 @@ export interface RollBreakdownView {
   readonly settled: boolean;
   /** Jump to the final numbers and clear away quickly: a new roll is starting. */
   hurry(): void;
+  /** Clear away now: a docked callout fades and slides out to the left, any
+   *  other is simply destroyed. */
+  dismiss(): void;
   destroy(): void;
 }
 
@@ -172,6 +178,19 @@ const DICE_LEAD_MS = 160;
  *  its summary line only appears once the count has finished. */
 const DICE_HOLD_MS = 1000;
 const FADE_MS = 300;
+
+/** The docked callout's entrance and exit: how far it slides in from (and out
+ *  to) the left, and how long each takes. Real milliseconds, not scaled by the
+ *  callout's pace, so a mashed seal still gets a legible slide. */
+const DOCK_SLIDE_PX = 28;
+const DOCK_ENTER_MS = 260;
+const DOCK_EXIT_MS = 200;
+/** How long a docked callout takes to slide out, for the caller to wait on
+ *  before the next one slides in (see `enterDelayMs`). */
+export const DOCK_EXIT_DURATION_MS = DOCK_EXIT_MS;
+/** Written (unscaled) lead before a docked callout's first row appears, so the
+ *  rows land on felt that has already faded in. */
+const DOCK_ENTER_LEAD = 220;
 
 /** Extra rest an acclaimed callout takes before it clears away, on top of the
  *  ordinary hold. The flare lands on the total and then has to be *looked* at;
@@ -776,9 +795,43 @@ export function playRollBreakdown(
   };
 
   reveal(panel, 0, false);
-  let delay = 0;
+  // Docked in the corner, the whole callout fades in as it slides a little way
+  // in from the left, and its rows wait for the felt to arrive.
+  const docked = opts.left !== undefined;
+  const slides = docked && motion;
+  const slideTweens: Phaser.Tweens.Tween[] = [];
+  const enterDelay = slides ? Math.max(0, opts.enterDelayMs ?? 0) : 0;
+  if (slides) {
+    for (const piece of pieces) {
+      const home = piece.x;
+      piece.x = home - DOCK_SLIDE_PX;
+      slideTweens.push(
+        scene.tweens.add({
+          targets: piece,
+          x: home,
+          delay: enterDelay,
+          duration: DOCK_ENTER_MS,
+          ease: "Cubic.easeOut",
+        }),
+      );
+    }
+    panel.setAlpha(0);
+    slideTweens.push(
+      scene.tweens.add({
+        targets: panel,
+        alpha: 1,
+        delay: enterDelay,
+        duration: DOCK_ENTER_MS,
+        ease: "Quad.easeOut",
+      }),
+    );
+  }
+  // The lead is written time, like every delay in the sequence; the wait for
+  // the previous callout to leave is real time, so it is converted back.
+  const lead = slides ? DOCK_ENTER_LEAD + (enterDelay * pace) / TIME_SCALE : 0;
+  let delay = lead;
   const rowGap = Math.min(90, 380 / Math.max(1, sumRows.length));
-  sumRows.forEach((row, index) => reveal(row, ms(index * rowGap)));
+  sumRows.forEach((row, index) => reveal(row, ms(lead + index * rowGap)));
   delay += sumRows.length * rowGap;
 
   // The bonus opens at +0 and adds each effect in turn.
@@ -892,7 +945,7 @@ export function playRollBreakdown(
     diceRow?.setText(diceText(netDice)).setColor(diceColor(netDice));
     fitDiceLabel(diceSummaryText(diceChanges));
   };
-  const diceStart = scored ? delay + 80 + DICE_LEAD_MS : 0;
+  const diceStart = scored ? delay + 80 + DICE_LEAD_MS : lead;
   const diceGap =
     countPace(diceChanges.length).gap * (DICE_COUNT_MS / COUNT_MS);
   const diceEnd = diceStart + diceChanges.length * diceGap;
@@ -1008,8 +1061,33 @@ export function playRollBreakdown(
       if (persist) comeToRest(160);
       else fadeOut(160);
     },
+    dismiss() {
+      for (const timer of timers) timer.remove();
+      countEvent?.remove();
+      diceEvent?.remove();
+      for (const made of slideTweens) made.stop();
+      if (!panel.scene) return;
+      if (!slides) {
+        this.destroy();
+        return;
+      }
+      fading = true;
+      for (const piece of pieces) {
+        stopOwn(piece);
+        piece.setScale(rest(piece));
+        scene.tweens.add({
+          targets: piece,
+          x: piece.x - DOCK_SLIDE_PX,
+          alpha: 0,
+          duration: DOCK_EXIT_MS,
+          ease: "Quad.easeIn",
+          onComplete: () => piece.destroy(),
+        });
+      }
+    },
     destroy() {
       for (const timer of timers) timer.remove();
+      for (const made of slideTweens) made.stop();
       countEvent?.remove();
       diceEvent?.remove();
       if (!panel.scene) return;

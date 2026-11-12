@@ -77,6 +77,7 @@ import { formatScore } from "../ui/formatScore";
 import { rollBreakdown, type MultiplierStep } from "../systems/RollBreakdown";
 import {
   breakdownRows,
+  DOCK_EXIT_DURATION_MS,
   playRollBreakdown,
   type RollAcclaim,
   type RollBreakdownView,
@@ -4437,7 +4438,10 @@ export class GameScene extends Phaser.Scene {
       Math.max(20, room / Math.max(1, rowCount)),
     );
     const effectFontSize = dock ? 17 : floatStep < 32 ? 18 : 22;
-    this.breakdownView?.destroy();
+    // A docked callout still showing the last roll slides out as this one
+    // slides in; any other is cleared at once.
+    const replacing = !!dock && !!this.breakdownView;
+    this.breakdownView?.dismiss();
     this.breakdownView = undefined;
     this.scoreRevealAt = 0;
     if (breakdown)
@@ -4455,6 +4459,7 @@ export class GameScene extends Phaser.Scene {
         left: dock?.left,
         fillAlpha: dock ? 0.8 : undefined,
         persist: !!dock,
+        enterDelayMs: replacing ? DOCK_EXIT_DURATION_MS : 0,
         maxWidth: dock ? dock.maxWidth : this.scale.width - 32,
         rowStep: floatStep,
         fontSize: effectFontSize,
