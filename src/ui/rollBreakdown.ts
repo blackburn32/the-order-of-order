@@ -46,6 +46,18 @@ export interface RollBreakdownOptions {
   fontSize: number;
   /** The widest the panel may be. */
   maxWidth: number;
+  /** Hang the panel from this left edge instead of centring it on `x`: the
+   *  docked callout of a large screen, tucked into the top-left corner. */
+  left?: number;
+  /** The felt's opacity (default 0.93). The docked callout sits over the grid
+   *  rather than over empty table, so it lets the dice show through a little. */
+  fillAlpha?: number;
+  /** Stay on screen once the sequence has run, showing the roll's result until
+   *  the caller destroys it (the next roll's callout replaces it). */
+  persist?: boolean;
+  /** Real milliseconds a docked callout waits before sliding in: the time the
+   *  previous roll's docked callout takes to slide out of the same corner. */
+  enterDelayMs?: number;
   /** Hand every object to the scene's overlay camera. */
   add<T extends Phaser.GameObjects.GameObject>(object: T): T;
   /** Speed the sequence up (2 = twice as fast) for a player mashing the seal. */
@@ -78,12 +90,21 @@ export type RollAcclaim = "goal" | "firstRoll";
 export interface RollBreakdownView {
   /** The y just below the panel, for whatever stacks under it. */
   readonly bottomY: number;
+  /** The panel's horizontal centre, for whatever stacks under it. */
+  readonly centerX: number;
   /** Scene-clock milliseconds from now until the total is shown. */
   readonly totalAtMs: number;
-  /** Scene-clock time at which the callout will have faded away on its own. */
+  /** Scene-clock time at which the callout will have faded away on its own —
+   *  or, for one that persists, finished its sequence and come to rest. */
   readonly closedAt: number;
+  /** A persisting callout that has finished its sequence and now just shows
+   *  the roll's result. */
+  readonly settled: boolean;
   /** Jump to the final numbers and clear away quickly: a new roll is starting. */
   hurry(): void;
+  /** Clear away now: a docked callout fades and slides out to the left, any
+   *  other is simply destroyed. */
+  dismiss(): void;
   destroy(): void;
 }
 
@@ -157,6 +178,19 @@ const DICE_LEAD_MS = 160;
  *  its summary line only appears once the count has finished. */
 const DICE_HOLD_MS = 1000;
 const FADE_MS = 300;
+
+/** The docked callout's entrance and exit: how far it slides in from (and out
+ *  to) the left, and how long each takes. Real milliseconds, not scaled by the
+ *  callout's pace, so a mashed seal still gets a legible slide. */
+const DOCK_SLIDE_PX = 28;
+const DOCK_ENTER_MS = 260;
+const DOCK_EXIT_MS = 200;
+/** How long a docked callout takes to slide out, for the caller to wait on
+ *  before the next one slides in (see `enterDelayMs`). */
+export const DOCK_EXIT_DURATION_MS = DOCK_EXIT_MS;
+/** Written (unscaled) lead before a docked callout's first row appears, so the
+ *  rows land on felt that has already faded in. */
+const DOCK_ENTER_LEAD = 220;
 
 /** Extra rest an acclaimed callout takes before it clears away, on top of the
  *  ordinary hold. The flare lands on the total and then has to be *looked* at;
@@ -253,7 +287,8 @@ export function playRollBreakdown(
   // for the sequence's delays, which collapse to nothing when motion is off.
   const scaled = (value: number) => (value * TIME_SCALE) / pace;
   const ms = (value: number) => (motion ? scaled(value) : 0);
-  const { x, fontSize, rowStep } = opts;
+  const { fontSize, rowStep } = opts;
+  let x = opts.x;
 
   const pieces: Piece[] = [];
   const text = (
@@ -440,6 +475,13 @@ export function playRollBreakdown(
     opts.maxWidth,
     Math.max(fontSize * 13, widest + padX * 2),
   );
+  // A docked callout is laid out on `x` like any other, then slid across so
+  // its left edge lands on `left` now that its width is known.
+  if (opts.left !== undefined) {
+    const shiftX = opts.left + panelW / 2 - x;
+    for (const piece of pieces) piece.x += shiftX;
+    x += shiftX;
+  }
   let panelTop = opts.top - rowStep / 2 - padY * 0.45;
   let panelBottom = lastY + lastPad;
   divider
@@ -466,7 +508,7 @@ export function playRollBreakdown(
     strokeAlpha: number,
   ) => {
     panel.clear();
-    panel.fillStyle(fill, 0.93);
+    panel.fillStyle(fill, opts.fillAlpha ?? 0.93);
     panel.fillRoundedRect(
       x - panelW / 2,
       panelTop,
@@ -753,9 +795,43 @@ export function playRollBreakdown(
   };
 
   reveal(panel, 0, false);
-  let delay = 0;
+  // Docked in the corner, the whole callout fades in as it slides a little way
+  // in from the left, and its rows wait for the felt to arrive.
+  const docked = opts.left !== undefined;
+  const slides = docked && motion;
+  const slideTweens: Phaser.Tweens.Tween[] = [];
+  const enterDelay = slides ? Math.max(0, opts.enterDelayMs ?? 0) : 0;
+  if (slides) {
+    for (const piece of pieces) {
+      const home = piece.x;
+      piece.x = home - DOCK_SLIDE_PX;
+      slideTweens.push(
+        scene.tweens.add({
+          targets: piece,
+          x: home,
+          delay: enterDelay,
+          duration: DOCK_ENTER_MS,
+          ease: "Cubic.easeOut",
+        }),
+      );
+    }
+    panel.setAlpha(0);
+    slideTweens.push(
+      scene.tweens.add({
+        targets: panel,
+        alpha: 1,
+        delay: enterDelay,
+        duration: DOCK_ENTER_MS,
+        ease: "Quad.easeOut",
+      }),
+    );
+  }
+  // The lead is written time, like every delay in the sequence; the wait for
+  // the previous callout to leave is real time, so it is converted back.
+  const lead = slides ? DOCK_ENTER_LEAD + (enterDelay * pace) / TIME_SCALE : 0;
+  let delay = lead;
   const rowGap = Math.min(90, 380 / Math.max(1, sumRows.length));
-  sumRows.forEach((row, index) => reveal(row, ms(index * rowGap)));
+  sumRows.forEach((row, index) => reveal(row, ms(lead + index * rowGap)));
   delay += sumRows.length * rowGap;
 
   // The bonus opens at +0 and adds each effect in turn.
@@ -869,7 +945,7 @@ export function playRollBreakdown(
     diceRow?.setText(diceText(netDice)).setColor(diceColor(netDice));
     fitDiceLabel(diceSummaryText(diceChanges));
   };
-  const diceStart = scored ? delay + 80 + DICE_LEAD_MS : 0;
+  const diceStart = scored ? delay + 80 + DICE_LEAD_MS : lead;
   const diceGap =
     countPace(diceChanges.length).gap * (DICE_COUNT_MS / COUNT_MS);
   const diceEnd = diceStart + diceChanges.length * diceGap;
@@ -917,23 +993,52 @@ export function playRollBreakdown(
       });
     }
   };
+  // A persisting callout keeps its rows and its gold once the sequence is
+  // done; only the acclaim's washes, which pulse and turn, die away, so the
+  // panel left on screen is a still record of the roll rather than a flare
+  // that never ends.
+  let settled = false;
+  const comeToRest = (duration: number) => {
+    if (settled) return;
+    settled = true;
+    for (const piece of [halo, seal]) {
+      if (!piece) continue;
+      stopOwn(piece);
+      tween(piece, {
+        alpha: 0,
+        duration,
+        ease: "Quad.easeIn",
+      });
+    }
+  };
+  const persist = opts.persist === true;
   const holdMs = HOLD_AFTER_TOTAL_MS + (acclaim ? ACCLAIM_HOLD_MS[acclaim] : 0);
   const closeAtMs = Math.max(
     scored ? totalAtMs + scaled(holdMs) : 0,
     diceRow ? ms(diceEnd) + scaled(DICE_HOLD_MS) : 0,
   );
-  at(closeAtMs, () => fadeOut(scaled(FADE_MS)));
+  let closedAt = scene.time.now + closeAtMs + (persist ? 0 : scaled(FADE_MS));
+  at(closeAtMs, () =>
+    persist ? comeToRest(scaled(FADE_MS)) : fadeOut(scaled(FADE_MS)),
+  );
 
   return {
     bottomY: panelBottom + rowStep * 0.5,
+    centerX: x,
     totalAtMs,
-    closedAt: scene.time.now + closeAtMs + scaled(FADE_MS),
+    get closedAt() {
+      return closedAt;
+    },
+    get settled() {
+      return settled;
+    },
     hurry() {
       for (const timer of timers) timer.remove();
       countEvent?.remove();
       diceEvent?.remove();
-      // Nothing to hurry once the scene has torn the callout down.
-      if (fading || !panel.scene) return;
+      // Nothing to hurry once the scene has torn the callout down, or once a
+      // persisting callout has already come to rest.
+      if (fading || settled || !panel.scene) return;
       settleBonus();
       settleDice();
       if (multiplied) {
@@ -952,10 +1057,37 @@ export function playRollBreakdown(
       // The gold and the ribbon land even on a callout the player skipped past:
       // the roll met the goal whether or not they waited to be told.
       celebrate();
-      fadeOut(160);
+      closedAt = scene.time.now;
+      if (persist) comeToRest(160);
+      else fadeOut(160);
+    },
+    dismiss() {
+      for (const timer of timers) timer.remove();
+      countEvent?.remove();
+      diceEvent?.remove();
+      for (const made of slideTweens) made.stop();
+      if (!panel.scene) return;
+      if (!slides) {
+        this.destroy();
+        return;
+      }
+      fading = true;
+      for (const piece of pieces) {
+        stopOwn(piece);
+        piece.setScale(rest(piece));
+        scene.tweens.add({
+          targets: piece,
+          x: piece.x - DOCK_SLIDE_PX,
+          alpha: 0,
+          duration: DOCK_EXIT_MS,
+          ease: "Quad.easeIn",
+          onComplete: () => piece.destroy(),
+        });
+      }
     },
     destroy() {
       for (const timer of timers) timer.remove();
+      for (const made of slideTweens) made.stop();
       countEvent?.remove();
       diceEvent?.remove();
       if (!panel.scene) return;

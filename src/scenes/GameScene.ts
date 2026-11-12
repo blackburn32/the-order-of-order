@@ -77,6 +77,7 @@ import { formatScore } from "../ui/formatScore";
 import { rollBreakdown, type MultiplierStep } from "../systems/RollBreakdown";
 import {
   breakdownRows,
+  DOCK_EXIT_DURATION_MS,
   playRollBreakdown,
   type RollAcclaim,
   type RollBreakdownView,
@@ -510,6 +511,16 @@ function blendColor(from: number, to: number, t: number): number {
   return Phaser.Display.Color.GetColor(mix.r, mix.g, mix.b);
 }
 
+/** The docked roll callout (see `Layout.dock`): its inset from the screen's
+ *  left edge, the top of its panel (low enough for an acclaim ribbon riding
+ *  the border to stay on screen), the narrowest and widest it is drawn, and
+ *  the shortest screen it docks on. */
+const DOCK_INSET = 14;
+const DOCK_TOP = 26;
+const DOCK_MIN_W = 250;
+const DOCK_MAX_W = 360;
+const DOCK_MIN_H = 600;
+
 interface HudCell {
   x: number;
   y: number;
@@ -534,6 +545,11 @@ interface Layout {
    *  seal sits beside the grid rather than under it and the callout hangs from
    *  just under the HUD instead. */
   calloutBand?: { top: number; bottom: number };
+  /** On a large landscape screen the roll callout docks in the top-left
+   *  corner beside the HUD instead of over the middle of the grid, and stays
+   *  up between rolls showing the last result. Its left edge, the band its
+   *  panel may fill (clear of the status table below), and its widest. */
+  dock?: { left: number; top: number; bottom: number; maxWidth: number };
   /** The dice camera's viewport: the whole playfield between the HUD and the
    *  footer, seal included. Dice are clipped to it, and pan/zoom may carry
    *  them anywhere inside it — behind the seal, which the interface camera
@@ -875,6 +891,12 @@ export class GameScene extends Phaser.Scene {
     }
 
     const layout = this.computeLayout();
+    // A docked callout left showing the last roll was placed for the old
+    // screen; a mid-count one finishes where it is and then waits as before.
+    if (this.breakdownView?.settled) {
+      this.breakdownView.destroy();
+      this.breakdownView = undefined;
+    }
     this.buildChrome(layout);
     // A resize moves the sigil as well as the grid viewport, so a fit-zoomed
     // block has to be re-centred on it — clamping the old scroll into the new
@@ -1215,6 +1237,24 @@ export class GameScene extends Phaser.Scene {
     const button = { x: W / 2, y: H - footerH - SEAL_RADIUS - 14, scale: 1 };
     const gridBottom = button.y - SEAL_RADIUS - 16;
     const calloutBand = { top: chromeBottom, bottom: button.y - SEAL_RADIUS };
+    // Room enough beside the centred HUD strip for the callout to stand in the
+    // corner at a readable width: the callout docks there rather than over the
+    // grid's middle. It may lap over the grid's left edge, which is why it is
+    // drawn translucent. Below it, the status table's tallest reach.
+    const dockRoom = (W - hudWidth) / 2 - DOCK_INSET * 2;
+    const dockTop = DOCK_TOP;
+    const dock =
+      !portrait && H >= DOCK_MIN_H && dockRoom >= DOCK_MIN_W
+        ? {
+            left: DOCK_INSET,
+            top: dockTop,
+            bottom: Math.max(
+              dockTop + DOCK_MIN_H / 2,
+              footer.status.bottom - statusMaxH - 12,
+            ),
+            maxWidth: Math.min(DOCK_MAX_W, dockRoom),
+          }
+        : undefined;
 
     const gridFrame = {
       x: portrait ? margin : W * 0.06,
@@ -1231,6 +1271,7 @@ export class GameScene extends Phaser.Scene {
         disabledCardOverlayLayout(disabledCount, gridFrame, false),
       footer,
       calloutBand,
+      dock,
       // A Boss Trial pushes the rule below the ribbon: the modifiers presiding
       // over the round are part of the header, not of the table.
       // The playfield runs to the footer, past the seal: a phone screen has
@@ -3822,7 +3863,9 @@ export class GameScene extends Phaser.Scene {
   private finishBreakdown(): void {
     if (!this.breakdownView) return;
     this.breakdownView.hurry();
-    this.breakdownView = undefined;
+    // A docked callout stays up showing this roll until the next one's
+    // replaces it, so its handle is kept for that roll to destroy.
+    if (!this.layout.dock) this.breakdownView = undefined;
     this.celebrateTimer?.remove();
     this.celebrateTimer = undefined;
     // The plaque lands on the score now rather than counting toward it.
@@ -4378,15 +4421,27 @@ export class GameScene extends Phaser.Scene {
         : tierGold;
 
     const band = this.layout.calloutBand;
-    let floatY = breakdown ? 150 : 195;
+    // Docked in the corner on a large screen, the callout is a compact panel
+    // with tighter rows rather than one spread across the table's middle.
+    const dock = this.layout.dock;
+    let floatY = dock ? dock.top : breakdown ? 150 : 195;
+    let floatX = this.scale.width / 2;
     const rowCount =
       breakdownRows(breakdown, diceChanges, !!acclaimDetail) + bossCues.length;
-    const room = band
-      ? band.bottom - band.top - 16
-      : this.scale.height - floatY - 24;
-    const floatStep = Math.min(45, Math.max(20, room / Math.max(1, rowCount)));
-    const effectFontSize = floatStep < 32 ? 18 : 22;
-    this.breakdownView?.destroy();
+    const room = dock
+      ? dock.bottom - dock.top
+      : band
+        ? band.bottom - band.top - 16
+        : this.scale.height - floatY - 24;
+    const floatStep = Math.min(
+      dock ? 32 : 45,
+      Math.max(20, room / Math.max(1, rowCount)),
+    );
+    const effectFontSize = dock ? 17 : floatStep < 32 ? 18 : 22;
+    // A docked callout still showing the last roll slides out as this one
+    // slides in; any other is cleared at once.
+    const replacing = !!dock && !!this.breakdownView;
+    this.breakdownView?.dismiss();
     this.breakdownView = undefined;
     this.scoreRevealAt = 0;
     if (breakdown)
@@ -4395,11 +4450,17 @@ export class GameScene extends Phaser.Scene {
     if (breakdown || diceChanges.length > 0) {
       const view = playRollBreakdown(this, breakdown, {
         x: this.scale.width / 2,
-        top: floatY,
-        centerY: band
-          ? (band.top + band.bottom) / 2 - (bossCues.length * floatStep) / 2
-          : undefined,
-        maxWidth: this.scale.width - 32,
+        // The panel's top edge sits half a row and a margin above `top`.
+        top: dock ? dock.top + floatStep * 0.75 : floatY,
+        centerY:
+          band && !dock
+            ? (band.top + band.bottom) / 2 - (bossCues.length * floatStep) / 2
+            : undefined,
+        left: dock?.left,
+        fillAlpha: dock ? 0.8 : undefined,
+        persist: !!dock,
+        enterDelayMs: replacing ? DOCK_EXIT_DURATION_MS : 0,
+        maxWidth: dock ? dock.maxWidth : this.scale.width - 32,
         rowStep: floatStep,
         fontSize: effectFontSize,
         add: (object) => {
@@ -4425,6 +4486,11 @@ export class GameScene extends Phaser.Scene {
         );
       }
       floatY = view.bottomY;
+      floatX = view.centerX;
+    } else if (dock) {
+      // Nothing to tally, so the boss's answer stands alone in the corner.
+      floatY += floatStep / 2;
+      floatX = dock.left + dock.maxWidth / 2;
     }
 
     for (const cue of bossCues) {
@@ -4432,7 +4498,7 @@ export class GameScene extends Phaser.Scene {
         cue.kind === "struck"
           ? struckFloatText(
               this,
-              this.scale.width / 2,
+              floatX,
               floatY,
               cue.message,
               CSS.goldLight,
@@ -4440,7 +4506,7 @@ export class GameScene extends Phaser.Scene {
             )
           : floatText(
               this,
-              this.scale.width / 2,
+              floatX,
               floatY,
               cue.message,
               CSS.red,
