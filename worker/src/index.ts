@@ -13,21 +13,32 @@
 // CPU and stays well inside the 10 ms the free plan allows. It also cuts the
 // upload ~7x, which is the difference that matters on a phone.
 //
-// Identity is anonymous and unchanged from before: the device UUID the game
-// already keeps in localStorage is the member id here, and also the R2 object
-// key. One row and one blob per player, holding their best run, both
+// Identity is anonymous. Each device keeps a random secret token, sent only in
+// the `X-Player-Token` header of its own writes, and the member id is a hash of
+// it (see memberIdFor). The board publishes the hash, never the token, so a row
+// read off `/v1/top` cannot be used to write as its player — which the bare
+// device UUID this board used to key on could. The member id is also the R2
+// object key. One row and one blob per player, holding their best run, both
 // overwritten in place when they beat it — which is what keeps storage growing
 // with players rather than with runs.
+//
+// Rows written before tokens (keyed by a raw device UUID) stay on the board
+// but can no longer be written to by anyone: every write is keyed by a token's
+// hash, which a UUID never is.
+
+import { cleanInitials } from "./initials";
 
 export interface Env {
   DB: D1Database;
   RUNS: R2Bucket;
-  /** Optional shared key. When set, submissions must carry it in
-   *  `X-Submit-Key`. Not a real secret — it ships in the game bundle — but it
-   *  turns away anything that has not read the client. */
-  SUBMIT_KEY?: string;
   MAX_BOARD_SIZE?: string;
+  /** Submissions allowed per player per hour. */
   SUBMITS_PER_HOUR?: string;
+  /** Submissions allowed per IP address per hour, across every player id it
+   *  sends — what stops one machine minting tokens to flood the board. */
+  SUBMITS_PER_HOUR_PER_IP?: string;
+  /** Crash reports accepted per IP address per hour. */
+  ERRORS_PER_HOUR_PER_IP?: string;
 }
 
 /** Sanity ceiling on a score's decimal length. There is no natural one: an
@@ -37,10 +48,25 @@ export interface Env {
  *  stop a submission carrying a megabyte of digits. */
 const MAX_SCORE_DIGITS = 4096;
 
-/** Cap on one submission's gzipped analysis. The largest run the client can
+/** Hard cap on one submission's analysis. The largest run the client can
  *  produce — an endless run held at the 1024-sample history cap — gzips to
  *  around 1 MB, so this is roughly 2x the worst realistic case. */
 const MAX_ANALYSIS_BYTES = 2 * 1024 * 1024;
+
+/** The tighter, per-run cap: a fixed allowance plus so much per roll sample,
+ *  with the samples counted up to the history's 1024 cap. A short run can then
+ *  store tens of kilobytes rather than two megabytes. */
+const ANALYSIS_BASE_BYTES = 64 * 1024;
+const ANALYSIS_BYTES_PER_SAMPLE = 2 * 1024;
+const HISTORY_SAMPLE_CAP = 1024;
+
+function analysisAllowance(rolls: number): number {
+  const samples = Math.min(rolls + 1, HISTORY_SAMPLE_CAP);
+  return Math.min(
+    MAX_ANALYSIS_BYTES,
+    ANALYSIS_BASE_BYTES + samples * ANALYSIS_BYTES_PER_SAMPLE,
+  );
+}
 
 const DEFAULT_BOARD_SIZE = 100;
 const HOUR_MS = 60 * 60 * 1000;
@@ -60,12 +86,13 @@ const ANALYSIS_CACHE_SECONDS = 300;
 // Wide open on purpose. The game is served from three origins we do not control
 // and cannot enumerate: itch.io's per-project CDN subdomain, the Capacitor
 // Android WebView (`https://localhost`), and a local Vite dev server. There is
-// no cookie or credential to protect here — every endpoint is anonymous, and
-// write access is bounded by the throttle below rather than by origin.
+// no cookie to protect here — the one credential, the player token, travels in
+// a header the page has to set on purpose — and write access is bounded by the
+// throttles below rather than by origin.
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Submit-Key",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, X-Player-Token",
   "Access-Control-Max-Age": "86400",
 };
 
@@ -88,7 +115,43 @@ function fail(status: number, error: string): Response {
 // than a hosted service checks for us.
 
 const MEMBER_RE = /^[A-Za-z0-9_-]{8,64}$/;
+const TOKEN_RE = /^[A-Za-z0-9_-]{32,128}$/;
 const INITIALS_RE = /^[A-Z]{0,3}$/;
+
+// --- Identity ---------------------------------------------------------------
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text),
+  );
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** The public member id for a player token: the first 128 bits of its
+ *  SHA-256, in hex. The game computes the same value (src/systems/
+ *  PlayerIdentity) to find its own row and to show the player their id. */
+export async function memberIdFor(token: string): Promise<string> {
+  return (await sha256Hex(`ooo-member:v1:${token}`)).slice(0, 32);
+}
+
+/** The member id of the request's token, or an error response. */
+async function requestMember(request: Request): Promise<string | Response> {
+  const token = request.headers.get("X-Player-Token") ?? "";
+  if (!TOKEN_RE.test(token))
+    return fail(401, "missing or malformed player token");
+  return memberIdFor(token);
+}
+
+/** The throttle key for the request's address. Hashed with the day so the
+ *  table never holds a raw IP, and cannot be joined across days. */
+async function ipKey(request: Request, scope: string): Promise<string> {
+  const ip = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  const day = new Date().toISOString().slice(0, 10);
+  return `${scope}:${(await sha256Hex(`ip:${day}:${ip}`)).slice(0, 24)}`;
+}
 const SCORE_RE = /^\d+$/;
 
 /** The novices a run can be played as (see src/systems/Characters). An
@@ -149,10 +212,10 @@ function readMedal(params: URLSearchParams): number {
   return value >= 0 && value <= 3 ? value : -1;
 }
 
-function readSubmission(params: URLSearchParams): Submission | string {
-  const memberId = params.get("member") ?? "";
-  if (!MEMBER_RE.test(memberId)) return "bad member";
-
+function readSubmission(
+  params: URLSearchParams,
+  memberId: string,
+): Submission | string {
   const initials = (params.get("initials") ?? "").toUpperCase();
   if (!INITIALS_RE.test(initials)) return "bad initials";
 
@@ -173,9 +236,9 @@ function readSubmission(params: URLSearchParams): Submission | string {
     return "bad score";
   const scoreExact = canonicalScore(rawScore);
 
-  return {
+  const submission: Submission = {
     memberId,
-    initials,
+    initials: cleanInitials(initials),
     rank,
     trial,
     endless: params.get("endless") === "1" ? 1 : 0,
@@ -185,6 +248,40 @@ function readSubmission(params: URLSearchParams): Submission | string {
     scoreLen: scoreExact.length,
     rolls,
   };
+  return implausible(submission) ?? submission;
+}
+
+// --- Plausibility -----------------------------------------------------------
+//
+// Cheap checks on the index fields alone, against facts about the game that do
+// not move with a rebalance. They cannot prove a run happened — only replaying
+// its input log can, which is `npm run board:audit` — but they turn away the
+// shapes no real client produces, which is most hand-made submissions.
+
+/** The rank whose Boss Trial wins the game (src/config WIN_RANK). */
+const WIN_RANK = 10;
+/** The most rolls any one trial could plausibly take, counting every roll a
+ *  card can add. The authored budgets are 7, 10 and 10. */
+const MAX_ROLLS_PER_TRIAL = 100;
+/** Score digits allowed for free, and then per roll. A finished ladder lands
+ *  near 80 digits over a few hundred rolls; an endless run near 200 digits at
+ *  1000 rolls and 550 at 2500. This sits at roughly twice those. */
+const FREE_SCORE_DIGITS = 40;
+const SCORE_DIGITS_PER_ROLL = 0.5;
+
+function implausible(run: Submission): string | null {
+  const won = run.medal >= 0 || run.endless === 1;
+  if (won && run.rank < WIN_RANK)
+    return "implausible: win before the last rank";
+  // Every trial before the one the run reached was cleared, and clearing one
+  // takes at least a roll.
+  const trialsCleared = (run.rank - 1) * 3 + (run.trial - 1);
+  if (run.rolls < trialsCleared) return "implausible: too few rolls";
+  if (run.rolls > (trialsCleared + 1) * MAX_ROLLS_PER_TRIAL)
+    return "implausible: too many rolls";
+  if (run.scoreLen > FREE_SCORE_DIGITS + run.rolls * SCORE_DIGITS_PER_ROLL)
+    return "implausible: score too large for its rolls";
+  return null;
 }
 
 /** Rank first, points as the tiebreak — the ordering the whole game uses.
@@ -205,10 +302,14 @@ function beats(
 
 // --- Throttle ---------------------------------------------------------------
 
-/** Count this submission against the device's hourly allowance. Returns false
- *  when the device has already used it up. */
-async function withinRate(env: Env, memberId: string): Promise<boolean> {
-  const limit = Number(env.SUBMITS_PER_HOUR ?? "20");
+/** Count this request against `key`'s hourly allowance. Returns false when it
+ *  has already been used up. `key` is a member id, or an `ip:`-prefixed hash
+ *  of an address (see ipKey). */
+async function withinRate(
+  env: Env,
+  key: string,
+  limit: number,
+): Promise<boolean> {
   const window = Math.floor(Date.now() / HOUR_MS) * HOUR_MS;
   // One statement: start a fresh window, or increment the live one. The
   // returned count is this submission's position in the window.
@@ -219,7 +320,7 @@ async function withinRate(env: Env, memberId: string): Promise<boolean> {
        window_start = ?2
      RETURNING count`,
   )
-    .bind(memberId, window)
+    .bind(key, window)
     .first<{ count: number }>();
   return (row?.count ?? 1) <= limit;
 }
@@ -285,32 +386,50 @@ function boardResponse(results: BoardRow[] | undefined): Response {
 }
 
 /** The checks every submission passes before either board looks at it: the
- *  key, the index fields, the declared size, the throttle, and the body. */
+ *  token, the index fields, the declared size, both throttles, and the body. */
 async function readPost(
   request: Request,
   env: Env,
 ): Promise<{ parsed: Submission; analysis: ArrayBuffer } | Response> {
-  if (env.SUBMIT_KEY && request.headers.get("X-Submit-Key") !== env.SUBMIT_KEY)
-    return fail(403, "bad submit key");
+  const memberId = await requestMember(request);
+  if (memberId instanceof Response) return memberId;
 
   const params = new URL(request.url).searchParams;
-  const parsed = readSubmission(params);
+  const parsed = readSubmission(params, memberId);
   if (typeof parsed === "string") return fail(400, parsed);
 
   // Refuse an oversized body before reading it, when the client declared one.
+  const allowance = analysisAllowance(parsed.rolls);
   const declared = Number(request.headers.get("Content-Length") ?? "0");
-  if (declared > MAX_ANALYSIS_BYTES) return fail(413, "analysis too large");
+  if (declared > allowance) return fail(413, "analysis too large");
 
-  if (!(await withinRate(env, parsed.memberId)))
+  // The address first: a flood from one machine is refused before it costs a
+  // row per minted token.
+  const perIp = Number(env.SUBMITS_PER_HOUR_PER_IP ?? "60");
+  if (!(await withinRate(env, await ipKey(request, "ip"), perIp)))
+    return fail(429, "too many submissions");
+  const perMember = Number(env.SUBMITS_PER_HOUR ?? "20");
+  if (!(await withinRate(env, parsed.memberId, perMember)))
     return fail(429, "too many submissions");
 
   // Buffered, not streamed: the blob has to be held anyway to decide whether it
   // is worth storing, and 2 MB is nothing against the Worker's memory. It is
   // never parsed or decompressed — these are opaque bytes on the way to R2.
   const analysis = await request.arrayBuffer();
-  if (analysis.byteLength > MAX_ANALYSIS_BYTES)
-    return fail(413, "analysis too large");
+  if (analysis.byteLength > allowance) return fail(413, "analysis too large");
+  if (!looksLikeAnalysis(analysis)) return fail(400, "bad analysis");
   return { parsed, analysis };
+}
+
+/** Whether a body is shaped like the game's analysis: gzip, or (from a browser
+ *  without CompressionStream) a JSON object. Enough to keep the bucket from
+ *  holding arbitrary files under this domain; an empty body is a run with no
+ *  timeline, which is allowed. */
+function looksLikeAnalysis(body: ArrayBuffer): boolean {
+  if (body.byteLength === 0) return true;
+  const head = new Uint8Array(body, 0, Math.min(2, body.byteLength));
+  if (head[0] === 0x1f && head[1] === 0x8b) return true;
+  return head[0] === 0x7b; // "{"
 }
 
 async function postRun(request: Request, env: Env): Promise<Response> {
@@ -395,6 +514,10 @@ async function getAnalysis(
     headers: {
       "Content-Type": "application/octet-stream",
       "Cache-Control": `public, max-age=${ANALYSIS_CACHE_SECONDS}`,
+      // Never rendered: whatever a blob holds, a browser that opens the URL
+      // directly downloads it rather than sniffing it into a page.
+      "Content-Disposition": "attachment",
+      "X-Content-Type-Options": "nosniff",
       ETag: object.httpEtag,
       ...CORS,
     },
@@ -521,6 +644,131 @@ async function postDailyRun(
   return json({ accepted: true, improved: (result.meta.changes ?? 0) > 0 });
 }
 
+// --- Deleting a player -------------------------------------------------------
+//
+// `DELETE /v1/players/me` removes everything the board holds for the token's
+// player: their global row, every daily row, and the analysis blobs behind
+// them. The game offers it in Settings; the privacy policy offers the same by
+// email, against the member id Settings shows, for a player who has lost the
+// device (an operator runs `npm run player:delete` for those).
+
+async function deletePlayer(request: Request, env: Env): Promise<Response> {
+  const memberId = await requestMember(request);
+  if (memberId instanceof Response) return memberId;
+  if (!(await withinRate(env, await ipKey(request, "del"), 30)))
+    return fail(429, "too many requests");
+  const removed = await removeMember(env, memberId);
+  return json({ deleted: true, ...removed });
+}
+
+export async function removeMember(
+  env: Env,
+  memberId: string,
+): Promise<{ runs: number; dailyRuns: number }> {
+  const { results } = await env.DB.prepare(
+    `SELECT day FROM daily_runs WHERE member_id = ?1`,
+  )
+    .bind(memberId)
+    .all<{ day: string }>();
+  const keys = [
+    memberId,
+    ...(results ?? []).map((row) => dailyKey(row.day, memberId)),
+  ];
+  // Blobs first, so a row is never left pointing at nothing; R2 deletes of a
+  // missing key are no-ops.
+  await env.RUNS.delete(keys);
+  const [runs, daily] = await env.DB.batch([
+    env.DB.prepare(`DELETE FROM runs WHERE member_id = ?1`).bind(memberId),
+    env.DB.prepare(`DELETE FROM daily_runs WHERE member_id = ?1`).bind(
+      memberId,
+    ),
+    env.DB.prepare(`DELETE FROM throttle WHERE member_id = ?1`).bind(memberId),
+  ]);
+  return {
+    runs: runs.meta.changes ?? 0,
+    dailyRuns: daily.meta.changes ?? 0,
+  };
+}
+
+// --- Crash reports ----------------------------------------------------------
+//
+// `POST /v1/errors` takes one uncaught error from the game (src/systems/
+// CrashReports): its message, stack, where it happened, and the build. No
+// player id rides with it. Reports are folded by fingerprint (build + message
+// + top of stack), so a crash a thousand players hit is one row with a count,
+// and rows unseen for ERROR_KEEP_DAYS are swept by the cron.
+
+const ERROR_KEEP_DAYS = 30;
+const MAX_ERROR_BODY = 8 * 1024;
+const MAX_ERROR_ROWS = 5000;
+
+function clip(value: unknown, max: number): string {
+  return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+async function postError(request: Request, env: Env): Promise<Response> {
+  const declared = Number(request.headers.get("Content-Length") ?? "0");
+  if (declared > MAX_ERROR_BODY) return fail(413, "report too large");
+  const perIp = Number(env.ERRORS_PER_HOUR_PER_IP ?? "30");
+  if (!(await withinRate(env, await ipKey(request, "err"), perIp)))
+    return fail(429, "too many reports");
+
+  const text = await request.text();
+  if (text.length > MAX_ERROR_BODY) return fail(413, "report too large");
+  let body: Record<string, unknown>;
+  try {
+    body = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return fail(400, "bad report");
+  }
+  const message = clip(body.message, 500);
+  if (!message) return fail(400, "bad report");
+  const stack = clip(body.stack, 4000);
+  const build = clip(body.build, 64);
+  const version = clip(body.version, 32);
+  const platform = clip(body.platform, 32);
+  const scene = clip(body.scene, 64);
+  const agent = clip(request.headers.get("User-Agent"), 300);
+  const fingerprint = (
+    await sha256Hex(`${build}\n${message}\n${stack.split("\n", 3).join("\n")}`)
+  ).slice(0, 32);
+  const now = Date.now();
+
+  await env.DB.prepare(
+    `INSERT INTO errors (fingerprint, build, version, platform, scene, message,
+                         stack, user_agent, first_seen, last_seen, count)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, 1)
+     ON CONFLICT(fingerprint) DO UPDATE SET
+       last_seen = excluded.last_seen,
+       count = errors.count + 1`,
+  )
+    .bind(
+      fingerprint,
+      build,
+      version,
+      platform,
+      scene,
+      message,
+      stack,
+      agent,
+      now,
+    )
+    .run();
+  return json({ ok: true });
+}
+
+async function sweepErrors(env: Env): Promise<void> {
+  await env.DB.prepare(`DELETE FROM errors WHERE last_seen < ?1`)
+    .bind(Date.now() - ERROR_KEEP_DAYS * DAY_MS)
+    .run();
+  await env.DB.prepare(
+    `DELETE FROM errors WHERE fingerprint NOT IN
+       (SELECT fingerprint FROM errors ORDER BY last_seen DESC LIMIT ?1)`,
+  )
+    .bind(MAX_ERROR_ROWS)
+    .run();
+}
+
 /** Drop the daily boards older than DAILY_KEEP_DAYS, blobs first so a row is
  *  never left pointing at nothing. */
 async function sweepDaily(env: Env): Promise<void> {
@@ -588,6 +836,20 @@ const SCHEMA = [
      window_start INTEGER NOT NULL,
      count        INTEGER NOT NULL
    )`,
+  `CREATE TABLE IF NOT EXISTS errors (
+     fingerprint  TEXT PRIMARY KEY,
+     build        TEXT NOT NULL,
+     version      TEXT NOT NULL,
+     platform     TEXT NOT NULL,
+     scene        TEXT NOT NULL,
+     message      TEXT NOT NULL,
+     stack        TEXT NOT NULL,
+     user_agent   TEXT NOT NULL,
+     first_seen   INTEGER NOT NULL,
+     last_seen    INTEGER NOT NULL,
+     count        INTEGER NOT NULL
+   )`,
+  `CREATE INDEX IF NOT EXISTS errors_recent ON errors (last_seen DESC)`,
 ];
 
 /** Columns added to `runs` after it first shipped. `CREATE TABLE IF NOT
@@ -637,6 +899,12 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && path === "/v1/runs")
     return postRun(request, env);
 
+  if (request.method === "DELETE" && path === "/v1/players/me")
+    return deletePlayer(request, env);
+
+  if (request.method === "POST" && path === "/v1/errors")
+    return postError(request, env);
+
   const analysis = /^\/v1\/runs\/([^/]+)$/.exec(path);
   if (request.method === "GET" && analysis)
     return getAnalysis(decodeURIComponent(analysis[1]), env);
@@ -683,5 +951,6 @@ export default {
       .bind(Date.now() - 24 * HOUR_MS)
       .run();
     await sweepDaily(env);
+    await sweepErrors(env);
   },
 };

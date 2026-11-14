@@ -83,10 +83,31 @@ CREATE TABLE IF NOT EXISTS daily_runs (
 CREATE INDEX IF NOT EXISTS daily_runs_board
   ON daily_runs (day, rank DESC, score_len DESC, score_exact DESC);
 
--- Per-device submission throttle. Rows are rewritten each hour and swept by the
--- cron trigger; nothing reads them except the rate check.
+-- Submission throttle, keyed by member id and by `ip:`/`err:`/`del:`-prefixed
+-- hashes of the caller's address (never the raw address). Rows are rewritten
+-- each hour and swept by the cron trigger; nothing reads them except the rate
+-- check.
 CREATE TABLE IF NOT EXISTS throttle (
   member_id    TEXT PRIMARY KEY,
   window_start INTEGER NOT NULL, -- epoch ms, floored to the hour
   count        INTEGER NOT NULL
 );
+
+-- Crash reports from the game (src/systems/CrashReports), folded by
+-- fingerprint. No player id is stored. Rows unseen for 30 days are swept by
+-- the cron. Read them with `npm run errors`.
+CREATE TABLE IF NOT EXISTS errors (
+  fingerprint  TEXT PRIMARY KEY,  -- hash of build + message + top of stack
+  build        TEXT NOT NULL,
+  version      TEXT NOT NULL,
+  platform     TEXT NOT NULL,     -- "web", "itch" or "android"
+  scene        TEXT NOT NULL,     -- the scene on screen when it threw
+  message      TEXT NOT NULL,
+  stack        TEXT NOT NULL,
+  user_agent   TEXT NOT NULL,
+  first_seen   INTEGER NOT NULL,  -- epoch ms
+  last_seen    INTEGER NOT NULL,
+  count        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS errors_recent ON errors (last_seen DESC);

@@ -10,3 +10,11 @@ art-out/
 .wrangler/
 worker/node_modules/
 worker/backups/
+
+# Local env overrides. Never commit these: anything in them that is meant to be
+# public belongs in source (see src/systems/GlobalScores.ts) or in a mode file
+# such as .env.itch / .env.phone.
+.env
+.env.local
+.env.*.local
+.pnpm-store/

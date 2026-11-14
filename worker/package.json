@@ -12,7 +12,10 @@
     "db:migrate:medal": "wrangler d1 execute order-of-order --remote --config wrangler.toml --file=./migrations/0001_medal.sql",
     "db:migrate:daily": "wrangler d1 execute order-of-order --remote --config wrangler.toml --file=./migrations/0002_daily.sql",
     "db:migrate:daily:local": "wrangler d1 execute order-of-order --local --config wrangler.toml --file=./migrations/0002_daily.sql",
-    "board:reset": "node scripts/reset-board.mjs"
+    "board:reset": "node scripts/reset-board.mjs",
+    "db:migrate:errors": "wrangler d1 execute order-of-order --remote --config wrangler.toml --file=./migrations/0003_errors.sql",
+    "player:delete": "node scripts/delete-player.mjs",
+    "errors": "wrangler d1 execute order-of-order --remote --config wrangler.toml --command \"SELECT datetime(last_seen/1000,'unixepoch') AS last_seen, count, version, platform, scene, substr(message,1,120) AS message FROM errors ORDER BY last_seen DESC LIMIT 50\""
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",

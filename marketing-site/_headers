@@ -11,6 +11,10 @@
   Content-Security-Policy: default-src 'self'; img-src 'self'; style-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
   Cache-Control: no-cache
 
+/privacy/*
+  Content-Security-Policy: default-src 'self'; img-src 'self'; style-src 'self'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+  Cache-Control: no-cache
+
 /assets/*
   Cache-Control: public, max-age=604800, stale-while-revalidate=86400
 

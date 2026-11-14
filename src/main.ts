@@ -19,19 +19,32 @@ import { TrialOverviewScene } from "./scenes/TrialOverviewScene";
 import { TrialResultsScene } from "./scenes/TrialResultsScene";
 import { EndingScene } from "./scenes/EndingScene";
 import { TributeScene } from "./scenes/TributeScene";
+import { CreditsScene } from "./scenes/CreditsScene";
 import { installDevPanel } from "./dev/DevPanel";
+import { installFocusNav } from "./ui/focusNav";
 import { GOLD_BORDER } from "./buildFlags";
-import { installHiDpi, installHighResolutionText } from "./renderQuality";
+import {
+  installHiDpi,
+  installHighResolutionText,
+  installUiScale,
+  UI_SCALE,
+} from "./renderQuality";
 import {
   initializeActiveRunStorage,
   installActiveRunLifecycle,
 } from "./systems/ActiveRunPersistence";
+import { installSaveMirror } from "./systems/SaveMirror";
+import { installCrashReports } from "./systems/CrashReports";
+
+// First of all, so an error anywhere in boot is reported too.
+installCrashReports();
 
 // Before the canvas exists, so the frame is part of the first layout rather
 // than a reflow after Phaser has sized itself.
 if (GOLD_BORDER) document.getElementById("game")?.classList.add("gold-border");
 
 installHighResolutionText();
+installUiScale(document.getElementById("game"));
 
 function createGame(): Phaser.Game {
   const game = new Phaser.Game({
@@ -58,8 +71,11 @@ function createGame(): Phaser.Game {
       // `installHiDpi`'s job, and it deliberately leaves the Scale Manager
       // alone so that layout and input keep one unit throughout.
       mode: Phaser.Scale.RESIZE,
-      width: window.innerWidth,
-      height: window.innerHeight,
+      // Divided by the interface size, as the parent element is (see
+      // installUiScale): Phaser takes this first size as given and only
+      // measures the parent on the next resize.
+      width: window.innerWidth / UI_SCALE,
+      height: window.innerHeight / UI_SCALE,
     },
     scene: [
       BootScene,
@@ -82,12 +98,14 @@ function createGame(): Phaser.Game {
       InitialsPromptScene,
       AnalysisScene,
       ItemAnalysisScene,
+      CreditsScene,
     ],
   });
 
   window.__game = game;
   installHiDpi(game);
   installDevPanel(game);
+  installFocusNav(game);
   installActiveRunLifecycle();
   return game;
 }
@@ -101,4 +119,9 @@ declare global {
 // Native Preferences must be consulted before Boot decides which scene to
 // enter. A storage failure is deliberately non-fatal: browser storage or the
 // menu remains available.
-void initializeActiveRunStorage().finally(() => createGame());
+// The same goes for the rest of the save, which the native mirror restores if
+// the WebView has lost it (see systems/SaveMirror).
+void Promise.allSettled([
+  installSaveMirror(),
+  initializeActiveRunStorage(),
+]).finally(() => createGame());
