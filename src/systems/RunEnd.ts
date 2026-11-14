@@ -1,7 +1,11 @@
 import { WIN_TRIAL, rankOf, trialInRank } from "../config";
 import type { RunState } from "../state/RunState";
 import type { CharacterId } from "./Characters";
-import { globalScoresEnabled, queuePendingSubmission } from "./GlobalScores";
+import {
+  globalBoardConsent,
+  globalScoresEnabled,
+  queuePendingSubmission,
+} from "./GlobalScores";
 import { recordRunEnd } from "./SaveData";
 import { clearActiveRun } from "./ActiveRunPersistence";
 
@@ -31,8 +35,12 @@ export function finalizeRun(
   // A daily run is offered to its day's board however it went: it is the one
   // attempt the player gets, so there is no better run of theirs to wait for.
   const daily = state.dailyRite?.day;
+  // A player who has said no to the global board is never asked again; one
+  // who has not answered yet is, on the prompt, which is where they opt in.
   const submissionQueued =
-    (personalBest || daily !== undefined) && globalScoresEnabled();
+    (personalBest || daily !== undefined) &&
+    globalScoresEnabled() &&
+    globalBoardConsent() !== false;
 
   if (submissionQueued) {
     // Only the run's Hall key and what the prompt displays. The analysis the

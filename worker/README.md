@@ -51,24 +51,10 @@ npm run deploy
 ```
 
 It prints a URL like `https://order-of-order-leaderboard.<subdomain>.workers.dev`.
-Put that in the game's `.env` at the repo root:
-
-```
-VITE_LEADERBOARD_API=https://order-of-order-leaderboard.<subdomain>.workers.dev
-```
-
-Rebuild the game (Vite inlines env vars at build time) and the Global tab is live.
-
-**5. Optional — the submit key.**
-
-```bash
-npx wrangler secret put SUBMIT_KEY
-```
-
-Set the same value as `VITE_LEADERBOARD_SUBMIT_KEY` in the game's `.env`. This is
-not a secret: it ships in the client bundle and anyone who opens devtools can read
-it. It turns away scanners that have not looked, and nothing more. Leave both
-sides unset to run without it.
+Production builds of the game point at the URL in `PRODUCTION_API`
+(`src/systems/GlobalScores.ts`); change it there for a different deployment. To
+point a single build or a dev server elsewhere, set `VITE_LEADERBOARD_API` in a
+local, gitignored `.env` (see `.env.example`).
 
 ## Upgrading an older board
 
@@ -135,8 +121,19 @@ needed. Players' local Halls are untouched; they live in each device's storage.
 | `GET /v1/daily/:day/top?limit=n`  | One day's Daily Rite board, best first.                            |
 | `POST /v1/daily/:day/runs?…`      | Submit a daily run. Same fields and body as `/v1/runs`.            |
 | `GET /v1/daily/:day/runs/:member` | That player's analysis blob for the day.                           |
+| `DELETE /v1/players/me`           | Delete the caller's global row, daily rows and blobs.              |
+| `POST /v1/errors`                 | One crash report from the game (JSON body, at most 8 KB).          |
 
-`POST /v1/runs` takes `member`, `initials`, `rank`, `trial`, `endless`, `score`
+**Identity.** Every write carries the device's secret in the `X-Player-Token`
+header (32–128 URL-safe characters). The member id is
+`sha256("ooo-member:v1:" + token)`, first 32 hex digits; the board stores and
+publishes only that, so a row read off `/v1/top` cannot be used to post as its
+player. The game computes the same id (`src/systems/PlayerIdentity.ts`) and shows
+it in Settings as the **Board ID**, for deletion requests. Rows posted before
+tokens are keyed by the device's raw UUID; they stay on the board, but nothing can
+write to them any more. `board:reset` clears them along with everything else.
+
+`POST /v1/runs` takes `initials`, `rank`, `trial`, `endless`, `score`
 (exact decimal) and `rolls` as query parameters, plus optional `character` and
 `medal` (the run's goal-tier rank, `0`–`3`, or `-1` for a loss), and the gzipped analysis as the
 raw request body. The Worker validates the query fields and passes the body
@@ -194,9 +191,21 @@ its own errors and answers with a JSON 500 that keeps them, and logs the cause;
 
 ## What this does and does not check
 
-The Worker validates the shape of every index field and throttles submissions per
-device (`SUBMITS_PER_HOUR`, default 20). It cannot prove a run happened — no
-client-submitted leaderboard can, and a determined player can post any score.
+On every submission the Worker:
+
+- requires a player token, and keys the row by its hash (above);
+- throttles per player (`SUBMITS_PER_HOUR`, default 20) **and** per IP address
+  (`SUBMITS_PER_HOUR_PER_IP`, default 60), the address stored only as a daily-salted
+  hash;
+- validates the shape of every index field, and refuses runs no client produces: a
+  win before rank 10, fewer rolls than the trials cleared, more than 100 rolls a
+  trial, or a score with more digits than `40 + rolls / 2`;
+- prints blocked initials (`src/initials.ts`) as `???`;
+- caps the analysis at 64 KB plus 2 KB per roll sample (2 MB at most), refuses a
+  body that is neither gzip nor JSON, and serves blobs as downloads with
+  `nosniff`, so the bucket cannot host pages under this domain.
+
+That still cannot prove a run happened — no client-submitted leaderboard can.
 
 The stronger check is replaying a run, and every run now carries what that
 takes. A submission's analysis blob holds, beside the timeline:
@@ -229,6 +238,31 @@ and prints `LEGIT` when the replay lands on the claimed score, or
 replays: it stores the blob as opaque bytes, so a new client field needs no
 Worker change. `npm run replay:e2e` plays real runs in a browser and checks
 they all replay, which is how to tell the replayer and the scenes still agree.
+
+## Removing a player
+
+```bash
+npm run player:delete -- <board-id>            # remote, with a prompt
+npm run player:delete -- <board-id> --local    # the `wrangler dev` database
+```
+
+Deletes the player's global row, daily rows and their blobs. Use it for an emailed
+deletion request (the privacy policy offers one, against the Board ID in
+Settings), for initials the filter missed, and for a row `npm run audit` reports as
+`NOT VERIFIED`. Players with the game can do this themselves from Settings › Delete
+My Board Record.
+
+## Crash reports
+
+The game reports uncaught errors to `POST /v1/errors` (`src/systems/CrashReports.ts`):
+message, stack, scene, build, version and platform, no player id. Repeats of one
+crash fold into one row with a count; rows unseen for 30 days are swept, and the
+table is capped at 5,000 rows. Reports are throttled to `ERRORS_PER_HOUR_PER_IP`
+(default 30). To read them:
+
+```bash
+npm run errors
+```
 
 ## Cost
 

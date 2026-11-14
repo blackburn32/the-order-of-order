@@ -4,7 +4,11 @@
 // server of its own, so the shared board lives in a small Cloudflare Worker
 // reached over plain fetch. Players are anonymous: a per-device UUID is the
 // member id, so the same browser keeps the same identity and we can spot our
-// own row by a direct id match.
+// own row by a direct id match. The id the board shows is a hash of a secret
+// the device keeps (see PlayerIdentity), and only the secret can write.
+//
+// Posting is opt-in: nothing goes up until the player agrees, on the initials
+// prompt or in Settings (see `globalBoardConsent`).
 //
 // The point of this backend over a hosted leaderboard product is fidelity. A
 // finished run's per-roll timeline is 100-300 KB of JSON — three orders of
@@ -33,6 +37,9 @@ import { ITEMS, type ShopItemId } from "./Items";
 import { isSeed } from "./Rng";
 import { readInputLog, type InputEvent } from "./InputLog";
 import { isDailyDay } from "./Daily";
+import { legacyPlayerId, memberId, playerToken } from "./PlayerIdentity";
+import { loadSettings, saveSettings } from "./SaveData";
+import { cleanInitials } from "../../worker/src/initials";
 import {
   hydrateRollHistory,
   serializeRollHistory,
@@ -43,8 +50,17 @@ import {
 // Defaulted like buildFlags' env: the audit command line (sim/audit) reads
 // blobs through this module under node, where Vite defines nothing.
 const env: Partial<ImportMetaEnv> = import.meta.env ?? {};
-const API = (env.VITE_LEADERBOARD_API ?? "").replace(/\/+$/, "");
-const SUBMIT_KEY = env.VITE_LEADERBOARD_SUBMIT_KEY ?? "";
+
+/** The production board. Public — every bundle carries it — so it lives here
+ *  rather than in a `.env` that has to be committed for builds to find it.
+ *  Production builds use it unless VITE_LEADERBOARD_API says otherwise (set it
+ *  empty to build with the board off); dev servers and the node-run
+ *  simulations stay offline unless they set it. */
+const PRODUCTION_API =
+  "https://order-of-order-leaderboard.alexblackburn32.workers.dev";
+export const API = (
+  env.VITE_LEADERBOARD_API ?? (env.PROD ? PRODUCTION_API : "")
+).replace(/\/+$/, "");
 
 export const GLOBAL_TOP_N = 100;
 
@@ -52,7 +68,6 @@ export const GLOBAL_TOP_N = 100;
  *  network. See `decodeAnalysis`. */
 const itemIds: ReadonlySet<string> = new Set(ITEMS.map((item) => item.id));
 
-const KEY_PLAYER_ID = "ooo_player_id_v1";
 const KEY_INITIALS = "ooo_initials_v1";
 const KEY_PENDING = "ooo_pending_global_v2";
 
@@ -150,24 +165,29 @@ export function globalScoresEnabled(): boolean {
   return API.length > 0;
 }
 
+// --- Consent ----------------------------------------------------------------
+
+/** Whether the player has agreed to post runs to the global board: true or
+ *  false once they have said, undefined until then. Undefined still opens the
+ *  initials prompt after a best run — as a question, with the privacy note —
+ *  and only a confirm there posts anything. False never asks again; Settings
+ *  turns it back on. */
+export function globalBoardConsent(): boolean | undefined {
+  return loadSettings().globalBoard;
+}
+
+export function setGlobalBoardConsent(value: boolean): void {
+  const settings = loadSettings();
+  settings.globalBoard = value;
+  saveSettings(settings);
+}
+
 // --- Local identity (device-scoped, no sign-in) -----------------------------
 
-let ephemeralId: string | null = null;
-
-/** Stable per-device id, used as the board's `member_id`. */
+/** This device's member id on the board: a hash of its secret token, safe to
+ *  show the player (Settings does, for deletion requests) and to publish. */
 export function getPlayerId(): string {
-  try {
-    let id = localStorage.getItem(KEY_PLAYER_ID);
-    if (!id) {
-      id = crypto.randomUUID();
-      localStorage.setItem(KEY_PLAYER_ID, id);
-    }
-    return id;
-  } catch {
-    // localStorage unavailable — fall back to an ephemeral per-session id.
-    if (!ephemeralId) ephemeralId = crypto.randomUUID();
-    return ephemeralId;
-  }
+  return memberId();
 }
 
 export function getInitials(): string {
@@ -192,6 +212,12 @@ export function normalizeInitials(raw: string): string {
     .toUpperCase()
     .replace(/[^A-Z]/g, "")
     .slice(0, 3);
+}
+
+/** The initials as the board will print them: blocked ones become "???" (see
+ *  worker/src/initials, which the board itself applies too). */
+export function boardInitials(raw: string): string {
+  return cleanInitials(normalizeInitials(raw));
 }
 
 // --- Pending submission (survives the end-of-run scene transition) ----------
@@ -394,6 +420,7 @@ async function gunzip(bytes: ArrayBuffer): Promise<string> {
 async function call(
   path: string,
   init: RequestInit = {},
+  authorized = false,
 ): Promise<Response | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -402,7 +429,8 @@ async function call(
       ...init,
       signal: controller.signal,
       headers: {
-        ...(SUBMIT_KEY ? { "X-Submit-Key": SUBMIT_KEY } : {}),
+        // Only on the calls that write as this player. Reads never carry it.
+        ...(authorized ? { "X-Player-Token": playerToken() } : {}),
         ...(init.headers ?? {}),
       },
     });
@@ -457,10 +485,9 @@ export async function submitRun(
   initials: string,
   daily?: string,
 ): Promise<boolean> {
-  if (!globalScoresEnabled()) return false;
+  if (!globalScoresEnabled() || globalBoardConsent() !== true) return false;
 
   const params = new URLSearchParams({
-    member: getPlayerId(),
     initials: normalizeInitials(initials),
     rank: String(Math.max(1, Math.floor(run.rank))),
     trial: String(Math.min(3, Math.max(1, Math.floor(run.trial)))),
@@ -487,11 +514,24 @@ export async function submitRun(
   // A daily run posts to its day's board, which keeps the first run each player
   // submits for that day rather than their best (see worker/).
   const route = daily ? `/v1/daily/${daily}/runs` : "/v1/runs";
-  const res = await call(`${route}?${params.toString()}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/octet-stream" },
-    body: body as BodyInit,
-  });
+  const res = await call(
+    `${route}?${params.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: body as BodyInit,
+    },
+    true,
+  );
+  return res !== null;
+}
+
+/** Remove everything the board holds for this device: its global row, its
+ *  daily rows, and their analyses. Resolves to whether the board confirmed it;
+ *  never throws. */
+export async function deleteMyRecord(): Promise<boolean> {
+  if (!globalScoresEnabled()) return false;
+  const res = await call("/v1/players/me", { method: "DELETE" }, true);
   return res !== null;
 }
 
@@ -509,7 +549,9 @@ export async function fetchTopScores(
   try {
     const data = (await res.json()) as { rows?: unknown };
     if (!Array.isArray(data.rows)) return null;
-    const me = getPlayerId();
+    // A row posted before tokens is keyed by the device's old UUID; it is
+    // still this player's, though nobody can write to it any more.
+    const me = new Set([getPlayerId(), legacyPlayerId()].filter(Boolean));
     return data.rows
       .map((row) => toRow(row, me))
       .filter((row): row is GlobalScoreRow => row !== null);
@@ -552,7 +594,7 @@ interface WireRow {
   character?: unknown;
 }
 
-function toRow(raw: unknown, me: string): GlobalScoreRow | null {
+function toRow(raw: unknown, me: ReadonlySet<string>): GlobalScoreRow | null {
   if (!raw || typeof raw !== "object") return null;
   const row = raw as WireRow;
   const position = Number(row.position);
@@ -574,7 +616,7 @@ function toRow(raw: unknown, me: string): GlobalScoreRow | null {
     score: BigInt(row.score),
     name: typeof row.initials === "string" ? row.initials.toUpperCase() : "",
     character: isCharacterId(row.character) ? row.character : DEFAULT_CHARACTER,
-    isYou: memberId !== "" && memberId === me,
+    isYou: memberId !== "" && me.has(memberId),
     memberId,
     rolls: Number.isFinite(Number(row.rolls)) ? Number(row.rolls) : 0,
     hasAnalysis: row.hasAnalysis === true,

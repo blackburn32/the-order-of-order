@@ -19,12 +19,16 @@ import { AmbientLayer } from "../ui/AmbientLayer";
 import { buildSceneHeader } from "../ui/sceneHeader";
 import { slideSceneIn, slideSceneOut } from "../ui/sceneSlide";
 import {
+  boardInitials,
   getInitials,
+  globalBoardConsent,
   normalizeInitials,
+  setGlobalBoardConsent,
   setInitials,
   submissionFromHallEntry,
   submitRun,
 } from "../systems/GlobalScores";
+import { showToast } from "../ui/toast";
 import { loadDailyHall, loadHall } from "../systems/SaveData";
 
 export interface InitialsPromptData {
@@ -71,6 +75,9 @@ export class InitialsPromptScene extends Phaser.Scene {
   private slotRules: Phaser.GameObjects.Rectangle[] = [];
   private transitionFelt?: Phaser.GameObjects.Image;
   private leaving = false;
+  /** Whether the player has yet to answer if their runs may go on the global
+   *  board. Then the prompt is a question, and confirming is the opt-in. */
+  private asking = false;
 
   constructor() {
     super("InitialsPrompt");
@@ -91,6 +98,39 @@ export class InitialsPromptScene extends Phaser.Scene {
     const seed = normalizeInitials(getInitials());
     this.slots = [seed[0] ?? "A", seed[1] ?? "A", seed[2] ?? "A"];
     this.sel = 0;
+    this.asking = globalBoardConsent() === undefined;
+  }
+
+  /** The line under the title. */
+  private subtitle(): string {
+    return this.asking
+      ? `Score ${formatScore(this.score)} — post it to the Global Hall?`
+      : `Score ${formatScore(this.score)} — enter your initials`;
+  }
+
+  /** Height kept clear at the foot of the screen for the consent note. */
+  private noteHeight(): number {
+    return this.asking ? 34 : 0;
+  }
+
+  /** What posting shares, said before the player agrees to it. */
+  private buildConsentNote(cx: number, width: number): void {
+    if (!this.asking) return;
+    const note = this.add
+      .text(
+        cx,
+        this.scale.height - 8,
+        "Posting shares your initials and this run's record on the public board.\nYou can turn this off, or delete your record, in Settings.",
+        {
+          fontFamily: SERIF,
+          fontSize: "12px",
+          color: CSS.dim,
+          fontStyle: "italic",
+          align: "center",
+        },
+      )
+      .setOrigin(0.5, 1);
+    fitTextWidth(note, width);
   }
 
   create(): void {
@@ -130,10 +170,17 @@ export class InitialsPromptScene extends Phaser.Scene {
     this.slotTexts = [];
     this.slotRules = [];
 
-    const actions: BannerAction[] = [
-      { label: "Confirm", onClick: () => this.confirm() },
-      { label: "Skip", onClick: () => this.close() },
-    ];
+    const actions: BannerAction[] = this.asking
+      ? [
+          { label: "Post to the Global Hall", onClick: () => this.confirm() },
+          { label: "Not Now", onClick: () => this.close() },
+          { label: "Never Post", onClick: () => this.decline() },
+        ]
+      : [
+          { label: "Confirm", onClick: () => this.confirm() },
+          { label: "Skip", onClick: () => this.close() },
+        ];
+    this.buildConsentNote(cx, W - 24);
 
     // The shared threshold rules out columns below 500px because the denser
     // game screens need more width. This prompt has only three letters and two
@@ -178,7 +225,7 @@ export class InitialsPromptScene extends Phaser.Scene {
 
     const header = buildSceneHeader(this, {
       title: this.title(),
-      subtitle: `Score ${formatScore(this.score)} — enter your initials`,
+      subtitle: this.subtitle(),
       y: Math.max(46, Math.min(H * 0.13, 88)),
       width: Math.min(W, 720),
     });
@@ -186,7 +233,11 @@ export class InitialsPromptScene extends Phaser.Scene {
     // Two full-size banners are 140px tall together; reserve enough room for
     // their gap and the 16px outer margin instead of letting the lower one hug
     // or cross the viewport edge.
-    const actionTop = Math.max(header.bottom + 150, H - 168);
+    const extra = actions.length > 2 ? 70 : 0;
+    const actionTop = Math.max(
+      header.bottom + 150,
+      H - 168 - extra - this.noteHeight(),
+    );
     const slotTop = header.bottom + 8;
     const slotBottom = Math.max(slotTop + 120, actionTop - 8);
     const slotY = (slotTop + slotBottom) / 2;
@@ -198,7 +249,7 @@ export class InitialsPromptScene extends Phaser.Scene {
       { cx, width: Math.min(W - 32, 340) },
       {
         top: actionTop,
-        height: Math.max(0, H - 16 - actionTop),
+        height: Math.max(0, H - 16 - this.noteHeight() - actionTop),
       },
       actions,
     );
@@ -218,7 +269,7 @@ export class InitialsPromptScene extends Phaser.Scene {
       ? this.buildShortCompactHeader(left.cx, left.width, columns.top)
       : buildSceneHeader(this, {
           title: this.title(),
-          subtitle: `Score ${formatScore(this.score)} — enter your initials`,
+          subtitle: this.subtitle(),
           x: left.cx,
           y: columns.top + 30,
           width: left.width,
@@ -235,7 +286,15 @@ export class InitialsPromptScene extends Phaser.Scene {
       top: slotTop,
       bottom: slotBottom,
     });
-    stackBannerButtons(this, right, columns, actions);
+    stackBannerButtons(
+      this,
+      right,
+      {
+        top: columns.top,
+        height: Math.max(0, columns.height - this.noteHeight()),
+      },
+      actions,
+    );
   }
 
   /** A low-profile masthead for landscape viewports with less than 240px of
@@ -421,10 +480,28 @@ export class InitialsPromptScene extends Phaser.Scene {
     }
   }
 
+  /** "Never Post": remember the answer, so no run asks again. Settings can
+   *  turn it back on. */
+  private decline(): void {
+    if (this.leaving) return;
+    setGlobalBoardConsent(false);
+    this.close();
+  }
+
   private confirm(): void {
     if (this.leaving) return;
+    // On the question form of the prompt, this press is the opt-in.
+    if (this.asking) setGlobalBoardConsent(true);
     const initials = this.slots.join("");
     setInitials(initials);
+    if (boardInitials(initials) !== normalizeInitials(initials))
+      showToast(
+        this.scene.get(this.returnTo),
+        "Those initials show as ??? on the board",
+        {
+          tone: "warning",
+        },
+      );
     // The run was filed in the Hall before this prompt opened, so its full
     // analysis is read from there. A run that somehow isn't there still posts
     // its score — the board row just carries no analysis.

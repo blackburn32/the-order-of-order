@@ -198,12 +198,16 @@ Setup and deployment live in [`worker/README.md`](worker/README.md).
 
 #### Pointing at a different leaderboard backend
 
-Two Vite environment variables, both optional:
+Production builds use the board in `PRODUCTION_API` (`src/systems/GlobalScores.ts`); the dev
+server and the simulations stay offline. One optional Vite variable overrides that, in a local
+`.env` (gitignored; see `.env.example`):
 
-| Variable                      | What it targets                                                                            |
-| ----------------------------- | ------------------------------------------------------------------------------------------ |
-| `VITE_LEADERBOARD_API`        | Base URL of the deployed Worker, no trailing slash. Absent disables the global board.      |
-| `VITE_LEADERBOARD_SUBMIT_KEY` | Optional, must match the Worker's `SUBMIT_KEY` secret. Ships in the bundle — a bot filter. |
+| Variable               | What it targets                                                                    |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| `VITE_LEADERBOARD_API` | Base URL of a Worker, no trailing slash. Set it empty to build with the board off. |
+
+Posting is opt-in: the initials prompt asks the first time, and Settings has the switch, the
+player's Board ID, and a button that deletes their record (`DELETE /v1/players/me`).
 
 Vite inlines env vars at build time, so changes to `.env` only take effect on the next
 `npm run dev` / `npm run build` — a running server won't pick them up.
