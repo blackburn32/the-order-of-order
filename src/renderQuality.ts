@@ -23,12 +23,95 @@ const LOW_CORE_COUNT = 4;
 const MAX_DPR = 3;
 const LOW_END_MAX_DPR = 2;
 
-export const DPR = Math.min(
+const DEVICE_DPR = Math.min(
   (navigator.hardwareConcurrency ?? 8) <= LOW_CORE_COUNT
     ? LOW_END_MAX_DPR
     : MAX_DPR,
   Math.max(1, window.devicePixelRatio || 1),
 );
+
+/**
+ * The player's Text Size setting (Settings, stored as `uiScale` in the
+ * settings key): how much larger than designed the whole interface draws.
+ *
+ * It works by giving every scene a smaller viewport to lay out in — the page
+ * divided by the scale — and enlarging the result to fill the page (see
+ * `installUiScale`). Every scene already lays itself out from
+ * `scale.width/height`, so text, buttons and touch targets all grow together
+ * and nothing overlaps that would not at that smaller size. The backing store
+ * stays at device resolution, so it costs no extra fill and stays sharp.
+ *
+ * Read once, at load, because every texture is baked at `DPR`; changing it
+ * takes a restart. Capped so the layout viewport's short side stays at 320
+ * CSS pixels or more, the smallest the layouts are drawn for.
+ */
+export const UI_SCALE_STEPS = [1, 1.15, 1.3, 1.5] as const;
+const MIN_LAYOUT_SIDE = 320;
+
+function storedUiScale(): number {
+  try {
+    const raw = localStorage.getItem("ooo_settings_v2");
+    const value = raw
+      ? Number((JSON.parse(raw) as { uiScale?: unknown }).uiScale)
+      : 1;
+    return Number.isFinite(value) ? value : 1;
+  } catch {
+    return 1;
+  }
+}
+
+export const UI_SCALE = Math.max(
+  1,
+  Math.min(
+    storedUiScale(),
+    UI_SCALE_STEPS[UI_SCALE_STEPS.length - 1],
+    Math.min(window.innerWidth, window.innerHeight) / MIN_LAYOUT_SIDE,
+  ),
+);
+
+/** Backing-store pixels per layout pixel: the device's density, times the
+ *  interface scale. Everything that sizes the canvas, a camera or a baked
+ *  texture goes through this one number. */
+export const DPR = DEVICE_DPR * UI_SCALE;
+
+/** Lay the game out in a viewport `UI_SCALE` times smaller than the page and
+ *  enlarge it to fill the page. Run before the Game is created, so its first
+ *  measurement is the scaled one. Phaser maps pointer positions through the
+ *  canvas's on-screen rectangle, so input follows without help. */
+export function installUiScale(parent: HTMLElement | null): void {
+  if (!parent || UI_SCALE === 1) return;
+  parent.style.width = `${100 / UI_SCALE}%`;
+  parent.style.height = `${100 / UI_SCALE}%`;
+  parent.style.transform = `scale(${UI_SCALE})`;
+  parent.style.transformOrigin = "0 0";
+
+  // Phaser measures its parent with getBoundingClientRect, which reports the
+  // enlarged, on-screen size. The layout size is the one wanted: divide it
+  // back out before Phaser compares it with what it has.
+  const manager = Phaser.Scale.ScaleManager.prototype as unknown as {
+    getParentBounds: (this: { parent?: HTMLElement }) => boolean;
+  };
+  const getParentBounds = manager.getParentBounds;
+  manager.getParentBounds = function (this: { parent?: HTMLElement }) {
+    const el = this.parent;
+    if (!el) return getParentBounds.call(this);
+    const measure = el.getBoundingClientRect;
+    el.getBoundingClientRect = function (this: HTMLElement) {
+      const rect = measure.call(this);
+      return new DOMRect(
+        rect.x,
+        rect.y,
+        rect.width / UI_SCALE,
+        rect.height / UI_SCALE,
+      );
+    };
+    try {
+      return getParentBounds.call(this);
+    } finally {
+      delete (el as Partial<HTMLElement>).getBoundingClientRect;
+    }
+  };
+}
 
 /**
  * Resolution used by Phaser's internal Text canvases. Scenes lay text out in

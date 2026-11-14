@@ -15,6 +15,17 @@ import {
 import { finalizeRun } from "../systems/RunEnd";
 import { resetTutorialProgress } from "../systems/Tutorial";
 import {
+  deleteMyRecord,
+  getPlayerId,
+  globalScoresEnabled,
+} from "../systems/GlobalScores";
+import { resetPlayerToken } from "../systems/PlayerIdentity";
+import { exportSave, importSave, pickSaveFile } from "../systems/SaveTransfer";
+import { flushSaveMirror } from "../systems/SaveMirror";
+import { versionLabel } from "../buildInfo";
+import { UI_SCALE, UI_SCALE_STEPS } from "../renderQuality";
+import { openExternal, PRIVACY_URL } from "../systems/links";
+import {
   addFelt,
   bannerButton,
   BannerAction,
@@ -290,6 +301,165 @@ export class SettingsScene extends Phaser.Scene {
         row.setChecked(false),
       );
     }
+
+    // ---- The interface size, which takes a restart to apply ---------------
+    this.makeCycleRow(
+      content,
+      x0,
+      x1,
+      y,
+      "Interface Size",
+      UI_SCALE_STEPS.map((step) => `${Math.round(step * 100)}%`),
+      Math.max(
+        0,
+        UI_SCALE_STEPS.findIndex(
+          (step) => Math.abs(step - (this.settings.uiScale ?? 1)) < 0.01,
+        ),
+      ),
+      (index) => {
+        this.settings.uiScale = UI_SCALE_STEPS[index];
+        this.apply();
+        if (Math.abs(UI_SCALE_STEPS[index] - UI_SCALE) < 0.01) return;
+        if (this.returnTo === "Menu") {
+          // Every texture is baked at the scale, so a new one means a fresh
+          // start. From the Vestibule there is nothing to lose by it.
+          showToast(this, "Resizing…", { tone: "info" });
+          void flushSaveMirror().then(() =>
+            this.time.delayedCall(450, () => window.location.reload()),
+          );
+        } else {
+          showToast(this, "Applies the next time the game starts", {
+            tone: "info",
+          });
+        }
+      },
+    );
+    y += TOGGLE_ROW_H;
+    divider();
+
+    // ---- The global board and what leaves the device ----------------------
+    if (globalScoresEnabled()) {
+      toggle(
+        "Post to the Global Hall",
+        this.settings.globalBoard === true,
+        (value) => {
+          this.settings.globalBoard = value;
+          this.apply();
+        },
+      );
+    }
+    toggle(
+      "Send Crash Reports",
+      this.settings.crashReports !== false,
+      (value) => {
+        this.settings.crashReports = value;
+        this.apply();
+      },
+    );
+
+    this.makeActionRow(content, x0, x1, y, "Export Save", () => {
+      void exportSave().then((how) => {
+        const message = {
+          downloaded: "Save downloaded",
+          shared: "Save shared",
+          copied: "Save copied to the clipboard",
+          failed: "The save could not be exported",
+        }[how];
+        showToast(this, message, {
+          tone: how === "failed" ? "warning" : "success",
+        });
+      });
+    });
+    y += TOGGLE_ROW_H;
+    divider();
+    this.makeConfirmRow(
+      content,
+      x0,
+      x1,
+      y,
+      "Import Save",
+      "Tap again to replace this save",
+      async () => {
+        const text = await pickSaveFile();
+        if (text === null) return;
+        if (!(await importSave(text)))
+          showToast(this, "That file is not a save from this game", {
+            tone: "warning",
+          });
+      },
+    );
+    y += TOGGLE_ROW_H;
+    divider();
+    if (globalScoresEnabled()) {
+      this.makeConfirmRow(
+        content,
+        x0,
+        x1,
+        y,
+        "Delete My Board Record",
+        "Tap again to delete it",
+        async () => {
+          if (await deleteMyRecord()) {
+            // A fresh identity, so nothing posted later is tied to the old
+            // one, and the board waits to be asked again.
+            resetPlayerToken();
+            this.settings.globalBoard = undefined;
+            this.apply();
+            showToast(this, "Your board record has been deleted", {
+              tone: "success",
+            });
+            this.scene.restart({
+              returnTo: this.returnTo,
+              overlay: this.overlay,
+            });
+          } else {
+            showToast(this, "Could not reach the board. Try again later", {
+              tone: "warning",
+            });
+          }
+        },
+      );
+      y += TOGGLE_ROW_H;
+      divider();
+    }
+    this.makeActionRow(content, x0, x1, y, "Privacy Policy", () =>
+      openExternal(PRIVACY_URL),
+    );
+    y += TOGGLE_ROW_H;
+    divider();
+    // From the Vestibule only: mid-run, Settings is an overlay on a live
+    // table, and the credits are not worth leaving it for.
+    if (this.returnTo === "Menu") {
+      this.makeActionRow(content, x0, x1, y, "Credits & Licences", () =>
+        this.leave(() => this.scene.start("Credits")),
+      );
+      y += TOGGLE_ROW_H;
+      divider();
+    }
+
+    // Who this device is to the board, for a deletion request by email, and
+    // which build this is, for a bug report. A tap copies both.
+    const idLine = globalScoresEnabled()
+      ? `Board ID ${getPlayerId()} · ${versionLabel()}`
+      : versionLabel();
+    const about = this.add
+      .text(formCx, y + 18, idLine, {
+        fontFamily: SERIF,
+        fontSize: "13px",
+        color: CSS.dim,
+        fontStyle: "italic",
+      })
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true })
+      .on("pointerup", () => {
+        void navigator.clipboard?.writeText(idLine).then(
+          () => showToast(this, "Copied", { tone: "success" }),
+          () => undefined,
+        );
+      });
+    fitTextWidth(about, formW);
+    content.add(about);
+    y += 36;
 
     const rowsBottom = y;
     const backLabel =
@@ -579,6 +749,113 @@ export class SettingsScene extends Phaser.Scene {
     if (this.settings.graphicsLevel)
       fx.setGraphicsLevel(this.settings.graphicsLevel);
     saveSettings(this.settings);
+  }
+
+  /** A row that does something when tapped: the label on the left, a chevron
+   *  on the right, the whole band the target. */
+  private makeActionRow(
+    content: Phaser.GameObjects.Container,
+    x0: number,
+    x1: number,
+    top: number,
+    label: string,
+    onTap: () => void,
+  ): Phaser.GameObjects.Text {
+    const mid = top + TOGGLE_ROW_H / 2;
+    const labelText = this.add
+      .text(x0, mid, label, {
+        fontFamily: SERIF,
+        fontSize: "21px",
+        color: CSS.parchment,
+      })
+      .setOrigin(0, 0.5);
+    const chevron = this.add
+      .text(x1, mid, "›", {
+        fontFamily: SERIF,
+        fontSize: "24px",
+        color: CSS.gold,
+        fontStyle: "bold",
+      })
+      .setOrigin(1, 0.5);
+    const band = this.add
+      .rectangle(
+        (x0 + x1) / 2,
+        mid,
+        x1 - x0,
+        TOGGLE_ROW_H - 6,
+        COLORS.gold,
+        0.001,
+      )
+      .setInteractive({ useHandCursor: true });
+    band.on("pointerover", () => labelText.setColor(CSS.ivory));
+    band.on("pointerout", () => labelText.setColor(CSS.parchment));
+    band.on("pointerup", () => {
+      audio.click();
+      onTap();
+    });
+    content.add([band, labelText, chevron]);
+    return labelText;
+  }
+
+  /** An action row that asks for a second tap, like the reset button. */
+  private makeConfirmRow(
+    content: Phaser.GameObjects.Container,
+    x0: number,
+    x1: number,
+    top: number,
+    label: string,
+    confirmLabel: string,
+    onConfirm: () => void | Promise<void>,
+  ): void {
+    let armed = false;
+    let timer: Phaser.Time.TimerEvent | undefined;
+    const text = this.makeActionRow(content, x0, x1, top, label, () => {
+      if (!armed) {
+        armed = true;
+        text.setText(confirmLabel);
+        timer = this.time.delayedCall(3000, () => {
+          armed = false;
+          text.setText(label);
+        });
+        return;
+      }
+      timer?.remove();
+      armed = false;
+      text.setText(label);
+      void onConfirm();
+    });
+  }
+
+  /** A row that steps through a short list of values on each tap. */
+  private makeCycleRow(
+    content: Phaser.GameObjects.Container,
+    x0: number,
+    x1: number,
+    top: number,
+    label: string,
+    values: readonly string[],
+    initial: number,
+    onChange: (index: number) => void,
+  ): void {
+    let index = initial;
+    const mid = top + TOGGLE_ROW_H / 2;
+    const readout = this.add
+      .text(x1, mid, values[index], {
+        fontFamily: SERIF,
+        fontSize: "18px",
+        color: CSS.gold,
+        fontStyle: "bold",
+      })
+      .setOrigin(1, 0.5);
+    this.makeActionRow(content, x0, x1, top, label, () => {
+      index = (index + 1) % values.length;
+      readout.setText(values[index]);
+      onChange(index);
+    });
+    // The action row's chevron gives way to the value.
+    const chevron = content.list[content.list.length - 1];
+    if (chevron instanceof Phaser.GameObjects.Text) chevron.setVisible(false);
+    content.add(readout);
   }
 
   /**

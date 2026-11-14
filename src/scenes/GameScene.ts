@@ -464,7 +464,7 @@ function afflictionRollCues(
   if (denied === "tollkeeper")
     cues.push({ kind: "penalty", message: "TOLL UNPAID · ROLL FORFEIT" });
   if (denied === "gamblersCurse")
-    cues.push({ kind: "penalty", message: "GAMBLER'S CURSE · ROLL FORFEIT" });
+    cues.push({ kind: "penalty", message: "OLD HABITS · ROLL FORFEIT" });
   return cues;
 }
 

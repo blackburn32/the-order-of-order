@@ -504,7 +504,7 @@ export class DieSprite extends Phaser.GameObjects.Container {
   /** Flash the die's border to signal one or more triggered effects, plus a
    *  scale bounce. With multiple effects the border is split into equal-length
    *  arcs — one color each — so a die that both scores and matches on Snake Eyes
-   *  reads as half-and-half. `big` gives a stronger bounce (Rollplayer jackpot). */
+   *  reads as half-and-half. `big` gives a stronger bounce (The Congregation). */
   pulseEffects(colors: number[], big = false): void {
     if (colors.length === 0) return;
 
