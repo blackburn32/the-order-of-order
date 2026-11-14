@@ -1,4 +1,4 @@
-package com.order.app;
+package com.theorderoforder.game;
 
 import com.getcapacitor.BridgeActivity;
 

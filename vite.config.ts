@@ -1,4 +1,5 @@
 import { execSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 
 /** The commit this bundle is built from, which every run it plays records (see
@@ -21,10 +22,22 @@ function buildSha(): string {
   }
 }
 
+/** The one version number every build carries: package.json's, which the
+ *  Android build reads too (android/app/build.gradle). Bump it with
+ *  `npm version patch|minor|major`. */
+const appVersion = (
+  JSON.parse(
+    readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+  ) as {
+    version: string;
+  }
+).version;
+
 export default defineConfig({
   base: "./",
   define: {
     "import.meta.env.VITE_BUILD_SHA": JSON.stringify(buildSha()),
+    "import.meta.env.VITE_APP_VERSION": JSON.stringify(appVersion),
   },
   build: {
     chunkSizeWarningLimit: 2000,

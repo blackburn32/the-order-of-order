@@ -1,7 +1,7 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 const config: CapacitorConfig = {
-  appId: "com.order.app",
+  appId: "com.theorderoforder.game",
   appName: "The Order of Order",
   webDir: "dist",
 };

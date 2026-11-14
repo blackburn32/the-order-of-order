@@ -1,14 +1,22 @@
 apply plugin: 'com.android.application'
 
+// One version for every build: package.json's. `npm version patch|minor|major`
+// bumps it, and the Play version code follows from it (1.2.3 -> 10203), so a
+// release can never ship with a code that disagrees with its name.
+def packageJson = new groovy.json.JsonSlurper().parse(file("../../package.json"))
+def appVersionName = packageJson.version.toString()
+def appVersionParts = appVersionName.tokenize("-")[0].tokenize(".").collect { it as int }
+def appVersionCode = appVersionParts[0] * 10000 + appVersionParts[1] * 100 + appVersionParts[2]
+
 android {
-    namespace = "com.order.app"
+    namespace = "com.theorderoforder.game"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.order.app"
+        applicationId "com.theorderoforder.game"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode appVersionCode
+        versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
