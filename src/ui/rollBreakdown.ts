@@ -86,12 +86,65 @@ export interface RollBreakdownOptions {
   actions?: readonly RollAction[];
 }
 
-/** One button on the callout's foot. */
+/** One button on the callout's foot: a round icon, with a pip under it for
+ *  each use left. */
 export interface RollAction {
-  label: string;
-  /** The pill's ink: its outline, its label, and the wash it takes on hover. */
+  /** What the button does, drawn rather than written: a circling arrow for a
+   *  reroll, a four-pointed star for a blessing. */
+  icon: "reroll" | "bless";
+  /** The button's ink: its ring, its icon, its pips, and its hover wash. */
   color: number;
+  /** Uses left this trial, shown as pips under the button. */
+  uses: number;
+  /** A figure tucked against the button's shoulder, e.g. a blessing's ×8. */
+  badge?: string;
   onPress(): void;
+}
+
+/** Draw `icon` into `g`, centred on the origin, `r` across its half-width. */
+function drawActionIcon(
+  g: Phaser.GameObjects.Graphics,
+  icon: RollAction["icon"],
+  r: number,
+  color: number,
+): void {
+  if (icon === "reroll") {
+    // Three quarters of a circle, and an arrowhead where it stops.
+    const start = Phaser.Math.DegToRad(-60);
+    const end = Phaser.Math.DegToRad(220);
+    const ring = r * 0.72;
+    g.lineStyle(Math.max(1.5, r * 0.2), color, 1);
+    g.beginPath();
+    g.arc(0, 0, ring, start, end, false);
+    g.strokePath();
+    const tip = { x: Math.cos(start) * ring, y: Math.sin(start) * ring };
+    // The arc runs clockwise from `start` back round to `end`, so the arrow
+    // at `start` points against it, along the tangent toward smaller angles.
+    const along = { x: Math.sin(start), y: -Math.cos(start) };
+    const out = { x: Math.cos(start), y: Math.sin(start) };
+    const head = r * 0.42;
+    g.fillStyle(color, 1);
+    g.fillTriangle(
+      tip.x + along.x * head,
+      tip.y + along.y * head,
+      tip.x + out.x * head * 0.7,
+      tip.y + out.y * head * 0.7,
+      tip.x - out.x * head * 0.7,
+      tip.y - out.y * head * 0.7,
+    );
+    return;
+  }
+  // A four-pointed star, its waist pinched in, the light a blessing gives.
+  const points: Phaser.Math.Vector2[] = [];
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * Math.PI) / 4 - Math.PI / 2;
+    const reach = i % 2 === 0 ? r * 0.9 : r * 0.3;
+    points.push(
+      new Phaser.Math.Vector2(Math.cos(angle) * reach, Math.sin(angle) * reach),
+    );
+  }
+  g.fillStyle(color, 1);
+  g.fillPoints(points, true);
 }
 
 /**
@@ -468,40 +521,55 @@ export function playRollBreakdown(
       .setVisible(true);
   }
 
-  // The favours' buttons: small outlined pills side by side along the panel's
-  // foot, each in its own ink, so they sit under the total as a footnote
-  // rather than competing with it. Built at the origin and placed once the
-  // panel's width is known.
-  const actionH = rowStep * 0.85;
-  const actionSize = Math.min(labelSize, actionH * 0.56);
-  const actionPad = actionSize * 1.3;
-  const actionGap = fontSize * 0.6;
-  const actionY = lastY + lastPad + actionH * 0.5;
+  // The favours' buttons: small round icons side by side along the panel's
+  // foot, each in its own ink, with a pip under it for every use left — a
+  // footnote to the total rather than a rival to it. Built at the origin and
+  // placed once the panel's width is known.
+  const iconR = rowStep * 0.5;
+  const pipR = Math.max(2.2, iconR * 0.12);
+  const pipY = iconR + pipR * 3;
+  const actionH = iconR * 2 + pipR * 5;
+  const actionGap = iconR * 1.2;
+  const actionY = lastY + lastPad + iconR;
+  const css = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
   const buttons = actions.map((action) => {
     const plate = scene.add.graphics();
-    const label = scene.add
-      .text(0, 0, action.label, {
-        fontFamily: SERIF,
-        fontSize: `${Math.round(actionSize)}px`,
-        color: `#${action.color.toString(16).padStart(6, "0")}`,
-      })
-      .setOrigin(0.5);
+    const glyph = scene.add.graphics();
+    drawActionIcon(glyph, action.icon, iconR * 0.62, action.color);
+    const pips = scene.add.graphics();
+    pips.fillStyle(action.color, 0.9);
+    for (let i = 0; i < action.uses; i++)
+      pips.fillCircle((i - (action.uses - 1) / 2) * pipR * 3.2, pipY, pipR);
+    const parts: Phaser.GameObjects.GameObject[] = [plate, glyph, pips];
+    if (action.badge)
+      parts.push(
+        scene.add
+          .text(iconR * 0.78, -iconR * 0.72, action.badge, {
+            fontFamily: SERIF,
+            fontSize: `${Math.round(Math.max(12, iconR * 0.62))}px`,
+            color: css(action.color),
+            fontStyle: "bold",
+            stroke: "#0d0a12",
+            strokeThickness: 3,
+          })
+          .setOrigin(0, 0.5),
+      );
     const button = opts.add(
-      scene.add.container(x, actionY, [plate, label]).setDepth(52),
+      scene.add.container(x, actionY, parts).setDepth(52),
     );
+    button.setData("action", action.icon);
     pieces.push(button);
-    return { action, button, plate, label };
+    return { action, button, plate };
   });
   const actionsWidth =
-    buttons.reduce((sum, b) => sum + b.label.width + actionPad * 2, 0) +
-    actionGap * Math.max(0, buttons.length - 1);
+    buttons.length * iconR * 2 + actionGap * Math.max(0, buttons.length - 1);
   // The line that replaces the buttons once one is spent.
   const actionNote = holds
     ? text(actionY, "", CSS.glow, labelSize).setVisible(false)
     : undefined;
   if (holds) {
-    lastY = actionY + actionH * 0.5;
-    lastPad = rowStep * 0.45;
+    lastY = actionY - iconR + actionH;
+    lastPad = rowStep * 0.5;
   }
 
   // The panel is as wide as the widest thing it will ever hold: every row, the
@@ -618,36 +686,33 @@ export function playRollBreakdown(
     if (diceLabel.width > room) diceLabel.setScale(room / diceLabel.width);
   };
 
-  // Each pill is as wide as its own label, and the row is centred, shrinking
-  // together only if a narrow panel cannot hold it.
+  // Every scale animation returns to the piece's resting scale, recorded here.
+  // Reading the live scale instead (as fx.punch does) compounds when a punch
+  // lands on a piece still mid-punch, and a multiplier punched on every step
+  // would swell across the screen.
+  const restScale = new Map<Piece, number>();
+  const rest = (piece: Piece) => restScale.get(piece) ?? piece.scale;
+
+  // The row is centred, and shrinks together only if a narrow panel cannot
+  // hold it.
   const actionFit = Math.min(1, (panelW - padX) / Math.max(1, actionsWidth));
   let actionX = x - (actionsWidth * actionFit) / 2;
-  buttons.forEach(({ action, button, plate, label }) => {
-    label.setScale(actionFit);
-    const buttonW = (label.width + actionPad * 2) * actionFit;
-    button.x = actionX + buttonW / 2;
-    actionX += buttonW + actionGap * actionFit;
+  buttons.forEach(({ action, button, plate }) => {
+    button.setScale(actionFit);
+    restScale.set(button, actionFit);
+    button.x = actionX + iconR * actionFit;
+    actionX += (iconR * 2 + actionGap) * actionFit;
     const draw = (alpha: number) => {
       plate.clear();
+      plate.fillStyle(COLORS.feltDark, 0.6);
+      plate.fillCircle(0, 0, iconR);
       plate.fillStyle(action.color, alpha);
-      plate.fillRoundedRect(
-        -buttonW / 2,
-        -actionH / 2,
-        buttonW,
-        actionH,
-        actionH / 2,
-      );
+      plate.fillCircle(0, 0, iconR);
       plate.lineStyle(1.5, action.color, 0.85);
-      plate.strokeRoundedRect(
-        -buttonW / 2,
-        -actionH / 2,
-        buttonW,
-        actionH,
-        actionH / 2,
-      );
+      plate.strokeCircle(0, 0, iconR);
     };
     draw(0);
-    button.setSize(buttonW, actionH);
+    button.setSize(iconR * 2, iconR * 2);
     button.setAlpha(0);
     let pressed = false;
     button.on("pointerover", () => draw(0.16));
@@ -681,14 +746,6 @@ export function playRollBreakdown(
       button.setVisible(false);
     }
   };
-
-  // Every scale animation returns to the piece's resting scale, recorded here.
-  // Reading the live scale instead (as fx.punch does) compounds when a punch
-  // lands on a piece still mid-punch, and a multiplier punched on every step
-  // would swell across the screen.
-  const restScale = new Map<Piece, number>();
-  const rest = (piece: Piece) => restScale.get(piece) ?? piece.scale;
-
   // Only ever stop the callout's own tweens. `killTweensOf` would also stop a
   // tween someone else put on these pieces — the scene's slide-out moves every
   // display object and waits for each of those tweens to complete, so killing

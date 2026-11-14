@@ -4478,14 +4478,17 @@ export class GameScene extends Phaser.Scene {
     const actions: RollAction[] = [];
     if (this.preRollSnapshot && rerollsLeft(s) > 0)
       actions.push({
-        label: `Reroll ·${rerollsLeft(s)}`,
+        icon: "reroll",
         color: COLORS.glowSteel,
+        uses: rerollsLeft(s),
         onPress: () => this.rerollLastRoll(),
       });
     if (blessingsLeft(s) > 0 && result.points > 0n)
       actions.push({
-        label: `Bless ×${blessingFactor(s)} ·${blessingsLeft(s)}`,
+        icon: "bless",
         color: COLORS.glow,
+        uses: blessingsLeft(s),
+        badge: `×${blessingFactor(s)}`,
         onPress: () => this.blessLastRoll(),
       });
     const holdForFavour = actions.length > 0;
