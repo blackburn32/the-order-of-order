@@ -80,8 +80,19 @@ import {
   DOCK_EXIT_DURATION_MS,
   playRollBreakdown,
   type RollAcclaim,
+  type RollAction,
   type RollBreakdownView,
 } from "../ui/rollBreakdown";
+import {
+  blessingFactor,
+  blessingsLeft,
+  blessRoll,
+  rerollsLeft,
+  restoreRun,
+  rollStreamKey,
+  snapshotRun,
+  spendReroll,
+} from "../systems/RollFavours";
 import { buildItemCard } from "../ui/itemCard";
 import { addFelt, floatText, struckFloatText } from "../ui/widgets";
 import { showCallout, CalloutHandle } from "../ui/Callout";
@@ -283,6 +294,9 @@ function duelProgress(score: bigint, rival: bigint): number {
 /** A roll worth this fraction of the trial's goal is a "big" one: it earns a
  *  shake and a spark burst rather than passing quietly. */
 const BIG_SCORE_FRACTION = 0.08;
+/** How long a blessed roll's callout holds its new total before the table
+ *  moves on. */
+const BLESSING_HOLD_MS = 1100;
 
 /** Felt tint at an empty score, at the trial's goal, and on a final roll that
  *  arrived short of it. The scene warms as the target
@@ -710,6 +724,15 @@ export class GameScene extends Phaser.Scene {
   private scoreRevealTimer?: Phaser.Time.TimerEvent;
   /** The last roll's callout, hurried off the table when the next roll starts. */
   private breakdownView?: RollBreakdownView;
+  /** The run as it stood before the roll on the table, kept while an
+   *  Absolution could still strike that roll (see systems/RollFavours). */
+  private preRollSnapshot?: RunState;
+  /** Set while the last roll's callout holds its favours open. Nothing moves
+   *  on — not the next roll, not the trial's end — until the player spends one
+   *  or presses the seal to keep the roll as it is. */
+  private favourPending = false;
+  /** What the roll the panel is holding open scored, for a blessing. */
+  private heldPoints = 0n;
   private celebrateTimer?: Phaser.Time.TimerEvent;
   private feltImage!: Phaser.GameObjects.Image;
   // Sigil + motes behind the dice. Only built when effects are on; every use
@@ -793,6 +816,8 @@ export class GameScene extends Phaser.Scene {
     // text and timers already destroyed; hurrying it on the next trial's first
     // roll would draw destroyed text.
     this.breakdownView = undefined;
+    this.preRollSnapshot = undefined;
+    this.favourPending = false;
     this.celebrateTimer = undefined;
     this.scoreRevealTimer = undefined;
     this.scoreRevealAt = 0;
@@ -3126,6 +3151,9 @@ export class GameScene extends Phaser.Scene {
       }
       // Nor is the status table: the wheel and a drag there scroll it.
       if (this.statusTable?.contains(p.x, p.y)) return false;
+      // Nor a callout holding its buttons open: a press there is a choice.
+      if (this.favourPending && this.breakdownView?.contains(p.x, p.y))
+        return false;
       return (
         p.x >= a.x &&
         p.x <= a.x + a.width &&
@@ -3854,6 +3882,20 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    if (this.favourPending) {
+      // The callout is holding a reroll or a blessing open: pressing the seal
+      // keeps the roll as it is and moves on.
+      this.favourPending = false;
+      this.preRollSnapshot = undefined;
+      this.finishBreakdown();
+      // The table is busy from here, with the next roll or, after the trial's
+      // last, with its end: a second press must not start a roll in the trial
+      // after it.
+      this.rolling = true;
+      this.afterRoll(true);
+      return;
+    }
+
     if (!this.rolling) this.startRoll();
   }
 
@@ -3882,6 +3924,11 @@ export class GameScene extends Phaser.Scene {
     // A roll pressed before the table has opened the trial: open it now, so
     // the dice about to tumble are the ones the grid is drawing.
     this.openTrialOnTable();
+    this.favourPending = false;
+    // Kept only while there is an Absolution to spend on this roll: it is the
+    // whole run, and a reroll puts all of it back.
+    this.preRollSnapshot =
+      rerollsLeft(this.state) > 0 ? snapshotRun(this.state) : undefined;
     this.rolling = true;
     this.tumbling = true;
     this.notice?.close();
@@ -3914,7 +3961,13 @@ export class GameScene extends Phaser.Scene {
     // it is the index of the one about to be made, and resolveRoll advances it.
     // A reload mid-tumble therefore re-makes this same roll rather than dealing
     // a different one (see systems/Rng).
-    const diceRng = streamFor(this.state.seed, "roll", rollKey);
+    // A reroll draws under a key of its own (see RollFavours.rollStreamKey), or
+    // it would deal the very dice it was bought to replace.
+    const diceRng = streamFor(
+      this.state.seed,
+      "roll",
+      rollStreamKey(this.state),
+    );
     // The columns the radius dice will reach across, read before the roll can
     // grow the grid — the layout follows the player's screen, so a replay has
     // to be told the shape this roll was made on (see systems/InputLog).
@@ -4184,7 +4237,7 @@ export class GameScene extends Phaser.Scene {
       // both from one generator would work, but it would have to be handed
       // across the tumble animation, and a stream that can be rebuilt from saved
       // state alone is one less thing a reload can lose.
-      streamFor(s.seed, "roll", `${s.trial}:${s.roll}:resolve`),
+      streamFor(s.seed, "roll", `${rollStreamKey(s)}:resolve`),
     );
     // The Vigil has just counted this roll on every die that scored, so the
     // growth each one wears goes up with the points it earned.
@@ -4420,6 +4473,23 @@ export class GameScene extends Phaser.Scene {
         ? `${tierLabel} · ${tierGold}`
         : tierGold;
 
+    // The roll favours the player can still spend on this roll. Any at all and
+    // the callout holds open for them instead of clearing itself away.
+    const actions: RollAction[] = [];
+    if (this.preRollSnapshot && rerollsLeft(s) > 0)
+      actions.push({
+        label: `Reroll ·${rerollsLeft(s)}`,
+        color: COLORS.glowSteel,
+        onPress: () => this.rerollLastRoll(),
+      });
+    if (blessingsLeft(s) > 0 && result.points > 0n)
+      actions.push({
+        label: `Bless ×${blessingFactor(s)} ·${blessingsLeft(s)}`,
+        color: COLORS.glow,
+        onPress: () => this.blessLastRoll(),
+      });
+    const holdForFavour = actions.length > 0;
+
     const band = this.layout.calloutBand;
     // Docked in the corner on a large screen, the callout is a compact panel
     // with tighter rows rather than one spread across the table's middle.
@@ -4427,7 +4497,9 @@ export class GameScene extends Phaser.Scene {
     let floatY = dock ? dock.top : breakdown ? 150 : 195;
     let floatX = this.scale.width / 2;
     const rowCount =
-      breakdownRows(breakdown, diceChanges, !!acclaimDetail) + bossCues.length;
+      breakdownRows(breakdown, diceChanges, !!acclaimDetail) +
+      bossCues.length +
+      (holdForFavour ? 1 : 0);
     const room = dock
       ? dock.bottom - dock.top
       : band
@@ -4447,7 +4519,7 @@ export class GameScene extends Phaser.Scene {
     if (breakdown)
       audio.score(Number(result.points > 100n ? 100n : result.points));
     else audio.dud();
-    if (breakdown || diceChanges.length > 0) {
+    if (breakdown || diceChanges.length > 0 || holdForFavour) {
       const view = playRollBreakdown(this, breakdown, {
         x: this.scale.width / 2,
         // The panel's top edge sits half a row and a margin above `top`.
@@ -4472,6 +4544,7 @@ export class GameScene extends Phaser.Scene {
         diceChanges,
         acclaimLabel,
         acclaimDetail,
+        actions,
         onBonus: (index) => audio.multiply(index),
         onStep: (index) => {
           audio.multiply(index);
@@ -4552,6 +4625,16 @@ export class GameScene extends Phaser.Scene {
       this.updateHud();
       // Surface the next tutorial step (e.g. "Tiers" after the first roll).
       this.renderTutorial();
+      if (holdForFavour) {
+        // The callout waits on the player: a favour spent, or the seal pressed
+        // to keep the roll (see onRoll). Mashing the seal mid-roll does not
+        // decide for them.
+        this.favourPending = true;
+        this.heldPoints = result.points;
+        this.rolling = false;
+        return;
+      }
+      this.preRollSnapshot = undefined;
       if (skipHold) {
         this.afterRoll(true);
         return;
@@ -4670,6 +4753,90 @@ export class GameScene extends Phaser.Scene {
    * Below `BIG_SCORE_FRACTION` the roll passes quietly: an impact on every
    * scoring roll would make all of them feel like nothing.
    */
+  /**
+   * Absolution: strike the roll on the table and make it again. The whole run
+   * goes back to how it stood before the roll — score, gold, grid, everything
+   * the roll touched — with the reroll counted spent, and the new roll then
+   * plays out like any other.
+   */
+  private rerollLastRoll(): void {
+    const snapshot = this.preRollSnapshot;
+    if (!this.favourPending || !snapshot) return;
+    this.favourPending = false;
+    this.preRollSnapshot = undefined;
+    restoreRun(this.state, snapshot);
+    if (!spendReroll(this.state)) return;
+    logInput(this.state, "absolve");
+    // Committed before the dice move, so a reload cannot hand the charge back.
+    saveActiveRun(this.registry, {
+      scene: "Game",
+      unlocked: this.trialUnlocks,
+    });
+    this.finishBreakdown();
+    this.rebuildGrid();
+    this.updateHud();
+    this.startRoll();
+  }
+
+  /**
+   * Benediction: multiply the roll on the table by the blessing's factor. The
+   * callout shows the new total where its buttons were, holds a beat, and the
+   * table moves on as it would have.
+   */
+  private blessLastRoll(): void {
+    if (!this.favourPending) return;
+    const points = this.heldPoints;
+    const s = this.state;
+    const before = s.score;
+    const factor = blessingFactor(s);
+    if (blessRoll(s, points) === 0n) return;
+    logInput(s, "bless");
+    this.favourPending = false;
+    this.preRollSnapshot = undefined;
+    this.checkUnlocks();
+    saveActiveRun(this.registry, {
+      scene: "Game",
+      unlocked: this.trialUnlocks,
+    });
+    // A blessing that carries the trial past a tier says so, as a roll would.
+    const crossed = isMirrorTrial(s.trial)
+      ? -1
+      : tierGoalsFor(s).reduce(
+          (top, goal, i) =>
+            goal > 0n && s.score >= goal && before < goal ? i : top,
+          -1,
+        );
+    const label =
+      crossed >= 0
+        ? `BLESSED ×${factor} · ${tierName(crossed).toUpperCase()} GOAL MET`
+        : `BLESSED ×${factor}`;
+    this.breakdownView?.bless(points * factor, label);
+    audio.multiply(4);
+    this.celebrateRoll(points * factor);
+    this.updateHud();
+    this.rolling = true;
+    this.pendingAdvance = this.time.delayedCall(BLESSING_HOLD_MS, () => {
+      this.pendingAdvance = undefined;
+      this.finishBreakdown();
+      this.afterRoll(false);
+    });
+  }
+
+  /** Lay the grid out from scratch against the pool the run holds now. A
+   *  reroll swaps the whole pool for the one before the roll, so nothing the
+   *  sprites and cards point at survives it. */
+  private rebuildGrid(): void {
+    this.clearFlourishes();
+    this.destroyDiceSprites();
+    for (const card of this.cards.values()) card.destroy();
+    this.cards.clear();
+    this.cardRegions.clear();
+    for (const retiring of this.retiringCards) retiring.card.destroy();
+    this.retiringCards.clear();
+    this.gridCount = -1;
+    this.syncGrid(this.layout);
+  }
+
   private celebrateRoll(points: bigint): void {
     if (!fx.on) return;
     const goal = goalFor(this.state);

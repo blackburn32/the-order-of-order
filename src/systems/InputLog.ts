@@ -13,6 +13,10 @@
 //   [trial, "build", sha]                  the build that played from here on
 //   [trial, "roll", roll, cols, rig, redo] a roll of the dice (see below)
 //   [trial, "move", from, to]              a die dragged to a new grid slot
+//   [trial, "absolve"]                     the last roll struck by an
+//                                          Absolution, to be made again
+//   [trial, "bless"]                       the last roll blessed by a
+//                                          Benediction
 //   [trial, "buy", "shelf"|"pack", index, id, target, targets]
 //   [trial, "pack", index, id]             a booster bought and opened
 //   [trial, "skip"]                        an opened pack closed with no pick
@@ -49,6 +53,8 @@ export type InputEvent =
       redo: number,
     ]
   | [trial: number, kind: "move", from: number, to: number]
+  | [trial: number, kind: "absolve"]
+  | [trial: number, kind: "bless"]
   | [
       trial: number,
       kind: "buy",
@@ -144,6 +150,8 @@ export function isInputEvent(value: unknown): value is InputEvent {
       );
     case "pack":
       return rest.length === 2 && isInt(rest[0]) && isStr(rest[1]);
+    case "absolve":
+    case "bless":
     case "skip":
     case "reroll":
     case "leave":

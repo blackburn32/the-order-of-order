@@ -7,7 +7,8 @@
 //
 // Starts the dev server and plays whole runs in a real browser by calling the
 // same scene methods the player's taps call — rolling (mid-tumble presses
-// included), dragging dice, buying cards and pointing them at dice, opening and
+// included), spending a reroll or a blessing from the score panel, dragging
+// dice, buying cards and pointing them at dice, opening and
 // skipping packs, rerolling the shelf, taking the Tribute, pressing on into
 // endless — at a browser size picked per run, so the radius dice's reach
 // changes with the layout. The shopping is decided here, in node, by the same
@@ -123,6 +124,18 @@ const STEP = `(seed) => {
           return "move";
         }
       }
+      // The score panel holding a roll open: strike it, bless it, or (by
+      // rolling on, below) keep it.
+      if (sc.favourPending && rand() < 0.5) {
+        if (sc.preRollSnapshot && (rand() < 0.5 || sc.heldPoints === 0n)) {
+          sc.rerollLastRoll();
+          return "absolve";
+        }
+        if (sc.heldPoints > 0n && sc.state.benediction > sc.state.blessingsUsed) {
+          sc.blessLastRoll();
+          return "bless";
+        }
+      }
       sc.onRoll();
       return "roll";
     }
@@ -185,6 +198,12 @@ type Action =
 
 /** The shopper: weigh every card the visit can take with the expert's
  *  appraiser and take the best one per gold, while one is worth anything. */
+const FAVOURS: ReadonlySet<string> = new Set([
+  "absolution",
+  "benediction",
+  "doxology",
+]);
+
 function decide(raw: string, rng: () => number): Action {
   const envelope = JSON.parse(raw) as {
     run: unknown;
@@ -201,6 +220,13 @@ function decide(raw: string, rng: () => number): Action {
     objective: "ladder" as const,
     horizon: 12,
   };
+  // A roll favour is taken whenever one is on offer, so the runs reach the
+  // score panel's reroll and blessing, which the replayer has to follow too.
+  const favour = row.findIndex(
+    (offer) => FAVOURS.has(offer.id) && visit.canBuy(offer),
+  );
+  if (favour >= 0)
+    return { kind: "buy", from: fromPack ? "pack" : "shelf", index: favour };
   const baseline = measureCapacity(state, opts);
   const appraisals: { a: Appraisal; index: number }[] = [];
   row.forEach((offer, index) => {
