@@ -48,9 +48,44 @@ const KEY_DAILY_HALL = "ooo_daily_hall_v1";
 /** How many finished daily runs the device keeps, newest first. */
 export const DAILY_HALL_SIZE = 30;
 
-/** Schema stamp on every Hall entry written by this version. Entries without
- *  it are dropped on load. */
+/** Schema stamp on every Hall entry written by this version.
+ *
+ *  Raising it means adding a step to HALL_MIGRATIONS that lifts an entry from
+ *  the schema before. An entry is never dropped for its schema: an older one
+ *  is migrated, and one this build cannot read (stamped by a newer build, or
+ *  malformed) is kept in storage exactly as it was and written back with the
+ *  rest, so going back a version, or a bug here, does not cost a player
+ *  their Hall. */
 export const HALL_SCHEMA = 2;
+
+/** `HALL_MIGRATIONS[n]` lifts a raw entry from schema n to n + 1. Schema 2 is
+ *  the first this format has had, so the list is empty; the v1 Hall measured a
+ *  different game under a different key and is not read at all (above). */
+const HALL_MIGRATIONS: Record<
+  number,
+  (entry: Record<string, unknown>) => Record<string, unknown>
+> = {};
+
+/** A raw entry at this build's schema, or null when it cannot be brought to
+ *  it. */
+function migrateHallEntry(
+  entry: Record<string, unknown>,
+): Record<string, unknown> | null {
+  let schema = Number(entry.schema);
+  if (!Number.isInteger(schema) || schema > HALL_SCHEMA) return null;
+  let current = entry;
+  while (schema < HALL_SCHEMA) {
+    const step = HALL_MIGRATIONS[schema];
+    if (!step) return null;
+    current = step(current);
+    schema += 1;
+  }
+  return { ...current, schema: HALL_SCHEMA };
+}
+
+/** Entries each Hall key held that this build could not read, by key, kept so
+ *  the next write puts them back (see HALL_SCHEMA). */
+const unreadEntries = new Map<string, unknown[]>();
 
 export interface HallEntry {
   schema: number; // HALL_SCHEMA; anything else is discarded on load
@@ -122,6 +157,14 @@ export interface Settings {
   // How far out per-die flourishes draw (see systems/GraphicsLevel). Unset
   // until the player picks one, so the device's own default applies.
   graphicsLevel?: GraphicsLevel;
+  // Whether finished runs may be posted to the global board (see
+  // GlobalScores.globalBoardConsent). Unset until the player answers.
+  globalBoard?: boolean;
+  // Whether uncaught errors are reported (see systems/CrashReports). On unless
+  // the player turns it off.
+  crashReports?: boolean;
+  // Text and interface scale, as a multiplier (see ui/uiScale). Unset is 1.
+  uiScale?: number;
 }
 
 const itemIds: ReadonlySet<string> = new Set(ITEMS.map((item) => item.id));
@@ -151,60 +194,100 @@ export function loadDailyHall(): HallEntry[] {
 }
 
 function readHall(key: string): HallEntry[] {
+  let raw: string | null;
   try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as Array<Record<string, unknown>>;
-    return parsed
-      .filter((entry) => Number(entry.schema) === HALL_SCHEMA)
-      .map((entry) => ({
-        schema: HALL_SCHEMA,
-        startedAt: Number(entry.startedAt),
-        rank: Number(entry.rank),
-        trial: Number(entry.trial),
-        score: BigInt((entry.score as string | number | undefined) ?? 0),
-        won: Boolean(entry.won),
-        medal: hallMedal(entry.medal, entry),
-        character: isCharacterId(entry.character)
-          ? entry.character
-          : DEFAULT_CHARACTER,
-        endless: Boolean(entry.endless),
-        goldEarned: Number(entry.goldEarned ?? 0),
-        dice: (Array.isArray(entry.dice) ? entry.dice : []).map((rawDie) => {
-          const d = rawDie as Partial<DiceStack>;
-          const scores = hallScores(d.scores);
-          return {
-            sides: d.sides ?? 6,
-            // Older hall entries stored this as a boolean. Resolve it from the
-            // die's then-current size once, while new entries persist ×2/×4.
-            maxFaceBonus: windfallFactor(
-              d.maxFaceBonus as number | boolean | undefined,
-              d.sides ?? 6,
-            ),
-            loaded: d.loaded ?? false,
-            wildFace: d.wildFace ?? false,
-            source: d.source ?? "starter",
-            count: d.count ?? 1,
-            // The Vigil's tally, for the final grid's tooltips. Entries
-            // recorded before it was kept carry none.
-            ...(scores ? { scores } : {}),
-          } as DiceStack;
-        }),
-        auras: hallAuras(entry.auras),
-        dicePoints: bigintMap(entry.dicePoints),
-        itemPoints: bigintMap(entry.itemPoints),
-        history: hydrateRollHistory(entry.history),
-        rolls: Number(entry.rolls ?? 0),
-        seed: isSeed(entry.seed) ? entry.seed : undefined,
-        unlocks: knownItemIds(entry.unlocks),
-        tutorialArmed: Boolean(entry.tutorialArmed),
-        forcedRolls: rollKeys(entry.forcedRolls),
-        inputLog: readInputLog(entry.inputLog),
-        ...(typeof entry.build === "string" ? { build: entry.build } : {}),
-        ...(typeof entry.daily === "string" ? { daily: entry.daily } : {}),
-      }));
+    raw = localStorage.getItem(key);
   } catch {
     return [];
+  }
+  if (!raw) {
+    unreadEntries.delete(key);
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = null;
+  }
+  if (!Array.isArray(parsed)) {
+    // Not a Hall at all. Set the text aside before anything writes over it.
+    try {
+      if (localStorage.getItem(`${key}_unreadable`) === null)
+        localStorage.setItem(`${key}_unreadable`, raw);
+    } catch {
+      // non-fatal
+    }
+    unreadEntries.delete(key);
+    return [];
+  }
+  const unread: unknown[] = [];
+  const entries: HallEntry[] = [];
+  for (const rawEntry of parsed) {
+    const migrated =
+      rawEntry && typeof rawEntry === "object"
+        ? migrateHallEntry(rawEntry as Record<string, unknown>)
+        : null;
+    const entry = migrated ? hallEntryFrom(migrated) : null;
+    if (entry) entries.push(entry);
+    else unread.push(rawEntry);
+  }
+  if (unread.length > 0) unreadEntries.set(key, unread);
+  else unreadEntries.delete(key);
+  return entries;
+}
+
+/** One entry read back off storage, or null when it will not parse. */
+function hallEntryFrom(entry: Record<string, unknown>): HallEntry | null {
+  try {
+    return {
+      schema: HALL_SCHEMA,
+      startedAt: Number(entry.startedAt),
+      rank: Number(entry.rank),
+      trial: Number(entry.trial),
+      score: BigInt((entry.score as string | number | undefined) ?? 0),
+      won: Boolean(entry.won),
+      medal: hallMedal(entry.medal, entry),
+      character: isCharacterId(entry.character)
+        ? entry.character
+        : DEFAULT_CHARACTER,
+      endless: Boolean(entry.endless),
+      goldEarned: Number(entry.goldEarned ?? 0),
+      dice: (Array.isArray(entry.dice) ? entry.dice : []).map((rawDie) => {
+        const d = rawDie as Partial<DiceStack>;
+        const scores = hallScores(d.scores);
+        return {
+          sides: d.sides ?? 6,
+          // Older hall entries stored this as a boolean. Resolve it from the
+          // die's then-current size once, while new entries persist ×2/×4.
+          maxFaceBonus: windfallFactor(
+            d.maxFaceBonus as number | boolean | undefined,
+            d.sides ?? 6,
+          ),
+          loaded: d.loaded ?? false,
+          wildFace: d.wildFace ?? false,
+          source: d.source ?? "starter",
+          count: d.count ?? 1,
+          // The Vigil's tally, for the final grid's tooltips. Entries
+          // recorded before it was kept carry none.
+          ...(scores ? { scores } : {}),
+        } as DiceStack;
+      }),
+      auras: hallAuras(entry.auras),
+      dicePoints: bigintMap(entry.dicePoints),
+      itemPoints: bigintMap(entry.itemPoints),
+      history: hydrateRollHistory(entry.history),
+      rolls: Number(entry.rolls ?? 0),
+      seed: isSeed(entry.seed) ? entry.seed : undefined,
+      unlocks: knownItemIds(entry.unlocks),
+      tutorialArmed: Boolean(entry.tutorialArmed),
+      forcedRolls: rollKeys(entry.forcedRolls),
+      inputLog: readInputLog(entry.inputLog),
+      ...(typeof entry.build === "string" ? { build: entry.build } : {}),
+      ...(typeof entry.daily === "string" ? { daily: entry.daily } : {}),
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -291,13 +374,18 @@ function writeHall(key: string, hall: HallEntry[]): void {
     localStorage.setItem(
       key,
       JSON.stringify(
-        // Hundreds of roll samples per entry, times the whole Hall, is the one
-        // part of this payload big enough to care about: they go out under the
-        // shared short-key form rather than one verbose object per roll.
-        hall.map((e) => ({
-          ...e,
-          history: serializeRollHistory(e.history ?? []),
-        })),
+        [
+          // Hundreds of roll samples per entry, times the whole Hall, is the
+          // one part of this payload big enough to care about: they go out
+          // under the shared short-key form rather than one verbose object
+          // per roll.
+          ...hall.map((e) => ({
+            ...e,
+            history: serializeRollHistory(e.history ?? []),
+          })),
+          // And whatever this build could not read, as it was.
+          ...(unreadEntries.get(key) ?? []),
+        ],
         (_key, value) => (typeof value === "bigint" ? value.toString() : value),
       ),
     );
@@ -320,6 +408,15 @@ export function loadSettings(): Settings {
         graphicsLevel: isGraphicsLevel(parsed.graphicsLevel)
           ? parsed.graphicsLevel
           : undefined,
+        globalBoard:
+          typeof parsed.globalBoard === "boolean"
+            ? parsed.globalBoard
+            : undefined,
+        crashReports: parsed.crashReports !== false,
+        uiScale:
+          typeof parsed.uiScale === "number" && Number.isFinite(parsed.uiScale)
+            ? parsed.uiScale
+            : undefined,
       };
     }
   } catch {
@@ -693,6 +790,7 @@ export function resetAllProgress(): void {
   clearActiveRun();
   resetItemAnalysis();
   resetPlayerStats();
+  unreadEntries.clear();
   try {
     localStorage.removeItem(KEY_PROGRESS);
     localStorage.removeItem(KEY_SCORES);
