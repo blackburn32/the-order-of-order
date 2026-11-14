@@ -1,0 +1,26 @@
+/* The policy page: one readable column on the site's own felt. */
+.policy {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 6rem 1.25rem 3rem;
+  line-height: 1.6;
+}
+.policy h1 {
+  color: var(--gold-light);
+  margin-bottom: 0.25rem;
+}
+.policy h2 {
+  color: var(--parchment);
+  margin-top: 2rem;
+  font-size: 1.25rem;
+}
+.policy-date {
+  color: var(--parchment-dark);
+  font-style: italic;
+}
+.policy a {
+  color: var(--gold-light);
+}
+.policy li {
+  margin-bottom: 0.4rem;
+}
