@@ -4,7 +4,7 @@
 // small set of RULES the run carries from its first roll to its last, chosen
 // once, before the first trial. Every one of them changes a mechanic and none
 // of them changes a goal — the ladder in `config.ts` is the same ladder for all
-// three, which is the whole point. A character makes some approaches
+// four, which is the whole point. A character makes some approaches
 // impractical rather than making the game longer or shorter.
 //
 // Each character's rules live here as data, and each is read at exactly one

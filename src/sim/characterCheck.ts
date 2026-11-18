@@ -1,4 +1,4 @@
-// Executable spec for the three novices: the rules in systems/Characters.ts and
+// Executable spec for the four novices: the rules in systems/Characters.ts and
 // the four seams that read them.
 //
 // Run: npm run characters:check
