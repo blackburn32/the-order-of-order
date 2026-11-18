@@ -27,6 +27,15 @@ import {
 import { buildsOf, type InputEvent } from "../systems/InputLog";
 import type { ShopItemId } from "../systems/Items";
 import { gridColumnsFor } from "../systems/RadiusDice";
+import {
+  blessingsLeft,
+  blessRoll,
+  rerollsLeft,
+  restoreRun,
+  rollStreamKey,
+  snapshotRun,
+  spendReroll,
+} from "../systems/RollFavours";
 import { streamFor } from "../systems/Rng";
 import { ShopVisit } from "../systems/ShopVisit";
 import {
@@ -86,6 +95,9 @@ export interface ReplayResult {
 type Phase =
   | { at: "overview" }
   | { at: "game" }
+  // The trial's last roll is made, but the score panel is holding it open for
+  // an Absolution or a Benediction: the trial ends once the player moves on.
+  | { at: "held" }
   | { at: "results"; outcome: TrialEndOutcome }
   | { at: "ending"; def: EndingDef }
   | {
@@ -152,6 +164,8 @@ function advance(state: RunState, phase: Phase): Phase {
           continue;
         }
         return phase;
+      case "held":
+        return phase;
       case "results": {
         // TrialResultsScene.continue.
         const def = endingAfterTrial(
@@ -211,6 +225,26 @@ function endTrial(state: RunState): Phase {
   return { at: "results", outcome };
 }
 
+/** The roll on the table, as the score panel holds it: the run before it, for
+ *  an Absolution to put back, and what it scored, for a Benediction to bless.
+ *  Cleared once anything but the panel's own choices happens. */
+interface LastRoll {
+  before: RunState | null;
+  points: bigint;
+}
+let lastRoll: LastRoll | null = null;
+
+/** Whether the score panel holds the roll just made open: GameScene.settleRoll
+ *  offers a reroll while an Absolution is left, and a blessing on a roll that
+ *  scored while a Benediction is. */
+function heldForFavour(state: RunState): boolean {
+  if (!lastRoll) return false;
+  return (
+    (lastRoll.before !== null && rerollsLeft(state) > 0) ||
+    (blessingsLeft(state) > 0 && lastRoll.points > 0n)
+  );
+}
+
 /** GameScene.startRoll and settleRoll, without the table. */
 function roll(
   state: RunState,
@@ -227,12 +261,18 @@ function roll(
   if (rigged === 1 && !state.forcedRolls.includes(key))
     state.forcedRolls.push(key);
   layOut(state, cols);
-  const diceRng = streamFor(state.seed, "roll", key);
+  const before = rerollsLeft(state) > 0 ? snapshotRun(state) : null;
+  const streamKey = rollStreamKey(state);
+  const diceRng = streamFor(state.seed, "roll", streamKey);
   const rollDice = () =>
     rollPool(state, state.dice, rigged === 1 ? () => 0 : diceRng);
   rollDice();
   for (let i = 0; i < redo; i++) rollDice();
-  resolveRoll(state, streamFor(state.seed, "roll", `${key}:resolve`));
+  const { result } = resolveRoll(
+    state,
+    streamFor(state.seed, "roll", `${streamKey}:resolve`),
+  );
+  lastRoll = { before, points: result.points };
 }
 
 /** Play one entry of the log against the screen the run is on. */
@@ -243,6 +283,18 @@ function play(
   event: InputEvent,
 ): Phase {
   const kind = event[1];
+  if (phase.at === "held") {
+    // Spent from the panel the trial's last roll is held on, or the player
+    // pressed on and the trial ended (GameScene.onRoll).
+    if (kind === "absolve" || kind === "bless")
+      return play(state, record, { at: "game" }, event);
+    // Dice dragged while the panel waits leave it waiting.
+    if (kind === "move") {
+      play(state, record, { at: "game" }, event);
+      return phase;
+    }
+    return play(state, record, advance(state, { at: "game" }), event);
+  }
   if (event[0] !== state.trial)
     fail(
       `a ${kind} logged on trial ${event[0]} while the run is on ${state.trial}`,
@@ -259,7 +311,26 @@ function play(
           return phase;
         case "roll":
           roll(state, record, event);
-          return trialComplete(state) ? endTrial(state) : phase;
+          return trialComplete(state) && heldForFavour(state)
+            ? { at: "held" }
+            : phase;
+        case "absolve": {
+          // GameScene.rerollLastRoll: the struck roll is made again by the
+          // "roll" entry that follows.
+          const before = lastRoll?.before;
+          if (!before) fail("an Absolution with no roll to strike");
+          lastRoll = null;
+          restoreRun(state, before);
+          if (!spendReroll(state)) fail("an Absolution the run did not have");
+          return phase;
+        }
+        case "bless": {
+          const points = lastRoll?.points ?? 0n;
+          lastRoll = null;
+          if (blessRoll(state, points) === 0n)
+            fail("a Benediction with nothing to bless");
+          return { at: "game" };
+        }
       }
       break;
     case "shop": {
@@ -335,6 +406,7 @@ export function replayRun(record: RunRecord): ReplayResult {
 
   let state: RunState | undefined;
   let phase: Phase = { at: "overview" };
+  lastRoll = null;
   let at: number | undefined;
   let error: string | undefined;
   // Every random decision a run makes is drawn from a stream named off its
@@ -356,6 +428,8 @@ export function replayRun(record: RunRecord): ReplayResult {
       if (phase.at === "over") fail(`a ${event[1]} after the run ended`);
       phase = advance(state, play(state, record, phase, event));
     }
+    // A log that ends on a held last roll ended the trial as it stood.
+    if (phase.at === "held") phase = advance(state, { at: "game" });
     at = undefined;
   } catch (err) {
     if (!(err instanceof ReplayError)) throw err;

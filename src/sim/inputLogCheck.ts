@@ -96,6 +96,8 @@ const junk: unknown[] = [
   [1, "roll", 0, 4, 0, 0],
   [1, "roll", 0, 4, 2, 0],
   [1, "nope"],
+  [1, "absolve"],
+  [1, "bless", 2],
   ["1", "leave"],
   [2, "buy", "floor", 0, "x", null, null],
   [2, "buy", "pack", 0, "x", null, [1, "2"]],
@@ -108,6 +110,7 @@ check(
   JSON.stringify(read) ===
     JSON.stringify([
       [1, "roll", 0, 4, 0, 0],
+      [1, "absolve"],
       [2, "leave"],
     ]),
   "only well-formed entries survive a read",

@@ -11,10 +11,15 @@
 //        │ ──────────────────────── │
 //        │         +82 DICE         │  ← only when the grid changed size
 //        │     SHATTERED −14        │  ← each gain and loss, then the sum
+//        │  [ REROLL ]  [ BLESS ×4 ]│  ← only with a roll favour to spend
 //        └──────────────────────────┘
 //
 // A roll that scored nothing but still changed the grid (dice defecting off a
 // dud, say) gets a panel holding the dice row alone.
+//
+// A callout with actions (the roll favours, systems/RollFavours) does not clear
+// itself away: it holds until the player spends one or rolls on, and the caller
+// closes it.
 //
 // Numbers come from systems/RollBreakdown; this file only stages them. The panel
 // behind the rows is what keeps them legible over a grid of pale dice. Every
@@ -76,6 +81,70 @@ export interface RollBreakdownOptions {
   /** A line under the total, shown with the acclaim: what crossing the goal
    *  earned ("+2 GOLD WHEN THE TRIAL ENDS"). */
   acclaimDetail?: string;
+  /** Buttons along the panel's foot, shown once the total lands. A callout
+   *  with any holds open until the caller closes it. */
+  actions?: readonly RollAction[];
+}
+
+/** One button on the callout's foot: a round icon, with a pip under it for
+ *  each use left. */
+export interface RollAction {
+  /** What the button does, drawn rather than written: a circling arrow for a
+   *  reroll, a four-pointed star for a blessing. */
+  icon: "reroll" | "bless";
+  /** The button's ink: its ring, its icon, its pips, and its hover wash. */
+  color: number;
+  /** Uses left this trial, shown as pips under the button. */
+  uses: number;
+  /** A figure tucked against the button's shoulder, e.g. a blessing's ×8. */
+  badge?: string;
+  onPress(): void;
+}
+
+/** Draw `icon` into `g`, centred on the origin, `r` across its half-width. */
+function drawActionIcon(
+  g: Phaser.GameObjects.Graphics,
+  icon: RollAction["icon"],
+  r: number,
+  color: number,
+): void {
+  if (icon === "reroll") {
+    // Three quarters of a circle, and an arrowhead where it stops.
+    const start = Phaser.Math.DegToRad(-60);
+    const end = Phaser.Math.DegToRad(220);
+    const ring = r * 0.72;
+    g.lineStyle(Math.max(1.5, r * 0.2), color, 1);
+    g.beginPath();
+    g.arc(0, 0, ring, start, end, false);
+    g.strokePath();
+    const tip = { x: Math.cos(start) * ring, y: Math.sin(start) * ring };
+    // The arc runs clockwise from `start` back round to `end`, so the arrow
+    // at `start` points against it, along the tangent toward smaller angles.
+    const along = { x: Math.sin(start), y: -Math.cos(start) };
+    const out = { x: Math.cos(start), y: Math.sin(start) };
+    const head = r * 0.42;
+    g.fillStyle(color, 1);
+    g.fillTriangle(
+      tip.x + along.x * head,
+      tip.y + along.y * head,
+      tip.x + out.x * head * 0.7,
+      tip.y + out.y * head * 0.7,
+      tip.x - out.x * head * 0.7,
+      tip.y - out.y * head * 0.7,
+    );
+    return;
+  }
+  // A four-pointed star, its waist pinched in, the light a blessing gives.
+  const points: Phaser.Math.Vector2[] = [];
+  for (let i = 0; i < 8; i++) {
+    const angle = (i * Math.PI) / 4 - Math.PI / 2;
+    const reach = i % 2 === 0 ? r * 0.9 : r * 0.3;
+    points.push(
+      new Phaser.Math.Vector2(Math.cos(angle) * reach, Math.sin(angle) * reach),
+    );
+  }
+  g.fillStyle(color, 1);
+  g.fillPoints(points, true);
 }
 
 /**
@@ -106,6 +175,14 @@ export interface RollBreakdownView {
    *  other is simply destroyed. */
   dismiss(): void;
   destroy(): void;
+  /** Whether a screen point lands on the panel, for input that must not fall
+   *  through it to the grid underneath. */
+  contains(x: number, y: number): boolean;
+  /** Show the total a blessing made of the roll, with the line saying so where
+   *  the buttons were. */
+  bless(points: bigint, label: string): void;
+  /** Take the buttons away, leaving the panel up. */
+  clearActions(): void;
 }
 
 /** How many row steps the callout's panel spans: its dice row, the bonus and
@@ -432,12 +509,76 @@ export function playRollBreakdown(
     lastPad = rowStep * 0.6;
   }
 
+  // A dud with a favour to spend still needs something to say above its
+  // buttons.
+  const actions = opts.actions ?? [];
+  const holds = actions.length > 0;
+  if (!scored && holds && diceChanges.length === 0) {
+    total
+      .setText("NOTHING SCORED")
+      .setColor(CSS.parchment)
+      .setFontSize(Math.round(fontSize))
+      .setVisible(true);
+  }
+
+  // The favours' buttons: small round icons side by side along the panel's
+  // foot, each in its own ink, with a pip under it for every use left — a
+  // footnote to the total rather than a rival to it. Built at the origin and
+  // placed once the panel's width is known.
+  const iconR = rowStep * 0.5;
+  const pipR = Math.max(2.2, iconR * 0.12);
+  const pipY = iconR + pipR * 3;
+  const actionH = iconR * 2 + pipR * 5;
+  const actionGap = iconR * 1.2;
+  const actionY = lastY + lastPad + iconR;
+  const css = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
+  const buttons = actions.map((action) => {
+    const plate = scene.add.graphics();
+    const glyph = scene.add.graphics();
+    drawActionIcon(glyph, action.icon, iconR * 0.62, action.color);
+    const pips = scene.add.graphics();
+    pips.fillStyle(action.color, 0.9);
+    for (let i = 0; i < action.uses; i++)
+      pips.fillCircle((i - (action.uses - 1) / 2) * pipR * 3.2, pipY, pipR);
+    const parts: Phaser.GameObjects.GameObject[] = [plate, glyph, pips];
+    if (action.badge)
+      parts.push(
+        scene.add
+          .text(iconR * 0.78, -iconR * 0.72, action.badge, {
+            fontFamily: SERIF,
+            fontSize: `${Math.round(Math.max(12, iconR * 0.62))}px`,
+            color: css(action.color),
+            fontStyle: "bold",
+            stroke: "#0d0a12",
+            strokeThickness: 3,
+          })
+          .setOrigin(0, 0.5),
+      );
+    const button = opts.add(
+      scene.add.container(x, actionY, parts).setDepth(52),
+    );
+    button.setData("action", action.icon);
+    pieces.push(button);
+    return { action, button, plate };
+  });
+  const actionsWidth =
+    buttons.length * iconR * 2 + actionGap * Math.max(0, buttons.length - 1);
+  // The line that replaces the buttons once one is spent.
+  const actionNote = holds
+    ? text(actionY, "", CSS.glow, labelSize).setVisible(false)
+    : undefined;
+  if (holds) {
+    lastY = actionY - iconR + actionH;
+    lastPad = rowStep * 0.5;
+  }
+
   // The panel is as wide as the widest thing it will ever hold: every row, the
   // final multiplier, and the longest step name.
   const finalHundredths = multiplierHundredths(breakdown.multiplier);
   const finalFractional = breakdown.multiplier.den !== 1n;
   let widest = Math.max(
-    scored ? total.width : 0,
+    actionsWidth,
+    scored || holds ? total.width : 0,
     detail?.width ?? 0,
     diceRow?.width ?? 0,
     diceLabel?.width ?? 0,
@@ -552,6 +693,59 @@ export function playRollBreakdown(
   const restScale = new Map<Piece, number>();
   const rest = (piece: Piece) => restScale.get(piece) ?? piece.scale;
 
+  // The row is centred, and shrinks together only if a narrow panel cannot
+  // hold it.
+  const actionFit = Math.min(1, (panelW - padX) / Math.max(1, actionsWidth));
+  let actionX = x - (actionsWidth * actionFit) / 2;
+  buttons.forEach(({ action, button, plate }) => {
+    button.setScale(actionFit);
+    restScale.set(button, actionFit);
+    button.x = actionX + iconR * actionFit;
+    actionX += (iconR * 2 + actionGap) * actionFit;
+    const draw = (alpha: number) => {
+      plate.clear();
+      plate.fillStyle(COLORS.feltDark, 0.6);
+      plate.fillCircle(0, 0, iconR);
+      plate.fillStyle(action.color, alpha);
+      plate.fillCircle(0, 0, iconR);
+      plate.lineStyle(1.5, action.color, 0.85);
+      plate.strokeCircle(0, 0, iconR);
+    };
+    draw(0);
+    button.setSize(iconR * 2, iconR * 2);
+    button.setAlpha(0);
+    let pressed = false;
+    button.on("pointerover", () => draw(0.16));
+    button.on("pointerout", () => {
+      pressed = false;
+      draw(0);
+    });
+    button.on("pointerdown", () => {
+      pressed = true;
+      draw(0.3);
+    });
+    button.on("pointerup", () => {
+      if (!pressed || button.alpha < 1) return;
+      pressed = false;
+      draw(0.16);
+      action.onPress();
+    });
+  });
+  const showActions = () => {
+    for (const { button } of buttons) {
+      if (!button.scene) continue;
+      stopOwn(button);
+      button.setAlpha(1).setScale(rest(button));
+      button.setInteractive({ useHandCursor: true });
+    }
+  };
+  const clearActions = () => {
+    for (const { button } of buttons) {
+      if (!button.scene) continue;
+      button.disableInteractive();
+      button.setVisible(false);
+    }
+  };
   // Only ever stop the callout's own tweens. `killTweensOf` would also stop a
   // tween someone else put on these pieces — the scene's slide-out moves every
   // display object and waits for each of those tweens to complete, so killing
@@ -1018,9 +1212,17 @@ export function playRollBreakdown(
     diceRow ? ms(diceEnd) + scaled(DICE_HOLD_MS) : 0,
   );
   let closedAt = scene.time.now + closeAtMs + (persist ? 0 : scaled(FADE_MS));
-  at(closeAtMs, () =>
-    persist ? comeToRest(scaled(FADE_MS)) : fadeOut(scaled(FADE_MS)),
-  );
+  // A callout holding a choice stays up until the caller closes it; its
+  // buttons arrive once everything above them has been counted out.
+  if (holds)
+    at(
+      Math.max(scored ? totalAtMs : 0, diceRow ? ms(diceEnd) : 0),
+      showActions,
+    );
+  else
+    at(closeAtMs, () =>
+      persist ? comeToRest(scaled(FADE_MS)) : fadeOut(scaled(FADE_MS)),
+    );
 
   return {
     bottomY: panelBottom + rowStep * 0.5,
@@ -1036,6 +1238,8 @@ export function playRollBreakdown(
       for (const timer of timers) timer.remove();
       countEvent?.remove();
       diceEvent?.remove();
+      // A choice is over once the table moves on.
+      clearActions();
       // Nothing to hurry once the scene has torn the callout down, or once a
       // persisting callout has already come to rest.
       if (fading || settled || !panel.scene) return;
@@ -1085,6 +1289,29 @@ export function playRollBreakdown(
         });
       }
     },
+    contains(px, py) {
+      if (fading || !panel.scene) return false;
+      return (
+        px >= x - panelW / 2 &&
+        px <= x + panelW / 2 &&
+        py >= panelTop &&
+        py <= panelBottom
+      );
+    },
+    bless(points, label) {
+      if (fading || !panel.scene) return;
+      clearActions();
+      total
+        .setText(`+${formatScore(points)}`)
+        .setColor(CSS.glow)
+        .setScale(1);
+      if (total.width > room) total.setScale(room / total.width);
+      restScale.set(total, total.scale);
+      punch(total, 1.4, 180);
+      actionNote?.setText(label).setVisible(true).setAlpha(1);
+      if (actionNote) punch(actionNote, 1.2, 150);
+    },
+    clearActions,
     destroy() {
       for (const timer of timers) timer.remove();
       for (const made of slideTweens) made.stop();

@@ -451,6 +451,18 @@ export const OUTSIDE_TREES: Partial<Record<ShopItemId, OutsidePlacement>> = {
   the_halo: { status: "neutral", note: RADIUS },
   the_grace: { status: "neutral", note: RADIUS },
   the_censer: { status: "neutral", note: RADIUS },
+  absolution: {
+    status: "neutral",
+    note: "A reroll spent from the score panel serves every strategy alike.",
+  },
+  benediction: {
+    status: "neutral",
+    note: "A blessed roll multiplies whatever the run is building.",
+  },
+  doxology: {
+    status: "neutral",
+    note: "Benediction's boost, neutral as Benediction is.",
+  },
   ledger: {
     status: "neutral",
     note: "A shop utility with no strategy of its own.",
